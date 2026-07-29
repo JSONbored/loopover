@@ -305,7 +305,7 @@ import { isRagEnabled } from "../review/rag-wire";
 import { loadDecisionLedgerTip, loadPublicDecisionRecord, loadPublicLedgerRow, verifyDecisionLedger } from "../review/decision-record";
 import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
 import { buildPublicCorpusCommitments } from "../review/public-eval-corpus";
-import { anchorSigningInput, buildLedgerAnchorPayload, currentAnchorKey, parseAnchorPublicKeys, publicAnchorStatus, signLedgerAnchorPayload } from "../review/ledger-anchor";
+import { anchorSigningInput, buildLedgerAnchorPayload, currentAnchorKey, diagnoseAnchorPublicKeys, parseAnchorPublicKeys, publicAnchorStatus, signLedgerAnchorPayload } from "../review/ledger-anchor";
 import { resolveProofPage } from "../review/proof-summary";
 import { renderProofBadgeSvg } from "./proof-badge";
 import { ingestBittensorAnchorReport, parseBittensorAnchorReport } from "../review/ledger-anchor-bittensor";
@@ -736,9 +736,14 @@ export function createApp() {
   // verifiable yet" is the honest answer before the signing key is provisioned, and a verifier can tell that
   // apart from a key that exists.
   app.get("/v1/public/decision-ledger/anchor-key", (c) => {
-    const keys = parseAnchorPublicKeys(c.env.LOOPOVER_LEDGER_ANCHOR_KEYS);
+    // #9834: `status`/`droppedEntries` alongside the keys, because `{"keys":[],"currentKeyId":null}` was the
+    // response to SIX different causes -- unset, unparseable, non-array, every-entry-invalid, all-expired,
+    // and an ambiguous rotation -- and read as a healthy empty state for all of them. Same reasoning
+    // PublicAnchorStatus already applies to the sibling anchors listing. `keys` and `currentKeyId` keep their
+    // exact shape and meaning; this is purely additive for existing consumers.
+    const diagnosis = diagnoseAnchorPublicKeys(c.env.LOOPOVER_LEDGER_ANCHOR_KEYS);
     c.header("Cache-Control", "public, max-age=300, stale-while-revalidate=3600");
-    return c.json({ keys, currentKeyId: currentAnchorKey(keys)?.keyId ?? null });
+    return c.json(diagnosis);
   });
 
   // #9271 (epic #9267): every anchoring attempt, success AND failure, paginated newest-first. This is what

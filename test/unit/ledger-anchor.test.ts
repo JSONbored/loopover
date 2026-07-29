@@ -5,6 +5,7 @@ import {
   buildLedgerAnchorPayload,
   computeAnchorKeyId,
   currentAnchorKey,
+  diagnoseAnchorPublicKeys,
   LEDGER_ANCHOR_LEDGER_ID,
   LEDGER_ANCHOR_PAYLOAD_VERSION,
   parseAnchorPublicKeys,
@@ -169,5 +170,88 @@ describe("currentAnchorKey / anchorKeyById (rotation)", () => {
   it("still resolves a RETIRED key by id, so anchors signed before a rotation stay verifiable", () => {
     expect(anchorKeyById([retired, active], "old")).toEqual(retired);
     expect(anchorKeyById([retired, active], "missing")).toBeNull();
+  });
+});
+
+// #9834: `{"keys":[],"currentKeyId":null}` was the answer to six different causes, and read as a healthy
+// empty state for all of them. After #9719 provisioned the anchor keypair, that made "did the provisioning
+// take effect?" unanswerable -- a typo in the secret is byte-identical to an unset secret.
+describe("diagnoseAnchorPublicKeys (#9834)", () => {
+  const key = (over: Partial<AnchorPublicKey> = {}): AnchorPublicKey => ({
+    keyId: "k1",
+    publicKeySpki: "MCowBQYDK2VwAyEA" + "a".repeat(28),
+    notBefore: "2026-01-01T00:00:00.000Z",
+    notAfter: null,
+    ...over,
+  });
+
+  it("ok: exactly one current key", () => {
+    const d = diagnoseAnchorPublicKeys(JSON.stringify([key()]));
+    expect(d).toMatchObject({ status: "ok", currentKeyId: "k1", droppedEntries: 0 });
+    expect(d.keys).toHaveLength(1);
+  });
+
+  it("unconfigured: the env var is absent", () => {
+    expect(diagnoseAnchorPublicKeys(undefined)).toEqual({ status: "unconfigured", keys: [], currentKeyId: null, droppedEntries: 0 });
+  });
+
+  it("unconfigured: an empty string, and an explicitly empty array", () => {
+    // An empty array is "configured to publish nothing", which is the same actionable state as never setting
+    // it -- and deliberately NOT the same as entries present but every one rejected.
+    expect(diagnoseAnchorPublicKeys("").status).toBe("unconfigured");
+    expect(diagnoseAnchorPublicKeys("[]").status).toBe("unconfigured");
+  });
+
+  it("malformed: unparseable JSON", () => {
+    expect(diagnoseAnchorPublicKeys("{not json").status).toBe("malformed");
+  });
+
+  it("malformed: valid JSON that is not an array", () => {
+    expect(diagnoseAnchorPublicKeys(JSON.stringify(key())).status).toBe("malformed");
+  });
+
+  it("no_valid_entries: right shape, wrong field names -- the typo case", () => {
+    const typod = { keyid: "k1", publicKeySpki: "x", notBefore: "2026-01-01T00:00:00.000Z", notAfter: null };
+    const d = diagnoseAnchorPublicKeys(JSON.stringify([typod]));
+    expect(d).toMatchObject({ status: "no_valid_entries", keys: [], currentKeyId: null });
+  });
+
+  it("expired: valid entries, none current -- the rotation ran off the end", () => {
+    const d = diagnoseAnchorPublicKeys(JSON.stringify([key({ notAfter: "2026-06-01T00:00:00.000Z" })]));
+    expect(d).toMatchObject({ status: "expired", currentKeyId: null });
+    expect(d.keys).toHaveLength(1); // retired keys still published, so old anchors stay verifiable
+  });
+
+  it("ambiguous_rotation: MORE than one current key -- the other half of currentAnchorKey's null", () => {
+    // currentAnchorKey returns null for both zero and >1 current keys. Those are different operator problems
+    // (publish a successor vs. retire one of two), and this is the only place they are told apart.
+    const d = diagnoseAnchorPublicKeys(JSON.stringify([key(), key({ keyId: "k2" })]));
+    expect(d).toMatchObject({ status: "ambiguous_rotation", currentKeyId: null, droppedEntries: 0 });
+    expect(d.keys).toHaveLength(2);
+  });
+
+  it("counts droppedEntries even when the overall status is ok", () => {
+    // One good key and one typo'd: without the count, the bad entry vanishes into a healthy-looking response.
+    const typod = { keyid: "k2", publicKeySpki: "x", notBefore: "2026-01-01T00:00:00.000Z", notAfter: null };
+    const d = diagnoseAnchorPublicKeys(JSON.stringify([key(), typod]));
+    expect(d).toMatchObject({ status: "ok", currentKeyId: "k1", droppedEntries: 1 });
+  });
+
+  it("SECURITY: never echoes the configured value back, whatever it is", () => {
+    // LOOPOVER_LEDGER_ANCHOR_KEYS is served by an UNAUTHENTICATED endpoint. An operator who mis-pastes
+    // LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY into it must not have the private half published by the very
+    // diagnostic meant to help them. Probe assembled from fragments so this file never contains a
+    // credential-shaped literal -- the convention forbidden-content.test.ts uses.
+    const probe = ["-----BEGIN", " PRIVATE", " KEY-----", "MC4CAQAwBQYDK2VwBCIEIA", "-----END", " PRIVATE", " KEY-----"].join("");
+    for (const raw of [probe, `[${probe}]`, JSON.stringify([{ keyId: probe }])]) {
+      expect(JSON.stringify(diagnoseAnchorPublicKeys(raw))).not.toContain("PRIVATE");
+      expect(JSON.stringify(diagnoseAnchorPublicKeys(raw))).not.toContain("MC4CAQAwBQYDK2VwBCIEIA");
+    }
+  });
+
+  it("INVARIANT: parseAnchorPublicKeys is unchanged -- the scheduler's guard order still sees what it always did", () => {
+    for (const raw of [undefined, "", "[]", "{not json", JSON.stringify([key()]), JSON.stringify([key({ notAfter: "2026-06-01T00:00:00.000Z" })])]) {
+      expect(diagnoseAnchorPublicKeys(raw).keys).toEqual(parseAnchorPublicKeys(raw));
+    }
   });
 });

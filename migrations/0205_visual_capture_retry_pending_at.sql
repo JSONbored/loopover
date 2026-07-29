@@ -1,0 +1,18 @@
+-- #9876: bound the visual-capture retry latch in TIME, not only by the code paths that release it.
+--
+-- `visual_capture_retry_pending_sha` defers the screenshot-table gate's one-shot CLOSE while a bounded
+-- recapture retry is still in flight for that head (#9030), so a browserless blip cannot be mistaken for "this
+-- PR has no visual evidence". It is a latch: once set, ONLY a later code path can release it. Twice now that
+-- release has been proven unreachable in production (#9462, and the durable-budget path this migration is part
+-- of fixing), each time leaving the latch set forever and silently freezing every affected PR -- the gate can
+-- neither close nor pass it, so nothing ever happens to it again.
+--
+-- A timestamp makes the bound structural: a latch older than the longest possible retry chain is stale by
+-- arithmetic, whatever code did or did not run. Same reasoning, and the same fail-safe direction, as
+-- preview-poll-budget.ts's BUDGET_MARKER_MAX_AGE_MS on the sibling R2 marker.
+--
+-- Nullable with no backfill: an existing latch written before this column has no recorded age, and
+-- visual-capture-retry-latch.ts deliberately treats a sha-without-timestamp as EXPIRED. That is the honest
+-- reading (the row predates the column, so its latch is at least as old as this deploy) and it is what
+-- unfreezes the PRs currently stuck behind one.
+ALTER TABLE pull_requests ADD COLUMN visual_capture_retry_pending_at TEXT;

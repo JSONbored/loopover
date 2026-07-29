@@ -486,7 +486,8 @@ export {
 export { processJob } from "./job-dispatch";
 import { isVisualPath } from "../review/visual/paths";
 import { buildCapture, fetchExternalScreenshotContentBlock, fetchShotContentBlock, hasSuccessfulBotCapture, resolveVisualRoutes, type CaptureInteractionRoute, type CaptureRoute } from "../review/visual/capture";
-import { MAX_PREVIEW_POLL_ATTEMPTS } from "../review/visual/preview-poll-budget";
+import { MAX_PREVIEW_POLL_ATTEMPTS, PREVIEW_POLL_SECONDS } from "../review/visual/preview-poll-budget";
+import { visualCaptureRetryLatchState, VISUAL_CAPTURE_RETRY_LATCH_MAX_AGE_MS } from "../review/visual/visual-capture-retry-latch";
 import {
   clearFallbackDispatchMarker,
   fallbackShotFileName,
@@ -3499,10 +3500,36 @@ async function runAgentMaintenancePlanAndExecute(
   // visualCaptureSatisfiedSha unset, and the very next maintenance pass could close a legitimate visual PR
   // purely because an internal service blipped. visualCaptureRetryPendingSha (set only while a bounded
   // recapture retry is genuinely still scheduled for this exact head -- see the capture block in
-  // maybePublishPrPublicSurface) defers the CLOSE for exactly as long as that retry chance remains; once the
-  // budget is exhausted, the marker is never set again and the gate falls through to its normal, accurate
-  // evaluation on the final attempt -- this can never hold a PR forever.
-  const botCaptureRetryPending = Boolean(pr.headSha) && pr.visualCaptureRetryPendingSha === pr.headSha;
+  // maybePublishPrPublicSurface) defers the CLOSE for exactly as long as that retry chance remains.
+  //
+  // #9876: that deferral used to be bounded only by "some later code path will clear the latch", and this
+  // comment used to assert on that basis that it "can never hold a PR forever". It did -- twice, for the two
+  // separate unreachable-release bugs recorded in visual-capture-retry-latch.ts, most recently freezing three
+  // contributor PRs for an hour each with the gate unable to either close or pass them. The latch is now
+  // bounded by its own AGE as well, so the deferral ends on schedule whether or not the releasing path runs.
+  const latchState = visualCaptureRetryLatchState({
+    latchSha: pr.visualCaptureRetryPendingSha,
+    latchAtIso: pr.visualCaptureRetryPendingAt,
+    headSha: pr.headSha,
+    // The decision clock (#9492), not Date.now(): a replayed decision must re-derive the same latch verdict
+    // from the same recorded instant, or replay could certify a close this run never actually made.
+    nowMs: decisionClock.nowMs,
+  });
+  const botCaptureRetryPending = latchState.live;
+  if (latchState.live === false && latchState.reason === "expired") {
+    // An expiry means the retry that justified the deferral is never arriving. Audited rather than silent:
+    // this is the exact state that used to freeze a PR invisibly, so it must be visible when it recurs.
+    await recordAuditEvent(env, {
+      eventType: "github_app.visual_capture_retry_latch_expired",
+      actor: null,
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "completed",
+      detail:
+        `visual-capture retry latch for this head is ${Math.round(latchState.ageMs / 60000)}m old, past the ` +
+        `${Math.round(VISUAL_CAPTURE_RETRY_LATCH_MAX_AGE_MS / 60000)}m bound on any retry chain -- the retry is not coming, ` +
+        `so the screenshot-table gate is evaluating on the evidence actually present instead of deferring again`,
+    });
+  }
   const screenshotTableMatch =
     screenshotTableGateResult.violated && screenshotTableGateConfig.action === "close" && !botCaptureRetryPending
       ? { matched: true, reason: screenshotTableGateResult.reason }
@@ -5135,14 +5162,6 @@ async function maybeForceFreshRebase(
 // only bounds FREQUENCY, never correctness — a later out-of-window completion + the hourly sweep + the merge-time
 // re-check still catch the settled state.
 const CI_COALESCE_WINDOW_SECONDS = 60;
-
-// Visual preview self-poll (reviewbot PREVIEW_POLL_SECONDS parity): when a PR's preview deploy isn't live at
-// review time, re-review after this delay to re-capture the AFTER shot. The actual attempt CAP
-// (MAX_PREVIEW_POLL_ATTEMPTS) now lives in preview-poll-budget.ts and is enforced INSIDE buildCapture itself,
-// durably per head SHA across every trigger (#6323) -- this local scheduling check below is a harmless,
-// now-redundant secondary bound for the dedicated self-poll job chain specifically; it stays for defense in
-// depth but is no longer the thing that actually stops a never-resolving preview from polling forever.
-const PREVIEW_POLL_SECONDS = 90;
 
 /**
  * Coalesce CI-completion re-reviews: claims a per-PR window and returns true if this PR was already re-reviewed
@@ -9810,10 +9829,15 @@ async function logTypeLabelSkip(env: Env, repoFullName: string, pullNumber: numb
  *  "the preview deploy is still building" (capture.previewPending) and "the capture pipeline itself errored"
  *  (browserless down, timeout, a GitHub hiccup) -- neither means "this PR genuinely has no visual evidence",
  *  so neither should let the screenshotTableGate treat it that way. Persists visualCaptureRetryPendingSha for
- *  the current head ONLY when a retry was actually scheduled (the budget is not yet exhausted) -- once
- *  MAX_PREVIEW_POLL_ATTEMPTS is reached, the marker is deliberately left unset so the gate falls through to its
+ *  the current head ONLY when a retry was actually SENT (budget remaining, and the enqueue itself succeeded --
+ *  #9876) -- once MAX_PREVIEW_POLL_ATTEMPTS is reached, the marker is cleared so the gate falls through to its
  *  normal (accurate) evaluation on this final attempt rather than holding the PR open forever. Best-effort:
- *  either write failing only means this ONE recovery chance is silently missed, never a crash. */
+ *  either write failing only means this ONE recovery chance is silently missed, never a crash.
+ *
+ *  #9876: this function is no longer the ONLY release. The durable per-head poll budget can end the retry chain
+ *  by suppressing `previewPending`, in which case the call site never invokes this function and the clear below
+ *  never runs -- so the call site clears on any conclusive capture, and the latch additionally expires by age.
+ *  Treat the clear here as the prompt path, not the guarantee. */
 async function scheduleVisualCaptureRetry(
   env: Env,
   args: {
@@ -9846,7 +9870,36 @@ async function scheduleVisualCaptureRetry(
     }
     return;
   }
-  if (args.pr.headSha) {
+  // #9876: enqueue FIRST, and mark only if it succeeded. The latch's whole meaning is "a retry is coming"; the
+  // send is best-effort by design, so writing the latch before it inverted that -- a failed enqueue left a
+  // latch behind with no retry in existence to release it, and the gate then deferred on a promise nothing
+  // was keeping. In this order the failure degrades to "no deferral this pass", which is the safe direction:
+  // the gate evaluates the evidence it has rather than freezing the PR.
+  const enqueued = await env.JOBS.send(
+    {
+      type: "recapture-preview",
+      deliveryId: args.webhook.deliveryId,
+      repoFullName: args.repoFullName,
+      prNumber: args.pr.number,
+      installationId: args.installationId,
+      attempt: args.previewPollAttempt + 1,
+    },
+    { delaySeconds: PREVIEW_POLL_SECONDS },
+  ).then(
+    () => true,
+    (error: unknown) => {
+      console.log(
+        JSON.stringify({
+          event: "recapture_enqueue_failed",
+          repoFullName: args.repoFullName,
+          pull: args.pr.number,
+          message: errorMessage(error).slice(0, 120),
+        }),
+      );
+      return false;
+    },
+  );
+  if (enqueued && args.pr.headSha) {
     await markPullRequestVisualCaptureRetryPending(env, args.repoFullName, args.pr.number, args.pr.headSha).catch((error) => {
       console.log(
         JSON.stringify({
@@ -9858,26 +9911,6 @@ async function scheduleVisualCaptureRetry(
       );
     });
   }
-  await env.JOBS.send(
-    {
-      type: "recapture-preview",
-      deliveryId: args.webhook.deliveryId,
-      repoFullName: args.repoFullName,
-      prNumber: args.pr.number,
-      installationId: args.installationId,
-      attempt: args.previewPollAttempt + 1,
-    },
-    { delaySeconds: PREVIEW_POLL_SECONDS },
-  ).catch((error) =>
-    console.log(
-      JSON.stringify({
-        event: "recapture_enqueue_failed",
-        repoFullName: args.repoFullName,
-        pull: args.pr.number,
-        message: errorMessage(error).slice(0, 120),
-      }),
-    ),
-  );
 }
 
 async function maybePublishPrPublicSurface(
@@ -12859,6 +12892,15 @@ async function maybePublishPrPublicSurface(
           // normally -- previewPending false, nothing thrown -- and neither the #9030 nor the #9207 guard
           // fired. The maintenance pass then read "no evidence, no retry pending" and CLOSED the PR one-shot.
           // A browserless outage now degrades to "we could not capture evidence, holding" instead.
+          //
+          // #9876: the `else` below is the half that was missing, and it is the half that froze three
+          // contributor PRs. Reaching it means this capture CONCLUDED -- no successful pair, but also nothing
+          // still pending and nothing broken -- which is a definite answer to the question the latch was
+          // deferring. Without it, a latch written by an earlier attempt outlived the chain that justified it:
+          // the durable per-head poll budget ends that chain by suppressing `previewPending`, so the final
+          // attempt takes neither branch above, `scheduleVisualCaptureRetry` is never called, and the
+          // budget-exhausted clear that #9462 put INSIDE it never runs. The release belongs to the capture
+          // outcome, where every conclusion passes, not to a scheduler that by definition stops being called.
           const previewPollAttempt = webhook.previewPollAttempt ?? 0;
           if (capture.previewPending || capture.renderFailed) {
             await scheduleVisualCaptureRetry(env, {
@@ -12867,6 +12909,20 @@ async function maybePublishPrPublicSurface(
               pr,
               installationId,
               previewPollAttempt,
+            });
+          } else if (pr.headSha) {
+            // Conclusive: release any latch this head still carries. Best-effort and idempotent -- the common
+            // case is that there is no latch to clear, and a failed clear only leaves the age bound in
+            // visual-capture-retry-latch.ts to end the deferral instead of ending it now.
+            await clearPullRequestVisualCaptureRetryPending(env, repoFullName, pr.number, pr.headSha).catch((error) => {
+              console.log(
+                JSON.stringify({
+                  event: "visual_capture_retry_pending_clear_failed",
+                  repoFullName,
+                  pull: pr.number,
+                  message: errorMessage(error).slice(0, 200),
+                }),
+              );
             });
           }
         } catch (error) {

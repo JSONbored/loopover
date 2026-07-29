@@ -29,6 +29,12 @@ const BUDGET_MARKER_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // combined -- the single source of truth processors.ts's own scheduling logic also imports, so the two
 // never drift out of sync.
 export const MAX_PREVIEW_POLL_ATTEMPTS = 5;
+// The delay between those attempts (reviewbot PREVIEW_POLL_SECONDS parity): when a PR's preview deploy isn't
+// live at review time, re-review after this long to re-capture the AFTER shot. Lives beside the attempt cap
+// rather than in processors.ts (#9876) because the two together ARE the retry budget: the latch deadline in
+// visual-capture-retry-latch.ts is derived from their product, so keeping them apart would let one move
+// without the bound that depends on it moving too.
+export const PREVIEW_POLL_SECONDS = 90;
 
 type BudgetMarker = { count: number; firstAttemptAt: number };
 // A read of the marker plus the R2 httpEtag it was stored under (null when no object exists yet). The etag is

@@ -488,6 +488,12 @@ export const pullRequests = sqliteTable(
     // provided". Cleared by a subsequent successful capture for the same head. loopover-computed
     // (publish-written), omitted from the GitHub-sync SET clause so a later sync cannot clobber it.
     visualCaptureRetryPendingSha: text("visual_capture_retry_pending_sha"),
+    // #9876: when the latch above was set, so its age can expire it. The latch is released only by code paths,
+    // and twice those paths have been unreachable in production (#9462, and the durable-poll-budget case that
+    // added this column), each time freezing every affected PR forever. See visual-capture-retry-latch.ts:
+    // a sha with no timestamp reads as EXPIRED, which is both honest (the row predates the column) and what
+    // releases the PRs already stuck behind one. loopover-computed, written with the sha, cleared with it.
+    visualCaptureRetryPendingAt: text("visual_capture_retry_pending_at"),
     // Screenshot-table PRESENCE-mode staleness correlation (#stale-screenshot-table-fix, follow-up to #2006).
     // JSON `{headSha, evidenceFingerprint}` -- the head SHA and before/after-image-URL fingerprint that last
     // satisfied screenshotTableGate's presence-mode check (see evaluateScreenshotTableGate's staleness comment).

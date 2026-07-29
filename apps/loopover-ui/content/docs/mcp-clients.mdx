@@ -4,9 +4,11 @@ description: Configure your coding agent to talk to the LoopOver MCP. Pick stdio
 eyebrow: Get started
 ---
 
+{/* GENERATED:MCP-CLIENT-CONFIG:BEGIN — edit packages/loopover-contract/src/client-config.ts, then `npm run mcp:client-config` */}
+
 ## Generate config
 
-These commands print config only. They do not mutate your local client files.
+Every block on this page is what `init-client` prints. It prints config only — it never edits your client files.
 
 <CodeBlock
   lang="bash"
@@ -14,15 +16,27 @@ These commands print config only. They do not mutate your local client files.
 loopover-mcp init-client --print claude
 loopover-mcp init-client --print cursor
 loopover-mcp init-client --print mcp
-loopover-mcp init-client --print vscode`}
+loopover-mcp init-client --print vscode
+loopover-mcp init-client --print codex --mode remote
+loopover-mcp init-client --print claude --mode remote
+loopover-mcp init-client --print cursor --mode remote
+loopover-mcp init-client --print vscode --mode remote
+loopover-mcp init-client --print codex --mode miner
+loopover-mcp init-client --print claude --mode miner
+loopover-mcp init-client --print cursor --mode miner
+loopover-mcp init-client --print mcp --mode miner
+loopover-mcp init-client --print vscode --mode miner`}
 />
 
-`--print mcp` uses the same JSON snippet as Claude Desktop and Cursor for other stdio MCP hosts
-that expect the `mcpServers` shape. Every generated snippet assumes `loopover-mcp` is on your
-`PATH` (install it globally first, per [Quickstart](/docs/quickstart)) — pass
-`--command /absolute/path/to/loopover-mcp` if your client doesn't inherit your shell PATH.
+## Local stdio (gateway)
 
-## Codex (OpenAI)
+The recommended default. Runs `loopover-mcp` on your machine, keeps auth and git analysis local, and — once you have run `loopover-mcp login` — mounts the remote tool set too, so one entry serves every tool your session entitles you to.
+
+- Run `loopover-mcp login` before starting the client; without a session you get the local-git tools only, plus an advisory resource explaining how to get the rest.
+- Pass `--no-remote` to keep the server purely local and skip the remote mount entirely.
+- Assumes `loopover-mcp` is on your PATH; pass `--command /absolute/path/to/loopover-mcp` if your client does not inherit your shell PATH.
+
+### Codex (OpenAI) (stdio)
 
 <CodeBlock
   filename="~/.codex/config.toml"
@@ -32,7 +46,7 @@ command = "loopover-mcp"
 args = ["--stdio"]`}
 />
 
-## Claude Desktop
+### Claude Desktop / Claude Code (stdio)
 
 <CodeBlock
   filename="claude_desktop_config.json"
@@ -47,7 +61,7 @@ args = ["--stdio"]`}
 }`}
 />
 
-## Cursor
+### Cursor (stdio)
 
 <CodeBlock
   filename=".cursor/mcp.json"
@@ -62,10 +76,22 @@ args = ["--stdio"]`}
 }`}
 />
 
-## VS Code
+### Other `mcpServers` hosts (stdio)
 
-VS Code's native MCP support uses a `servers` map with an explicit transport type instead of the
-`mcpServers` shape the other JSON hosts use:
+<CodeBlock
+  filename="mcp.json"
+  lang="json"
+  code={`{
+  "mcpServers": {
+    "loopover": {
+      "command": "loopover-mcp",
+      "args": ["--stdio"]
+    }
+  }
+}`}
+/>
+
+### VS Code (stdio)
 
 <CodeBlock
   filename=".vscode/mcp.json"
@@ -81,14 +107,163 @@ VS Code's native MCP support uses a `servers` map with an explicit transport typ
 }`}
 />
 
-## Remote MCP
+## Remote streamable-http
 
-The Worker also exposes a remote MCP endpoint. Use this when your agent runs in the cloud or you
-don't want a local Node process.
+For agents that run in the cloud, or anywhere you do not want a local Node process. Connects straight to the hosted server; the local-git tools are not available over this transport because there is no local checkout to read.
 
-<CodeBlock lang="http" code={`https://api.loopover.ai/mcp`} />
+- Authenticates with a bearer token read from `LOOPOVER_API_TOKEN` — the same variable the CLI honors. Set it in the environment your client starts in; never paste the token into the config file.
+- Tools whose work is a local git operation are absent here by design. Use the stdio mode if you need them.
+
+### Codex (OpenAI) (remote)
+
+<CodeBlock
+  filename="~/.codex/config.toml"
+  lang="toml"
+  code={`[mcp_servers.loopover]
+url = "https://api.loopover.ai/mcp"
+bearer_token_env_var = "LOOPOVER_API_TOKEN"`}
+/>
+
+Codex releases before its RMCP client became the default also need `experimental_use_rmcp_client = true` at the top level of config.toml.
+
+### Claude Desktop / Claude Code (remote)
+
+<CodeBlock
+  filename=".mcp.json"
+  lang="json"
+  code={`{
+  "mcpServers": {
+    "loopover": {
+      "type": "http",
+      "url": "https://api.loopover.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer \${LOOPOVER_API_TOKEN}"
+      }
+    }
+  }
+}`}
+/>
+
+### Cursor (remote)
+
+<CodeBlock
+  filename=".cursor/mcp.json"
+  lang="json"
+  code={`{
+  "mcpServers": {
+    "loopover": {
+      "type": "http",
+      "url": "https://api.loopover.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer \${LOOPOVER_API_TOKEN}"
+      }
+    }
+  }
+}`}
+/>
+
+### VS Code (remote)
+
+<CodeBlock
+  filename=".vscode/mcp.json"
+  lang="json"
+  code={`{
+  "servers": {
+    "loopover": {
+      "type": "http",
+      "url": "https://api.loopover.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer \${LOOPOVER_API_TOKEN}"
+      }
+    }
+  }
+}`}
+/>
+
+## Miner stdio
+
+AMS's own local state-visibility tools, as a separate stdio server. It stays separate on purpose: it reads this machine's SQLite state and shares no code or network path with the hosted server.
+
+- Takes no flags and needs no login — everything it reads is already on this machine.
+- A dual-role operator runs this alongside the stdio gateway; the two entries coexist in one client config.
+
+### Codex (OpenAI) (miner)
+
+<CodeBlock
+  filename="~/.codex/config.toml"
+  lang="toml"
+  code={`[mcp_servers.loopover-miner]
+command = "loopover-miner-mcp"
+args = []`}
+/>
+
+### Claude Desktop / Claude Code (miner)
+
+<CodeBlock
+  filename="claude_desktop_config.json"
+  lang="json"
+  code={`{
+  "mcpServers": {
+    "loopover-miner": {
+      "command": "loopover-miner-mcp",
+      "args": []
+    }
+  }
+}`}
+/>
+
+### Cursor (miner)
+
+<CodeBlock
+  filename=".cursor/mcp.json"
+  lang="json"
+  code={`{
+  "mcpServers": {
+    "loopover-miner": {
+      "command": "loopover-miner-mcp",
+      "args": []
+    }
+  }
+}`}
+/>
+
+### Other `mcpServers` hosts (miner)
+
+<CodeBlock
+  filename="mcp.json"
+  lang="json"
+  code={`{
+  "mcpServers": {
+    "loopover-miner": {
+      "command": "loopover-miner-mcp",
+      "args": []
+    }
+  }
+}`}
+/>
+
+### VS Code (miner)
+
+<CodeBlock
+  filename=".vscode/mcp.json"
+  lang="json"
+  code={`{
+  "servers": {
+    "loopover-miner": {
+      "type": "stdio",
+      "command": "loopover-miner-mcp",
+      "args": []
+    }
+  }
+}`}
+/>
+
+Every block above comes from the same grid the CLI prints from, so a snippet copied from here and one printed by `init-client` can never disagree.
+
+{/* GENERATED:MCP-CLIENT-CONFIG:END */}
 
 <Callout variant="safety">
   Local `--stdio` is the default recommendation. It keeps auth + analysis on your machine and is the
-  easiest path to log into with GitHub Device Flow.
+  easiest path to log into with GitHub Device Flow — and, since it mounts the remote tool set too, it
+  is the only mode that gives you every tool from one entry.
 </Callout>

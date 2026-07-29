@@ -9,10 +9,71 @@
 // the self-host app, and any test can call them identically. Availability filtering is the CALLER's job —
 // a self-host deployment passes its own filtered list, which is what makes the same route serve a truthful
 // answer on both deployments.
+import { z } from "zod";
 import type { McpToolDefinition } from "./tool-definition.js";
 
 /** Which deployment is answering; the card names it so a reader can tell the two apart. */
-export type DiscoveryDeployment = "cloud" | "selfhost";
+export const DISCOVERY_DEPLOYMENTS = ["cloud", "selfhost"] as const;
+export type DiscoveryDeployment = (typeof DISCOVERY_DEPLOYMENTS)[number];
+
+/**
+ * The documents are ZOD SCHEMAS with their TypeScript types inferred, not types with a hand-written schema
+ * beside them (#9526).
+ *
+ * They are served by specced routes, so the published OpenAPI document needs a schema for each -- and a
+ * second, hand-kept declaration of the same shape is the drift this whole epic exists to remove. Declaring
+ * the schema and inferring the type means the builders below are type-checked against exactly what the API
+ * document promises.
+ */
+const JsonSchemaLikeSchema = z.looseObject({}).describe("JSON Schema (draft 2020-12) for a tool's arguments or result.");
+const ToolAnnotationsSchema = z.object({ readOnlyHint: z.boolean(), destructiveHint: z.boolean() });
+
+export const ServerCardSchema = z.object({
+  name: z.string(),
+  version: z.string(),
+  description: z.string(),
+  deployment: z.enum(DISCOVERY_DEPLOYMENTS),
+  generated_at: z.string(),
+  capabilities: z.object({ tools: z.object({ listChanged: z.boolean() }) }),
+  remotes: z.array(z.object({ type: z.literal("streamable-http"), url: z.string() })),
+  tools: z.array(z.object({ name: z.string(), title: z.string(), description: z.string(), category: z.string(), annotations: ToolAnnotationsSchema })),
+});
+
+export const ToolExecutorSchema = z.object({ transport: z.literal("streamable-http"), url: z.string(), method: z.literal("tools/call") });
+
+export const AgentToolsIndexSchema = z.object({
+  generated_at: z.string(),
+  executor: ToolExecutorSchema,
+  tools: z.array(
+    z.object({
+      name: z.string(),
+      title: z.string(),
+      description: z.string(),
+      category: z.string(),
+      annotations: ToolAnnotationsSchema,
+      input_schema: JsonSchemaLikeSchema,
+      output_schema: JsonSchemaLikeSchema,
+    }),
+  ),
+});
+
+export const OpenAiToolsSchema = z.object({
+  generated_at: z.string(),
+  executor: ToolExecutorSchema,
+  tools: z.array(z.object({ type: z.literal("function"), function: z.object({ name: z.string(), description: z.string(), parameters: JsonSchemaLikeSchema }) })),
+});
+
+export const AnthropicToolsSchema = z.object({
+  generated_at: z.string(),
+  executor: ToolExecutorSchema,
+  tools: z.array(z.object({ name: z.string(), description: z.string(), input_schema: JsonSchemaLikeSchema })),
+});
+
+export type ServerCard = z.infer<typeof ServerCardSchema>;
+export type ToolExecutor = z.infer<typeof ToolExecutorSchema>;
+export type AgentToolsIndex = z.infer<typeof AgentToolsIndexSchema>;
+export type OpenAiTools = z.infer<typeof OpenAiToolsSchema>;
+export type AnthropicTools = z.infer<typeof AnthropicToolsSchema>;
 
 export type ServerCardInput = {
   /** The server's semantic version. Sourced from @loopover/mcp's package.json — never hand-bumped here. */
@@ -27,17 +88,6 @@ export type ServerCardInput = {
    * defeat the 304 path entirely.
    */
   generatedAt: string;
-};
-
-export type ServerCard = {
-  name: string;
-  version: string;
-  description: string;
-  deployment: DiscoveryDeployment;
-  generated_at: string;
-  capabilities: { tools: { listChanged: boolean } };
-  remotes: Array<{ type: "streamable-http"; url: string }>;
-  tools: Array<{ name: string; title: string; description: string; category: string; annotations: McpToolDefinition["annotations"] }>;
 };
 
 export const SERVER_CARD_NAME = "io.github.JSONbored/loopover";
@@ -72,8 +122,6 @@ function trimTrailingSlash(value: string): string {
  * How a caller actually invokes one of these tools. Every agent-tools document carries it, because a tool
  * catalog with no executor is a list a reader cannot act on.
  */
-export type ToolExecutor = { transport: "streamable-http"; url: string; method: "tools/call" };
-
 function executorFor(baseUrl: string): ToolExecutor {
   return { transport: "streamable-http", url: `${trimTrailingSlash(baseUrl)}/mcp`, method: "tools/call" };
 }
@@ -81,7 +129,7 @@ function executorFor(baseUrl: string): ToolExecutor {
 export type AgentToolsInput = { baseUrl: string; tools: readonly McpToolDefinition[]; generatedAt: string };
 
 /** The neutral index: every tool with both schemas, plus the executor. */
-export function buildAgentToolsIndex(input: AgentToolsInput) {
+export function buildAgentToolsIndex(input: AgentToolsInput): AgentToolsIndex {
   return {
     generated_at: input.generatedAt,
     executor: executorFor(input.baseUrl),
@@ -98,7 +146,7 @@ export function buildAgentToolsIndex(input: AgentToolsInput) {
 }
 
 /** OpenAI's function-tool shape. `parameters` is the input schema verbatim — no second translation. */
-export function buildOpenAiTools(input: AgentToolsInput) {
+export function buildOpenAiTools(input: AgentToolsInput): OpenAiTools {
   return {
     generated_at: input.generatedAt,
     executor: executorFor(input.baseUrl),
@@ -110,7 +158,7 @@ export function buildOpenAiTools(input: AgentToolsInput) {
 }
 
 /** Anthropic's tool shape. Same schemas, different key names; still one source. */
-export function buildAnthropicTools(input: AgentToolsInput) {
+export function buildAnthropicTools(input: AgentToolsInput): AnthropicTools {
   return {
     generated_at: input.generatedAt,
     executor: executorFor(input.baseUrl),

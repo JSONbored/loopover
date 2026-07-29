@@ -7,6 +7,17 @@ import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CLI_RESPONSE_SCHEMAS, type ApiResponse, type ValidatedApiPath } from "@loopover/contract/api-schemas";
+import {
+  CLIENT_HOSTS,
+  CLIENT_HOST_SPEC,
+  CONNECTION_MODES,
+  CONNECTION_MODE_SPEC,
+  clientConfigFile,
+  clientConfigSnippet,
+  supportsConnectionMode,
+  type ClientHost,
+  type ConnectionMode,
+} from "@loopover/contract/client-config";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -246,7 +257,14 @@ const CLI_COMMAND_SPEC = {
   tools: { subcommands: ["search"], usage: ["tools [--json]", "tools search <query> [--json]"] },
   doctor: { subcommands: [], usage: ["doctor [--profile name] [--cwd path] [--exit-code] [--json]"] },
   telemetry: { subcommands: ["enable", "disable", "status"], usage: ["telemetry enable|disable|status [--json]"] },
-  "init-client": { subcommands: [], usage: ["init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]"] },
+  "init-client": {
+    subcommands: [],
+    // Hosts and modes come from the @loopover/contract grid that also renders the snippets and the docs, so
+    // adding either can never leave the usage line describing a smaller surface than the command accepts.
+    usage: [
+      `init-client --print ${CLIENT_HOSTS.join("|")} [--mode ${CONNECTION_MODES.join("|")}] [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]`,
+    ],
+  },
   "decision-pack": { subcommands: [], usage: ["decision-pack --login <github-login> [--json]"] },
   "repo-decision": { subcommands: [], usage: ["repo-decision --login <github-login> --repo owner/repo [--json]"] },
   "contributor-profile": { subcommands: [], usage: ["contributor-profile [--login <github-login>] [--json]"] },
@@ -2490,16 +2508,25 @@ function registerProxiedTool(tool: RemoteToolDescriptor): void {
     {
       ...(tool.title ? { title: tool.title } : {}),
       ...(tool.description ? { description: tool.description } : {}),
-      ...(contract ? { inputSchema: contract.input.shape, outputSchema: contract.output } : {}),
+      // The schema OBJECTS, not their `.shape` -- a raw shape is re-wrapped in a plain `z.object` that
+      // silently drops the catchall, turning every extra field the remote allows into a -32602 here.
+      ...(contract ? { inputSchema: contract.input, outputSchema: contract.output } : {}),
       ...(tool.annotations ? { annotations: tool.annotations as never } : {}),
       _meta: { ...(tool._meta ?? {}), transport: "proxied" },
     } as never,
-    (async (input: unknown) => {
-      // Forwarded verbatim to the remote's own tools/call: this layer routes, it does not interpret.
-      const payload = await apiPost("/mcp", { jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name: tool.name, arguments: input } });
-      const result = (payload as { result?: unknown }).result;
-      return (result ?? payload) as never;
-    }) as never,
+    // Wrapped by the same telemetry chokepoint local tools go through, tagged `proxied` -- gateway
+    // adoption is exactly the count of stdio calls that took this path (#9526 requirement 6).
+    wrapStdioToolHandler(
+      tool.name,
+      () => telemetryState().enabled,
+      (async (input: unknown) => {
+        // Forwarded verbatim to the remote's own tools/call: this layer routes, it does not interpret.
+        const payload = await apiPost("/mcp", { jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name: tool.name, arguments: input } });
+        const result = (payload as { result?: unknown }).result;
+        return result ?? payload;
+      }) as (...args: unknown[]) => Promise<unknown>,
+      "proxied",
+    ) as never,
   );
 }
 
@@ -2554,18 +2581,45 @@ export async function mountRemoteTools(options: { argv?: readonly string[]; fetc
     registerGatewayAdvisory(result);
     return result;
   }
-  for (const tool of result.tools) registerProxiedTool(tool);
-  return result;
+
+  const mounted: RemoteToolDescriptor[] = [];
+  const skipped = [...result.skipped];
+  for (const tool of result.tools) {
+    try {
+      registerProxiedTool(tool);
+      mounted.push(tool);
+    } catch {
+      // One descriptor the SDK refuses -- a repeated name in the same response, say -- must cost that tool
+      // and nothing else. Mounting is all-or-nothing only if you let it be.
+      skipped.push(tool.name);
+    }
+  }
+  return { status: "mounted", tools: mounted, skipped };
 }
 
 // #7764: only bind the shared stdin/stdout transport when actually launched as the CLI/stdio process. An
 // in-process unit-test importer holds the exported `server` and connects it to an in-memory transport instead.
-/* v8 ignore next 4 -- only the launched stdio process mounts remote tools and binds the real transport;
+/* v8 ignore start -- only the launched stdio process binds the real transport and mounts remote tools;
    unit tests call mountRemoteTools() directly and connect in-memory. */
 if (runAsCliEntrypoint) {
-  await mountRemoteTools();
   await server.connect(new StdioServerTransport());
+  // Mount AFTER connecting, and without awaiting it (#9526): a network round-trip in front of the transport
+  // bind would put seconds of dead air between a client launching this process and it answering anything.
+  // Registering a tool on a connected server emits notifications/tools/list_changed, so a client that
+  // listed early is told to re-list the moment the remote set lands -- which is the refresh path the
+  // stateless remote cannot push on its own.
+  //
+  // The .catch is the boundary belt: mountRemoteTools is total by construction (discoverRemoteTools guards
+  // its own I/O, and each registration is caught individually), but nothing here awaits it, and an unhandled
+  // rejection ends a Node process. A dead stdio server is not an acceptable cost for an enhancement.
+  void mountRemoteTools().catch((error: unknown) => {
+    registerGatewayAdvisory({
+      status: "unavailable",
+      advisory: `Remote tools are not mounted: the gateway failed to start (${error instanceof Error ? error.message : String(error)}). Local tools are available now.`,
+    });
+  });
 }
+/* v8 ignore stop */
 
 async function withClientWorkspaceRoots(input: any) {
   return withWorkspaceRoots(input, await clientWorkspaceRoots());
@@ -4851,20 +4905,30 @@ function shellArg(value: any) {
 }
 
 function initClient(options: any) {
-  const client = String(options.print ?? options.client ?? "").toLowerCase();
-  if (!client) throw new Error("Pass --print codex, --print claude, --print cursor, --print mcp, or --print vscode.");
-  const command = options.command ?? "loopover-mcp";
-  const snippet = clientSnippet(client, command);
+  const client = String(options.print ?? options.client ?? "").toLowerCase() as ClientHost;
+  if (!client) throw new Error(`Pass --print with one of: ${CLIENT_HOSTS.join(", ")}.`);
+  if (!CLIENT_HOSTS.includes(client)) throw new Error(`Unsupported client: ${client}. Use ${CLIENT_HOSTS.join(", ")}.`);
+  // #9526: the same host can be wired three ways, so the mode is explicit rather than assumed. `stdio` stays
+  // the default, which is why every pre-gateway invocation keeps printing exactly what it printed before.
+  const mode = String(options.mode ?? "stdio").toLowerCase() as ConnectionMode;
+  if (!CONNECTION_MODES.includes(mode)) throw new Error(`Unsupported mode: ${mode}. Use ${CONNECTION_MODES.join(", ")}.`);
+  if (!supportsConnectionMode(client, mode)) throw new Error(`${CLIENT_HOST_SPEC[client].title} cannot connect over the ${CONNECTION_MODE_SPEC[mode].title} mode.`);
+  const modeSpec = CONNECTION_MODE_SPEC[mode];
+  const command = options.command ?? modeSpec.command ?? "loopover-mcp";
+  const snippet = clientConfigSnippet(client, mode, { command });
   const agentProfile = resolveAgentProfile(options.agentProfile);
+  const remoteNote = modeSpec.transport === "http" ? CLIENT_HOST_SPEC[client].remoteNote : undefined;
   const payload = {
     client,
-    command,
-    args: ["--stdio"],
+    mode,
+    file: clientConfigFile(client, mode),
+    command: modeSpec.transport === "http" ? null : command,
+    args: [...modeSpec.args],
     snippet,
     agentProfile,
     notes: [
-      "Run `loopover-mcp login` before starting the MCP client.",
-      "Use an absolute command path if the client does not inherit your shell PATH.",
+      ...modeSpec.notes,
+      ...(remoteNote ? [remoteNote] : []),
       "This command prints config only; it does not edit client files.",
       ...(agentProfile
         ? [
@@ -5263,42 +5327,6 @@ function redactPrivateValidationMetrics(text: any) {
     /\b(?:wallet|hotkey|coldkey|mnemonic|raw[-_\s]?trust|private[-_\s]?reviewability|trust[-_\s]?score)\b(?:\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s"'`,;)]+))?/gi,
     "[redacted]",
   );
-}
-
-function clientSnippet(client: any, command: any) {
-  if (client === "codex") return `[mcp_servers.loopover]\ncommand = ${JSON.stringify(command)}\nargs = ["--stdio"]`;
-  if (client === "claude" || client === "cursor" || client === "mcp") {
-    return JSON.stringify(
-      {
-        mcpServers: {
-          loopover: {
-            command,
-            args: ["--stdio"],
-          },
-        },
-      },
-      null,
-      2,
-    );
-  }
-  // VS Code's native MCP support uses a `servers` map with an explicit transport type, not the
-  // `mcpServers` shape the other JSON hosts use, so it needs its own snippet (see .vscode/mcp.json).
-  if (client === "vscode") {
-    return JSON.stringify(
-      {
-        servers: {
-          loopover: {
-            type: "stdio",
-            command,
-            args: ["--stdio"],
-          },
-        },
-      },
-      null,
-      2,
-    );
-  }
-  throw new Error(`Unsupported client: ${client}. Use codex, claude, cursor, mcp, or vscode.`);
 }
 
 async function getDecisionPackWithCache(login: any) {

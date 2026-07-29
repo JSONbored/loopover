@@ -96,6 +96,16 @@ describe("every failure degrades to a working local server (#9526)", () => {
     expect(result.status === "unavailable" && result.advisory).toContain("ECONNREFUSED");
   });
 
+  it("names a non-Error rejection too, rather than rendering it as [object Object]", async () => {
+    // fetch implementations reject with plenty of things that are not Errors; an advisory reading
+    // "the API was unreachable ([object Object])" tells a contributor nothing.
+    const fetchImpl = vi.fn(async () => {
+      throw "ETIMEDOUT from a bare string";
+    }) as unknown as GatewayFetch;
+    const result = await discoverRemoteTools(input({ fetchImpl }));
+    expect(result.status === "unavailable" && result.advisory).toContain("ETIMEDOUT from a bare string");
+  });
+
   it("a non-2xx reports the STATUS and does not echo the remote body", async () => {
     // The body is remote-controlled; it has no business in a local advisory string.
     const fetchImpl = respondingWith({ error: "internal", secretish: "do-not-echo" }, { ok: false, status: 503 });

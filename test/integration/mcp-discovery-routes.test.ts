@@ -34,9 +34,30 @@ describe("discovery routes (#9526)", () => {
       tools: unknown[];
     };
     expect(card.name).toBe(SERVER_CARD_NAME);
-    expect(card.deployment).toBe("cloud");
     expect(card.remotes[0]!.url).toBe("https://api.loopover.ai/mcp");
     expect(card.tools.length).toBeGreaterThan(100);
+  });
+
+  it("names the deployment that ANSWERED, and scopes the catalog to what it serves", async () => {
+    // src/server.ts serves this very Hono app, so the same route answers on both deployments. A self-host
+    // card advertising the cloud's tool set would be a list of calls that 404 there.
+    const selfhostEnv = createTestEnv();
+    expect(selfhostEnv.SELFHOST_TRANSIENT_CACHE, "the test env is the self-host runtime").toBeTruthy();
+    const selfhost = (await (await app.fetch(new Request("https://api.loopover.ai/.well-known/mcp.json"), selfhostEnv)).json()) as {
+      deployment: string;
+      tools: Array<{ name: string }>;
+    };
+    expect(selfhost.deployment).toBe("selfhost");
+
+    resetDiscoveryCacheForTesting();
+    const cloud = (await (
+      await app.fetch(new Request("https://api.loopover.ai/.well-known/mcp.json"), { ...selfhostEnv, SELFHOST_TRANSIENT_CACHE: undefined } as unknown as Env)
+    ).json()) as { deployment: string; tools: Array<{ name: string }> };
+    expect(cloud.deployment).toBe("cloud");
+
+    // Not merely a different label: the registry's cloud-only entries are absent from the self-host card.
+    const cloudOnly = cloud.tools.filter((tool) => !selfhost.tools.some((entry) => entry.name === tool.name));
+    expect(cloudOnly.length, "a cloud-only tool must not appear on a self-host card").toBeGreaterThan(0);
   });
 
   it("does not hardcode a version — the card reports what the shipped package says", async () => {

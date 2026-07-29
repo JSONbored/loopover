@@ -63,6 +63,10 @@
     "./discovery": {
       "types": "./dist/discovery.d.ts",
       "default": "./dist/discovery.js"
+    },
+    "./client-config": {
+      "types": "./dist/client-config.d.ts",
+      "default": "./dist/client-config.js"
     }
   },
   "files": [

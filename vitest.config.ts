@@ -1,6 +1,34 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vitest/config";
 
 const junitPath = process.env.VITEST_JUNIT_PATH;
+
+/**
+ * The @loopover/contract source aliases, DERIVED from that package's own "exports" map (#9526).
+ *
+ * This list used to be typed out by hand, one line per subpath, and adding an export without also adding
+ * its alias produced a "Cannot find package" that names the subpath but not the reason -- a trap that costs
+ * whoever hits it a confused half hour. The exports map already enumerates every subpath, so read it.
+ *
+ * Longest specifier FIRST. Vite's string-`find` alias matcher treats a plain string as matching both the
+ * exact specifier and anything starting with `find + "/"`, first-match-wins in declaration order -- so with
+ * the bare "@loopover/contract" entry first it silently intercepted "@loopover/contract/tools" too and
+ * rewrote it to a "<index.ts path>/tools" that resolved nowhere.
+ */
+function contractSourceAliases(): Record<string, string> {
+  const manifest = JSON.parse(readFileSync(new URL("./packages/loopover-contract/package.json", import.meta.url).pathname, "utf8")) as {
+    exports: Record<string, { default?: string } | string>;
+  };
+  const entries: Array<[string, string]> = [];
+  for (const [subpath, target] of Object.entries(manifest.exports)) {
+    const dist = typeof target === "string" ? target : target.default;
+    // "./package.json" maps to a literal file, not a module; nothing to point at source.
+    if (!dist?.endsWith(".js")) continue;
+    const source = dist.replace(/^\.\/dist\//, "./packages/loopover-contract/src/").replace(/\.js$/, ".ts");
+    entries.push([`@loopover/contract${subpath.replace(/^\./, "")}`, new URL(source, import.meta.url).pathname]);
+  }
+  return Object.fromEntries(entries.sort(([a], [b]) => b.length - a.length));
+}
 
 export default defineConfig({
   ssr: {
@@ -21,20 +49,8 @@ export default defineConfig({
       // for free from their relative-import resolution; this closes the same gap for a package
       // that's actually installed as a workspace dependency.
       //
-      // "/tools" MUST be listed before the bare "@loopover/contract" entry: Vite's string-`find`
-      // alias matcher treats a plain string as matching BOTH the exact specifier and anything
-      // starting with `find + "/"`, first-match-wins in declaration order -- so with the bare entry
-      // first, it silently intercepted "@loopover/contract/tools" too and rewrote it to a bogus
-      // "<index.ts path>/tools" that resolved nowhere. Confirmed by reproducing the failure with a
-      // throwaway probe test before reordering, not assumed from reading Vite's docs alone.
-      "@loopover/contract/discovery": new URL("./packages/loopover-contract/src/discovery.ts", import.meta.url).pathname,
-      "@loopover/contract/enums": new URL("./packages/loopover-contract/src/enums.ts", import.meta.url).pathname,
-      "@loopover/contract/tools": new URL("./packages/loopover-contract/src/tools/index.ts", import.meta.url).pathname,
-      "@loopover/contract/cli-config": new URL("./packages/loopover-contract/src/cli-config.ts", import.meta.url).pathname,
-      "@loopover/contract/orb-broker": new URL("./packages/loopover-contract/src/orb-broker.ts", import.meta.url).pathname,
-      "@loopover/contract/api-schemas": new URL("./packages/loopover-contract/src/api-schemas.ts", import.meta.url).pathname,
-      "@loopover/contract/public-api": new URL("./packages/loopover-contract/src/public-api.ts", import.meta.url).pathname,
-      "@loopover/contract": new URL("./packages/loopover-contract/src/index.ts", import.meta.url).pathname,
+      // Ordering and derivation both live in contractSourceAliases() above.
+      ...contractSourceAliases(),
     },
   },
   test: {

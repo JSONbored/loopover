@@ -180,6 +180,7 @@ import { handleMcpRequest } from "../mcp/server";
 import { simulateOpenPrPressureShape } from "../mcp/server";
 import { simulateOpenPrPressure, type OpenPrPressureInput } from "../services/open-pr-pressure-scenarios";
 import { DISCOVERY_PATHS, discoveryDocumentsFor, respondWithDocument, toolsForDeployment } from "../mcp/discovery-routes";
+import { isSelfHostedReviewRuntime } from "../selfhost/review-runtime";
 import { buildOpenApiSpec } from "../openapi/spec";
 import { COMMAND_RATE_LIMIT_EVENT_TYPE, generateSignalSnapshots } from "../queue/processors";
 import { generateChatQaAnswer } from "../services/ai-chat-qa";
@@ -1258,11 +1259,16 @@ export function createApp() {
   // excluded from requiresApiToken alongside the other unauthenticated document routes.
   for (const path of DISCOVERY_PATHS) {
     app.get(path, (c) => {
+      // The SAME routes on both deployments, scoped to what each actually serves. A self-host card that
+      // advertised the cloud's tool set would be a list of calls that 404 -- and this app IS the self-host
+      // app (src/server.ts serves this very Hono instance), so the deployment has to be read at request
+      // time rather than assumed.
+      const deployment = isSelfHostedReviewRuntime(c.env) ? "selfhost" : "cloud";
       const documents = discoveryDocumentsFor({
         version: LATEST_RECOMMENDED_MCP_VERSION,
-        deployment: "cloud",
+        deployment,
         baseUrl: c.env.PUBLIC_API_ORIGIN ?? new URL(c.req.url).origin,
-        tools: toolsForDeployment("cloud"),
+        tools: toolsForDeployment(deployment),
       });
       return respondWithDocument(documents[path]!, c.req.header("if-none-match") ?? null);
     });

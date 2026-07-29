@@ -26,6 +26,8 @@
     "loadtest:worker": "node --experimental-strip-types scripts/load-test-worker.ts",
     "mcp:tool-reference": "tsx scripts/gen-mcp-tool-reference.ts",
     "mcp:tool-reference:check": "tsx scripts/gen-mcp-tool-reference.ts --check",
+    "mcp:client-config": "tsx scripts/gen-mcp-client-config.ts",
+    "mcp:client-config:check": "tsx scripts/gen-mcp-client-config.ts --check",
     "contract:api-schemas": "tsx scripts/gen-contract-api-schemas.ts",
     "contract:api-schemas:check": "tsx scripts/gen-contract-api-schemas.ts --check",
     "command-reference": "node --experimental-strip-types scripts/gen-command-reference.ts",

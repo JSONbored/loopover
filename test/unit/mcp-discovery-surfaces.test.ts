@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  AgentToolsIndexSchema,
+  AnthropicToolsSchema,
+  OpenAiToolsSchema,
   SERVER_CARD_NAME,
+  ServerCardSchema,
   buildAgentToolsIndex,
   buildAnthropicTools,
   buildOpenAiTools,
@@ -18,6 +22,7 @@ import {
   respondWithDocument,
   toolsForDeployment,
 } from "../../src/mcp/discovery-routes";
+import { buildOpenApiSpec } from "../../src/openapi/spec";
 
 // #9526: the discovery surfaces are COMPUTED, never committed — metagraphed's committed server card made
 // every concurrent tool PR conflict on one generated file. So there is no golden fixture to compare here;
@@ -214,5 +219,34 @@ describe("the per-origin memo (#9526)", () => {
     );
     expect(selfhost.deployment).toBe("selfhost");
     expect(selfhost.tools.length).not.toBe(cloud.tools.length);
+  });
+});
+
+describe("the documents are what the API document PROMISES (#9526)", () => {
+  const tools = listToolDefinitions();
+  const context = { version: "1.2.3", deployment: "cloud" as const, baseUrl: "https://api.loopover.ai", tools };
+  const agentToolsInput = { baseUrl: context.baseUrl, tools, generatedAt: deterministicGeneratedAt(context.version) };
+
+  it.each([
+    ["/.well-known/mcp.json", ServerCardSchema, () => buildServerCard({ ...context, generatedAt: agentToolsInput.generatedAt })],
+    ["/.well-known/agent-tools/index.json", AgentToolsIndexSchema, () => buildAgentToolsIndex(agentToolsInput)],
+    ["/.well-known/agent-tools/openai.json", OpenAiToolsSchema, () => buildOpenAiTools(agentToolsInput)],
+    ["/.well-known/agent-tools/anthropic.json", AnthropicToolsSchema, () => buildAnthropicTools(agentToolsInput)],
+  ])("%s validates against the schema the spec publishes", (_path, schema, build) => {
+    // The builders' return types are INFERRED from these schemas, so a mismatch is normally a compile
+    // error -- but the JSON Schema in the document is generated from the same object, and this is what
+    // proves the runtime value satisfies it rather than merely type-checking against it.
+    expect(schema.safeParse(build()).success).toBe(true);
+  });
+
+  it("every discovery path has a specced GET operation with a 200 schema and a 304", () => {
+    const paths = buildOpenApiSpec().paths as Record<string, { get?: { operationId?: string; responses?: Record<string, { content?: unknown }> } }>;
+    for (const path of DISCOVERY_PATHS) {
+      const operation = paths[path]?.get;
+      expect(operation?.operationId, `${path} must be described in the published document`).toBeTruthy();
+      expect(operation!.responses!["200"]!.content, `${path}'s 200 must carry a schema, not just a description`).toBeTruthy();
+      // Without the 304 in the document, a generated client has no reason to send if-none-match at all.
+      expect(operation!.responses!["304"]).toBeTruthy();
+    }
   });
 });

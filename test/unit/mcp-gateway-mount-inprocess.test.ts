@@ -104,6 +104,44 @@ describe("mountRemoteTools against the real server (#9526)", () => {
     expect(result.status === "mounted" && result.skipped).toContain(collidingName);
   });
 
+  it("mounts a REGISTRY-KNOWN tool with the contract's schemas rather than the wire's", async () => {
+    // The remote registered from the same contract registry, so the proxy can advertise exactly what the
+    // remote enforces without this package trusting a schema a remote handed it.
+    const contractName = "loopover_refresh_repo_focus_manifest";
+    const result = await mod.mountRemoteTools({
+      argv: ["--stdio"],
+      fetchImpl: remoteToolsFetch([{ name: contractName, description: "remote-only in a later release" }]),
+    });
+    expect(result.status === "mounted" && result.tools).toHaveLength(1);
+
+    const client = await connect("gateway-contract-schema");
+    try {
+      const proxied = (await client.listTools()).tools.find((tool) => tool.name === contractName)!;
+      // The wire descriptor carried NO inputSchema; the registry supplied one.
+      expect(Object.keys(proxied.inputSchema.properties ?? {}), "the contract's shape, not the wire's silence").toEqual(["owner", "repo"]);
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("a descriptor the SDK refuses costs that tool and nothing else", async () => {
+    // A remote that repeats a name in one response would otherwise crash the whole mount on the duplicate
+    // registration — mounting is all-or-nothing only if you let it be.
+    const result = await mod.mountRemoteTools({
+      argv: ["--stdio"],
+      fetchImpl: remoteToolsFetch([
+        { name: "loopover_gateway_twice", description: "first" },
+        { name: "loopover_gateway_twice", description: "a repeat of the same name" },
+        { name: "loopover_gateway_survivor", description: "must still mount" },
+      ]),
+    });
+    expect(result.status === "mounted" && result.tools.map((tool) => tool.name)).toEqual([
+      "loopover_gateway_twice",
+      "loopover_gateway_survivor",
+    ]);
+    expect(result.status === "mounted" && result.skipped).toEqual(["loopover_gateway_twice"]);
+  });
+
   it("an unreachable API leaves a server that still lists its LOCAL tools", async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("ECONNREFUSED");

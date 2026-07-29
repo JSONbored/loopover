@@ -1,5 +1,6 @@
 import { OpenApiGeneratorV3, OpenAPIRegistry } from "@asteasolutions/zod-to-openapi";
 import { requiresApiToken } from "../auth/route-auth";
+import { registerDiscoveryRouteSpecs } from "./discovery-route-specs";
 import { registerOrbAndControlRouteSpecs } from "./orb-and-control-route-specs";
 import { registerInternalAndPublicRouteSpecs } from "./internal-and-public-route-specs";
 import { z } from "zod";
@@ -2248,7 +2249,16 @@ export function buildOpenApiSpec() {
   // Registered from their own module rather than inline here because each entry declares an auth
   // level that DERIVES its security stanza, instead of having one bolted on afterwards by
   // applySecurityMetadata's path-prefix guesswork.
+<<<<<<< HEAD
   for (const register of SPEC_REGISTRARS) register(registry);
+||||||| parent of 42b72c8f5 (feat(mcp): derive every client-config surface and tag proxied calls (#9526))
+  registerOrbAndControlRouteSpecs(registry);
+  registerInternalAndPublicRouteSpecs(registry);
+=======
+  registerOrbAndControlRouteSpecs(registry);
+  registerDiscoveryRouteSpecs(registry);
+  registerInternalAndPublicRouteSpecs(registry);
+>>>>>>> 42b72c8f5 (feat(mcp): derive every client-config surface and tag proxied calls (#9526))
 
   const generator = new OpenApiGeneratorV3(registry.definitions);
   const document = generator.generateDocument({

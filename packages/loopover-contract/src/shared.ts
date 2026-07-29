@@ -5,6 +5,7 @@
 // second. Two tools that happen to take the same fields today are usually a coincidence, and
 // prematurely coupling them means a later divergence has to be un-shared under pressure.
 import { z } from "zod";
+import { MCP_TELEMETRY_ERROR_CODES } from "./telemetry.js";
 
 /** The owner/repo pair virtually every repo-scoped tool takes. */
 export const ownerRepoInput = z.object({
@@ -38,7 +39,10 @@ export const freshnessFields = {
 export const toolErrorFields = {
   error: z
     .object({
-      code: z.string().min(1),
+      // #9659: the closed set, not free text. The doc above always said "drawn from a closed,
+      // developer-defined set so telemetry can break failures down by cause" -- while the type said
+      // `z.string()`, which is what let a server return a code telemetry then re-guessed differently.
+      code: z.enum(MCP_TELEMETRY_ERROR_CODES),
       message: z.string().min(1),
     })
     .optional(),

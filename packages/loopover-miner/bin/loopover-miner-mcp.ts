@@ -2,6 +2,7 @@
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { McpServer, type ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpTelemetryErrorCode } from "@loopover/contract";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 // #9536: every tool's schemas come from the shared contract instead of being declared here. The
 // remote and stdio servers already register from the same package (#9517/#9518) -- this closes the
@@ -53,7 +54,7 @@ import { initGovernorLedger } from "../lib/governor-ledger.js";
 import { collectStatus, runDoctorChecks } from "../lib/status.js";
 import { collectMinerPredictionMetrics } from "@loopover/engine";
 import { collectPredictionMetricRows } from "../lib/metrics-cli.js";
-import { dispatchChatAction } from "../lib/chat-action-dispatch.js";
+import { dispatchChatAction, type ChatActionRefusalStatus } from "../lib/chat-action-dispatch.js";
 import {
   MINER_CLAIM_RELEASE_ACTION,
   MINER_DENY_HOOKS_DECIDE_ACTION,
@@ -86,9 +87,21 @@ import { captureMinerPostHogErrorAndFlush, initMinerPostHog } from "../lib/posth
  * thrown values to this set rather than passing a caller/store-derived string through, matching the
  * `code`/`message` shape @loopover/contract's shared `toolErrorFields` describes.
  */
-type MinerToolErrorCode = "store_unavailable" | "unknown_error";
+/**
+ * Each way a dispatch can refuse, as the closed telemetry code for it (#9659).
+ *
+ * A `Record` over the status union rather than a lookup with a fallback: adding a dispatch status without
+ * deciding what it means to a caller then fails the build, which is the only reason a mapping between two
+ * closed vocabularies is safe to write down at all.
+ */
+const DISPATCH_REFUSAL_CODES: Record<ChatActionRefusalStatus, McpTelemetryErrorCode> = {
+  disabled: "not_configured",
+  unknown_action: "not_found",
+  invalid_params: "invalid_input",
+  handler_error: "upstream_error",
+};
 
-function toolErrorCode(error: unknown): MinerToolErrorCode {
+function toolErrorCode(error: unknown): McpTelemetryErrorCode {
   // A local SQLite store failing to open (missing file, corrupted file, permissions) is the one
   // failure mode every store-backed tool below can actually hit; anything else is unclassified.
   return error instanceof Error && /not found|not a database|permission|ENOENT/i.test(error.message) ? "store_unavailable" : "unknown_error";
@@ -173,7 +186,10 @@ async function withMinerToolErrorHandling<T extends object>(
     return payload;
   } catch (error) {
     const data = { error: { code: toolErrorCode(error), message: error instanceof Error ? error.message : String(error) } };
-    recordMinerDispatchTelemetry({ tool: toolName, ok: false, durationMs: Date.now() - startedAt, error });
+    // #9659: the ENVELOPE, not the raw error. Passing the raw one made telemetry re-derive a code from
+    // the message regexes, so a store that would not open told the caller `store_unavailable` while the
+    // event recorded `not_found` -- two classifications of one failure, from adjacent lines.
+    recordMinerDispatchTelemetry({ tool: toolName, ok: false, durationMs: Date.now() - startedAt, error, errorEnvelope: data.error });
     return { ...minerToolResult(data), isError: true };
   }
 }
@@ -274,7 +290,11 @@ export interface MinerMcpServerOptions {
 export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
   const server = new McpServer({ name: "loopover-miner", version: ownPackageJson.version });
 
-  registerMinerTool(server, minerPingTool, async () => minerToolResult(MINER_PING_STATUS),
+  // #9658: through the wrapper, like the other twenty. Ping is the health check an operator's monitoring
+  // hits on a loop -- the cheapest signal that this server is alive and being used -- and it was the one
+  // registration that never reached the dispatch-telemetry chokepoint, so a `usage_event` breakdown by
+  // tool reported zero pings forever.
+  registerMinerTool(server, minerPingTool, () => withMinerToolErrorHandling(() => MINER_PING_STATUS, minerPingTool.name),
   );
 
   registerMinerTool(server, minerPortfolioDashboardTool, () =>
@@ -436,7 +456,16 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       if (result.ok) return { ok: true, action, result: (result as { result?: unknown }).result };
       // A refusal is an ANSWER, not a transport failure: the caller needs to know the governor said no and
       // why, which a thrown error would flatten into a generic tool error.
-      return { ok: false, action, blocked: true, reason: result.status, ...(result.error ? { error: result.error } : {}) };
+      return {
+        ok: false,
+        action,
+        blocked: true,
+        reason: result.status,
+        // #9659: the shared envelope, so one `error` field means one thing everywhere. `blocked` and
+        // `reason` still carry the refusal's own vocabulary; what used to be a bare string detail is now
+        // the envelope's `message`, under a code drawn from the same closed set telemetry records.
+        error: { code: DISPATCH_REFUSAL_CODES[result.status] ?? "unknown_error", message: typeof result.error === "string" ? result.error : result.status },
+      };
     };
 
     registerMinerTool(server, minerGovernorPauseTool, (input) => withMinerToolErrorHandling(() => dispatchResult(GOVERNOR_PAUSE_CHAT_ACTION, input.reason ? { reason: input.reason } : {}), minerGovernorPauseTool.name),

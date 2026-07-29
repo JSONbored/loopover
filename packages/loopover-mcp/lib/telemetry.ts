@@ -7,6 +7,7 @@ import {
   MCP_TOOL_CALL_EVENT,
   MCP_USAGE_EVENT,
   resolveErrorCode,
+  toolErrorEnvelope,
   toolExcludesPayloads,
   UNKNOWN_TOOL_CATEGORY,
   type McpTelemetryTransport,
@@ -131,6 +132,9 @@ export function wrapStdioToolHandler(
         transport,
         args: args[0],
         result: result?.structuredContent,
+        // #9659: on the failure path this used to pass no error at all, so `resolveErrorCode(undefined)`
+        // classified every returned failure as `unknown_error` regardless of what the tool told the caller.
+        ...(ok ? {} : { error: toolErrorEnvelope(result?.structuredContent) }),
       });
       return result;
     } catch (error) {

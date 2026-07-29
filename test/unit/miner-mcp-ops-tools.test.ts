@@ -190,11 +190,16 @@ describe("the mutating tools shape their dispatch result (#9523)", () => {
   it("REPORTS a governor refusal as a blocked result rather than throwing", async () => {
     // A refusal is an ANSWER the caller needs to see; a thrown error would flatten it into a generic
     // tool failure with no reason attached.
-    const dispatchAction = (async () => ({ ok: false, status: "blocked_by_governor", action: "miner_purge_repo" })) as never;
+    // #9659: a REAL refusal status. The dispatcher's outcomes are a closed union now, and this fixture used
+    // to invent one ("blocked_by_governor") that `dispatchChatAction` cannot return -- so the case proved
+    // the shaping worked for a status that does not exist.
+    const dispatchAction = (async () => ({ ok: false, status: "handler_error", action: "miner_purge_repo" })) as never;
     const client = await connect({ dispatchAction });
     const result = (await client.callTool({ name: "loopover_miner_purge_repo", arguments: { repoFullName: "owner/repo", confirm: true } })) as ToolResult;
     expect(result.isError, "a refusal is not a transport failure").toBeFalsy();
-    expect(structured(result)).toMatchObject({ ok: false, blocked: true, reason: "blocked_by_governor" });
+    expect(structured(result)).toMatchObject({ ok: false, blocked: true, reason: "handler_error" });
+    // The refusal carries the shared envelope, under the code its status maps to.
+    expect(structured(result).error).toEqual({ code: "upstream_error", message: "handler_error" });
   });
 
   it("carries the dispatcher's own error text through when it supplies one", async () => {
@@ -203,7 +208,21 @@ describe("the mutating tools shape their dispatch result (#9523)", () => {
     const result = structured(
       (await client.callTool({ name: "loopover_miner_queue_release", arguments: { repoFullName: "owner/repo", issueNumber: 1 } })) as ToolResult,
     );
-    expect(result).toMatchObject({ blocked: true, reason: "invalid_params", error: "issueNumber must be positive" });
+    // #9659: the detail now travels inside the shared envelope rather than as a bare `error` string, so
+    // one field name means one thing on every LoopOver server.
+    expect(result).toMatchObject({ blocked: true, reason: "invalid_params", error: { code: "invalid_input", message: "issueNumber must be positive" } });
+  });
+
+  it("falls back to unknown_error for a status outside the dispatcher's closed set", async () => {
+    // `dispatchAction` is an injection seam and the chat-action registry is populated at runtime, so a
+    // status the union does not name is reachable even though it is not writable in typed code. It must
+    // still produce a valid envelope rather than an unparseable code.
+    const dispatchAction = (async () => ({ ok: false, status: "something_new", action: "miner_queue_release", error: "detail" })) as never;
+    const client = await connect({ dispatchAction });
+    const result = structured(
+      (await client.callTool({ name: "loopover_miner_queue_release", arguments: { repoFullName: "owner/repo", issueNumber: 1 } })) as ToolResult,
+    );
+    expect(result.error).toEqual({ code: "unknown_error", message: "detail" });
   });
 
   it("REGRESSION: rejects a purge whose confirm is absent, before any dispatch happens", async () => {

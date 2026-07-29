@@ -9,6 +9,7 @@
 import { z } from "zod";
 
 import { checkBeforeStartSchema, slopRiskSchema, validateFocusManifestSchema, validateLinkedIssueSchema } from "./api-requests.js";
+import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS } from "./enums.js";
 import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP, MAX_REVIEW_NAG_COOLDOWN_DAYS } from "./limits.js";
 
 export const FindingSchema = z
@@ -581,8 +582,8 @@ export const RepositorySettingsSchema = z
     // exact drift class #9517's enum notes warned about, republished here. The compile-time parity
     // assertion in src/openapi/schema-type-parity.ts is what finally caught it.
     autonomy: z.partialRecord(
-      z.enum(["review", "request_changes", "approve", "merge", "close", "label", "review_state_label", "update_branch", "assign"]),
-      z.enum(["observe", "auto_with_approval", "auto"]),
+      z.enum(AGENT_ACTION_CLASSES),
+      z.enum(AUTONOMY_LEVELS),
     ),
     autoMaintain: z.object({ requireApprovals: z.number().int(), mergeMethod: z.enum(["merge", "squash", "rebase"]) }).optional(),
     agentPaused: z.boolean().optional(),

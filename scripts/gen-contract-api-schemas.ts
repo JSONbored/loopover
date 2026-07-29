@@ -17,7 +17,7 @@
 // by construction -- and the contract copy is generated with the names stripped, which the CLI does not
 // need: it only parses and infers. `--check` in test:ci is what makes the copy safe, exactly like
 // gen-selfhost-env-reference.ts and gen-command-reference.ts.
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const SOURCE = "src/openapi/schemas.ts";
@@ -310,11 +310,7 @@ export function renderApiSchemas(sourceText: string, documentText: string, binSo
   const staticCalls = cliApiCalls(binSource);
   const byRequest = new Map([...requestSchemaByCall(document, staticCalls), ...requestSchemaByCall(document, parameterisedCalls)]);
   const blocks = closure(parseSchemaBlocks(sourceText), [...new Set([...byPath.values(), ...byPattern.values(), ...byRequest.values()])]);
-  const exportsByModule = new Map<string, ReadonlySet<string>>([
-    ["./limits.js", new Set(exportedNames(readModule("packages/loopover-contract/src/limits.ts")))],
-    ["./api-requests.js", new Set(exportedNames(readModule("packages/loopover-contract/src/api-requests.ts")))],
-  ]);
-  const externals = referencedExternals(blocks, exportsByModule);
+  const externals = referencedExternals(blocks, contractModuleExports());
   const body = blocks
     .map((block) =>
       block.source
@@ -426,16 +422,39 @@ export type ParameterisedApiResponse<Method extends string, Path extends string>
 >;
 `;
 
+const CONTRACT_SRC = "packages/loopover-contract/src";
+
+/**
+ * What every sibling contract module exports, DISCOVERED rather than listed (#9773).
+ *
+ * A hardcoded module list is a hand-maintained list by another name, and it fails in the quietest way
+ * there is: `PUBLIC_SURFACE_SKIP_REASONS` moved between two contract modules, and a generator that only
+ * knew about the module it left would have emitted a file referencing a name it never imported -- valid
+ * output, broken build. Reading the directory means a constant can move, or a new module can appear,
+ * without this script knowing anything about it.
+ *
+ * `index.ts` is excluded because it re-exports the generated file (importing it back would be a cycle),
+ * and the generated file itself because a schema cannot import its own copy.
+ */
+export function contractModuleExports(): Map<string, ReadonlySet<string>> {
+  const modules = listModules(CONTRACT_SRC)
+    .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "api-schemas.ts")
+    .sort();
+  return new Map(modules.map((file) => [`./${file.replace(/\.ts$/, ".js")}`, new Set(exportedNames(readModule(`${CONTRACT_SRC}/${file}`)))]));
+}
+
 /** The names a module exports, for resolving what a copied schema references. */
 export function exportedNames(source: string): string[] {
   return [...source.matchAll(/^export (?:const|function|type) ([A-Za-z_][A-Za-z0-9_]*)/gm)].map((match) => match[1]!);
 }
 
 let readModule: (path: string) => string = (path) => readFileSync(path, "utf8");
+let listModules: (dir: string) => string[] = (dir) => readdirSync(dir);
 
-export function generate(deps: { readFile?: (path: string) => string } = {}): string {
+export function generate(deps: { readFile?: (path: string) => string; listDir?: (dir: string) => string[] } = {}): string {
   const readFile = deps.readFile ?? ((path: string) => readFileSync(path, "utf8"));
   readModule = readFile;
+  listModules = deps.listDir ?? ((dir: string) => readdirSync(dir));
   return renderApiSchemas(readFile(SOURCE), readFile(OPENAPI_DOCUMENT), readFile(CLI_BIN));
 }
 

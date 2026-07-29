@@ -8,6 +8,8 @@ import {
   closure,
   declaredPathShapes,
   parseSchemaBlocks,
+  contractModuleExports,
+  referencedExternals,
   referencedLimits,
   responseSchemaByCall,
   responseSchemaByPath,
@@ -147,6 +149,21 @@ describe("parameterised response schemas (#9773)", () => {
     const blocks = closure(parseSchemaBlocks(readFileSync(join(process.cwd(), "src/openapi/schemas.ts"), "utf8")), ["AutomationStateSchema", "RepositorySettingsSchema"]);
     expect(blocks.some((block) => block.name === "AGENT_ACTION_CLASS_VALUES"), "a referenced value is copied").toBe(true);
     expect(referencedLimits(blocks), "one declared elsewhere is imported").toContain("MAX_REVIEW_NAG_COOLDOWN_DAYS");
+  });
+
+  it("discovers which contract module a referenced constant lives in, so it may move", () => {
+    // A hardcoded module list fails silently when a constant relocates: PUBLIC_SURFACE_SKIP_REASONS moved
+    // between two contract modules, and a generator that still only knew the old one would have emitted a
+    // file referencing a name it never imported -- valid TypeScript, broken build.
+    const modules = contractModuleExports();
+    expect([...modules.keys()], "index.js would import this file back").not.toContain("./index.js");
+    expect([...modules.keys()], "the generated file cannot import its own copy").not.toContain("./api-schemas.js");
+
+    const owner = [...modules].find(([, names]) => names.has("PUBLIC_SURFACE_SKIP_REASONS"));
+    expect(owner?.[0], "wherever it lives today, it is found there").toMatch(/^\.\/[a-z-]+\.js$/);
+    expect(referencedExternals([{ name: "XSchema", exported: true, source: "const XSchema = z.enum(PUBLIC_SURFACE_SKIP_REASONS);" }], modules).get(owner![0])).toEqual([
+      "PUBLIC_SURFACE_SKIP_REASONS",
+    ]);
   });
 
   it("does not mistake a capitalised word in prose for a constant", () => {

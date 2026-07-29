@@ -2801,7 +2801,7 @@ export async function maintainCli(args: readonly string[]) {
     if (!actionClass || !pullArg) {
       throw new Error("Usage: loopover-mcp maintain propose <action-class> <pull-number> --repo owner/repo [--reason ...] [--label ...] [--review-body ...] [--merge-method merge|squash|rebase] [--close-comment ...].");
     }
-    if (!PROPOSE_ACTION_CLASSES.includes(actionClass)) throw new Error(`Unknown action class: ${actionClass}. Use ${PROPOSE_ACTION_CLASSES.join(", ")}.`);
+    if (!isOneOf(PROPOSE_ACTION_CLASSES, actionClass)) throw new Error(`Unknown action class: ${actionClass}. Use ${PROPOSE_ACTION_CLASSES.join(", ")}.`);
     const pullNumber = Number(pullArg);
     if (!Number.isInteger(pullNumber) || pullNumber <= 0) throw new Error(`Invalid pull number: ${pullArg}. Pass a positive integer.`);
     const payload = await apiPost(
@@ -2824,8 +2824,8 @@ export async function maintainCli(args: readonly string[]) {
     const action = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
     const level = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
     if (!action || !level) throw new Error("Usage: loopover-mcp maintain set-level <action> <level> --repo owner/repo.");
-    if (!MAINTAIN_ACTION_CLASSES.includes(action)) throw new Error(`Unknown action: ${action}. Use ${MAINTAIN_ACTION_CLASSES.join(", ")}.`);
-    if (!MAINTAIN_AUTONOMY_LEVELS.includes(level)) throw new Error(`Unknown level: ${level}. Use ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}.`);
+    if (!isOneOf(MAINTAIN_ACTION_CLASSES, action)) throw new Error(`Unknown action: ${action}. Use ${MAINTAIN_ACTION_CLASSES.join(", ")}.`);
+    if (!isOneOf(MAINTAIN_AUTONOMY_LEVELS, level)) throw new Error(`Unknown level: ${level}. Use ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}.`);
     // Read-merge-write so one class is updated without clearing the others.
     const current = await apiGet(`${repoBase}/settings`);
     const autonomy = { ...(current.autonomy ?? {}), [action]: level };
@@ -4366,6 +4366,17 @@ function printAgentHelp() {
 
 function printProfileHelp() {
   process.stdout.write(printableUsage("profile"));
+}
+
+/**
+ * Whether a user-supplied string is one of a closed set (#9773).
+ *
+ * A TYPE PREDICATE, so the value narrows for whatever it is passed to next. `list.includes(value)` returns
+ * a boolean and narrows nothing, which is why an action class or autonomy level still arrived at the API
+ * as a plain `string` -- the check ran, and the type system learned nothing from it.
+ */
+function isOneOf<const T extends readonly string[]>(list: T, value: string): value is T[number] {
+  return (list as readonly string[]).includes(value);
 }
 
 /**

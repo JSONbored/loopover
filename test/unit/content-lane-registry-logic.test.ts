@@ -669,6 +669,32 @@ describe("checkContentLaneDeliverable (generic, spec-driven — #content-lane-de
     expect(checkContentLaneDeliverable(spec, issueText, ["registry\\subnets\\foo.json"]).verdict).toBe("delivered");
   });
 
+  it("regression (#9667): canonicalizes issue-BODY path tokens — a mixed-case path is 'missing' when undelivered, quoting the body verbatim", () => {
+    const issueText = "Add the missing surfaces to Registry/Subnets/Foo.json.";
+    // No matching changed file ⇒ missing; the reported mentionedPath stays the ORIGINAL mixed-case token so the
+    // public PR comment quotes the issue as written (canonicalizing it would corrupt that text).
+    expect(checkContentLaneDeliverable(spec, issueText, ["tests/foo-verify.test.mjs"])).toEqual({
+      verdict: "missing",
+      mentionedPath: "Registry/Subnets/Foo.json",
+    });
+  });
+
+  it("regression (#9667): the same mixed-case body is 'delivered' when the PR changes the (lowercase) file", () => {
+    const issueText = "Add the missing surfaces to Registry/Subnets/Foo.json.";
+    expect(checkContentLaneDeliverable(spec, issueText, ["registry/subnets/foo.json"]).verdict).toBe("delivered");
+  });
+
+  it("all-lowercase body behaviour is byte-identical — delivered when the file is touched, missing (quoting the token) when it is not", () => {
+    const issueText = "Add registry/subnets/foo.json.";
+    expect(checkContentLaneDeliverable(spec, issueText, ["registry/subnets/foo.json"]).verdict).toBe("delivered");
+    expect(checkContentLaneDeliverable(spec, issueText, ["tests/foo.test.mjs"])).toEqual({ verdict: "missing", mentionedPath: "registry/subnets/foo.json" });
+  });
+
+  it("does not over-broaden: a real body path token matching NO spec pattern is still not-applicable", () => {
+    const result = checkContentLaneDeliverable(spec, "See docs/architecture/overview.md for context.", ["registry/subnets/foo.json"]);
+    expect(result).toEqual({ verdict: "not-applicable" });
+  });
+
   it("is not-applicable for a spec with no providerFilePattern configured, even if the issue mentions an entry-shaped path (guards the optional-chaining branch)", () => {
     const entryOnlySpec: RegistryLaneSpec = { entryFilePattern: SUBNET_ENTRY_PATTERN, collectionField: "surfaces" };
     const issueText = "Add registry/subnets/foo.json.";

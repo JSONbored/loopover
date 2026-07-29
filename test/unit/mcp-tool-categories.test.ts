@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { describe, expect, it } from "vitest";
 import { LoopoverMcp, MCP_TOOL_CATEGORIES, MCP_TOOL_CATEGORY_IDS } from "../../src/mcp/server";
+import { getToolDefinition } from "@loopover/contract/tools";
 import { createTestEnv } from "../helpers/d1";
 
 async function listRegisteredTools() {
@@ -60,6 +61,33 @@ describe("MCP remote server tool categorization (#6301)", () => {
     for (const tool of tools) {
       const category = (tool._meta as { category?: unknown } | undefined)?.category;
       expect(category, `wire category mismatch for ${tool.name}`).toBe(MCP_TOOL_CATEGORIES[tool.name]);
+    }
+    await client.close();
+  });
+
+  // #9655: the posture is the operationally load-bearing half of what a server advertises. An MCP client
+  // that gates a confirmation prompt on `destructiveHint` got NOTHING from the server that performs the
+  // delete, because no remote registration carried annotations at all.
+  it("advertises the contract's posture, so a destructive tool says so", async () => {
+    const { client, tools } = await listRegisteredTools();
+    const listed = new Map(tools.map((tool) => [tool.name, tool]));
+
+    expect(listed.get("loopover_ops_purge_dead_letter_jobs")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(listed.get("loopover_admin_rotate_secret")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    // And the default posture is MATERIALIZED, not omitted: a read-only tool advertises both hints.
+    expect(listed.get("loopover_get_repo_context")?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    // `loopover_delete_branch` is deliberately NOT in the destructive set: the remote tool BUILDS a
+    // local-execution spec and touches nothing, and the hints describe the tool call rather than the
+    // command a caller may later choose to run with their own credentials. Advertising the contract's
+    // posture faithfully means advertising this one too.
+    expect(listed.get("loopover_delete_branch")?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+
+    // Every registered tool, against the registry's own projection -- the same comparison validate-mcp
+    // makes, asserted here too so a posture regression fails in the fast unit suite as well.
+    for (const tool of tools) {
+      const projected = getToolDefinition(tool.name);
+      expect(tool.title, `title mismatch for ${tool.name}`).toBe(projected?.title);
+      expect(tool.annotations, `annotations mismatch for ${tool.name}`).toMatchObject(projected!.annotations);
     }
     await client.close();
   });

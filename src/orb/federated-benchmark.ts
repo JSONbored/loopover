@@ -22,7 +22,7 @@
 import { buildFederatedBundle, isFederatedIntelligenceEnabled, resolveFederatedWindowDays } from "./federated-bundle";
 import { applyFederatedPeerWatermarks, importPeerBundles } from "./federated-import";
 import { pullPeerBundles, pushFederatedBundle, type CollectorOpts } from "./federated-collector";
-import { percentile } from "./analytics";
+import { median } from "./analytics";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import type { FocusManifest } from "../signals/focus-manifest";
@@ -140,18 +140,19 @@ export async function refreshFederatedBenchmarkCache(
   const stateless = importPeerBundles(manifest, peerBundles, { now, localWindowDays });
   const { accepted } = config ? await applyFederatedPeerWatermarks(db, stateless, config.peerKeys, { now }) : stateless;
 
-  // MEDIAN, NOT MEAN (mirrors analytics.ts's own fleet aggregation, see federated-import.ts's header comment):
-  // a bounded number of outliers cannot drag a median arbitrarily, so re-deriving a mean here would quietly
-  // weaken the same poisoning-resistance property the import side already relies on holding by construction.
+  // MEDIAN, NOT MEAN, and via analytics.ts's OWN `median` — the identical estimator computeFleetAnalytics uses
+  // for the fleet median (#9645). A nearest-rank percentile(…, 50) differed on an even-sized peer set (it
+  // returns the upper-middle value, not the mean of the two middle ones), so the peer benchmark and the fleet
+  // aggregation could disagree; sharing one function makes them agree by construction. A bounded number of
+  // outliers cannot drag a median arbitrarily, preserving the poisoning-resistance the import side relies on.
   // `accepted` is deduped one-bundle-per-instanceId by importPeerBundles (#9148), so this count is already a
   // count of distinct CONTRIBUTING INSTANCES, not raw bundles — the bug the peerCount doc used to warn about.
   const peerMergePrecisions = accepted
     .map((bundle) => bundle.mergePrecision)
-    .filter((value): value is number => value !== null)
-    .sort((a, b) => a - b);
+    .filter((value): value is number => value !== null);
 
   await writeFederatedBenchmarkCache(db, {
-    peerMedianMergePrecision: percentile(peerMergePrecisions, 50),
+    peerMedianMergePrecision: median(peerMergePrecisions),
     peerCount: peerMergePrecisions.length,
     refreshedAt: new Date(now).toISOString(),
   });

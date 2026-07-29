@@ -164,6 +164,9 @@ export * from "./governor/action-mode.js";
 export * from "./governor/chokepoint.js";
 export * from "./calibration/signal-tracking.js";
 export * from "./calibration/backtest-corpus.js";
+// #9639: the corpus freeze point, moved out of scripts/ so the in-Worker threshold backtest can stamp its
+// own runs with the same checksum the CI-side manifests are frozen and validated by.
+export * from "./calibration/backtest-checksum.js";
 export * from "./calibration/repo-corpus-slice.js";
 export * from "./calibration/ams-prediction-corpus.js";
 export * from "./calibration/ams-rank-corpus.js";

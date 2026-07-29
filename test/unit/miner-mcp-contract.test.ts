@@ -9,6 +9,8 @@ import {
   type MinerMcpServerOptions,
 } from "../../packages/loopover-miner/bin/loopover-miner-mcp";
 import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger";
+import { getToolContract, getToolDefinition, listToolDefinitions } from "@loopover/contract/tools";
+import { MCP_TELEMETRY_ERROR_CODES } from "@loopover/contract";
 // The SAME secret-shape matcher the miner pack validator uses — imported from its single source of truth (rather
 // than hand-duplicated here) so the two stay byte-for-byte in sync instead of relying on manual vigilance.
 import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content";
@@ -300,5 +302,64 @@ describe("contract assertions catch violations (canary)", () => {
 
   it("assertUniformErrorShape throws when a non-error (success) result is passed", () => {
     expect(() => assertUniformErrorShape({ content: [{ type: "text", text: "ok" }], isError: false })).toThrow();
+  });
+});
+
+// #9655: the AMS server advertised neither `title` nor `annotations` on any of its 21 registrations, and
+// passed every schema as a raw `.shape` -- which the SDK re-wraps in a plain `z.object`, discarding the
+// catchall. Every miner output is a `looseObject`, so each one was advertised and ENFORCED as
+// `additionalProperties: false`: any field a payload carried beyond the modelled set came back to the
+// caller as a -32602 they could do nothing about.
+describe("the miner server advertises the registry's projection (#9655)", () => {
+  it("carries the projected title and posture, and keeps its outputs open", async () => {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "miner-mcp-advertised", version: "0.0.0" });
+    await Promise.all([createMinerMcpServer({}).connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.length).toBeGreaterThan(0);
+      for (const tool of tools) {
+        const projected = getToolDefinition(tool.name);
+        expect(projected, `${tool.name} is registered but has no registry entry`).toBeTruthy();
+        expect(tool.title, `${tool.name} title`).toBe(projected!.title);
+        expect(tool.description, `${tool.name} description`).toBe(projected!.description);
+        expect(tool.annotations, `${tool.name} posture`).toMatchObject(projected!.annotations);
+        // The catchall survived registration: a loose output must NOT be advertised as closed.
+        expect((tool.outputSchema as { additionalProperties?: unknown }).additionalProperties, `${tool.name} output is closed`).not.toBe(false);
+      }
+
+      const byName = new Map(tools.map((tool) => [tool.name, tool]));
+      expect(byName.get("loopover_miner_purge_repo")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+      expect(byName.get("loopover_miner_ping")?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  });
+});
+
+// #9659: `toolErrorFields` declared an envelope with zero consumers -- no output schema spread it -- while
+// every miner tool answered a store failure with exactly that shape. So the advertised schema described only
+// the success arm, and the field a caller has to read to know WHY a call failed appeared in no artifact.
+describe("every miner output declares the shared error envelope (#9659)", () => {
+  const miner = listToolDefinitions({ locality: ["miner"] });
+
+  it("advertises `error` with the closed code set, on every tool", () => {
+    expect(miner.length).toBeGreaterThan(15);
+    for (const tool of miner) {
+      const error = (tool.outputSchema.properties as Record<string, { properties?: Record<string, { enum?: string[] }> }> | undefined)?.error;
+      expect(error, `${tool.name} advertises no error envelope`).toBeTruthy();
+      // The code is the closed telemetry set rather than free text, which is what lets the code the caller
+      // is told and the code telemetry records be the same one.
+      expect(error!.properties?.code?.enum, `${tool.name}'s error code is not the closed set`).toEqual([...MCP_TELEMETRY_ERROR_CODES]);
+    }
+  });
+
+  it("accepts a payload carrying the envelope", () => {
+    // The envelope rides ALONGSIDE the success fields rather than replacing them: the MCP SDK exempts an
+    // `isError` result from output validation (mcp.js `validateToolOutput`), so making every success field
+    // optional to let a bare `{ error }` validate would weaken the success contract for no gain.
+    const ping = getToolContract("loopover_miner_ping")!;
+    expect(ping.output.safeParse({ status: "ok", tool: "loopover_miner_ping", error: { code: "store_unavailable", message: "queue.db is not a database" } }).success).toBe(true);
+    expect(ping.output.safeParse({ status: "ok", tool: "loopover_miner_ping", error: { code: "invented", message: "x" } }).success, "an invented code is refused").toBe(false);
   });
 });

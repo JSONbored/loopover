@@ -20,6 +20,7 @@
 //     agent-safe control and is here instead.
 import { z } from "zod";
 import { defineTool } from "../tool-definition.js";
+import { toolErrorFields } from "../shared.js";
 import { INSTANCE_CHECK_STATUSES } from "../enums.js";
 
 const RepoFullName = z.string().min(3).max(200).describe("owner/repo.");
@@ -32,6 +33,11 @@ export const MinerDoctorInput = z.object({});
 export const MinerDoctorOutput = z.looseObject({
   ok: z.boolean().describe("True when no check reported fail. Warnings do not clear it to false."),
   checks: z.array(z.looseObject({ name: z.string(), status: z.enum(INSTANCE_CHECK_STATUSES), detail: z.string().optional() })),
+  // #9659: every miner tool answers a store failure with the shared error envelope
+  // (`withMinerToolErrorHandling`), so the advertised schema declares it rather than describing only
+  // the success shape. `error.code` is the closed telemetry set, which is what lets the code the caller
+  // is told and the code telemetry records be the same one.
+  ...toolErrorFields,
 });
 
 export const minerDoctorTool = defineTool({
@@ -59,6 +65,11 @@ export const MinerMetricsSnapshotOutput = z.looseObject({
       samples: z.array(z.looseObject({ value: z.number(), labels: z.record(z.string(), z.string()).optional() })),
     }),
   ),
+  // #9659: every miner tool answers a store failure with the shared error envelope
+  // (`withMinerToolErrorHandling`), so the advertised schema declares it rather than describing only
+  // the success shape. `error.code` is the closed telemetry set, which is what lets the code the caller
+  // is told and the code telemetry records be the same one.
+  ...toolErrorFields,
 });
 
 export const minerMetricsSnapshotTool = defineTool({
@@ -86,7 +97,11 @@ export const MinerGovernorActionOutput = z.looseObject({
   blocked: z.boolean().optional().describe("True when the governor chokepoint refused the action."),
   reason: z.string().optional(),
   result: z.unknown().optional(),
-  error: z.string().optional(),
+  // #9659: every miner tool answers a store failure with the shared error envelope
+  // (`withMinerToolErrorHandling`), so the advertised schema declares it rather than describing only
+  // the success shape. `error.code` is the closed telemetry set, which is what lets the code the caller
+  // is told and the code telemetry records be the same one.
+  ...toolErrorFields,
 });
 
 export const MinerGovernorPauseInput = z.object({
@@ -216,7 +231,11 @@ export const MinerRunMigrationsOutput = z.looseObject({
   result: z.unknown().optional(),
   blocked: z.boolean().optional(),
   reason: z.string().optional(),
-  error: z.string().optional(),
+  // #9659: every miner tool answers a store failure with the shared error envelope
+  // (`withMinerToolErrorHandling`), so the advertised schema declares it rather than describing only
+  // the success shape. `error.code` is the closed telemetry set, which is what lets the code the caller
+  // is told and the code telemetry records be the same one.
+  ...toolErrorFields,
 });
 
 export const minerRunMigrationsTool = defineTool({
@@ -248,7 +267,11 @@ export const MinerPurgeRepoOutput = z.looseObject({
   result: z.unknown().optional(),
   blocked: z.boolean().optional(),
   reason: z.string().optional(),
-  error: z.string().optional(),
+  // #9659: every miner tool answers a store failure with the shared error envelope
+  // (`withMinerToolErrorHandling`), so the advertised schema declares it rather than describing only
+  // the success shape. `error.code` is the closed telemetry set, which is what lets the code the caller
+  // is told and the code telemetry records be the same one.
+  ...toolErrorFields,
 });
 
 export const minerPurgeRepoTool = defineTool({

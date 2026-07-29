@@ -238,9 +238,38 @@ describe("MCP dispatch chokepoint (#9525)", () => {
     const { sink: spy, calls, exceptions } = sink();
     const wrapped = instrumentToolDispatch("loopover_get_repo_context", spy, async (_args: unknown) => ({ isError: true, structuredContent: {} }));
     await wrapped({});
+    // No envelope on the result: `unknown_error` is the honest answer, and stays the answer (#9659).
     expect(calls[0]).toMatchObject({ ok: false, errorCode: "unknown_error" });
     expect(exceptions).toEqual([]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("mcp_tool_call_failed"));
+    warn.mockRestore();
+  });
+
+  // #9659: the code the caller is told is the code the event records. Before this the remote emitted a
+  // hardcoded `"unknown_error"` for every returned failure, so the dimension the closed set exists to
+  // populate was dead on the only failure path that does not throw.
+  it("resolves the error code from the result's own envelope", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { sink: spy, calls } = sink();
+    const wrapped = instrumentToolDispatch("loopover_get_repo_context", spy, async (_args: unknown) => ({
+      isError: true,
+      structuredContent: { error: { code: "not_configured", message: "no token" } },
+    }));
+    await wrapped({});
+    expect(calls[0]).toMatchObject({ ok: false, errorCode: "not_configured" });
+    warn.mockRestore();
+  });
+
+  it("falls back to unknown_error for an envelope whose code is not in the closed set", async () => {
+    // A tool cannot widen the dimension by inventing a code: `resolveErrorCode` validates membership.
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { sink: spy, calls } = sink();
+    const wrapped = instrumentToolDispatch("loopover_get_repo_context", spy, async (_args: unknown) => ({
+      isError: true,
+      structuredContent: { error: { code: "made_up", message: "nope" } },
+    }));
+    await wrapped({});
+    expect(calls[0]).toMatchObject({ ok: false, errorCode: "unknown_error" });
     warn.mockRestore();
   });
 

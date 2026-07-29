@@ -81,6 +81,10 @@
     "./calibration/backtest-corpus": {
       "types": "./dist/calibration/backtest-corpus.d.ts",
       "default": "./dist/calibration/backtest-corpus.js"
+    },
+    "./calibration/backtest-checksum": {
+      "types": "./dist/calibration/backtest-checksum.d.ts",
+      "default": "./dist/calibration/backtest-checksum.js"
     }
   },
   "files": [

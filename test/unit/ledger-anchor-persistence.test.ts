@@ -240,4 +240,22 @@ describe("anchorBackendsMissingForRowHash (#9489)", () => {
     expect(await anchorBackendsMissingForRowHash(env, "hash-a", [])).toEqual([]);
     expect(spy).not.toHaveBeenCalled();
   });
+
+  it("is served by the (row_hash, status) index rather than a full table scan (#9652)", async () => {
+    const env = createTestEnv();
+    const idx = await env.DB.prepare("SELECT name FROM sqlite_master WHERE type='index' AND name = ?")
+      .bind("decision_ledger_anchors_row_hash_status")
+      .first<{ name: string }>();
+    expect(idx?.name).toBe("decision_ledger_anchors_row_hash_status");
+
+    // The exact predicate anchorBackendsMissingForRowHash runs — must SEARCH via the new index, not SCAN.
+    const plan = await env.DB.prepare(
+      "EXPLAIN QUERY PLAN SELECT DISTINCT backend FROM decision_ledger_anchors WHERE row_hash = ? AND status = 'ok' AND backend IN ('rekor', 'git')",
+    )
+      .bind("hash-a")
+      .all<{ detail: string }>();
+    const detail = (plan.results ?? []).map((row) => row.detail).join(" ");
+    expect(detail).toContain("decision_ledger_anchors_row_hash_status");
+    expect(detail).not.toContain("SCAN decision_ledger_anchors ");
+  });
 });

@@ -17,7 +17,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 import type { BacktestCase } from "@loopover/engine";
-import { checksumCases } from "./backtest-corpus-export-core";
+import { checksumCases } from "@loopover/engine";
 import {
   buildLogicBacktestAuditInsertSql,
   filterReplayableCases,

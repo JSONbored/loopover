@@ -62,7 +62,7 @@ export type ToolAnnotations = {
  * the wire-compatibility constraint metagraphed hit head-on when it tried to reuse its strict REST
  * schemas for MCP output and found the tighter contract was a regression.
  */
-export type ToolContract = {
+export type ToolContract<TInput extends z.ZodObject = z.ZodObject, TOutput extends z.ZodObject = z.ZodObject> = {
   name: string;
   title: string;
   description: string;
@@ -71,8 +71,11 @@ export type ToolContract = {
   locality: ToolLocality;
   availability: ToolAvailability;
   annotations?: Partial<ToolAnnotations>;
-  input: z.ZodObject;
-  output: z.ZodObject;
+  /** Generic so a server registering from a contract gets that tool's REAL argument type in its
+   *  handler, rather than the erased `z.ZodObject`. `TOOL_CONTRACTS` erases them again on the way
+   *  into the registry array, where only the common shape matters. */
+  input: TInput;
+  output: TOutput;
 };
 
 /** JSON Schema as emitted by `z.toJSONSchema` -- structurally open because draft-2020-12 allows
@@ -133,7 +136,18 @@ function matchesFilter(contract: ToolContract, filter: ToolFilter): boolean {
  * derives from this and never from the raw contract array.
  */
 export function projectToolDefinitions(contracts: readonly ToolContract[], filter: ToolFilter = {}): McpToolDefinition[] {
-  return contracts.filter((contract) => matchesFilter(contract, filter)).map((contract) => ({
+  return contracts.filter((contract) => matchesFilter(contract, filter)).map(projectToolDefinition);
+}
+
+/**
+ * The same projection for ONE contract, as a total function (#9655).
+ *
+ * A server registering a tool it has already resolved needs the defaulted `annotations` without a second
+ * lookup that can fail -- and the defaulting must not be re-implemented at the registration site, which is
+ * how the three servers came to advertise three different postures for one entry.
+ */
+export function projectToolDefinition(contract: ToolContract): McpToolDefinition {
+  return {
     name: contract.name,
     title: contract.title,
     description: contract.description,
@@ -144,7 +158,7 @@ export function projectToolDefinitions(contracts: readonly ToolContract[], filte
     annotations: { ...DEFAULT_ANNOTATIONS, ...contract.annotations },
     inputSchema: toJsonSchema(contract.input),
     outputSchema: toJsonSchema(contract.output),
-  }));
+  };
 }
 
 /**
@@ -155,6 +169,8 @@ export function projectToolDefinitions(contracts: readonly ToolContract[], filte
  * of those heterogeneous types collapses to an unsatisfiable intersection the moment anything
  * maps over it. metagraphed documents the same lesson on its own registry array.
  */
-export function defineTool(contract: ToolContract): ToolContract {
+export function defineTool<TInput extends z.ZodObject, TOutput extends z.ZodObject>(
+  contract: ToolContract<TInput, TOutput>,
+): ToolContract<TInput, TOutput> {
   return contract;
 }

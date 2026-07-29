@@ -177,3 +177,45 @@ describe("cross-surface: deriveUnifiedStatus consumes the bridge-resolved boolea
     }
   });
 });
+
+describe("unstable explained only by an IGNORED check (#9810 follow-up)", () => {
+  const base = {
+    reviewGood: true, guardrailHit: false, migrationCollisionHold: false, unlinkedIssueMatchHold: false,
+    advisoryCheckHold: false, unlinkedIssueMatchCloseWithoutCloseActing: false,
+  };
+
+  it("REGRESSION: an unstable state the ignore list fully explains no longer holds", () => {
+    // The live half-fix: gate.ignoredCheckRuns removed the check from LoopOver's CI aggregate, but
+    // mergeable_state is GitHub's own computation and stayed "unstable" while the check existed at all —
+    // so JSONbored/loopover#9816 was still held, reason "mergeable_state is unstable — non-required
+    // check(s) not passing: Contributor trust". The ignore was half-effective until this.
+    const d = derivePrDisposition({ ...base, mergeableState: "unstable", unstableExplainedByIgnoredChecks: true });
+    expect(d.heldForManualReview).toBe(false);
+    expect(d.heldForUnstableMergeState).toBe(false);
+    expect(d.commentMergeStateHeld).toBe(false);
+  });
+
+  it("INVARIANT: unstable from ANY other cause still holds — the flag is not a blanket override", () => {
+    const d = derivePrDisposition({ ...base, mergeableState: "unstable", unstableExplainedByIgnoredChecks: false });
+    expect(d.heldForManualReview).toBe(true);
+    expect(d.heldForUnstableMergeState).toBe(true);
+  });
+
+  it("INVARIANT: absent flag behaves exactly as before (byte-identical for every existing caller)", () => {
+    expect(derivePrDisposition({ ...base, mergeableState: "unstable" }).heldForManualReview).toBe(true);
+  });
+
+  it("INVARIANT: the flag never rescues a PR held for a DIFFERENT reason", () => {
+    // An ignored check explaining the instability must not also wave through a guardrail hit.
+    const d = derivePrDisposition({ ...base, guardrailHit: true, mergeableState: "unstable", unstableExplainedByIgnoredChecks: true });
+    expect(d.heldForManualReview).toBe(true);
+    expect(d.wouldMerge).toBe(false);
+  });
+
+  it("a dismissed-unstable PR can actually merge when everything else is clean", () => {
+    // The point of the fix: not merely "not held", but genuinely mergeable again. GitHub still says
+    // unstable, so mergeableState stays the gate on wouldMerge — the PR approves rather than merging.
+    const d = derivePrDisposition({ ...base, mergeableState: "unstable", unstableExplainedByIgnoredChecks: true });
+    expect(d.wouldApprove).toBe(true);
+  });
+});

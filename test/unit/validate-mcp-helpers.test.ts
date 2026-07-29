@@ -5,7 +5,9 @@
 // that is not object-typed, a version that has drifted, a release path that has been deleted.
 import { describe, expect, it } from "vitest";
 import {
+  checkAdvertisedMetadata,
   checkAdvertisedShape,
+  checkInputNarrowing,
   checkEveryToolCalled,
   checkVersionLock,
   checkWatchedPathsExist,
@@ -33,6 +35,129 @@ describe("validate-mcp invariants", () => {
 
   it("passes when the two sets agree", () => {
     expect(diffToolSets([tool("a")], [{ name: "a" }])).toEqual([]);
+  });
+
+  describe("advertised metadata matches the registry's projection (#9655)", () => {
+    const projected = (name: string, overrides: Partial<McpToolDefinition> = {}): McpToolDefinition =>
+      ({ name, title: `${name} title`, description: `${name} description`, annotations: { readOnlyHint: true, destructiveHint: false }, ...overrides }) as McpToolDefinition;
+    const advertised = (name: string) => ({
+      name,
+      title: `${name} title`,
+      description: `${name} description`,
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    });
+
+    it("passes when every advertised field is the projected one", () => {
+      expect(checkAdvertisedMetadata([projected("a"), projected("b")], [advertised("a"), advertised("b")])).toEqual([]);
+    });
+
+    it("reports a title the server rewrote", () => {
+      expect(checkAdvertisedMetadata([projected("a")], [{ ...advertised("a"), title: "Something else" }])).toEqual([
+        'a advertises title "Something else", registry says "a title"',
+      ]);
+    });
+
+    it("reports a description the server rewrote", () => {
+      // The exact text is deliberately NOT in the failure: 35 of these were paragraph-length, and a
+      // failure listing both in full is unreadable at the point it fires.
+      expect(checkAdvertisedMetadata([projected("a")], [{ ...advertised("a"), description: "drifted" }])).toEqual([
+        "a advertises a description the registry does not",
+      ]);
+    });
+
+    it("reports a readOnlyHint that disagrees", () => {
+      expect(
+        checkAdvertisedMetadata([projected("a", { annotations: { readOnlyHint: false, destructiveHint: false } })], [advertised("a")]),
+      ).toEqual(["a advertises readOnlyHint=true, registry says false"]);
+    });
+
+    it("reports a destructiveHint that disagrees", () => {
+      expect(
+        checkAdvertisedMetadata([projected("a", { annotations: { readOnlyHint: false, destructiveHint: true } })], [{ ...advertised("a"), annotations: { readOnlyHint: false, destructiveHint: false } }]),
+      ).toEqual(["a advertises destructiveHint=false, registry says true"]);
+    });
+
+    it("reports a tool advertising no annotations at all", () => {
+      // The defect this check was written for: the raw `Partial` is not what the projection publishes,
+      // so "absent" and "the default posture" are different things on the wire.
+      expect(checkAdvertisedMetadata([projected("a")], [{ name: "a", title: "a title", description: "a description" }])).toEqual([
+        "a advertises readOnlyHint=undefined, registry says true",
+        "a advertises destructiveHint=undefined, registry says false",
+      ]);
+    });
+
+    it("stays quiet about a tool the server never registered — that is diffToolSets' finding", () => {
+      expect(checkAdvertisedMetadata([projected("a")], [])).toEqual([]);
+    });
+  });
+
+  describe("an advertised input may only narrow the contract's (#9662)", () => {
+    const projected = (properties: string[], required: string[] = []): McpToolDefinition =>
+      ({ name: "a", inputSchema: { type: "object", properties: Object.fromEntries(properties.map((k) => [k, {}])), required } }) as unknown as McpToolDefinition;
+    const advertised = (properties: string[], required: string[] = []) => ({
+      name: "a",
+      inputSchema: { type: "object", properties: Object.fromEntries(properties.map((k) => [k, {}])), required },
+    });
+
+    it("passes when the advertised schema is the contract's", () => {
+      expect(checkInputNarrowing([projected(["login", "repo"], ["repo"])], [advertised(["login", "repo"], ["repo"])])).toEqual([]);
+    });
+
+    it("passes when the server serves strictly less", () => {
+      // The sanctioned direction: a server whose route cannot honour a field says so by not advertising it.
+      expect(checkInputNarrowing([projected(["login", "repo"], ["repo"])], [advertised(["repo"], ["repo"])])).toEqual([]);
+    });
+
+    it("reports a property the contract never declared", () => {
+      expect(checkInputNarrowing([projected(["login"])], [advertised(["login", "invented"])])).toEqual([
+        "a advertises input property invented, which its contract does not declare",
+      ]);
+    });
+
+    it("reports an optional contract field the server demands", () => {
+      // Not a widening of the accepted SET, but a widening of the caller's obligations -- and the catalog
+      // says the field is optional, so a caller following it gets rejected.
+      expect(checkInputNarrowing([projected(["login"])], [advertised(["login"], ["login"])])).toEqual([
+        "a requires input property login, which its contract does not require",
+      ]);
+    });
+
+    it("stays quiet about a tool the server never registered, or one advertising no input schema", () => {
+      expect(checkInputNarrowing([projected(["login"])], [])).toEqual([]);
+      expect(checkInputNarrowing([projected(["login"])], [{ name: "a" }])).toEqual([]);
+    });
+  });
+
+  describe("the version lock's serverInfo leg (#9661)", () => {
+    it("passes when all three agree", () => {
+      expect(checkVersionLock({ packageVersion: "3.16.0", advertisedLatestVersion: "3.16.0", serverInfoVersion: "3.16.0" })).toEqual([]);
+    });
+
+    it("reports a serverInfo that has drifted from its package", () => {
+      expect(checkVersionLock({ packageVersion: "3.16.0", advertisedLatestVersion: "3.16.0", serverInfoVersion: "3.15.2" })).toEqual([
+        "stdio serverInfo reports 3.15.2 but its package is 3.16.0",
+      ]);
+    });
+
+    it("reports a compatibility constant that has drifted", () => {
+      expect(checkVersionLock({ packageVersion: "3.16.0", advertisedLatestVersion: "3.15.2", serverInfoVersion: "3.16.0" })).toEqual([
+        "compatibility advertises 3.15.2 but @loopover/mcp is 3.16.0",
+      ]);
+    });
+
+    it("reports an ABSENT serverInfo version rather than reading it as a mismatch", () => {
+      // The case the old signature could not express: `undefined !== packageVersion` is true, but "the
+      // server advertised no version at all" and "the server advertised a different one" are not the same
+      // problem, and an empty string must not read as a version either.
+      expect(checkVersionLock({ packageVersion: "3.16.0", serverInfoVersion: undefined })).toEqual(["stdio serverInfo advertises no version"]);
+      expect(checkVersionLock({ packageVersion: "3.16.0", serverInfoVersion: "   " })).toEqual(["stdio serverInfo advertises no version"]);
+    });
+
+    it("names the server it is locking, so one helper can cover more than one", () => {
+      expect(checkVersionLock({ packageVersion: "1.2.3", serverInfoVersion: "1.0.0", serverLabel: "miner" })).toEqual([
+        "miner serverInfo reports 1.0.0 but its package is 1.2.3",
+      ]);
+    });
   });
 
   it("requires a description and object-typed input and output schemas", () => {
@@ -64,7 +189,7 @@ describe("validate-mcp invariants", () => {
       "compatibility advertises 1.2.2 but @loopover/mcp is 1.2.3",
     ]);
     expect(checkVersionLock({ packageVersion: "1.2.3", advertisedLatestVersion: "1.2.3", serverInfoVersion: "0.9.0" })).toEqual([
-      "stdio serverInfo reports 0.9.0 but @loopover/mcp is 1.2.3",
+      "stdio serverInfo reports 0.9.0 but its package is 1.2.3",
     ]);
   });
 

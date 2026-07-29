@@ -197,6 +197,74 @@ export function parseAnchorPublicKeys(raw: string | undefined): AnchorPublicKey[
   });
 }
 
+/**
+ * Why {@link parseAnchorPublicKeys} produced what it produced (#9834).
+ *
+ * `parseAnchorPublicKeys` returns `[]` from four separate paths -- absent value, unparseable JSON, a non-array,
+ * and a filter that drops every entry -- and {@link currentAnchorKey} folds two more together, returning null
+ * both when NO key is current and when more than one is. Six causes, one `{"keys":[],"currentKeyId":null}`,
+ * which reads as a healthy empty state.
+ *
+ * This is the same defect {@link PublicAnchorStatus} was introduced to fix for the sibling anchors listing,
+ * never applied here. It matters concretely: after #9719 provisioned the keypair, whether that provisioning
+ * took effect was undeterminable -- a typo in the secret is byte-identical to an unset secret, from outside
+ * AND for the operator.
+ */
+export type AnchorKeyStatus =
+  /** Exactly one key has `notAfter: null`. Anchoring can sign. */
+  | "ok"
+  /** The env var is absent or empty -- never provisioned. */
+  | "unconfigured"
+  /** Present but not parseable as a JSON array: a truncated paste, a quoting mistake, an object. */
+  | "malformed"
+  /** A JSON array whose every entry failed field validation -- e.g. `keyid` for `keyId`. Shape right, keys wrong. */
+  | "no_valid_entries"
+  /** Valid entries, but every one carries a `notAfter` -- the rotation ran off the end without a successor. */
+  | "expired"
+  /** More than one entry claims `notAfter: null`. currentAnchorKey fails closed here (picking one would
+   *  attribute anchors to a key that did not sign them), so this is unsigned-but-configured, not ok. */
+  | "ambiguous_rotation";
+
+export type AnchorKeyDiagnosis = {
+  status: AnchorKeyStatus;
+  keys: AnchorPublicKey[];
+  currentKeyId: string | null;
+  /** Entries present in the array but rejected by validation. Reported even when `status` is "ok", so one
+   *  typo'd key among three is visible rather than silently dropped into a healthy-looking response. */
+  droppedEntries: number;
+};
+
+/**
+ * PURE. Classify the raw env value, alongside the keys {@link parseAnchorPublicKeys} would return.
+ *
+ * NEVER echoes the raw value, under any status. `LOOPOVER_LEDGER_ANCHOR_KEYS` is served by an
+ * unauthenticated endpoint, and an operator who mis-pastes `LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY` into it
+ * would have the private half published by the very diagnostic meant to help them. A classification is
+ * always safe to return; the input never is.
+ */
+export function diagnoseAnchorPublicKeys(raw: string | undefined): AnchorKeyDiagnosis {
+  const empty = { keys: [] as AnchorPublicKey[], currentKeyId: null, droppedEntries: 0 };
+  if (!raw) return { status: "unconfigured", ...empty };
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { status: "malformed", ...empty };
+  }
+  if (!Array.isArray(parsed)) return { status: "malformed", ...empty };
+
+  const keys = parseAnchorPublicKeys(raw);
+  const droppedEntries = parsed.length - keys.length;
+  // An empty array is "configured to publish no keys", which is operationally the same actionable state as
+  // never setting it -- and distinct from "entries were present but every one was rejected".
+  if (keys.length === 0) return { status: parsed.length === 0 ? "unconfigured" : "no_valid_entries", ...empty };
+
+  const current = keys.filter((key) => key.notAfter === null);
+  const status: AnchorKeyStatus = current.length === 1 ? "ok" : current.length === 0 ? "expired" : "ambiguous_rotation";
+  return { status, keys, currentKeyId: currentAnchorKey(keys)?.keyId ?? null, droppedEntries };
+}
+
 /** The key currently signing anchors: the one entry with `notAfter: null`. Returns null when zero or MORE
  *  THAN ONE qualify -- an ambiguous rotation state must fail closed rather than silently pick one, since
  *  picking wrong would attribute anchors to a key that did not sign them. */

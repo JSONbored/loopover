@@ -29,7 +29,9 @@ import { LATEST_RECOMMENDED_MCP_VERSION } from "../../src/services/mcp-compatibi
 import { createMinerMcpServer } from "../../packages/loopover-miner/bin/loopover-miner-mcp";
 import { createTestEnv } from "../helpers/d1";
 import {
+  checkAdvertisedMetadata,
   checkAdvertisedShape,
+  checkInputNarrowing,
   checkEveryToolCalled,
   checkVersionLock,
   checkWatchedPathsExist,
@@ -159,7 +161,7 @@ async function validateSurface(
   expected: readonly McpToolDefinition[],
 ): Promise<{ failures: string[]; tools: number; validated: number; declined: number }> {
   const listed = (await client.listTools()).tools as unknown as ListedTool[];
-  const failures = [...diffToolSets(expected, listed), ...checkAdvertisedShape(listed)];
+  const failures = [...diffToolSets(expected, listed), ...checkAdvertisedShape(listed), ...checkAdvertisedMetadata(expected, listed), ...checkInputNarrowing(expected, listed)];
   const { validators, failures: compileFailures } = compileOutputSchemas(listed);
   failures.push(...compileFailures);
   const { called, failures: callFailures, validated, declined } = await smokeCallAll(client, listed, validators);
@@ -180,10 +182,6 @@ describe("MCP contract validator (#9520)", () => {
   it("enforces the remote server's advertised contract", async () => {
     const client = await connect(new LoopoverMcp(createTestEnv()).createServer());
     try {
-      // Set equality against a locality filter would be false precision: the remote server also
-      // serves several tools the registry marks `local-git`, because a caller may supply the branch
-      // metadata itself instead of having it read off a checkout. The strict direction asserted here
-      // is the one that matters -- nothing is registered without a contract entry.
       // Set equality against a locality filter would be false precision in BOTH directions: the
       // remote server also serves tools the registry marks `local-git` (a caller may supply the
       // branch metadata itself instead of having it read off a checkout), and it does NOT serve the
@@ -194,8 +192,6 @@ describe("MCP contract validator (#9520)", () => {
       const registered = new Set(((await client.listTools()).tools as unknown as ListedTool[]).map((tool) => tool.name));
       const result = await validateSurface(client, listToolDefinitions().filter((tool) => registered.has(tool.name)));
       report("remote", result);
-      for (const f of result.failures) process.stdout.write(`RFAIL ${f}
-`);
       expect(result.failures).toEqual([]);
       expect(result.tools).toBeGreaterThan(100);
 
@@ -206,6 +202,29 @@ describe("MCP contract validator (#9520)", () => {
         .map((tool) => tool.name)
         .filter((name) => !registered.has(name));
       expect(missing).toEqual([]);
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  }, 180_000);
+
+  it("enforces the remote server's ADMIN surface, which no other case can see", async () => {
+    // #9657: the five admin tools register only when LOOPOVER_MCP_ADMIN_ENABLED is set, and every other
+    // case here boots a server without it -- so the admin category was never diffed, compiled,
+    // smoke-called or output-validated. That is how `loopover_admin_rotate_secret` kept registering from
+    // schemas declared in src/mcp/server.ts long after its four siblings moved to the contract: the
+    // validator's own "nothing is registered without a contract entry" assertion was structurally unable
+    // to see the one tool that violated it.
+    const client = await connect(new LoopoverMcp({ ...createTestEnv(), LOOPOVER_MCP_ADMIN_ENABLED: "1" }).createServer());
+    try {
+      const registered = new Set(((await client.listTools()).tools as unknown as ListedTool[]).map((tool) => tool.name));
+      const result = await validateSurface(client, listToolDefinitions().filter((tool) => registered.has(tool.name)));
+      report("remote+admin", result);
+      expect(result.failures).toEqual([]);
+
+      // Every admin tool the registry knows, with none left behind in a local declaration.
+      const adminTools = listToolDefinitions({ category: ["admin"] }).map((tool) => tool.name);
+      expect(adminTools.length).toBeGreaterThanOrEqual(5);
+      expect(adminTools.filter((name) => !registered.has(name))).toEqual([]);
     } finally {
       await client.close().catch(() => undefined);
     }
@@ -258,15 +277,38 @@ describe("MCP contract validator (#9520)", () => {
     expect(duplicated.map(([name]) => name)).toEqual([]);
   });
 
-  it("locks the published MCP version across the three places it appears", () => {
+  it("locks the published MCP version across the three places it appears", async () => {
+    // #9661: `serverInfoVersion` used to be the SAME EXPRESSION as `packageVersion`, so the one leg
+    // `checkVersionLock`'s own doc calls "the one that can drift" was asserted against itself. It is
+    // read off a connected client now -- the value a real client actually sees.
     const packageVersion = (JSON.parse(readFileSync(join(process.cwd(), "packages/loopover-mcp/package.json"), "utf8")) as { version: string }).version;
-    expect(
-      checkVersionLock({
-        packageVersion,
-        advertisedLatestVersion: LATEST_RECOMMENDED_MCP_VERSION,
-        serverInfoVersion: packageVersion,
-      }),
-    ).toEqual([]);
+    const stdio = await import("../../packages/loopover-mcp/bin/loopover-mcp");
+    const client = await connect(stdio.server);
+    try {
+      expect(
+        checkVersionLock({
+          packageVersion,
+          advertisedLatestVersion: LATEST_RECOMMENDED_MCP_VERSION,
+          serverInfoVersion: client.getServerVersion()?.version,
+        }),
+      ).toEqual([]);
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  }, 180_000);
+
+  it("locks the miner server's advertised version to its own package", async () => {
+    // The second server was unlocked entirely: it reads its version from its own package.json at
+    // construction and nothing compared the two. No compatibility constant exists for the miner, so this
+    // is the two-way lock. (The REMOTE server's `version: "0.1.0"` is hardcoded and stays out of the lock
+    // deliberately -- making it derivable is #9526's, not this one's.)
+    const packageVersion = (JSON.parse(readFileSync(join(process.cwd(), "packages/loopover-miner/package.json"), "utf8")) as { version: string }).version;
+    const client = await connect(createMinerMcpServer({}));
+    try {
+      expect(checkVersionLock({ packageVersion, serverInfoVersion: client.getServerVersion()?.version, serverLabel: "miner" })).toEqual([]);
+    } finally {
+      await client.close().catch(() => undefined);
+    }
   });
 
   it("fails if a path the release automation reads has been moved or deleted", () => {

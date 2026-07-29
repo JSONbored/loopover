@@ -20852,7 +20852,7 @@
         "summary": "Published anchor-signing public keys with their full rotation history, for verifying an externally-published ledger anchor",
         "responses": {
           "200": {
-            "description": "{ keys: [{ keyId, publicKeySpki, notBefore, notAfter }], currentKeyId } — retired keys are retained so anchors signed under them stay verifiable; currentKeyId is null when unconfigured or the rotation state is ambiguous"
+            "description": "{ keys: [{ keyId, publicKeySpki, notBefore, notAfter }], currentKeyId, status, droppedEntries } — retired keys are retained so anchors signed under them stay verifiable; currentKeyId is null when unconfigured or the rotation state is ambiguous. status (#9834) says WHICH: ok | unconfigured | malformed | no_valid_entries | expired | ambiguous_rotation, because all six previously rendered as an identical empty response that read as healthy. droppedEntries counts array entries rejected by validation, reported even when status is ok so one typo'd key among several is visible. The raw configured value is never echoed back under any status."
           }
         },
         "operationId": "getPublicDecisionLedgerAnchorKey",

@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { detectMigrationCollisions, extractMigrationNumber, KNOWN_MIGRATION_DUPLICATES, MIGRATION_FILENAME_PATTERN } from "../../src/db/migration-collisions";
 
@@ -89,5 +90,33 @@ describe("KNOWN_MIGRATION_DUPLICATES (#2550)", () => {
     expect(detectMigrationCollisions(["0090_contributor_cap_label.sql"], KNOWN_MIGRATION_DUPLICATES)).toEqual([]);
     // And the renumbered file at its new number is likewise a lone, non-colliding entry.
     expect(detectMigrationCollisions(["0092_pull_request_detail_sync_head_sha.sql"], KNOWN_MIGRATION_DUPLICATES)).toEqual([]);
+  });
+
+  describe("stays bidirectionally in step with the real migrations/ directory (#9653)", () => {
+    const realMigrationFiles = readdirSync("migrations").filter((f) => MIGRATION_FILENAME_PATTERN.test(f));
+
+    it("every filename in KNOWN_MIGRATION_DUPLICATES exists on disk (no dead grandfather entries)", () => {
+      // A re-added 0090 entry (or any stale filename) fails here — the file no longer exists, so the list would
+      // point at a migration that isn't there.
+      const onDisk = new Set(realMigrationFiles);
+      const missing: string[] = [];
+      for (const files of KNOWN_MIGRATION_DUPLICATES.values()) {
+        for (const file of files) if (!onDisk.has(file)) missing.push(file);
+      }
+      expect(missing).toEqual([]);
+    });
+
+    it("every migration number with more than one file on disk is a KNOWN_MIGRATION_DUPLICATES key", () => {
+      // The reverse direction: a genuine on-disk collision that isn't grandfathered would surface here rather
+      // than only at premerge, keeping the two sources in step in both directions.
+      const filesByNumber = new Map<number, string[]>();
+      for (const file of realMigrationFiles) {
+        const number = extractMigrationNumber(file);
+        if (number == null) continue;
+        filesByNumber.set(number, [...(filesByNumber.get(number) ?? []), file]);
+      }
+      const collidingNumbers = [...filesByNumber.entries()].filter(([, files]) => files.length > 1).map(([number]) => number);
+      for (const number of collidingNumbers) expect(KNOWN_MIGRATION_DUPLICATES.has(number)).toBe(true);
+    });
   });
 });

@@ -24,6 +24,7 @@ import {
   getToolContract,
   mcpToolSpanName,
   resolveErrorCode,
+  toolErrorEnvelope,
   toolExcludesPayloads,
   UNKNOWN_TOOL_CATEGORY,
   type McpToolCallTelemetry,
@@ -103,7 +104,11 @@ export function instrumentToolDispatch<TArgs extends unknown[], TResult extends 
           surface: "remote",
           ok,
           durationMs: Date.now() - startedAt,
-          ...(ok ? {} : { errorCode: "unknown_error" as const }),
+          // #9659: the result's own envelope classifies the failure. `resolveErrorCode` validates the
+          // declared code against the closed set and falls back to `unknown_error` for a result that
+          // carries no envelope, or one whose code is not a member -- so a tool cannot widen the
+          // dimension by inventing a code.
+          ...(ok ? {} : { errorCode: resolveErrorCode(toolErrorEnvelope(result?.structuredContent)) }),
         };
         emit(call, { arguments: args[0], result: result?.structuredContent });
         if (!ok) {

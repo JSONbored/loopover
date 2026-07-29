@@ -194,3 +194,22 @@ export type TenantProduct = (typeof TENANT_PRODUCTS)[number];
 /** One doctor check's verdict (#9522). `warn` exists so a degraded-but-working instance is not reported as broken. */
 export const INSTANCE_CHECK_STATUSES = ["pass", "warn", "fail"] as const;
 export type InstanceCheckStatus = (typeof INSTANCE_CHECK_STATUSES)[number];
+
+/**
+ * The AMS miner's own vocabularies (#9660).
+ *
+ * Restated here for the usual reason -- this package cannot import the miner -- and pinned against the live
+ * lists by test/unit/contract-registry.test.ts. They lived in tools/miner.ts until now, which put them
+ * outside even the convention that a shared vocabulary lives in this file, and two of them appear in OUTPUT
+ * schemas: a new queue status or run state would make a tool's real `structuredContent` fail the schema that
+ * same tool advertises.
+ */
+/** packages/loopover-miner/lib/portfolio-queue.ts */
+export const QUEUE_STATUSES = ["queued", "in_progress", "done"] as const;
+export type QueueStatus = (typeof QUEUE_STATUSES)[number];
+/** packages/loopover-miner/lib/claim-ledger.ts */
+export const CLAIM_STATUSES = ["active", "released", "expired"] as const;
+export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
+/** packages/loopover-miner/lib/run-state.ts */
+export const MINER_RUN_STATES = ["idle", "discovering", "planning", "preparing"] as const;
+export type MinerRunState = (typeof MINER_RUN_STATES)[number];

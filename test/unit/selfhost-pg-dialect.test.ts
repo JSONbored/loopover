@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { quoteCamelCaseAliases, stripConflictTargetQualifiers, toNumberedPlaceholders, translateDdl, translateFunctions, translateInsertOr, translateMigrationInserts, translateRowid, translateSql } from "../../src/selfhost/pg-dialect";
 
@@ -44,6 +46,29 @@ describe("pg-dialect (#977 SQLite → Postgres)", () => {
     // datetime( must NOT match the date( rule, and an unrelated identifier ending in date( must survive.
     expect(translateFunctions("datetime('now')")).not.toContain("YYYY-MM-DD')");
     expect(translateFunctions("candidate(x)")).toBe("candidate(x)");
+  });
+
+  it("translates julianday() to a Julian Day NUMBER, preserving the ms arithmetic (#9648)", () => {
+    // A single call → the numeric Julian Day, cast via ::timestamptz like the date()/strftime() rules.
+    expect(translateFunctions("julianday(pr.merged_at)")).toBe("(EXTRACT(EPOCH FROM (pr.merged_at)::timestamptz) / 86400.0 + 2440587.5)");
+    // Whitespace-tolerant.
+    expect(translateFunctions("julianday(  pr.created_at  )")).toBe("(EXTRACT(EPOCH FROM (pr.created_at)::timestamptz) / 86400.0 + 2440587.5)");
+    // The exact avgMergeMs expression from submitter-reputation.ts:421 — both calls translated, and the
+    // `(a - b) * 86400000` still yields milliseconds (the +2440587.5 offsets cancel in the subtraction).
+    const avgMergeMs = "(julianday(pr.merged_at) - julianday(pr.created_at)) * 86400000";
+    const translated = translateFunctions(avgMergeMs);
+    expect(translated).not.toMatch(/julianday/i);
+    expect(translated).toBe(
+      "((EXTRACT(EPOCH FROM (pr.merged_at)::timestamptz) / 86400.0 + 2440587.5) - (EXTRACT(EPOCH FROM (pr.created_at)::timestamptz) / 86400.0 + 2440587.5)) * 86400000",
+    );
+  });
+
+  it("REGRESSION: listSubmitterCohortRows' statement has no remaining julianday after translateSql (#9648)", () => {
+    // The full avgMergeMs SELECT column as it appears in src/review/submitter-reputation.ts (inline, not
+    // exported) — translateSql must leave no SQLite-only julianday for Postgres to choke on.
+    const statement =
+      "SELECT AVG(CASE WHEN po.decision = 'merged' AND pr.merged_at IS NOT NULL THEN (julianday(pr.merged_at) - julianday(pr.created_at)) * 86400000 ELSE NULL END) AS avgMergeMs FROM review_audit po WHERE po.created_at >= datetime('now', ?)";
+    expect(translateSql(statement)).not.toMatch(/julianday/i);
   });
 
   it("REGRESSION: translates json_each(col) array iteration to json_array_elements_text (crash-looped self-host Postgres boot, beta.9)", () => {
@@ -260,5 +285,59 @@ describe("pg-dialect (#977 SQLite → Postgres)", () => {
     const out = translateSql(sql);
     expect(out.toLowerCase()).not.toContain("rowid");
     expect(out).toContain("ORDER BY enrolled_at DESC, ctid DESC");
+  });
+});
+
+describe("SQLite-only-function drift guard (#9648)", () => {
+  // SQLite scalar functions with NO Postgres equivalent — each MUST be rewritten by translateSql before a
+  // self-host Postgres deploy sees it. New app SQL using one of these without a translation rule is a silent
+  // self-host break (untranslated → "function X does not exist"), exactly the class #8171/#9648 keep closing.
+  const SQLITE_ONLY_FUNCTIONS = ["julianday", "unixepoch", "json_group_array", "json_array_length", "group_concat", "printf", "iif", "glob", "randomblob", "total"] as const;
+  const callRe = (fn: string) => new RegExp(`\\b${fn}\\s*\\(`, "i");
+
+  /** Strip TS comments (block + line) so the same words in English prose — "…their total (…)", a
+   *  `review.exclude_paths` glob — are not mistaken for SQL. Runs before string-literal extraction. */
+  function stripComments(source: string): string {
+    return source.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/(^|[^:])\/\/[^\n]*/g, "$1");
+  }
+
+  /** Every backtick/single/double-quoted string literal in a comment-stripped TS source file — the only place
+   *  real SQL text lives. */
+  function stringLiterals(source: string): string[] {
+    return stripComments(source).match(/`(?:\\[\s\S]|[^`\\])*`|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"/g) ?? [];
+  }
+
+  /** SQLite-only function names that appear in `sql` AND still appear after translateSql — i.e. would reach
+   *  Postgres untranslated. Empty ⇒ every such call is covered by a translation rule. */
+  function detectUntranslatedSqliteFunctions(sql: string): string[] {
+    const translated = translateSql(sql);
+    return SQLITE_ONLY_FUNCTIONS.filter((fn) => callRe(fn).test(sql) && callRe(fn).test(translated));
+  }
+
+  it("its detection helper flags a synthetic untranslated function (so the guard is not trivially green)", () => {
+    // `unixepoch(` has no translation rule today, so a source line using it must be caught.
+    expect(detectUntranslatedSqliteFunctions("SELECT unixepoch(created_at) FROM t")).toEqual(["unixepoch"]);
+    // And the now-translated julianday must NOT be reported.
+    expect(detectUntranslatedSqliteFunctions("SELECT julianday(created_at) FROM t")).toEqual([]);
+  });
+
+  it("no src/** SQL string literal uses a SQLite-only function without a translateSql rewrite", () => {
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+          continue;
+        }
+        if (!entry.name.endsWith(".ts") || full === join("src", "selfhost", "pg-dialect.ts")) continue;
+        for (const literal of stringLiterals(readFileSync(full, "utf8"))) {
+          const untranslated = detectUntranslatedSqliteFunctions(literal);
+          if (untranslated.length) offenders.push(`${full}: ${untranslated.join(", ")}`);
+        }
+      }
+    };
+    walk("src");
+    expect(offenders).toEqual([]);
   });
 });

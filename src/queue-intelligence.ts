@@ -43,7 +43,7 @@ const MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
 /**
  * #9432: ordinary English that carries gittensor meaning ONLY in context. Each of these is a word a perfectly
  * safe review of this codebase's own gate/scoring code uses naturally -- "updates the ranking comparator",
- * "this improves reviewability", "the reward path". They are still matched by default (unchanged), but a repo
+ * "this improves reviewability", "the farming loop". They are still matched by default (unchanged), but a repo
  * that has POSITIVELY confirmed via {@link isPublicScoreTermSafeForRepo}'s allowlist that this vocabulary is
  * safe public language for it can exempt them, exactly as bare "score" already could.
  *
@@ -51,12 +51,10 @@ const MILLISECONDS_PER_DAY = 1000 * 60 * 60 * 24;
  * VALUE, and a value never appears as a bare noun -- it appears qualified ("reward estimate 12 TAO", "trust
  * score 0.82", "score preview"). Every one of those QUALIFIED forms lives in
  * {@link ALWAYS_FORBIDDEN_PUBLIC_COMMENT_WORDS} below and stays enforced for every repo, allowlisted or not.
- * A bare "reward" or "ranking" with no number attached leaks nothing on its own. This generalizes the exact
+ * A bare "ranking" or "cohort" with no number attached leaks nothing on its own. This generalizes the exact
  * judgment `allowBareScoreTerm` already made for "score" to its siblings, rather than inventing a new one.
  */
 export const AMBIGUOUS_PUBLIC_COMMENT_WORDS = [
-  "rewards",
-  "reward",
   "farming",
   "rankings",
   "ranking",
@@ -80,6 +78,10 @@ export const ALWAYS_FORBIDDEN_PUBLIC_COMMENT_WORDS = [
   "reward estimate",
   "estimated rewards",
   "estimated reward",
+  // #9702: a bare "reward"/"rewards" names the private concept regardless of repo -- moved here from the
+  // AMBIGUOUS tier so `allowBareScoreTerm` can never let it through (it was reaching allowlisted repos verbatim).
+  "rewards",
+  "reward",
   "private reviewability",
   "reviewability internals",
   "private scoreability",
@@ -233,17 +235,18 @@ export function shouldWarnPublicScoreTermsAllowlistUnset(env: Record<string, str
   return parsePublicScoreTermAllowedRepos(env.LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS).length === 0;
 }
 
-/** `allowBareScoreTerm` (#public-score-terms-scoping, default false = today's unchanged behavior): the bare
- *  "\bscore\w*\b" check exists to catch a LEAKED gittensor trust/reward VALUE, but it also matches the word
- *  "score" used as ordinary, already-public API vocabulary -- a real problem for a repo like metagraphed,
- *  whose own public schema legitimately has fields named `totalScore`/`credibility`/`baseTotalScore`. Any AI
- *  review discussing that code naturally uses the word "score" and, before this option existed, had its
- *  WHOLE narrative assessment silently discarded (observed live: metagraphed#8038 and recurring). The other,
- *  EXPLICIT-PHRASE entries in FORBIDDEN_PUBLIC_COMMENT_WORDS ("trust score", "reward", "scoreability", ...)
- *  are NEVER skippable by this flag -- those name the actual private concept regardless of repo, so they stay
- *  enforced everywhere; only the over-broad bare-word check is ever relaxed, and only where a caller has
- *  positively confirmed (via a repo allowlist, never a blanket default) that "score" is safe public
- *  vocabulary for that repo. */
+/** `allowBareScoreTerm` (#public-score-terms-scoping, default false = today's unchanged behavior): swaps the
+ *  full {@link FORBIDDEN_PUBLIC_COMMENT_WORDS} matching set for {@link ALWAYS_FORBIDDEN_PUBLIC_COMMENT_WORDS}
+ *  and skips the bare `\bscore\w*\b` check -- i.e. it relaxes the ENTIRE {@link AMBIGUOUS_PUBLIC_COMMENT_WORDS}
+ *  tier (ordinary English that only carries gittensor meaning in context) along with a bare standalone "score".
+ *  The bare `\bscore\w*\b` check exists to catch a LEAKED trust/reward VALUE, but it also matches "score"/"scores"
+ *  used as ordinary, already-public API vocabulary -- a real problem for a repo like metagraphed whose own AI
+ *  review narratives naturally say "score" while discussing its public schema; before this option existed the
+ *  WHOLE narrative assessment was silently discarded (observed live: metagraphed#8038 and recurring). The
+ *  {@link ALWAYS_FORBIDDEN_PUBLIC_COMMENT_WORDS} tier -- every qualified private-value form, plus a bare
+ *  "reward"/"rewards" (#9702) -- is checked for EVERY repo, allowlisted or not, so the flag only ever relaxes the
+ *  ambiguous tier, and only where a caller has positively confirmed (via a repo allowlist, never a blanket
+ *  default) that this vocabulary is safe public language for that repo. */
 export function sanitizePublicComment(comment: string, options?: { allowBareScoreTerm?: boolean }): string {
   // #9432: an allowlisted repo exempts the AMBIGUOUS tier (ordinary English -- "reward", "ranking",
   // "reviewability", ...) along with bare "score"; the ALWAYS_FORBIDDEN tier is checked for every repo,

@@ -116,6 +116,15 @@ describe("check-import-specifiers script", () => {
     expect(violations).toEqual([]);
   });
 
+  // Most important regression test in this file: the real repo, scanned with NO injected
+  // listSourceFiles/readFile, must have zero import-specifier violations. Until #9649 this guard was enforced
+  // only by `npm run test:ci` locally and by no GitHub Actions job, so #9240 and #9249 were two separate
+  // drifts that reached main after #9221 shipped the checker. If this fails, a new relative import has drifted
+  // from its zone's convention -- fix the specifier, don't weaken this check.
+  it("the real tree has zero import-specifier violations (regression guard, #9240/#9249)", () => {
+    expect(findImportSpecifierViolations()).toEqual([]);
+  });
+
   it("sorts violations by file then specifier, and a missing root yields nothing (real listSourceFiles catch arm)", () => {
     const violations = findImportSpecifierViolations({ bundlerRoots: ["definitely-not-a-real-directory-xyz"], nodeNextRoots: [] });
     expect(violations).toEqual([]);

@@ -49,6 +49,7 @@ jobs:
       rees: ${{ steps.filter.outputs.rees }}
       controlPlane: ${{ steps.filter.outputs.controlPlane }}
       observability: ${{ steps.filter.outputs.observability }}
+      cocoDev: ${{ steps.filter.outputs.cocoDev }}
     steps:
       # Debounce rapid re-pushes to an open PR: every job below (validate-code, validate-tests)
       # has `needs: changes` in its dependency chain, so none of
@@ -256,6 +257,14 @@ jobs:
               - 'packages/loopover-miner/**'
               - 'test/unit/check-miner-package.test.ts'
               - 'test/unit/miner-calibration-types.test.ts'
+            # The two files coco-dev-versions:check cross-checks, plus the checker itself. Nothing else in the
+            # repo references k8s/coco-dev/**, so without this filter a PR editing ONLY one of the two version
+            # files (or the reverse) would match no other filter, skip validate-code entirely, and never reach
+            # the "Coco-dev versions drift check" step's own step-level gate -- the exact drift the step exists
+            # to catch. Feeds validate-code's job-level `if:` (which lists cocoDev) as well as the step below.
+            cocoDev:
+              - 'k8s/coco-dev/**'
+              - 'scripts/check-coco-dev-versions*.ts'
 
       # Diff-scoped security gate, folded in from the old standalone `security` job (2026-07-24, one fewer
       # runner slot on every PR at zero added wall-clock -- the API-based lockfile diff takes seconds and
@@ -282,7 +291,7 @@ jobs:
     needs: changes
     # draft != true also gates push runs correctly: github.event.pull_request is unset there, so the
     # property access evaluates to null, and null != true is true.
-    if: ${{ github.event_name == 'push' || (github.event.pull_request.draft != true && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.discoveryIndex == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.controlPlane == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.observability == 'true')) }}
+    if: ${{ github.event_name == 'push' || (github.event.pull_request.draft != true && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.discoveryIndex == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.controlPlane == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.observability == 'true' || needs.changes.outputs.cocoDev == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -406,6 +415,26 @@ jobs:
       - name: Re-gate sort-key check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run regate-sort-key:check
+      # #9213: scripts/check-coco-dev-versions.ts cross-checks the version pin in k8s/coco-dev/versions.json
+      # against k8s/coco-dev/kbs/base/kustomization.yaml, so a bump made in only one of the two files fails CI
+      # instead of silently shipping a KBS deploy that doesn't match its own recorded version manifest. Same
+      # local-only-until-now gap as the drift checks above: it was wired only into `npm run test:ci`, and
+      # nothing under .github/workflows/ referenced k8s at all, so nothing here ever ran it. Gated on the new
+      # `cocoDev` filter (which the validate-code job-level `if:` above also lists, so a k8s/coco-dev-only PR
+      # still schedules this job) plus the standard push clause.
+      - name: Coco-dev versions drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.cocoDev == 'true' }}
+        run: npm run coco-dev-versions:check
+      # #9221: scripts/check-import-specifiers.ts enforces the per-zone relative-import extension convention
+      # (bundler zones src/scripts/test resolve extensionless; NodeNext packages/* require `.js`). Same
+      # local-only-until-now gap as the drift checks above -- it ran only in `npm run test:ci`, so #9240 and
+      # #9249 were two separate drifts that reached main after #9221 shipped the guard. The checker scans src,
+      # scripts, test (BUNDLER_ROOTS) and packages (NODENEXT_ROOTS), so it's gated on every filter that covers
+      # one of those roots: backend (src/scripts/test) plus each packages/* workspace (mcp/engine/miner/
+      # discoveryIndex), each of which is already in validate-code's job-level `if:` above.
+      - name: Import-specifiers drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.discoveryIndex == 'true' }}
+        run: npm run import-specifiers:check
 
       # #9563: every webhook-owned handler must decide about #9312's redelivery guard out loud. Three had
       # silently skipped it -- one writing duplicate permanent suppression rows, two spending a second paid

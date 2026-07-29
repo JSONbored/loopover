@@ -20,13 +20,13 @@ import { checksumCases as checksumCasesViaExportCore } from "../../scripts/backt
 // input can never change. Keys are deliberately NOT in sorted order, so the test also exercises the
 // canonicalization rather than just the hash.
 const FIXTURE: BacktestCase[] = [
-  { targetKey: "acme/widgets#2", ruleId: "ai_consensus_defect", reversed: true, confidence: 0.91, firedAt: "2026-01-02T00:00:00.000Z" },
-  { ruleId: "ai_consensus_defect", firedAt: "2026-01-01T00:00:00.000Z", targetKey: "acme/widgets#1", confidence: 0.42, reversed: false },
-] as unknown as BacktestCase[];
+  { targetKey: "acme/widgets#2", ruleId: "ai_consensus_defect", outcome: "close", label: "reversed", decidedAt: "2026-01-03T00:00:00.000Z", firedAt: "2026-01-02T00:00:00.000Z", metadata: { confidence: 0.91 } },
+  { ruleId: "ai_consensus_defect", firedAt: "2026-01-01T00:00:00.000Z", decidedAt: "2026-01-02T00:00:00.000Z", targetKey: "acme/widgets#1", label: "confirmed", outcome: "merge", metadata: { confidence: 0.42 } },
+];
 
 // Produced by the pre-move implementation in scripts/backtest-corpus-export-core.ts. If this constant has to
 // be edited to make the test pass, the freeze point has drifted and every exported manifest is invalidated.
-const FIXTURE_DIGEST = "d980dbeecbd9e9d63ff1182821b726b62b8a65a1f2ec37eafe3fa01aad493844";
+const FIXTURE_DIGEST = "bba3c7db2e1ff0b6943802416ebf94c789f37ac5ed962cc7167c2dd33a33a861";
 
 describe("checksumCases byte-stability across the #9639 move", () => {
   it("produces the pinned digest for the fixed fixture", () => {
@@ -42,7 +42,7 @@ describe("checksumCases byte-stability across the #9639 move", () => {
   });
 
   it("ignores property order, so a reordered case set freezes to the same digest", () => {
-    const reordered = FIXTURE.map((c) => Object.fromEntries(Object.entries(c).reverse())) as unknown as BacktestCase[];
+    const reordered = FIXTURE.map((c) => Object.fromEntries(Object.entries(c).reverse()) as unknown as BacktestCase);
     expect(checksumCases(reordered)).toBe(FIXTURE_DIGEST);
   });
 
@@ -51,7 +51,7 @@ describe("checksumCases byte-stability across the #9639 move", () => {
   });
 
   it("distinguishes a changed value, so the checksum actually commits to the cases", () => {
-    const mutated = FIXTURE.map((c, i) => (i === 0 ? { ...c, reversed: false } : c)) as unknown as BacktestCase[];
+    const mutated = FIXTURE.map((c, i) => (i === 0 ? { ...c, reversed: false } : c));
     expect(checksumCases(mutated)).not.toBe(FIXTURE_DIGEST);
   });
 

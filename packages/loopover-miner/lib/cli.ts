@@ -43,6 +43,7 @@ export function printHelp(input: { packageName: string }): void {
       "  loopover-miner claim claim <owner/repo> <issue#> [--note <text>] [--dry-run] [--json]",
       "  loopover-miner claim release <owner/repo> <issue#> [--dry-run] [--json]",
       "  loopover-miner claim list [--repo <owner/repo>] [--status active|released|expired] [--json]",
+      "  loopover-miner claim reclaim [--max-age-ms <n>] [--dry-run] [--json]  Expire claims orphaned by a killed attempt",
       "  loopover-miner ledger list [--repo <owner/repo>] [--since <seq>] [--type <eventType>] [--json]",
       "  loopover-miner ledger metrics                               Print event-ledger counters in Prometheus text format",
       "  loopover-miner plan list [--status pending|running|completed|failed] [--json]",

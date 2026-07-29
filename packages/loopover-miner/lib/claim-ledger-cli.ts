@@ -9,6 +9,8 @@ const CLAIM_RELEASE_USAGE =
   "Usage: loopover-miner claim release <owner/repo> <issue#> [--api-base-url <url>] [--dry-run] [--json]";
 const CLAIM_LIST_USAGE =
   "Usage: loopover-miner claim list [--repo <owner/repo>] [--status active|released|expired] [--json]";
+const CLAIM_RECLAIM_USAGE =
+  "Usage: loopover-miner claim reclaim [--max-age-ms <n>] [--dry-run] [--json]";
 
 export type ParsedClaimClaimArgs =
   | {
@@ -36,6 +38,14 @@ export type ParsedClaimListArgs =
       json: boolean;
       repoFullName: string | null;
       status: ClaimStatus | null;
+    }
+  | { error: string };
+
+export type ParsedClaimReclaimArgs =
+  | {
+      maxAgeMs: number | undefined;
+      dryRun: boolean;
+      json: boolean;
     }
   | { error: string };
 
@@ -361,9 +371,90 @@ export function runClaimList(args: string[], options: ClaimLedgerCliOptions = {}
   }
 }
 
+export function parseClaimReclaimArgs(args: string[]): ParsedClaimReclaimArgs {
+  const options: { json: boolean; dryRun: boolean; maxAgeMs: number | undefined } = {
+    json: false,
+    dryRun: false,
+    maxAgeMs: undefined,
+  };
+
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]!;
+    if (token === "--json") {
+      options.json = true;
+      continue;
+    }
+    if (token === "--dry-run") {
+      options.dryRun = true;
+      continue;
+    }
+    if (token === "--max-age-ms") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        return { error: CLAIM_RECLAIM_USAGE };
+      }
+      const parsed = Number(value);
+      // Only a finite integer >= 0 is a valid claim age; reject fractional, negative, and non-numeric input so
+      // a typo can never be silently coerced into an unbounded or nonsensical reclaim window.
+      if (!Number.isInteger(parsed) || parsed < 0) {
+        return { error: CLAIM_RECLAIM_USAGE };
+      }
+      options.maxAgeMs = parsed;
+      index += 1;
+      continue;
+    }
+    return { error: token.startsWith("-") ? `Unknown option: ${token}` : CLAIM_RECLAIM_USAGE };
+  }
+
+  return { maxAgeMs: options.maxAgeMs, dryRun: options.dryRun, json: options.json };
+}
+
+/** `reclaim [--max-age-ms <n>] [--dry-run] [--json]`: expire claims orphaned by a crashed/killed attempt,
+ *  the manual counterpart to the automatic sweep claimIssue runs (mirrors `queue release` for the analogous
+ *  portfolio-queue lease). Omitting --max-age-ms uses the ledger's own DEFAULT_MAX_CLAIM_AGE_MS. Exit 0 even
+ *  when nothing is over-age -- reclaiming nothing is not a failure. */
+export function runClaimReclaim(args: string[], options: ClaimLedgerCliOptions = {}): number {
+  const parsed = parseClaimReclaimArgs(args);
+  if ("error" in parsed) {
+    return reportCliFailure(argsWantJson(args), parsed.error);
+  }
+
+  if (parsed.dryRun) {
+    // Short-circuit BEFORE withClaimLedger so a dry run never opens the ledger at all, matching runQueueRelease.
+    const dryRunResult = { outcome: "dry_run", maxAgeMs: parsed.maxAgeMs ?? null };
+    if (parsed.json) {
+      console.log(JSON.stringify(dryRunResult, null, 2));
+    } else {
+      const window = parsed.maxAgeMs === undefined ? "the default max age" : `${parsed.maxAgeMs}ms`;
+      console.log(`DRY RUN: would reclaim claims older than ${window}. No claim-ledger write was made.`);
+    }
+    return 0;
+  }
+
+  try {
+    return withClaimLedger(options, (claimLedger) => {
+      const reclaimed = claimLedger.reclaimExpiredClaims(parsed.maxAgeMs);
+      if (parsed.json) {
+        console.log(JSON.stringify({ reclaimed }, null, 2));
+      } else if (reclaimed.length === 0) {
+        console.log("none");
+      } else {
+        for (const claim of reclaimed) {
+          console.log(`${claim.repoFullName}#${claim.issueNumber} ${claim.status}`);
+        }
+        console.log(`reclaimed ${reclaimed.length}`);
+      }
+      return 0;
+    });
+  } catch (error) {
+    return reportCliFailure(parsed.json, describeCliError(error));
+  }
+}
+
 export function runClaimCli(subcommand: string | undefined, args: string[], options: ClaimLedgerCliOptions = {}): number {
   if (subcommand === "claim") return runClaimClaim(args, options);
   if (subcommand === "release") return runClaimRelease(args, options);
   if (subcommand === "list") return runClaimList(args, options);
+  if (subcommand === "reclaim") return runClaimReclaim(args, options);
   return reportCliFailure(argsWantJson(args), `Unknown claim subcommand: ${subcommand ?? ""}. ${CLAIM_LIST_USAGE}`);
 }

@@ -1,3 +1,5 @@
+import { isValidRepoSegment } from "./repo-segment.js";
+
 /** Immutable governor decision vocabulary — unknown values fail closed before insert. */
 export const GOVERNOR_LEDGER_EVENT_TYPES = Object.freeze([
   "allowed",
@@ -34,16 +36,6 @@ function normalizeRequiredString(value: unknown, code: string): string {
   const trimmed = value.trim();
   if (!trimmed) throw new Error(code);
   return trimmed;
-}
-
-// #5831/#7525's path-safety guard, restated locally. The miner package's parsers share
-// repo-clone.ts's isValidRepoSegment, but this engine package must not import from the miner package
-// (miner depends on engine, not the reverse), so the semantics are duplicated here deliberately:
-// a segment must be entirely [A-Za-z0-9._-] and must not be a bare "." or ".." traversal segment.
-const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
-
-function isValidRepoSegment(segment: string): boolean {
-  return REPO_SEGMENT_PATTERN.test(segment) && segment !== "." && segment !== "..";
 }
 
 function normalizeOptionalRepoFullName(repoFullName: unknown): string | null {

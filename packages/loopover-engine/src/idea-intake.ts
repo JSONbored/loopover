@@ -10,6 +10,7 @@ import {
   type FeasibilityGateInput,
   type FeasibilityVerdict,
 } from "./feasibility.js";
+import { isValidRepoSegment } from "./repo-segment.js";
 
 // Intake bounds — mirror the manifest text-slot handling (focus-manifest.ts): a renter's freeform text is
 // length-capped so one submission can never dominate a public surface.
@@ -101,8 +102,14 @@ export function validateIdeaSubmission(raw: unknown): IdeaValidationResult {
   // `go`). A `{ kind: "provision" }` object requests a not-yet-created repo (#7589). Anything else is missing.
   let resolvedTarget: IdeaTarget | undefined;
   if (isNonEmptyString(input.targetRepo)) {
-    if (/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(input.targetRepo)) resolvedTarget = { kind: "existing", repo: input.targetRepo };
-    else errors.push("target_repo_malformed");
+    // Same split-and-guard shape as repo-clone.ts's normalizeRepoFullName: exactly two segments, each a
+    // valid repo segment, so a bare "." / ".." traversal segment is rejected at intake too.
+    const [owner, repo, extra] = input.targetRepo.split("/");
+    if (!owner || !repo || extra !== undefined || !isValidRepoSegment(owner) || !isValidRepoSegment(repo)) {
+      errors.push("target_repo_malformed");
+    } else {
+      resolvedTarget = { kind: "existing", repo: input.targetRepo };
+    }
   } else if (typeof input.targetRepo === "object" && input.targetRepo !== null && (input.targetRepo as Record<string, unknown>).kind === "provision") {
     resolvedTarget = { kind: "provision" };
   } else errors.push("target_repo_required");

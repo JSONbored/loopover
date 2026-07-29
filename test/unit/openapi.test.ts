@@ -353,6 +353,10 @@ describe("OpenAPI contract", () => {
     const aprTransfer = spec.paths["/v1/loop/request-apr-transfer"]?.post;
     expect(aprTransfer?.operationId).toBe("requestAprTransfer");
     expect(aprTransfer?.requestBody).toBeUndefined();
+    // #9711: the declared statuses must match the handler's real exits (400/409/502/202) — never the 200 it
+    // could never return. A spec claiming 200 for a route that only ever answers 202 misleads every generated
+    // client.
+    expect(Object.keys(aprTransfer?.responses ?? {}).sort()).toEqual(["202", "400", "401", "409", "502"]);
   });
 
   // #9308: the eight /v1/lint/* + /v1/validate/focus-manifest advisory-check routes are each backed by an MCP

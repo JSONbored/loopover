@@ -26,8 +26,7 @@
 // live source for complexityDeltas, duplicationDeltas, or patchCoverageDeltaPercent — all three are honest
 // gaps, not yet wired by design (a later sub-issue's job), and this module must degrade cleanly when they're
 // absent (see "insufficient signal" below) rather than fabricate a neutral score.
-import { buildMissingTestEvidenceFinding, clamp, type SlopChangedFile } from "./slop";
-import { isCodeFile } from "./path-matchers";
+import { buildMissingTestEvidenceFinding, clamp, isTestableCodePath, type SlopChangedFile } from "./slop";
 import type { SignalFinding } from "./engine";
 
 export type ImprovementBand = "insufficient-signal" | "none" | "minor" | "moderate" | "significant";
@@ -161,7 +160,10 @@ function finitePatchCoverageDelta(value: number | undefined): number | undefined
 }
 
 function hasCodeFileToEvaluate(changedFiles: SlopChangedFile[] | undefined): boolean {
-  return (changedFiles ?? []).some((file) => Boolean(file.path) && isCodeFile(file.path));
+  // isTestableCodePath, not bare isCodeFile: a diff of only generated/vendored/minified output (e.g.
+  // `api/service.pb.go`) is NOT code that needs tests, so it must not disambiguate the null from
+  // buildMissingTestEvidenceFinding into a positive "test evidence present" finding (#9696).
+  return (changedFiles ?? []).some((file) => Boolean(file.path) && isTestableCodePath(file.path));
 }
 
 // Fires when at least one function's complexity genuinely dropped (a negative delta) after this PR. Mixed

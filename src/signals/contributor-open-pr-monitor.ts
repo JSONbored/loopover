@@ -12,7 +12,7 @@ import type { CheckSummaryRecord, PullRequestFileRecord, PullRequestRecord, Pull
 import { nowIso } from "../utils/json";
 import { buildRoleContext } from "./engine";
 import { isFailingCheckSummary } from "./check-summary";
-import { isCodeFile } from "./local-branch";
+import { isTestableCodePath } from "./slop";
 import { isTestPath } from "./test-evidence";
 
 export type OpenPrWorkClassification =
@@ -263,10 +263,12 @@ function normalizeTitle(title: string): string {
 
 function missingTestsFromFiles(files: PullRequestFileRecord[]): boolean {
   if (files.length === 0) return false;
-  // "Code" is genuine source (isCodeFile), not merely "anything that isn't a test": a docs-, lockfile-, or
-  // config-only PR has no code to cover and must not be flagged missing_tests. Mirrors the isCodeFile code-side
-  // used by slop.ts's buildMissingTestEvidenceFinding and the local-branch/local-scorer source predicates.
-  const codeFiles = files.filter((file) => file.path && isCodeFile(file.path));
+  // "Code" is genuine source that ought to carry tests, not merely "anything that isn't a test": a docs-,
+  // lockfile-, or config-only PR — or one of only generated/vendored/minified output — has no code to cover
+  // and must not be flagged missing_tests. Uses slop.ts's shared isTestableCodePath so this signal applies the
+  // SAME codegen exemption buildMissingTestEvidenceFinding does, instead of a bare isCodeFile that would flag a
+  // vendored-only diff the gate-side deliberately exempts (#9696).
+  const codeFiles = files.filter((file) => file.path && isTestableCodePath(file.path));
   const testFiles = files.filter((file) => file.path && isTestPath(file.path));
   return codeFiles.length > 0 && testFiles.length === 0;
 }

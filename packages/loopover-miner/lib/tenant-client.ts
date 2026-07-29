@@ -9,6 +9,10 @@
  * exactly as the API reports them -- no AMS-specific state vocabulary is invented here. A single bounded request
  * per call (no retry): a create is not idempotent, so it must not be silently re-sent. */
 
+import { TenantListResponseSchema, TenantRecordSchema, type TenantRecord } from "@loopover/contract/control-plane";
+
+export type { TenantRecord };
+
 export const CONTROL_PLANE_FLAG = "LOOPOVER_MINER_CONTROL_PLANE";
 export const CONTROL_PLANE_URL_FLAG = "LOOPOVER_MINER_CONTROL_PLANE_URL";
 export const CONTROL_PLANE_ADMIN_TOKEN_FLAG = "LOOPOVER_MINER_CONTROL_PLANE_ADMIN_TOKEN";
@@ -24,10 +28,6 @@ export type TenantClientOptions = {
 export type CreateTenantOptions = TenantClientOptions & {
   product?: string;
 };
-
-/** A tenant record as reported by the control plane. Lifecycle `state` is passed through verbatim (the API owns
- *  the vocabulary, e.g. `provisioning` / `active` / `suspended` / `torn down`); other fields vary by product. */
-export type TenantRecord = Record<string, unknown>;
 
 const TRUTHY_ENV_VALUE = /^(1|true|yes|on)$/i;
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
@@ -110,6 +110,24 @@ async function controlPlaneRequest(
 }
 
 /**
+ * Parse a control-plane response against the published schema (#9750).
+ *
+ * The client used to CAST every response to `Record<string, unknown>` and hand it straight to the CLI, so a
+ * field the control plane renamed reached a printed table as `undefined` and nothing anywhere reported it.
+ * Parsing is the fix, and it keeps this module's fail-loud posture: a create or destroy is a deliberate
+ * admin action, so a response that does not match the contract is an error with a readable reason, not a
+ * shrug. `TenantRecordSchema` is a loose object, so a control plane that starts returning an extra field
+ * still parses -- only a MISSING or wrong-typed one fails.
+ */
+function parseResponse<T>(schema: { safeParse: (value: unknown) => { success: true; data: T } | { success: false; error: { message: string } } }, payload: unknown, method: string, path: string): T {
+  const parsed = schema.safeParse(payload);
+  if (!parsed.success) {
+    throw new Error(`control plane returned a response that does not match the published contract for ${method} ${path}: ${parsed.error.message}`);
+  }
+  return parsed.data;
+}
+
+/**
  * Create a hosted tenant instance. Returns the created tenant record exactly as the control plane reports it
  * (including its lifecycle `state`). `options.product` defaults to `"ams"`.
  *
@@ -118,7 +136,7 @@ async function controlPlaneRequest(
  */
 export async function createTenant(name: string, options: CreateTenantOptions = {}): Promise<TenantRecord> {
   const product = typeof options.product === "string" && options.product.trim() ? options.product.trim() : "ams";
-  return controlPlaneRequest("POST", "/v1/tenants", { name, product }, options);
+  return parseResponse(TenantRecordSchema, await controlPlaneRequest("POST", "/v1/tenants", { name, product }, options), "POST", "/v1/tenants");
 }
 
 /**
@@ -129,7 +147,9 @@ export async function createTenant(name: string, options: CreateTenantOptions = 
  */
 export async function listTenants(options: TenantClientOptions = {}): Promise<TenantRecord[]> {
   const payload = await controlPlaneRequest("GET", "/v1/tenants", undefined, options);
-  return Array.isArray(payload.tenants) ? payload.tenants : [];
+  // Was `Array.isArray(payload.tenants) ? payload.tenants : []` -- a missing or malformed `tenants` silently
+  // became "you have no tenants", which is the most misleading possible answer for an admin listing.
+  return parseResponse(TenantListResponseSchema, payload, "GET", "/v1/tenants").tenants;
 }
 
 /**
@@ -140,5 +160,6 @@ export async function listTenants(options: TenantClientOptions = {}): Promise<Te
  * @param {{ env?: Record<string, string | undefined>, fetchImpl?: typeof fetch, requestTimeoutMs?: number }} [options]
  */
 export async function destroyTenant(name: string, options: TenantClientOptions = {}): Promise<TenantRecord> {
-  return controlPlaneRequest("DELETE", `/v1/tenants/${encodeURIComponent(name)}`, undefined, options);
+  const path = `/v1/tenants/${encodeURIComponent(name)}`;
+  return parseResponse(TenantRecordSchema, await controlPlaneRequest("DELETE", path, undefined, options), "DELETE", path);
 }

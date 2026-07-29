@@ -27,6 +27,14 @@
 // secret driver's `revokeSecrets` knows which broker enrollment to revoke on teardown -- without it, a torn-
 // down tenant's stored credential would stay valid in the broker forever.
 import { Hono } from "hono";
+import {
+  AmsCycleScheduleRequestSchema,
+  CreateTenantRequestSchema,
+  HOSTED_CYCLE_COMMANDS as CONTRACT_HOSTED_CYCLE_COMMANDS,
+  OrbInstallationIdSchema,
+  RelinkOrbInstallationRequestSchema,
+  TenantProductQuerySchema,
+} from "./generated/control-plane-contract.js";
 import { normalizeSharedSecret, verifyBearer } from "./auth.js";
 import { routeOrbWebhook, type RouterNamespaceLike } from "./orb-webhook-router.js";
 import {
@@ -71,44 +79,46 @@ function safeRecord(record: Pick<TenantRegistryRecord, "tenant" | "product" | "s
   };
 }
 
-/** The only `command` names #7182's hosted entry point (loopover-miner-hosted) actually dispatches --
- *  mirrors packages/loopover-miner/lib/hosted-entry.ts's own `HOSTED_CYCLE_COMMANDS` keys exactly. Kept as a
- *  plain string literal here (not imported) since this package has no cross-package type/value coupling with
- *  loopover-miner anywhere else -- a drift between the two lists would only matter if someone edits one
- *  without the other, which is why both list comments point at each other. */
-const HOSTED_CYCLE_COMMANDS = ["discover", "manage-poll", "attempt"] as const;
+/** The only `command` names #7182's hosted entry point (loopover-miner-hosted) actually dispatches.
+ *  #9750: no longer a plain literal that merely POINTS at packages/loopover-miner/lib/hosted-entry.ts's own
+ *  list -- both now come from the contract, and the miner's copy is asserted against it, so the two cannot
+ *  drift while their comments claim they agree. */
+const HOSTED_CYCLE_COMMANDS = CONTRACT_HOSTED_CYCLE_COMMANDS;
 
 /** Validated body of `POST /v1/tenants`'s optional `schedule` field (#7182): configures a NEW AMS tenant's
  *  cron-wake cadence at creation time. `undefined` input (the field omitted entirely) is valid and means "no
  *  schedule yet" -- an AMS tenant with no schedule simply never gets woken, which is a legitimate state, not
  *  an error. `intervalMs` has no configured maximum: an operator setting an absurdly long interval is their
- *  own call to make, not something this validation second-guesses. */
+ *  own call to make, not something this validation second-guesses.
+ *
+ *  #9750: AmsCycleScheduleRequestSchema replaces the hand-rolled field walk. The per-field messages are
+ *  preserved verbatim -- they are what an operator reads out of the CLI -- so this rejects exactly what it
+ *  rejected before, and `nextDueAt` is still minted here rather than accepted from a caller. */
 function parseScheduleRequest(value: unknown): AmsCycleSchedule | string | undefined {
   if (value === undefined) return undefined;
   if (value === null || typeof value !== "object" || Array.isArray(value)) return "schedule must be a JSON object";
-  const { command, args, intervalMs } = value as Record<string, unknown>;
-  if (typeof command !== "string" || !(HOSTED_CYCLE_COMMANDS as readonly string[]).includes(command)) {
-    return `schedule.command must be one of: ${HOSTED_CYCLE_COMMANDS.join(", ")}`;
-  }
-  if (args !== undefined && (!Array.isArray(args) || !args.every((value): value is string => typeof value === "string"))) {
-    return "schedule.args must be an array of strings";
-  }
-  if (typeof intervalMs !== "number" || !Number.isFinite(intervalMs) || intervalMs <= 0) {
+  const parsed = AmsCycleScheduleRequestSchema.safeParse(value);
+  if (!parsed.success) {
+    const path = parsed.error.issues[0]?.path[0];
+    if (path === "command") return `schedule.command must be one of: ${HOSTED_CYCLE_COMMANDS.join(", ")}`;
+    if (path === "args") return "schedule.args must be an array of strings";
     return "schedule.intervalMs must be a positive number of milliseconds";
   }
-  return { command, args: Array.isArray(args) ? args : [], intervalMs, nextDueAt: new Date().toISOString() };
+  return { command: parsed.data.command, args: parsed.data.args ?? [], intervalMs: parsed.data.intervalMs, nextDueAt: new Date().toISOString() };
 }
 
 /** Validated body of `POST /v1/tenants`'s optional `orbInstallationId` field (#7181): a GitHub App
  *  installation ID, always a positive integer (GitHub's own ID space). `undefined` input (the field omitted)
  *  is valid -- an ORB tenant with no installation linked yet simply never receives a routed webhook, which is
- *  a legitimate state during onboarding, not an error. */
+ *  a legitimate state during onboarding, not an error.
+ *
+ *  #9750: the shape check is now OrbInstallationIdSchema, so the route and the published document agree by
+ *  construction. The message is unchanged and still returned as a string, because callers (and the CLI that
+ *  surfaces it) read that exact wording. */
 function parseOrbInstallationId(value: unknown): number | string | undefined {
   if (value === undefined) return undefined;
-  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
-    return "orbInstallationId must be a positive integer";
-  }
-  return value;
+  const parsed = OrbInstallationIdSchema.safeParse(value);
+  return parsed.success ? parsed.data : "orbInstallationId must be a positive integer";
 }
 
 export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
@@ -134,9 +144,16 @@ export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
   app.post("/v1/tenants", async (c) => {
     const body: unknown = await c.req.json().catch(() => null);
     if (body === null || typeof body !== "object") return c.json({ error: "invalid_json" }, 400);
-    const { name, product, schedule: scheduleInput, orbInstallationId: orbInstallationIdInput } = body as Record<string, unknown>;
-    if (typeof name !== "string" || !name.trim()) return c.json({ error: "invalid_request", message: "name is required" }, 400);
-    if (typeof product !== "string" || !product.trim()) return c.json({ error: "invalid_request", message: "product is required" }, 400);
+    const { name: nameInput, product: productInput, schedule: scheduleInput, orbInstallationId: orbInstallationIdInput } = body as Record<string, unknown>;
+    // #9750: the same two required-and-non-blank checks, now expressed by the schema the document publishes.
+    // Reported field by field rather than as a zod issue list, because these messages are what an operator
+    // reads out of the CLI and a shape change here would be a behavior change for them.
+    const identity = CreateTenantRequestSchema.pick({ name: true, product: true }).safeParse({ name: nameInput, product: productInput });
+    if (!identity.success) {
+      const field = identity.error.issues[0]?.path[0] === "product" ? "product" : "name";
+      return c.json({ error: "invalid_request", message: `${field} is required` }, 400);
+    }
+    const { name, product } = identity.data;
     const schedule = parseScheduleRequest(scheduleInput);
     if (typeof schedule === "string") return c.json({ error: "invalid_request", message: schedule }, 400);
     if (schedule && product !== "ams") return c.json({ error: "invalid_request", message: 'schedule is only valid for product "ams"' }, 400);
@@ -229,10 +246,11 @@ export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
   app.patch("/v1/tenants/:name/orb-installation", async (c) => {
     const name = c.req.param("name");
     // Product is required so the registry can resolve the same `${product}:${name}` key used at create (#8024).
-    const product = c.req.query("product");
-    if (typeof product !== "string" || !product.trim()) {
+    const productQuery = TenantProductQuerySchema.safeParse({ product: c.req.query("product") });
+    if (!productQuery.success) {
       return c.json({ error: "invalid_request", message: "product query parameter is required" }, 400);
     }
+    const product = productQuery.data.product;
     if (product !== "orb") {
       return c.json({ error: "invalid_request", message: 'orbInstallationId is only valid for product "orb"' }, 400);
     }
@@ -246,8 +264,11 @@ export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
     if (orbInstallationIdInput === undefined) {
       return c.json({ error: "invalid_request", message: "orbInstallationId is required" }, 400);
     }
-    const orbInstallationId = parseOrbInstallationId(orbInstallationIdInput);
-    if (typeof orbInstallationId === "string") return c.json({ error: "invalid_request", message: orbInstallationId }, 400);
+    // RelinkOrbInstallationRequestSchema is the published shape; the field-level message stays the one the
+    // create route returns for the same value, so a caller sees one wording for one mistake.
+    const relink = RelinkOrbInstallationRequestSchema.safeParse({ orbInstallationId: orbInstallationIdInput });
+    if (!relink.success) return c.json({ error: "invalid_request", message: "orbInstallationId must be a positive integer" }, 400);
+    const orbInstallationId = relink.data.orbInstallationId;
 
     // Refuse to steal an installation ID a DIFFERENT, currently-claiming tenant still legitimately holds —
     // same conflict posture as the create route's own check, just excluding this tenant's own current record
@@ -268,10 +289,11 @@ export function createTenantHttpApp(deps: TenantHttpAppDeps): Hono {
   app.delete("/v1/tenants/:name", async (c) => {
     const name = c.req.param("name");
     // Product is required so the registry can resolve the same `${product}:${name}` key used at create (#8024).
-    const product = c.req.query("product");
-    if (typeof product !== "string" || !product.trim()) {
+    const productQuery = TenantProductQuerySchema.safeParse({ product: c.req.query("product") });
+    if (!productQuery.success) {
       return c.json({ error: "invalid_request", message: "product query parameter is required" }, 400);
     }
+    const product = productQuery.data.product;
 
     const existing = await deps.registry.get(name, product);
     if (!existing) return c.json({ error: "tenant_not_found" }, 404);

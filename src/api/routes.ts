@@ -4,7 +4,7 @@ import { handleAppError, nonErrorBoundary } from "./error-handler";
 import { createWorkerPostHogErrorMiddleware } from "./worker-posthog";
 import { z } from "zod";
 import { parsePositiveInt } from "../utils/json";
-import { analyzePRQueue, type AuthorRole, type ChecksStatus } from "../queue-intelligence";
+import { analyzePRQueue } from "../queue-intelligence";
 import { completeGitHubWebOAuth, createSessionFromGitHubToken, getLiveSessionGitHubToken, pollGitHubDeviceFlow, startGitHubDeviceFlow, startGitHubWebOAuth } from "../auth/github-oauth";
 import { enforceRateLimit, enforceShotRenderGlobalCeiling, routeClassForPath } from "../auth/rate-limit";
 import { handleShot } from "../review/visual/shot";
@@ -34,7 +34,6 @@ import {
 import { normalizeGittBountySnapshot } from "../bounties/ingest";
 import { DEFAULT_COMMAND_AUTHORIZATION_POLICY, normalizeCommandAuthorizationPolicy } from "../settings/command-authorization";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
-import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
 import {
   countOpenIssues,
   countOpenPullRequests,
@@ -57,8 +56,6 @@ import {
   listAuditEventsForTarget,
   listNotificationDeliveriesForRecipient,
   markNotificationDeliveriesRead,
-  MAX_NOTIFICATION_DELIVERY_ID_LENGTH,
-  MAX_NOTIFICATION_MARK_READ_IDS,
   listPendingAgentActions,
   recordAuditEvent,
   recordPostMergeIncidentReport,
@@ -177,7 +174,7 @@ import {
 } from "../orb/relay";
 import { computeFleetAnalytics } from "../orb/analytics";
 import { handleMcpRequest } from "../mcp/server";
-import { simulateOpenPrPressureShape } from "../mcp/server";
+import { simulateOpenPrPressureSchema } from "../mcp/server";
 import { simulateOpenPrPressure, type OpenPrPressureInput } from "../services/open-pr-pressure-scenarios";
 import { DISCOVERY_PATHS, discoveryDocumentsFor, respondWithDocument, toolsForDeployment } from "../mcp/discovery-routes";
 import { isSelfHostedReviewRuntime } from "../selfhost/review-runtime";
@@ -256,7 +253,6 @@ import { buildAmsMinerCohortComparison } from "../review/ams-miner-cohort";
 import { loadCachedBurdenForecastResponse } from "../services/burden-forecast";
 import { buildUnavailableQueueTrendReport } from "../services/queue-trends";
 import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outcome-patterns";
-import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import {
   buildBountyAdvisory,
   buildCollisionReport,
@@ -326,14 +322,13 @@ import { buildMaintainerSlopDuplicateTrend, SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT 
 import { buildFederatedBenchmark } from "../orb/federated-benchmark";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import { buildGateOutcomeBreakdown, GATE_OUTCOME_BREAKDOWN_WINDOW_DAYS } from "../services/gate-outcome-breakdown";
-import { MAX_LOCAL_SCORER_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT } from "../signals/local-scorer-diagnostics";
-import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES, resolveEffectiveSettings } from "../signals/focus-manifest";
+import { compileFocusManifestPolicy, resolveEffectiveSettings } from "../signals/focus-manifest";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest, upsertRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { generateContributorIssueDrafts } from "../services/contributor-issue-draft";
 import { generateIssuePlanDrafts } from "../services/issue-plan-draft";
-import { buildRepoSettingsPreview, PUBLIC_SURFACE_SKIP_REASONS, skippedPrAuditRemediation } from "../signals/settings-preview";
+import { buildRepoSettingsPreview, skippedPrAuditRemediation } from "../signals/settings-preview";
 import {
   buildGittensorConfigRecommendation,
   buildRegistrationReadiness,
@@ -430,20 +425,6 @@ async function recordRouteProductUsage(
 }
 
 const LOCAL_BRANCH_ANALYSIS_MAX_BODY_BYTES = 1024 * 1024;
-const QUEUE_INTELLIGENCE_MAX_BODY_BYTES = 1024 * 1024;
-const QUEUE_INTELLIGENCE_MAX_PULL_REQUESTS = 250;
-const QUEUE_INTELLIGENCE_MAX_AUTHOR_LENGTH = 100;
-const QUEUE_INTELLIGENCE_MAX_TITLE_LENGTH = 300;
-const QUEUE_INTELLIGENCE_MAX_BODY_LENGTH = 4000;
-const QUEUE_INTELLIGENCE_MAX_DUPLICATE_CANDIDATES = 25;
-
-function isJsonByteLengthWithinLimit(value: unknown, maxBytes: number): boolean {
-  try {
-    return new TextEncoder().encode(JSON.stringify(value)).byteLength <= maxBytes;
-  } catch {
-    return false;
-  }
-}
 
 async function readRequestBodyWithLimit(request: Request, maxBytes: number): Promise<string | null> {
   const stream = request.body;
@@ -469,676 +450,63 @@ async function readRequestBodyWithLimit(request: Request, maxBytes: number): Pro
   return chunks.join("");
 }
 
-const MAX_LOCAL_BRANCH_REF_CHARS = 256;
-const MAX_LOCAL_BRANCH_TEXT_CHARS = 4000;
+// #9750: every request schema this file used to declare inline now lives in @loopover/contract, so an MCP
+// tool wrapping one of these routes references the SAME object rather than a copy of the shape. The one
+// exception is the settings write schema, whose `commandAuthorization` default is a twenty-key policy owned
+// by the engine -- the contract exports the shape as a factory and the engine's value is applied here, once.
+import {
+  markNotificationsReadBodySchema,
+  amsNotificationsBodySchema,
+  watchSubscriptionBodySchema,
+  preflightSchema,
+  localDiffPreflightSchema,
+  validateLinkedIssueSchema,
+  checkBeforeStartSchema,
+  lintPrTextSchema,
+  validateFocusManifestSchema,
+  evaluateEscalationSchema,
+  requestAprTransferSchema,
+  proposePendingActionSchema,
+  intakeIdeaSchema,
+  resultsPayloadSchema,
+  progressSnapshotSchema,
+  testEvidenceSchema,
+  boundaryTestsSchema,
+  slopRiskSchema,
+  improvementPotentialSchema,
+  issueSlopSchema,
+  selfhostDeadLetterQueueQuerySchema,
+  skippedPrAuditQuerySchema,
+  localBranchAnalysisSchema,
+  scorePreviewSchema,
+  agentRunSchema,
+  agentPlanSchema,
+  agentExplainBlockersSchema,
+  maintainerSettingsSchema,
+  installationBulkAgentSettingsSchema,
+  repositoryAiKeySchema,
+  rotatableProviderSchema,
+  providerCredentialSchema,
+  repositoryLinearKeySchema,
+  repositoryAiReviewSchema,
+  contributorIssueDraftGenerateSchema,
+  issuePlanDraftGenerateSchema,
+  settingsPreviewSchema,
+  chatQaRequestSchema,
+  commandPreviewSchema,
+  commandFeedbackSchema,
+  killSwitchUpdateSchema,
+  configPushSchema,
+  digestSubscriptionSchema,
+  postMergeIncidentReportSchema,
+  operatorPostMergeIncidentReportSchema,
+  buildRepositorySettingsSchema,
+  QUEUE_INTELLIGENCE_LIMITS,
+  QueueIntelligencePullRequestSchema,
+  QueueIntelligenceRepoContextSchema,
+} from "@loopover/contract/api-requests";
 
-// #6745: body of POST /v1/contributors/:login/notifications/read. Mirrors markNotificationsReadShape
-// (src/mcp/server.ts) minus `login` (which is the path param): `ids` is optional (absent = mark all delivered).
-const markNotificationsReadBodySchema = z.object({
-  ids: z.array(z.string().min(1).max(MAX_NOTIFICATION_DELIVERY_ID_LENGTH)).max(MAX_NOTIFICATION_MARK_READ_IDS).optional(),
-});
-
-// #7657: AMS miner posts DetectedNotificationEvent-shaped AMS kinds; recipient is forced to the path login.
-const amsNotificationsBodySchema = z.object({
-  events: z
-    .array(
-      z.object({
-        eventType: z.enum(["ams_attempt_started", "ams_attempt_failed", "ams_governor_paused", "ams_pr_outcome"]),
-        repoFullName: z.string().min(1).max(200),
-        pullNumber: z.number().int().min(0),
-        dedupKey: z.string().min(1).max(500),
-        deeplink: z.string().min(1).max(2000),
-        actorLogin: z.string().min(1).max(100),
-        detectedAt: z.string().min(1).max(64),
-      }),
-    )
-    .min(1)
-    .max(20),
-});
-
-// #6746: body of POST/DELETE /v1/contributors/:login/watches. Mirrors watchIssuesShape (src/mcp/server.ts) minus
-// `login` (path param) and `action` (the HTTP verb). `labels` is POST-only (a DELETE ignores it).
-const watchSubscriptionBodySchema = z.object({
-  repoFullName: z.string().min(3).max(200),
-  labels: z.array(z.string().min(1).max(100)).max(50).optional(),
-});
-
-const preflightSchema = z.object({
-  repoFullName: z.string().min(3).max(PREFLIGHT_LIMITS.repoFullNameChars),
-  contributorLogin: z.string().min(1).max(PREFLIGHT_LIMITS.contributorLoginChars).optional(),
-  title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars),
-  body: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
-  labels: z.array(z.string().max(PREFLIGHT_LIMITS.labelChars)).max(PREFLIGHT_LIMITS.labels).optional(),
-  changedFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
-  linkedIssues: z.array(z.number().int().positive()).max(PREFLIGHT_LIMITS.linkedIssues).optional(),
-  tests: z.array(z.string().max(PREFLIGHT_LIMITS.testChars)).max(PREFLIGHT_LIMITS.tests).optional(),
-  authorAssociation: z.string().max(PREFLIGHT_LIMITS.authorAssociationChars).optional(),
-});
-
-const localDiffPreflightSchema = preflightSchema.extend({
-  changedLineCount: z.number().int().min(0).optional(),
-  testFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
-  commitMessage: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
-});
-
-const validateLinkedIssueSchema = z.object({
-  issueNumber: z.number().int().positive(),
-  plannedChange: z
-    .object({
-      title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars).optional(),
-      changedFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
-      contributorLogin: z.string().min(1).max(PREFLIGHT_LIMITS.contributorLoginChars).optional(),
-    })
-    .optional(),
-});
-
-const checkBeforeStartSchema = z.object({
-  issueNumber: z.number().int().positive().optional(),
-  title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars).optional(),
-  plannedPaths: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
-});
-
-const lintPrTextSchema = z.object({
-  commitMessages: z.array(z.string().max(PREFLIGHT_LIMITS.bodyChars)).max(50).optional(),
-  prBody: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
-  linkedIssue: z.number().int().positive().optional(),
-});
-
-const validateFocusManifestSchema = z.object({
-  content: z.string().max(256 * 1024),
-  source: z.enum(["repo_file", "api_record", "none"]).optional(),
-});
-
-// Pure local-metadata slop self-checks (no repo data, no secrets) — mirror the loopover_check_slop_risk /
-// loopover_check_issue_slop MCP tools so the npm package can offer the same agent-native self-check.
-// #6754: mirrors the loopover_evaluate_escalation MCP tool's input shape exactly (src/mcp/server.ts) so the
-// REST surface can never accept something the tool would reject, or vice versa.
-const evaluateEscalationSchema = z.object({
-  runStatus: z.enum(["running", "converged", "abandoned", "error"]),
-  healthStatus: z.enum(["healthy", "degraded", "critical"]).optional(),
-  customerFlagged: z.boolean().optional(),
-  killRequested: z.boolean().optional(),
-});
-
-// #7742: customer-facing APR transfer request. Completion is resolved SERVER-SIDE via loadAprIdeaCompletion —
-// never accepted from the body (that was the #8000 Superagent P1). `.strict()` rejects any attempt to smuggle
-// `ideaComplete` (or other unknown keys). Plan/payment fields are deliberately absent.
-const requestAprTransferSchema = z
-  .object({
-    installationId: z.number().int().positive(),
-    repoFullName: z.string().min(1).max(200),
-    newOwner: z.string().min(1).max(100),
-    ideaId: z.string().min(1).max(200).optional(),
-  })
-  .strict();
-
-// #6744: mirrors `ProposeActionInput` in @loopover/contract VERBATIM, minus owner/repo (they are path params), so
-// POST /v1/repos/:owner/:repo/agent/pending-actions can never stage an action the loopover_propose_action MCP
-// tool would reject, or vice versa. actionClass stays the 7-value propose set (a subset of AgentActionClass).
-const proposePendingActionSchema = z.object({
-  pullNumber: z.number().int().positive(),
-  actionClass: z.enum(["review", "request_changes", "approve", "merge", "close", "label", "review_state_label"]),
-  reason: z.string().max(500).optional(),
-  label: z.string().min(1).max(100).optional(),
-  reviewBody: z.string().max(60000).optional(),
-  mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
-  closeComment: z.string().max(60000).optional(),
-});
-
-// #6755: mirrors `IntakeIdeaInput` in @loopover/contract VERBATIM. Fields are deliberately LOOSE here for the same
-// reason they are on the tool: the engine's validateIdeaSubmission owns the real bounds/format checks and returns
-// the actionable error list, so an empty/malformed submission must reach the handler rather than be rejected
-// upstream by the schema.
-const intakeIdeaSchema = z.object({
-  id: z.string().optional(),
-  title: z.string().optional(),
-  body: z.string().optional(),
-  targetRepo: z.string().optional(),
-  constraints: z.array(z.string()).max(50).optional(),
-  acceptanceHints: z.array(z.string()).max(50).optional(),
-  priority: z.string().optional(),
-  decomposition: z
-    .array(z.object({ key: z.string(), title: z.string(), body: z.string(), dependsOn: z.array(z.string()).max(50).optional() }))
-    .max(50)
-    .optional(),
-});
-
-// #6752: mirrors `BuildResultsPayloadInput` in @loopover/contract VERBATIM (same bounds, same optionality) so the
-// REST surface can never accept an input the MCP tool would reject, or vice versa.
-const resultsPayloadSchema = z.object({
-  repoFullName: z.string().min(1),
-  prNumber: z.number().int().nullable().optional(),
-  title: z.string(),
-  changedFiles: z
-    .array(z.object({ path: z.string(), additions: z.number().int().optional(), deletions: z.number().int().optional() }))
-    .max(5000)
-    .optional(),
-  status: z.enum(["open", "merged", "closed"]).optional(),
-});
-
-// #6753: mirrors `BuildProgressSnapshotInput` in @loopover/contract VERBATIM (same bounds, same optionality) so the
-// REST surface can never accept an input the MCP tool would reject, or vice versa.
-const progressSnapshotSchema = z.object({
-  iteration: z.number().int(),
-  maxIterations: z.number().int().nullable().optional(),
-  phase: z.enum(["queued", "claiming", "coding", "reviewing", "submitting", "done"]),
-  status: z.enum(["running", "converged", "abandoned", "error"]),
-  recentActivity: z
-    .array(z.object({ step: z.string(), detail: z.string().optional(), at: z.string().optional() }))
-    .max(1000)
-    .optional(),
-});
-
-// #6749: mirrors checkTestEvidenceShape in src/mcp/server.ts VERBATIM (same bounds, same optionality) so the
-// REST surface can never accept an input the MCP tool would reject, or vice versa.
-const testEvidenceSchema = z.object({
-  changedPaths: z.array(z.string().min(1).max(400)).max(2000),
-  testFiles: z.array(z.string().min(1).max(400)).max(2000).optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-});
-
-// #6750: mirrors suggestBoundaryTestsShape in src/mcp/server.ts VERBATIM (same bounds, same .strict()
-// objects, same optionality) so the REST surface can never accept an input the MCP tool would reject.
-const boundaryTestsSchema = z.object({
-  changedFiles: z.array(z.object({ path: z.string().min(1).max(400) }).strict()).max(500),
-  boundaryTouches: z
-    .array(
-      z
-        .object({
-          path: z.string().min(1).max(400),
-          kind: z.enum(["array_index_bounds", "null_or_undefined_branch", "empty_collection_check"]),
-        })
-        .strict(),
-    )
-    .max(20)
-    .optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-  testFiles: z.array(z.string().max(400)).max(2000).optional(),
-});
-
-const slopRiskSchema = z.object({
-  changedFiles: z
-    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
-    .max(2000)
-    .optional(),
-  description: z.string().max(20000).optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-  testFiles: z.array(z.string().max(400)).max(2000).optional(),
-  commitMessages: z.array(z.string().max(2000)).max(200).optional(),
-  hasLinkedIssue: z.boolean().optional(),
-  issueDiscoveryLane: z.boolean().optional(),
-});
-
-// #6748: mirrors checkImprovementPotentialShape in src/mcp/server.ts VERBATIM (same bounds, same optionality)
-// so the REST surface can never accept an input the MCP tool would reject, or vice versa.
-const improvementPotentialSchema = z.object({
-  changedFiles: z
-    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
-    .max(2000)
-    .optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-  testFiles: z.array(z.string().max(400)).max(2000).optional(),
-  patchCoverageDeltaPercent: z.number().optional(),
-  complexityDeltas: z
-    .array(
-      z.object({
-        file: z.string().min(1).max(400),
-        line: z.number().int().min(1),
-        name: z.string().min(1).max(400),
-        before: z.number().int().min(0),
-        after: z.number().int().min(0),
-        delta: z.number().int(),
-      }),
-    )
-    .max(2000)
-    .optional(),
-  duplicationDeltas: z
-    .array(
-      z.object({
-        file: z.string().min(1).max(400),
-        line: z.number().int().min(1),
-        duplicateOfLine: z.number().int().min(1),
-        lines: z.number().int().min(1),
-      }),
-    )
-    .max(2000)
-    .optional(),
-});
-const issueSlopSchema = z.object({
-  title: z.string().max(500).optional(),
-  body: z.string().max(40000).optional(),
-});
-
-const selfhostDeadLetterQueueQuerySchema = z
-  .object({
-    limit: z.coerce.number().int().optional(),
-    offset: z.coerce.number().int().optional(),
-  })
-  .strict();
-
-const skippedPrAuditQuerySchema = z
-  .object({
-    limit: z.coerce.number().int().optional(),
-    offset: z.coerce.number().int().optional(),
-    repoFullName: z.string().trim().min(3).max(200).optional(),
-    reason: z.enum(PUBLIC_SURFACE_SKIP_REASONS).optional(),
-    since: z.string().trim().min(1).max(64).optional(),
-  })
-  .strict();
-
-const localBranchChangedFileSchema = z
-  .object({
-    path: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
-    previousPath: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
-    additions: z.number().int().min(0).optional(),
-    deletions: z.number().int().min(0).optional(),
-    status: z.enum(["added", "modified", "deleted", "renamed", "copied", "unknown"]).optional(),
-    binary: z.boolean().optional(),
-  })
-  .strict();
-
-const localBranchValidationSchema = z
-  .object({
-    command: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
-    status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
-    summary: z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS).optional(),
-    durationMs: z.number().int().min(0).optional(),
-    exitCode: z.number().int().min(0).optional(),
-  })
-  .strict();
-
-const localBranchScorerSchema = z
-  .object({
-    mode: z.enum(["metadata_only", "external_command", "gittensor_root"]),
-    activeModel: z.string().max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
-    sourceTokenScore: z.number().min(0).optional(),
-    totalTokenScore: z.number().min(0).optional(),
-    sourceLines: z.number().min(0).optional(),
-    testTokenScore: z.number().min(0).optional(),
-    nonCodeTokenScore: z.number().min(0).optional(),
-    nonCodeLines: z.number().min(0).optional(),
-    warnings: z.array(z.string().max(MAX_LOCAL_SCORER_WARNING_CHARS)).max(MAX_LOCAL_SCORER_WARNING_COUNT).optional(),
-  })
-  .strict();
-
-const linkedIssueContextSchema = z
-  .object({
-    status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]).optional(),
-    source: z.enum(["user_supplied", "official_mirror", "github_cache", "issue_quality", "missing"]).optional(),
-    issueNumbers: z.array(z.number().int().positive()).max(50).optional(),
-    solvedByPullRequests: z.array(z.number().int().positive()).max(50).optional(),
-    reason: z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS).optional(),
-    warnings: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
-  })
-  .strict();
-
-const branchEligibilitySchema = z
-  .object({
-    status: z.enum(["eligible", "ineligible", "unknown"]),
-    source: z.enum(["github_metadata", "local_metadata", "registry", "user_supplied"]).optional(),
-    reason: z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS).optional(),
-    checkedAt: z.string().max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
-    stale: z.boolean().optional(),
-  })
-  .strict()
-  .transform((value) => ({ ...value, status: value.status === "eligible" ? ("unknown" as const) : value.status, source: "user_supplied" as const }));
-
-const focusManifestInputSchema = z
-  .record(z.string(), z.unknown())
-  .refine((manifest) => isJsonByteLengthWithinLimit(manifest, MAX_FOCUS_MANIFEST_BYTES), {
-    message: `focusManifest must serialize to ${MAX_FOCUS_MANIFEST_BYTES} bytes or fewer`,
-  });
-
-export const localBranchAnalysisSchema = z
-  .object({
-    login: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS),
-    repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
-    baseRef: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
-    headRef: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
-    branchName: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
-    baseSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
-    headSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
-    mergeBaseSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
-    remoteTrackingSha: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
-    commitMessages: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(30).optional(),
-    changedFiles: z.array(localBranchChangedFileSchema).max(500).optional(),
-    validation: z.array(localBranchValidationSchema).max(50).optional(),
-    linkedIssues: z.array(z.number().int().positive()).max(SCENARIO_MAX_LINKED_ISSUE_NUMBERS).optional(),
-    labels: z.array(z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS)).max(50).optional(),
-    title: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
-    body: z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS).optional(),
-    localScorer: localBranchScorerSchema.optional(),
-    pendingMergedPrCount: z.number().int().min(0).optional(),
-    pendingClosedPrCount: z.number().int().min(0).optional(),
-    approvedPrCount: z.number().int().min(0).optional(),
-    expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
-    projectedCredibility: z.number().min(0).max(1).optional(),
-    scenarioNotes: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
-    pendingCommitCount: z.number().int().min(0).optional(),
-    ciStatusHints: z.array(z.string().max(MAX_LOCAL_BRANCH_TEXT_CHARS)).max(20).optional(),
-    focusManifest: focusManifestInputSchema.optional(),
-    branchEligibility: branchEligibilitySchema.optional(),
-  })
-  .strict();
-
-const scorePreviewSchema = z.object({
-  repoFullName: z.string().min(3),
-  targetType: z.enum(["planned_pr", "pull_request", "local_diff", "variant"]).default("planned_pr"),
-  targetKey: z.string().optional(),
-  contributorLogin: z.string().min(1).optional(),
-  labels: z.array(z.string()).optional(),
-  linkedIssueMode: z.enum(["none", "standard", "maintainer"]).default("none"),
-  linkedIssueContext: linkedIssueContextSchema.optional(),
-  sourceTokenScore: z.number().min(0).optional(),
-  totalTokenScore: z.number().min(0).optional(),
-  sourceLines: z.number().min(0).optional(),
-  testTokenScore: z.number().min(0).optional(),
-  nonCodeTokenScore: z.number().min(0).optional(),
-  nonCodeLines: z.number().min(0).optional(),
-  existingContributorTokenScore: z.number().min(0).optional(),
-  prAgeHours: z.number().min(0).optional(),
-  openPrCount: z.number().int().min(0).optional(),
-  mergedPullRequests: z.number().int().min(0).optional(),
-  validSolvedIssues: z.number().int().min(0).optional(),
-  issueCredibility: z.number().min(0).max(1).optional(),
-  credibility: z.number().min(0).max(1).optional(),
-  changesRequestedCount: z.number().int().min(0).optional(),
-  duplicateRiskCount: z.number().int().min(0).optional(),
-  fixedBaseScore: z.number().min(0).optional(),
-  metadataOnly: z.boolean().default(false),
-  pendingMergedPrCount: z.number().int().min(0).optional(),
-  pendingClosedPrCount: z.number().int().min(0).optional(),
-  approvedPrCount: z.number().int().min(0).optional(),
-  expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
-  projectedCredibility: z.number().min(0).max(1).optional(),
-  scenarioNotes: z.array(z.string()).max(20).optional(),
-  branchEligibility: branchEligibilitySchema.optional(),
-});
-
-const agentSurfaceSchema = z.enum(["api", "mcp", "github_comment"]).default("api");
-
-const agentRunSchema = z
-  .object({
-    objective: z.string().min(1).max(500),
-    actorLogin: z.string().min(1),
-    surface: agentSurfaceSchema.optional(),
-    target: z
-      .object({
-        repoFullName: z.string().min(3).optional(),
-        pullNumber: z.number().int().positive().optional(),
-        issueNumber: z.number().int().positive().optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
-
-const agentPlanSchema = z
-  .object({
-    login: z.string().min(1),
-    objective: z.string().min(1).max(500).optional(),
-    repoFullName: z.string().min(3).optional(),
-    surface: agentSurfaceSchema.optional(),
-  })
-  .strict();
-
-const agentExplainBlockersSchema = z.union([localBranchAnalysisSchema, agentPlanSchema]);
-
-// reviewCheckMode/linkedIssueGateMode/duplicatePrGateMode/qualityGateMode/qualityGateMinScore/
-// aiReviewMode/aiReviewByok/aiReviewProvider/aiReviewModel/aiReviewAllAuthors removed from this write
-// schema (Batch C, loopover#6444) -- config-as-code only via .loopover.yml's gate.* block now;
-// upsertRepositorySettings no longer has a DB column to write any of them into.
-const repositorySettingsSchema = z.object({
-  gatePack: z.enum(["gittensor", "oss-anti-slop"]).default("gittensor"),
-  aiReviewLowConfidenceDisposition: z.enum(["one_shot", "hold_for_review", "advisory_only"]).default("hold_for_review"),
-  closeOwnerAuthors: z.boolean().default(false),
-  autoLabelEnabled: z.boolean().default(true),
-  // #6443: gittensorLabel/blacklistLabel/createMissingLabel/contributorBlacklist removed -- no longer
-  // DB-backed, config-as-code only via .loopover.yml's settings: block now.
-  requireLinkedIssue: z.boolean().default(false),
-  commandAuthorization: z
-    .object({
-      default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4).optional(),
-      commands: z.record(z.string().trim().min(1).max(64), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4)).optional(),
-    })
-    .default(DEFAULT_COMMAND_AUTHORIZATION_POLICY),
-});
-
-// #130 maintainer self-serve settings editor. A PATCH-style subset: every field optional so the maintainer
-// dashboard can save just the group it changed. Excludes the secret-bearing aiReview* group (set via the
-// dedicated /ai-review + /ai-key routes) and the operator-only scoring internal (backfillEnabled). The
-// handler loads current settings and merges, since upsertRepositorySettings defaults any absent field
-// rather than preserving it.
-// reviewCheckMode/linkedIssueGateMode/duplicatePrGateMode/qualityGateMode/qualityGateMinScore/
-// selfAuthoredLinkedIssueGateMode removed from this write schema (Batch C, loopover#6444) --
-// config-as-code only via .loopover.yml's gate.* block now.
-const maintainerSettingsSchema = z
-  .object({
-    gatePack: z.enum(["gittensor", "oss-anti-slop"]),
-    mergeReadinessGateMode: z.enum(["off", "advisory", "block"]),
-    manifestPolicyGateMode: z.enum(["off", "advisory", "block"]),
-    linkedIssueSatisfactionGateMode: z.enum(["off", "advisory", "block"]),
-    contentLaneDeliverableGateMode: z.enum(["off", "advisory", "block"]),
-    backtestRegressionGateMode: z.enum(["off", "advisory", "block"]),
-    // #6443: mergeTrainMode/gittensorLabel/blacklistLabel/createMissingLabel removed -- no longer DB-backed,
-    // config-as-code only via .loopover.yml's settings: block now.
-    // #6446: firstTimeContributorGrace removed -- a dead, never-wired RESERVED/INERT field (#2266); deleted
-    // rather than wired in, since the gate's one-shot design deliberately never softens a blocker for a
-    // newcomer.
-    slopGateMode: z.enum(["off", "advisory", "block"]),
-    slopGateMinScore: z.number().int().min(0).max(100).nullable(),
-    slopAiAdvisory: z.boolean(),
-    autoLabelEnabled: z.boolean(),
-    closeOwnerAuthors: z.boolean(),
-    requireLinkedIssue: z.boolean(),
-    agentPaused: z.boolean(),
-    agentDryRun: z.boolean(),
-    requireFreshRebaseWindowMinutes: z.number().int().positive().nullable(),
-    staleBaseAheadByThreshold: z.number().int().positive().nullable(),
-    commandAuthorization: z.object({
-      default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4).optional(),
-      commands: z.record(z.string().trim().min(1).max(64), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])).max(4)).optional(),
-    }),
-    // Agent-layer config (#773/#774). The DB layer normalizes autonomy (deny-by-default), so a loose
-    // record here is safe — invalid entries are dropped on persist.
-    // #6445: autoMaintain removed -- no longer DB-backed, config-as-code only via .loopover.yml's
-    // settings: block now.
-    autonomy: z.record(z.string().trim().min(1).max(32), z.enum(["observe", "auto_with_approval", "auto"])),
-  })
-  .partial();
-
-// #7676 installation-scoped bulk pause/dry-run: the same two per-repo flags maintainerSettingsSchema already
-// validates, picked out on their own so a tenant with many repos under one installation can flip both at once
-// instead of one PUT /v1/repos/:owner/:repo/settings call per repo. Deliberately just these two fields -- not
-// a general bulk settings merge -- and deliberately separate from the global operator kill-switch
-// (getGlobalAgentFrozenState), which stays its own singleton untouched by this.
-const installationBulkAgentSettingsSchema = maintainerSettingsSchema.pick({ agentPaused: true, agentDryRun: true }).strict();
-
-// downgradeQualityGateMode (the settings-write-path "block" -> "advisory" downgrade for
-// qualityGateMode/#2267) was removed here: qualityGateMode is config-as-code only now (Batch C,
-// loopover#6444), so no write path sets it anymore. resolveEffectiveSettings's own downgrade logic
-// (src/signals/focus-manifest.ts) still applies the same rule on the read/resolver path.
-
-// Maintainer BYOK provider key. Write-only: the key is encrypted at rest and never returned. A loose
-// prefix check catches the common provider/key mismatch (e.g. pasting an OpenAI key under Anthropic)
-// without coupling to exact provider key formats: Anthropic keys start with `sk-ant-`; OpenAI keys
-// start with `sk-` but never `sk-ant-`.
-const repositoryAiKeySchema = z
-  .object({
-    provider: z.enum(["anthropic", "openai"]),
-    key: z.string().trim().min(20).max(400),
-    model: z.string().trim().min(1).max(120).nullable().optional(),
-  })
-  .refine((value) => (value.provider === "anthropic" ? value.key.startsWith("sk-ant-") : value.key.startsWith("sk-") && !value.key.startsWith("sk-ant-")), {
-    message: "API key does not match the selected provider (Anthropic keys start with sk-ant-, OpenAI keys start with sk-).",
-    path: ["key"],
-  });
-
-// Instance subscription-CLI credential (#9543). Write-only: encrypted at rest, never returned. The
-// single-line / no-comment / no-surrounding-whitespace rule is the SAME one the host-side rotation path
-// enforces, for the same reason -- src/selfhost/load-file-secrets.ts only .trim()s, so a label line above
-// the value silently becomes part of the credential and every AI call fails auth while the container stays
-// healthy. Validating it here too means the DB path cannot store a shape the file path would reject.
-const rotatableProviderSchema = z.enum(["claude-code", "codex"]);
-const providerCredentialSchema = z.object({
-  credential: z
-    .string()
-    .min(1)
-    .max(4096)
-    .refine((value) => !/[\r\n]/.test(value), "must be a single line -- a comment or label line would become part of the credential")
-    .refine((value) => value.trim() === value, "must not have leading or trailing whitespace")
-    .refine((value) => !value.startsWith("#"), "must not start with '#' -- that is a comment, not a credential"),
-});
-
-// Linear personal API key (#3186) -- no provider-prefix assertion (unlike the AI-key schema above): Linear's
-// key format is not a stable enough public contract to hard-validate against, so only a length bound applies.
-const repositoryLinearKeySchema = z.object({
-  key: z.string().trim().min(20).max(400),
-});
-
-// Maintainer-settable AI-review config. mode/byok/provider/model/allAuthors are config-as-code only now
-// (Batch C, loopover#6444) -- set via a repo's own .loopover.yml gate.aiReview.* block, not this route --
-// so they are intentionally NOT accepted here anymore (a caller submitting the old shape gets a clean
-// validation error naming the current route, not a silently-ignored write). The secret key is set
-// separately via the ai-key route; never here.
-const repositoryAiReviewSchema = z
-  .object({
-    closeOwnerAuthors: z.boolean().optional(),
-    // Disposition for a sub-aiReviewCloseConfidence-floor ai_consensus_defect/ai_review_split finding (#4603).
-    // Optional -- upsertRepositorySettings applies its own "hold_for_review" default when omitted.
-    lowConfidenceDisposition: z.enum(["one_shot", "hold_for_review", "advisory_only"]).optional(),
-  })
-  // .strict() so a caller still sending the pre-Batch-C shape (mode/byok/provider/model/allAuthors) gets
-  // an immediate "unrecognized key" validation error naming exactly which fields moved, instead of those
-  // keys being silently dropped and the request appearing to partially succeed.
-  .strict();
-
-const contributorIssueDraftGenerateSchema = z.object({
-  dryRun: z.boolean().optional().default(true),
-  create: z.boolean().optional().default(false),
-  limit: z.number().int().min(1).max(20).optional().default(5),
-});
-
-// #7764: REST mirror of the loopover_plan_repo_issues MCP tool (src/mcp/server.ts's planRepoIssuesShape).
-// Unlike the contributor-issue-draft schema above, `goal` is a REQUIRED maintainer-supplied free-form string
-// and `limit` is capped lower (10, not 20): every draft here costs real LLM spend, unlike that tool's zero-cost
-// static signals. dryRun/create keep the same create-safety contract (create alone is rejected below).
-const issuePlanDraftGenerateSchema = z.object({
-  goal: z.string().trim().min(1).max(2000),
-  dryRun: z.boolean().optional().default(true),
-  create: z.boolean().optional().default(false),
-  limit: z.number().int().min(1).max(10).optional().default(5),
-});
-
-const settingsPreviewSchema = z.object({
-  sample: z
-    .object({
-      authorLogin: z.string().trim().min(1).max(100).optional(),
-      authorType: z.enum(["User", "Bot"]).optional(),
-      authorAssociation: z.enum(["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", "NONE"]).optional(),
-      minerStatus: z.enum(["confirmed", "not_found", "unavailable"]).optional(),
-      title: z.string().max(300).optional(),
-      body: z.string().max(10000).nullable().optional(),
-      labels: z.array(z.string().max(100)).max(50).optional(),
-      linkedIssues: z.array(z.number().int().positive()).max(50).optional(),
-      commandName: z.string().trim().min(1).max(64).optional(),
-      commenterLogin: z.string().trim().min(1).max(100).optional(),
-      commenterAssociation: z.enum(["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", "NONE"]).optional(),
-    })
-    .optional(),
-});
-
-const chatQaRequestSchema = z
-  .object({
-    question: z.string().trim().min(1).max(500),
-  })
-  .strict();
-
-const commandPreviewSchema = z
-  .object({
-    command: z.string().min(1).max(80),
-    repoFullName: z.string().min(3).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
-    pullNumber: z.number().int().positive().optional(),
-    login: z.string().min(1).max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
-    sample: z
-      .object({
-        authorLogin: z.string().trim().min(1).max(100).optional(),
-        authorType: z.enum(["User", "Bot"]).optional(),
-        authorAssociation: z.enum(["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", "NONE"]).optional(),
-        commenterLogin: z.string().trim().min(1).max(100).optional(),
-        commenterAssociation: z.enum(["OWNER", "MEMBER", "COLLABORATOR", "CONTRIBUTOR", "FIRST_TIMER", "FIRST_TIME_CONTRIBUTOR", "MANNEQUIN", "NONE"]).optional(),
-        minerStatus: z.enum(["confirmed", "not_found", "unavailable"]).optional(),
-        title: z.string().max(300).optional(),
-        body: z.string().max(10000).nullable().optional(),
-        labels: z.array(z.string().max(100)).max(50).optional(),
-        linkedIssues: z.array(z.number().int().positive()).max(50).optional(),
-        permissions: z.record(z.string(), z.string()).optional(),
-        missingPermissions: z.array(z.string().max(100)).max(50).optional(),
-      })
-      .strict()
-      .optional(),
-  })
-  .strict();
-
-const commandFeedbackSchema = z
-  .object({
-    answerId: z.string().min(8).max(120).regex(/^[A-Za-z0-9_.:-]+$/),
-    vote: z.enum(["useful", "not_useful"]),
-  })
-  .strict();
-
-const killSwitchUpdateSchema = z
-  .object({
-    frozen: z.boolean(),
-  })
-  .strict();
-
-// Config-push write path (#7522, piece 1 of #4902's design): an operator-addressed Orb-operational notice
-// (enrollment lifecycle, capability announcement, deprecation notice) -- explicit installationIds target list
-// only, no percentage/canary selector (no rollout-percentage primitive exists in this codebase to build one on
-// top of; out of scope here). pushId doubles as the idempotency key (see enqueueConfigPushRelay's deliveryId
-// derivation), so it's constrained to the same safe-identifier shape as commandFeedbackSchema's answerId above.
-const configPushSchema = z
-  .object({
-    installationIds: z.array(z.number().int().positive()).min(1).max(500),
-    pushId: z.string().min(1).max(120).regex(/^[A-Za-z0-9_.:-]+$/),
-    message: z.string().min(1).max(500),
-    capability: z.string().min(1).max(120).optional(),
-    deprecatesAt: z.string().datetime().optional(),
-  })
-  .strict();
-
-const digestSubscriptionSchema = z
-  .object({
-    email: z.string().email().max(320),
-  })
-  .strict();
-
-const postMergeIncidentSeveritySchema = z.enum(["low", "medium", "high", "critical"]);
-
-const postMergeIncidentReportSchema = z
-  .object({
-    description: z.string().min(1).max(4000),
-    severity: postMergeIncidentSeveritySchema,
-    mergedSha: z
-      .string()
-      .regex(/^[0-9a-f]{7,40}$/i)
-      .optional(),
-  })
-  .strict();
-
-const operatorPostMergeIncidentReportSchema = z
-  .object({
-    repoFullName: z.string().min(3).max(200),
-    pullNumber: z.number().int().positive(),
-    description: z.string().min(1).max(4000),
-    severity: postMergeIncidentSeveritySchema,
-    mergedSha: z
-      .string()
-      .regex(/^[0-9a-f]{7,40}$/i)
-      .optional(),
-  })
-  .strict();
+const repositorySettingsSchema = buildRepositorySettingsSchema(DEFAULT_COMMAND_AUTHORIZATION_POLICY);
 
 function contributorOpenIssueCount(issues: Array<{ repoFullName: string; state: string }>, repoFullName: string): number {
   const targetRepo = repoFullName.toLowerCase();
@@ -4014,7 +3382,7 @@ export function createApp() {
   // delegates to the same pure simulateOpenPrPressure. No logic of its own.
   app.post("/v1/lint/open-pr-pressure", async (c) => {
     const body = await c.req.json().catch(() => null);
-    const parsed = z.object(simulateOpenPrPressureShape).safeParse(body);
+    const parsed = simulateOpenPrPressureSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_open_pr_pressure_request", issues: parsed.error.issues }, 400);
     return c.json(simulateOpenPrPressure(parsed.data as unknown as OpenPrPressureInput));
   });
@@ -5313,13 +4681,13 @@ export function createApp() {
 
   app.post("/v1/internal/queue-intelligence", async (c) => {
     const contentLength = parsePositiveInt(c.req.header("content-length"));
-    if (contentLength !== null && contentLength > QUEUE_INTELLIGENCE_MAX_BODY_BYTES) {
-      return c.json({ error: "payload_too_large", maxBytes: QUEUE_INTELLIGENCE_MAX_BODY_BYTES }, 413);
+    if (contentLength !== null && contentLength > QUEUE_INTELLIGENCE_LIMITS.bodyBytes) {
+      return c.json({ error: "payload_too_large", maxBytes: QUEUE_INTELLIGENCE_LIMITS.bodyBytes }, 413);
     }
 
-    const rawBody = await readRequestBodyWithLimit(c.req.raw, QUEUE_INTELLIGENCE_MAX_BODY_BYTES);
+    const rawBody = await readRequestBodyWithLimit(c.req.raw, QUEUE_INTELLIGENCE_LIMITS.bodyBytes);
     if (rawBody === null) {
-      return c.json({ error: "payload_too_large", maxBytes: QUEUE_INTELLIGENCE_MAX_BODY_BYTES }, 413);
+      return c.json({ error: "payload_too_large", maxBytes: QUEUE_INTELLIGENCE_LIMITS.bodyBytes }, 413);
     }
 
     let body: unknown;
@@ -5332,32 +4700,10 @@ export function createApp() {
       return c.json({ error: "invalid_request", detail: "pullRequests array required" }, 400);
     }
     const queueBody = body as { pullRequests: unknown[]; repoContext?: unknown };
-    const prSchema = z.object({
-      number: z.number().int().positive(),
-      author: z.string().max(QUEUE_INTELLIGENCE_MAX_AUTHOR_LENGTH),
-      authorRole: z.enum(["first-time", "contributor", "maintainer"] as [AuthorRole, ...AuthorRole[]]),
-      isConfirmedMiner: z.boolean(),
-      linkedIssue: z.object({ qualityScore: z.number().min(0).max(1) }).nullable(),
-      checksStatus: z.enum(["passing", "failing", "pending"] as [ChecksStatus, ...ChecksStatus[]]),
-      isStale: z.boolean(),
-      additions: z.number().int().nonnegative(),
-      deletions: z.number().int().nonnegative(),
-      title: z.string().max(QUEUE_INTELLIGENCE_MAX_TITLE_LENGTH),
-      body: z.string().max(QUEUE_INTELLIGENCE_MAX_BODY_LENGTH),
-      duplicateCandidates: z.array(z.number().int().positive()).max(QUEUE_INTELLIGENCE_MAX_DUPLICATE_CANDIDATES),
-      createdAt: z.string().datetime(),
-      lastUpdatedAt: z.string().datetime(),
-    });
-    const repoContextSchema = z.object({
-      totalOpenPRs: z.number().int().nonnegative(),
-      avgReviewTimeDays: z.number().nonnegative(),
-      maintainerWorkload: z.number().min(0).max(1),
-    });
-    const prsResult = z.array(prSchema).max(QUEUE_INTELLIGENCE_MAX_PULL_REQUESTS).safeParse(queueBody.pullRequests);
+    const prsResult = z.array(QueueIntelligencePullRequestSchema).max(QUEUE_INTELLIGENCE_LIMITS.pullRequests).safeParse(queueBody.pullRequests);
     if (!prsResult.success) return c.json({ error: "invalid_request", issues: prsResult.error.issues }, 400);
-    const repoContext = repoContextSchema.safeParse(queueBody.repoContext).success
-      ? repoContextSchema.parse(queueBody.repoContext)
-      : { totalOpenPRs: 0, avgReviewTimeDays: 0, maintainerWorkload: 0 };
+    const parsedRepoContext = QueueIntelligenceRepoContextSchema.safeParse(queueBody.repoContext);
+    const repoContext = parsedRepoContext.success ? parsedRepoContext.data : { totalOpenPRs: 0, avgReviewTimeDays: 0, maintainerWorkload: 0 };
     const result = await analyzePRQueue(prsResult.data, repoContext);
     const recommendations: Record<number, string> = {};
     for (const [num, rec] of result.recommendations) recommendations[num] = rec;

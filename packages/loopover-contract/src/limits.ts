@@ -67,3 +67,45 @@ export const SCENARIO_LIMITS = {
   repoFullNameChars: 200,
   branchRefChars: 200,
 } as const;
+
+// ---------------------------------------------------------------------------------------------------
+// Bounds the Worker's REQUEST schemas apply (#9750).
+//
+// Same posture as PREFLIGHT_LIMITS above and for the same reason: api-requests.ts holds the schemas the
+// API validates against, and this package cannot import the Worker or the engine. Each constant below is
+// canonical in src/ or packages/loopover-engine/src/ and restated here, pinned against its original by
+// test/unit/contract-api-requests.test.ts. A bound that drifts on one side only fails in the worst
+// direction -- a schema that rejects input the server would have accepted, or accepts input it then
+// truncates.
+// ---------------------------------------------------------------------------------------------------
+
+/** src/db/repositories.ts */
+export const MAX_NOTIFICATION_MARK_READ_IDS = 100;
+/** src/db/repositories.ts */
+export const MAX_NOTIFICATION_DELIVERY_ID_LENGTH = 128;
+
+/** src/signals/focus-manifest.ts */
+export const MAX_FOCUS_MANIFEST_BYTES = 128 * 1024;
+
+/** src/signals/local-scorer-diagnostics.ts */
+export const MAX_LOCAL_SCORER_WARNING_COUNT = 20;
+/** src/signals/local-scorer-diagnostics.ts */
+export const MAX_LOCAL_SCORER_WARNING_CHARS = 1000;
+
+/** src/scenarios/input-model.ts */
+export const SCENARIO_MAX_REPO_FULL_NAME_CHARS = 200;
+/** src/scenarios/input-model.ts */
+export const SCENARIO_MAX_BRANCH_REF_CHARS = 200;
+/** src/scenarios/input-model.ts */
+export const SCENARIO_MAX_LINKED_ISSUE_NUMBERS = 50;
+
+/** src/signals/settings-preview.ts -- the reasons the public surface reports for skipping a PR. */
+export const PUBLIC_SURFACE_SKIP_REASONS = [
+  "surface_off",
+  "missing_author",
+  "bot_author",
+  "ignored_author",
+  "maintainer_author",
+  "miner_detection_unavailable",
+  "not_official_gittensor_miner",
+] as const;

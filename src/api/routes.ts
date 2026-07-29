@@ -572,6 +572,10 @@ export function createApp() {
       c.header("Access-Control-Allow-Headers", "authorization, content-type");
       c.header("Access-Control-Allow-Methods", "GET, OPTIONS");
       c.header("Access-Control-Max-Age", "600");
+      // The response varies by Origin (this branch fires only when the request carried one), so a shared cache
+      // must not serve this Origin-specific response to a no-Origin request or vice versa — append Vary the same
+      // way the credentialed branch does at the else-arm below (#9712).
+      c.header("Vary", "Origin", { append: true });
     } else {
       const allowedOrigin = allowedCorsOrigin(c.env, origin);
       if (allowedOrigin) {

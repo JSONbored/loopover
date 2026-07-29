@@ -25,8 +25,8 @@ const PAGERDUTY_EVENTS_URL = "https://events.pagerduty.com/v2/enqueue";
 // The audit `detail` written for a real page vs an auto-resolve. Both share outcome "completed", so the cooldown
 // must key off `detail` to count only rows that ACTUALLY paged (#9695). Exported + used at both the write and
 // the read site so the two spellings can never drift.
-export const PAGERDUTY_AUDIT_DETAIL_TRIGGERED = "triggered";
-export const PAGERDUTY_AUDIT_DETAIL_RESOLVED = "resolved";
+const PAGERDUTY_AUDIT_DETAIL_TRIGGERED = "triggered";
+const PAGERDUTY_AUDIT_DETAIL_RESOLVED = "resolved";
 // PagerDuty routing/integration keys are 32 lowercase hex characters.
 const ROUTING_KEY_RE = /^[a-f0-9]{32}$/i;
 const DEFAULT_MIN_SEVERITY: PagerDutySeverity = "error";

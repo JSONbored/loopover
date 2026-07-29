@@ -405,7 +405,7 @@ export function isAuthorizedCommandActor(args: {
 /** Fixed, non-LLM disclaimer stamped on every `@loopover chat` answer card (#4595 req 9). Deliberately NOT run
  *  through neutralizePublicMarkdownText so the `@loopover review` code span renders; it carries no forbidden
  *  terms, so the whole-body sanitizePublicComment pass leaves it byte-for-byte intact. */
-export const CHAT_QA_DISCLAIMER =
+const CHAT_QA_DISCLAIMER =
   "Read-only informational reply — cannot change review outcomes, gate state, or trigger a re-review. To retrigger a review, comment `@loopover review`.";
 
 export function buildPublicAgentCommandComment(args: {

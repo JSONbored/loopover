@@ -13,7 +13,7 @@ import type { listPullRequestFiles } from "../db/repositories";
 /** Char budget of the diff fed to the review models. The 120B review models have ~128k-token context, so
  *  even a large PR fits in ONE coherent pass (accuracy over speed). Only a genuinely huge PR truncates —
  *  and then SOURCE survives via priority ordering. */
-export const DEFAULT_DIFF_BUDGET = 80_000;
+const DEFAULT_DIFF_BUDGET = 80_000;
 
 /** Review priority for diff ordering. When the budget is tight, SOURCE survives and
  *  lockfiles/generated/docs/tests are dropped first (least useful to a code reviewer). Lower = kept.

@@ -219,6 +219,14 @@ export function resolveEffectiveAiReviewPlan(
 }
 
 export type LoopOverAiReviewInput = {
+  /** #9808/#9821: the effective review knobs the caller resolved for THIS PR (resolveReviewKnobs) -- already
+   *  layered escalation > per-repo > global, so this module never re-derives precedence. Absent ⇒ the env
+   *  defaults exactly as before. Consumed HERE: `selfConsistencyRuns` outranks
+   *  AI_REVIEW_SELF_CONSISTENCY_RUNS, and `model`/`effort` outrank the review.ai_model fields on the
+   *  AiRunCorrelation that rides to every provider invocation. `provider` is the one field NOT consumed in
+   *  this module: it governs the BYOK key selection, which happens at the orchestration BEFORE this runs
+   *  (a mismatched stored key is dropped there) -- it is carried on this object for logging/replay only. */
+  reviewKnobs?: { provider?: string | null; model?: string | null; effort?: string | null; selfConsistencyRuns?: number | null } | undefined;
   repoFullName: string;
   prNumber: number;
   title: string;
@@ -857,11 +865,6 @@ export function extractLastJsonObject(text: string): string | null {
   return last;
 }
 
-/** Default reviewer confidence when the model omits a usable `confidence` (#8) — 1.0, so an absent/garbage value
- *  degrades to EXACTLY the historical hardcoded `confidence: 1` (a defect always cleared the floor). Shared by the
- *  parser and the combiners so the fallback is identical everywhere. */
-export const DEFAULT_REVIEW_CONFIDENCE = 1;
-
 /** #8833: the fallback when a model states NO usable confidence at all. The old fallback was 1.0 — "the
  *  model said nothing" read as MAXIMUM certainty, so a review missing the field skipped every low-confidence
  *  safeguard (#4603's disposition, the close-confidence floor) and drove a straight close. 0.5 sits below
@@ -1042,7 +1045,7 @@ export function demoteStaleBaseClaimBlockers(review: ModelReview): { review: Mod
  *  hallucination pattern lives in (a symbol/import/guard/handler the model merely could not SEE). Every
  *  other kind remains free-form judgment; this list is deliberately closed so a novel kind string can never
  *  smuggle a claim past verification (unknown kinds are treated as plain judgment, not as absence). */
-export const ABSENCE_CLAIM_KINDS = new Set(["missing_symbol", "missing_import", "missing_guard", "missing_handling", "missing_registration"]);
+const ABSENCE_CLAIM_KINDS = new Set(["missing_symbol", "missing_import", "missing_guard", "missing_handling", "missing_registration"]);
 
 /** #8833: the minimum usable evidence quote. Shorter fragments ("x", ") {") appear in virtually any diff, so
  *  they would verify vacuously — a quote must be long enough to plausibly identify ONE breaking line. */
@@ -3106,18 +3109,21 @@ export async function runLoopOverAiReview(
     jobId: input.jobId,
     repoFullName: input.repoFullName,
     pullNumber: input.prNumber,
-    claudeModel: input.claudeModel ?? undefined,
-    claudeEffort: input.claudeEffort ?? undefined,
-    codexModel: input.codexModel ?? undefined,
-    codexEffort: input.codexEffort ?? undefined,
+    // #9821: reviewKnobs (per-repo gate.aiReview.*, or the guardrailEscalation override on a guarded path)
+    // outrank the review.ai_model fields -- the same precedence the orchestration pre-applies; folding it
+    // here too makes THIS module honor the knobs for any caller, and is idempotent when both did.
+    claudeModel: input.reviewKnobs?.model ?? input.claudeModel ?? undefined,
+    claudeEffort: input.reviewKnobs?.effort ?? input.claudeEffort ?? undefined,
+    codexModel: input.reviewKnobs?.model ?? input.codexModel ?? undefined,
+    codexEffort: input.reviewKnobs?.effort ?? input.codexEffort ?? undefined,
     claudeTimeoutMs: input.claudeTimeoutMs ?? undefined,
     codexTimeoutMs: input.codexTimeoutMs ?? undefined,
     claudeFirstOutputTimeoutMs: input.claudeFirstOutputTimeoutMs ?? undefined,
     codexFirstOutputTimeoutMs: input.codexFirstOutputTimeoutMs ?? undefined,
-    ollamaModel: input.ollamaModel ?? undefined,
-    openaiModel: input.openaiModel ?? undefined,
-    openaiCompatibleModel: input.openaiCompatibleModel ?? undefined,
-    anthropicModel: input.anthropicModel ?? undefined,
+    ollamaModel: input.reviewKnobs?.model ?? input.ollamaModel ?? undefined,
+    openaiModel: input.reviewKnobs?.model ?? input.openaiModel ?? undefined,
+    openaiCompatibleModel: input.reviewKnobs?.model ?? input.openaiCompatibleModel ?? undefined,
+    anthropicModel: input.reviewKnobs?.model ?? input.anthropicModel ?? undefined,
   };
   if (input.providerKey) {
     const outcome = await runProviderReview(
@@ -3279,7 +3285,14 @@ export async function runLoopOverAiReview(
   // review that produced no usable verdict would spend real money measuring nothing.
   const selfConsistencySamples: { reviewer: string; votedFail: boolean }[] = [];
   let selfConsistencyDegraded = false;
-  const configuredSelfConsistencyRuns = resolveSelfConsistencyRuns(env.AI_REVIEW_SELF_CONSISTENCY_RUNS);
+  // #9821: a caller-resolved value (per-repo, or escalated because this PR touched a guarded path) outranks
+  // the global env var. `?? undefined` not `|| undefined`: 0 is a real choice ("off"), and truthiness here
+  // would silently fall back to the env value on a repo that deliberately turned extra runs off.
+  const configuredSelfConsistencyRuns = resolveSelfConsistencyRuns(
+    input.reviewKnobs?.selfConsistencyRuns !== null && input.reviewKnobs?.selfConsistencyRuns !== undefined
+      ? String(input.reviewKnobs.selfConsistencyRuns)
+      : env.AI_REVIEW_SELF_CONSISTENCY_RUNS,
+  );
   if (configuredSelfConsistencyRuns >= 2 && reviewerVotes.length > 0) {
     const plan = planSelfConsistencyRuns({
       configuredTotalRuns: configuredSelfConsistencyRuns,

@@ -748,6 +748,12 @@ export const RepositorySettingsSchema = z
     expectedCiContexts: z.array(z.string()).readonly().nullable().optional(),
     advisoryCheckRuns: z.array(z.object({ name: z.string(), appSlug: z.string() })).readonly().nullable().optional(),
     ignoredCheckRuns: z.array(z.object({ name: z.string(), appSlug: z.string() })).readonly().nullable().optional(),
+    aiReviewEffort: z.enum(["low", "medium", "high", "xhigh", "max"]).nullable().optional(),
+    aiReviewSelfConsistencyRuns: z.number().nullable().optional(),
+    guardrailEscalationProvider: z.enum(["anthropic", "openai"]).nullable().optional(),
+    guardrailEscalationModel: z.string().nullable().optional(),
+    guardrailEscalationEffort: z.enum(["low", "medium", "high", "xhigh", "max"]).nullable().optional(),
+    guardrailEscalationSelfConsistencyRuns: z.number().nullable().optional(),
     copycatGateMode: z.enum(["off", "warn", "label", "block"]).optional(),
     copycatGateMinScore: z.number().nullable().optional(),
     gateDryRun: z.boolean().optional(),
@@ -1404,7 +1410,7 @@ export const SignalFidelitySchema = z
   })
   .openapi("SignalFidelity");
 
-export const CoreSignalFidelitySchema = z
+const CoreSignalFidelitySchema = z
   .object({
     status: z.enum(["complete", "degraded", "blocked", "unknown"]),
     repoCount: z.number(),
@@ -1418,7 +1424,7 @@ export const CoreSignalFidelitySchema = z
   })
   .openapi("CoreSignalFidelity");
 
-export const RepoGithubTotalsSnapshotSchema = z
+const RepoGithubTotalsSnapshotSchema = z
   .object({
     id: z.string(),
     repoFullName: z.string(),
@@ -1550,7 +1556,7 @@ const RegistryHyperparameterDriftFieldSchema = z.enum([
 
 const RegistryDriftSurfaceSchema = z.enum(["allocation", "lane_fit", "scoreability_assumptions", "maintainer_economics", "issue_discovery_behavior", "label_policy"]);
 
-export const RegistryHyperparameterDriftSummarySchema = z
+const RegistryHyperparameterDriftSummarySchema = z
   .object({
     totalEvents: z.number(),
     omittedEvents: z.number(),

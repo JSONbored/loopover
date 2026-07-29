@@ -1117,6 +1117,19 @@ export type RepositorySettings = {
   /** Config-as-code model override for the BYOK advisory write-up (e.g. "claude-3-5-sonnet-latest").
    *  `null` = use the key record's model, else a conservative per-provider default. */
   aiReviewModel?: string | null | undefined;
+  /** `gate.aiReview.effort` (#9821): reasoning effort for the review pass (low | medium | high | xhigh | max).
+   *  Per-repo parity with the global CLAUDE_AI_EFFORT / CODEX_AI_EFFORT env vars. Unset ⇒ the env default. */
+  aiReviewEffort?: "low" | "medium" | "high" | "xhigh" | "max" | null | undefined;
+  /** `gate.aiReview.selfConsistencyRuns` (#9821): TOTAL evaluations per review, primary included. Per-repo
+   *  parity with AI_REVIEW_SELF_CONSISTENCY_RUNS; clamped downstream to {0,2,3}. Unset ⇒ the env default. */
+  aiReviewSelfConsistencyRuns?: number | null | undefined;
+  /** `gate.guardrailEscalation.*` (#9808/#9821): review settings used INSTEAD of the repo defaults when a PR
+   *  touches a hardGuardrailGlobs path, so a guarded path buys MORE SCRUTINY rather than a manual hold. Each
+   *  field falls through to the repo/global value when unset. */
+  guardrailEscalationProvider?: "anthropic" | "openai" | null | undefined;
+  guardrailEscalationModel?: string | null | undefined;
+  guardrailEscalationEffort?: "low" | "medium" | "high" | "xhigh" | "max" | null | undefined;
+  guardrailEscalationSelfConsistencyRuns?: number | null | undefined;
   /** Review EVERY PR's author, not only confirmed Gittensor contributors. Only meaningful when
    *  {@link aiReviewConfirmedContributorsOnly} is also `true` (that field opts INTO confirmed-only
    *  scoping in the first place — see its own doc comment for the full invariant: AI review runs for

@@ -19,7 +19,7 @@ import { errorMessage } from "../utils/json";
  * re-enqueued, rather than relying solely on that downstream no-op.
  */
 
-export const STRANDED_NOTIFICATION_REQUEUED_EVENT = "notification.delivery.requeued";
+const STRANDED_NOTIFICATION_REQUEUED_EVENT = "notification.delivery.requeued";
 
 /** Grace past a row's creation before the sweep steps in, so a delivery merely waiting its turn behind a busy
  *  queue is never mistaken for a lost one. */
@@ -34,7 +34,7 @@ export const STRANDED_NOTIFICATION_LOOKBACK_MS = 3 * 24 * 60 * 60 * 1000;
 export const STRANDED_NOTIFICATION_REQUEUE_INTERVAL_MS = 60 * 60 * 1000;
 
 /** Bounded rows-per-tick, so one sweep can never fan out an unbounded number of re-enqueues. */
-export const STRANDED_NOTIFICATION_SCAN_LIMIT = 500;
+const STRANDED_NOTIFICATION_SCAN_LIMIT = 500;
 
 export type StrandedNotificationSweepResult = { scanned: number; requeued: number };
 

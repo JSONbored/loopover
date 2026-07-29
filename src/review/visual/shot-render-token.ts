@@ -18,7 +18,7 @@ import { hmacHex, timingSafeEqualHex } from "../../utils/crypto";
 // window. A comment's embedded link is minted once and never re-signed, so this also bounds how long a
 // stale/never-viewed on-demand link stays renderable at all -- an explicit tradeoff, not an oversight (see
 // this repo's own PR discussion for #9044).
-export const SHOT_RENDER_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
+const SHOT_RENDER_TOKEN_TTL_MS = 24 * 60 * 60 * 1000;
 
 async function signShotRenderToken(env: Env, url: string, expiresAtMs: number): Promise<string> {
   return hmacHex(env.INTERNAL_JOB_TOKEN, `${url}:${expiresAtMs}`);

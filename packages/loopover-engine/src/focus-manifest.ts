@@ -114,6 +114,22 @@ export type FocusManifestGateConfig = {
   aiReviewByok: boolean | null;
   aiReviewProvider: "anthropic" | "openai" | null;
   aiReviewModel: string | null;
+  /** `gate.aiReview.effort` (#9821): reasoning effort for the review pass — low | medium | high | xhigh | max.
+   *  Per-repo parity with the global CLAUDE_AI_EFFORT/CODEX_AI_EFFORT env vars, which were previously the ONLY
+   *  way to set it: provider and model were already per-repo, effort was not. Unset ⇒ the env default. */
+  aiReviewEffort: "low" | "medium" | "high" | "xhigh" | "max" | null;
+  /** `gate.aiReview.selfConsistencyRuns` (#9821): TOTAL evaluations per review, primary included. Per-repo
+   *  parity with AI_REVIEW_SELF_CONSISTENCY_RUNS. Clamped downstream to {0,2,3} -- one run cannot measure
+   *  agreement and the benefit saturates by three. Unset ⇒ the env default. */
+  aiReviewSelfConsistencyRuns: number | null;
+  /** `gate.guardrailEscalation` (#9808/#9821): the review settings to use INSTEAD of the repo defaults when a
+   *  PR touches a `hardGuardrailGlobs` path. Any subset may be given; each unset field falls through to the
+   *  repo/global value. This is what makes a guarded path buy MORE SCRUTINY rather than a manual hold --
+   *  today a guardrail hit reviews identically to any other file and merely stops the merge. */
+  guardrailEscalationProvider: "anthropic" | "openai" | null;
+  guardrailEscalationModel: string | null;
+  guardrailEscalationEffort: "low" | "medium" | "high" | "xhigh" | "max" | null;
+  guardrailEscalationSelfConsistencyRuns: number | null;
   aiReviewAllAuthors: boolean | null;
   /** `gate.aiReview.closeConfidence` (#7): minimum calibrated AI-reviewer confidence (0-1) for an AI defect to BLOCK
    *  under `aiReview.mode: block`. null (unset) ⇒ the gate's 0.93 default. Clamped to [0,1] at parse time. */
@@ -631,6 +647,12 @@ export type FocusManifestSettings = Partial<
     | "aiReviewByok"
     | "aiReviewProvider"
     | "aiReviewModel"
+    | "aiReviewEffort"
+    | "aiReviewSelfConsistencyRuns"
+    | "guardrailEscalationProvider"
+    | "guardrailEscalationModel"
+    | "guardrailEscalationEffort"
+    | "guardrailEscalationSelfConsistencyRuns"
     | "aiReviewAllAuthors"
     | "aiReviewConfirmedContributorsOnly"
     | "closeOwnerAuthors"
@@ -1342,6 +1364,12 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   aiReviewByok: null,
   aiReviewProvider: null,
   aiReviewModel: null,
+  aiReviewEffort: null,
+  aiReviewSelfConsistencyRuns: null,
+  guardrailEscalationProvider: null,
+  guardrailEscalationModel: null,
+  guardrailEscalationEffort: null,
+  guardrailEscalationSelfConsistencyRuns: null,
   aiReviewAllAuthors: null,
   aiReviewCloseConfidence: null,
   aiReviewSalvageabilityMinScore: null,
@@ -1815,6 +1843,7 @@ const GATE_TOP_LEVEL_KEYS = new Set<string>([
   "expectedCiContexts",
   "advisoryCheckRuns",
   "ignoredCheckRuns",
+  "guardrailEscalation",
   "aiJudgmentBlockers",
   "copycat",
 ]);
@@ -1837,6 +1866,10 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
   }
   const aiReview = record.aiReview;
   const aiReviewRecord = aiReview !== null && typeof aiReview === "object" && !Array.isArray(aiReview) ? (aiReview as Record<string, JsonValue>) : undefined;
+  // #9821: `gate.guardrailEscalation` — same "nested mapping, each field optional" shape as gate.aiReview above.
+  const escalation = record.guardrailEscalation;
+  const escalationRecord =
+    escalation !== null && typeof escalation === "object" && !Array.isArray(escalation) ? (escalation as Record<string, JsonValue>) : undefined;
   if (aiReview !== undefined && aiReview !== null && aiReviewRecord === undefined) {
     warnings.push(`Manifest gate field "gate.aiReview" must be a mapping; ignoring it.`);
   }
@@ -1881,6 +1914,12 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     aiReviewByok: normalizeOptionalBoolean(aiReviewRecord?.byok, "gate.aiReview.byok", warnings),
     aiReviewProvider: normalizeOptionalEnum(aiReviewRecord?.provider, "gate.aiReview.provider", ["anthropic", "openai"] as const, warnings),
     aiReviewModel: normalizeOptionalString(aiReviewRecord?.model, "gate.aiReview.model", warnings),
+    aiReviewEffort: normalizeOptionalEnum(aiReviewRecord?.effort, "gate.aiReview.effort", ["low", "medium", "high", "xhigh", "max"] as const, warnings),
+    aiReviewSelfConsistencyRuns: normalizeOptionalNonNegativeInt(aiReviewRecord?.selfConsistencyRuns, "gate.aiReview.selfConsistencyRuns", warnings),
+    guardrailEscalationProvider: normalizeOptionalEnum(escalationRecord?.provider, "gate.guardrailEscalation.provider", ["anthropic", "openai"] as const, warnings),
+    guardrailEscalationModel: normalizeOptionalString(escalationRecord?.model, "gate.guardrailEscalation.model", warnings),
+    guardrailEscalationEffort: normalizeOptionalEnum(escalationRecord?.effort, "gate.guardrailEscalation.effort", ["low", "medium", "high", "xhigh", "max"] as const, warnings),
+    guardrailEscalationSelfConsistencyRuns: normalizeOptionalNonNegativeInt(escalationRecord?.selfConsistencyRuns, "gate.guardrailEscalation.selfConsistencyRuns", warnings),
     aiReviewAllAuthors: normalizeOptionalBoolean(aiReviewRecord?.allAuthors, "gate.aiReview.allAuthors", warnings),
     aiReviewCloseConfidence: normalizeOptionalConfidence(aiReviewRecord?.closeConfidence, "gate.aiReview.closeConfidence", warnings),
     aiReviewSalvageabilityMinScore: normalizeOptionalScore(aiReviewRecord?.salvageabilityMinScore, "gate.aiReview.salvageabilityMinScore", warnings),
@@ -1947,6 +1986,8 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.aiReviewByok !== null ||
     gate.aiReviewProvider !== null ||
     gate.aiReviewModel !== null ||
+    gate.aiReviewEffort !== null ||
+    gate.aiReviewSelfConsistencyRuns !== null ||
     gate.aiReviewAllAuthors !== null ||
     gate.aiReviewCloseConfidence !== null ||
     gate.aiReviewSalvageabilityMinScore !== null ||
@@ -1970,6 +2011,12 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.claCheckRunAppSlug !== null ||
     gate.expectedCiContexts !== null ||
     gate.advisoryCheckRuns !== null ||
+    gate.aiReviewEffort !== null ||
+    gate.aiReviewSelfConsistencyRuns !== null ||
+    gate.guardrailEscalationProvider !== null ||
+    gate.guardrailEscalationModel !== null ||
+    gate.guardrailEscalationEffort !== null ||
+    gate.guardrailEscalationSelfConsistencyRuns !== null ||
     gate.ignoredCheckRuns !== null ||
     gate.aiJudgmentBlockersMode !== null ||
     gate.copycatMode !== null ||
@@ -2029,13 +2076,17 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     gate.aiReviewLowConfidenceDisposition !== null ||
     gate.aiReviewCombine !== null ||
     gate.aiReviewOnMerge !== null ||
-    gate.aiReviewReviewers !== null
+    gate.aiReviewReviewers !== null ||
+    gate.aiReviewEffort !== null ||
+    gate.aiReviewSelfConsistencyRuns !== null
   ) {
     const aiReview: Record<string, JsonValue> = {};
     if (gate.aiReviewMode !== null) aiReview.mode = gate.aiReviewMode;
     if (gate.aiReviewByok !== null) aiReview.byok = gate.aiReviewByok;
     if (gate.aiReviewProvider !== null) aiReview.provider = gate.aiReviewProvider;
     if (gate.aiReviewModel !== null) aiReview.model = gate.aiReviewModel;
+    if (gate.aiReviewEffort !== null) aiReview.effort = gate.aiReviewEffort;
+    if (gate.aiReviewSelfConsistencyRuns !== null) aiReview.selfConsistencyRuns = gate.aiReviewSelfConsistencyRuns;
     if (gate.aiReviewAllAuthors !== null) aiReview.allAuthors = gate.aiReviewAllAuthors;
     if (gate.aiReviewCloseConfidence !== null) aiReview.closeConfidence = gate.aiReviewCloseConfidence;
     if (gate.aiReviewSalvageabilityMinScore !== null) aiReview.salvageabilityMinScore = gate.aiReviewSalvageabilityMinScore;
@@ -2048,6 +2099,20 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
       ) as JsonValue;
     }
     out.aiReview = aiReview;
+  }
+  // #9821: guardrail escalation round-trips as its own nested mapping, emitted only when something is set.
+  if (
+    gate.guardrailEscalationProvider !== null ||
+    gate.guardrailEscalationModel !== null ||
+    gate.guardrailEscalationEffort !== null ||
+    gate.guardrailEscalationSelfConsistencyRuns !== null
+  ) {
+    const escalation: Record<string, JsonValue> = {};
+    if (gate.guardrailEscalationProvider !== null) escalation.provider = gate.guardrailEscalationProvider;
+    if (gate.guardrailEscalationModel !== null) escalation.model = gate.guardrailEscalationModel;
+    if (gate.guardrailEscalationEffort !== null) escalation.effort = gate.guardrailEscalationEffort;
+    if (gate.guardrailEscalationSelfConsistencyRuns !== null) escalation.selfConsistencyRuns = gate.guardrailEscalationSelfConsistencyRuns;
+    out.guardrailEscalation = escalation;
   }
   if (gate.mergeReadiness !== null) out.mergeReadiness = gate.mergeReadiness;
   if (gate.manifestPolicy !== null) out.manifestPolicy = gate.manifestPolicy;

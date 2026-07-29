@@ -56,7 +56,9 @@ describe("GET /v1/public/eval-scores (#9266, epic #8534, spec #9215)", () => {
     expect(body.records).toHaveLength(1);
     const [record] = body.records;
     expect(record?.workUnit).toEqual({ kind: "outcome_confirmed_precision", ruleId: "ai_consensus_defect" });
-    expect(record?.score).toEqual({ decided: 20, confirmed: 16, precision: 0.8, recall: null, coverage: null, abstained: 0 });
+    // coverage is 1, not null: abstained is structurally 0 for this work-unit kind, so the record's own
+    // decided/(decided+abstained) is fully determined and the published field states it (#9643).
+    expect(record?.score).toEqual({ decided: 20, confirmed: 16, precision: 0.8, recall: null, coverage: 1, abstained: 0 });
     expect(record?.commitments.corpusChecksum).toBe("freeze-point-checksum");
     expect(record?.subject).toEqual({ kind: "agent", id: ORB_GATE_SUBJECT_ID });
 

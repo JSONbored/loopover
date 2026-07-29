@@ -384,7 +384,7 @@ describe("decision ledger (#8837)", () => {
   it("verifying a completely empty ledger returns ok:true with a zero tip, and skips the tail-truncation check (nothing to anchor against yet)", async () => {
     const env = createTestEnv();
     const verified = await verifyDecisionLedger(env);
-    expect(verified).toEqual({ ok: true, checked: 0, nextAfterSeq: null, tipSeq: 0, tipHash: LEDGER_GENESIS_HASH, totalCount: 0, prunedRecords: 0 });
+    expect(verified).toEqual({ ok: true, checked: 0, nextAfterSeq: null, tipSeq: 0, tipHash: LEDGER_GENESIS_HASH, totalCount: 0, prunedRecords: 0, contentMismatches: 0 });
   });
 
   it("TAIL TRUNCATION now breaks verify instead of passing clean (#9122): dropping the newest ledger rows leaves an orphaned decision_records tail", async () => {
@@ -638,5 +638,78 @@ describe("verifier vs absence (#9474 pruned records, #9489 grace + interior orph
 
     expect(verified).toMatchObject({ ok: true, checked: 2, prunedRecords: 0 });
     expect(verified.break).toBeUndefined();
+  });
+});
+
+// #9850: a content mismatch used to ABORT verification, so one unreconcilable row was a denial-of-
+// verification for every row after it. Found live: 83 rows (seq 5-257) left by the record-overwriting UPDATE
+// that #9123 replaced, with verification stopping at seq 5 and never examining the remaining 1,649 rows --
+// real tampering at seq 900 would have been invisible behind permanent historical damage at seq 5.
+describe("content mismatches do not mask later rows (#9850)", () => {
+  const seedChained = async (env: Env, count: number) => {
+    for (let i = 1; i <= count; i += 1) {
+      const { record, recordDigest } = await buildDecisionRecord(recordInput({ pullNumber: i }));
+      await persistDecisionRecord(env, record, recordDigest);
+    }
+  };
+  /** Rewrite one record's stored body so its digest no longer matches what the chain committed to -- exactly
+   *  the state the pre-#9123 UPDATE left behind. */
+  const corruptRecordAt = async (env: Env, seq: number) => {
+    const row = await env.DB.prepare("SELECT record_id AS recordId FROM decision_ledger WHERE seq = ?").bind(seq).first<{ recordId: string }>();
+    await env.DB.prepare("UPDATE decision_records SET record_json = ? WHERE id = ?").bind('{"tampered":true}', row!.recordId).run();
+  };
+
+  it("REGRESSION: keeps verifying past a content mismatch instead of stopping at it", async () => {
+    const env = createTestEnv();
+    await seedChained(env, 6);
+    await corruptRecordAt(env, 2);
+
+    const verified = await verifyDecisionLedger(env);
+
+    expect(verified.ok).toBe(false);
+    expect(verified.break).toMatchObject({ kind: "content_mismatch", atSeq: 2 });
+    // The whole window was examined, not just the two rows before the break.
+    expect(verified.checked).toBe(6);
+  });
+
+  it("REGRESSION: a STRUCTURAL break after a content mismatch is still found -- it used to be unreachable", async () => {
+    // This is the security consequence, not just a cosmetic one: a historical unreconcilable row at seq 2 hid
+    // a genuinely broken chain further along.
+    const env = createTestEnv();
+    await seedChained(env, 6);
+    await corruptRecordAt(env, 2);
+    await env.DB.prepare("UPDATE decision_ledger SET row_hash = ? WHERE seq = 5").bind("f".repeat(64)).run();
+
+    const verified = await verifyDecisionLedger(env);
+
+    // The structural break wins the `break` slot: everything after it is unverifiable, so it is the more
+    // serious finding and the scan stops there.
+    expect(verified.break).toMatchObject({ kind: "row_hash_mismatch", atSeq: 5 });
+    expect(verified.contentMismatches).toBe(1); // ...and the earlier content mismatch is still counted
+  });
+
+  it("counts EVERY content mismatch, not just the first", async () => {
+    const env = createTestEnv();
+    await seedChained(env, 6);
+    for (const seq of [2, 4, 5]) await corruptRecordAt(env, seq);
+
+    const verified = await verifyDecisionLedger(env);
+
+    expect(verified.contentMismatches).toBe(3);
+    expect(verified.break).toMatchObject({ atSeq: 2 }); // the first is still what `break` names
+  });
+
+  it("INVARIANT: the verdict is not softened -- any mismatch still means ok:false", async () => {
+    const env = createTestEnv();
+    await seedChained(env, 3);
+    await corruptRecordAt(env, 3);
+    expect((await verifyDecisionLedger(env)).ok).toBe(false);
+  });
+
+  it("reports contentMismatches: 0 on a clean chain, so the field is a fact and not only an error signal", async () => {
+    const env = createTestEnv();
+    await seedChained(env, 4);
+    const verified = await verifyDecisionLedger(env);
+    expect(verified).toMatchObject({ ok: true, contentMismatches: 0 });
   });
 });

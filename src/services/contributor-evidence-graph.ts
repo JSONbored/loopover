@@ -11,7 +11,7 @@ import type {
 import { nowIso } from "../utils/json";
 
 export const CONTRIBUTOR_EVIDENCE_GRAPH_SIGNAL = "contributor-evidence-graph";
-export const CONTRIBUTOR_EVIDENCE_GRAPH_VERSION = 1;
+const CONTRIBUTOR_EVIDENCE_GRAPH_VERSION = 1;
 export const CONTRIBUTOR_EVIDENCE_GRAPH_MAX_REPOS = 50;
 export const CONTRIBUTOR_EVIDENCE_GRAPH_MAX_LABELS = 80;
 export const CONTRIBUTOR_EVIDENCE_GRAPH_MAX_PATHS = 80;

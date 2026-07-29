@@ -6,16 +6,16 @@ import { sanitizePublicComment } from "../github/commands";
 // of a weaker env-flag-only check. Re-exported here to keep this module's public surface unchanged.
 export { assertScenarioLocalBranchInputSafe } from "@loopover/engine";
 
-export const SCENARIO_INPUT_VERSION = 1 as const;
+const SCENARIO_INPUT_VERSION = 1 as const;
 export const SCENARIO_MAX_REPO_FULL_NAME_CHARS = 200;
 export const SCENARIO_MAX_BRANCH_REF_CHARS = 200;
 export const SCENARIO_MAX_LINKED_ISSUE_NUMBERS = 50;
 export const SCENARIO_MAX_SIGNAL_DETAIL_CHARS = 2000;
 
-export const scenarioInputKinds = ["fact", "assumption", "estimate", "unavailable"] as const;
+const scenarioInputKinds = ["fact", "assumption", "estimate", "unavailable"] as const;
 export type ScenarioInputKind = (typeof scenarioInputKinds)[number];
 
-export const scenarioTypes = [
+const scenarioTypes = [
   "open_pr_pressure",
   "pending_pr_resolution",
   "branch_preflight",
@@ -24,7 +24,7 @@ export const scenarioTypes = [
 ] as const;
 export type ScenarioType = (typeof scenarioTypes)[number];
 
-export const scenarioSignalSources = [
+const scenarioSignalSources = [
   "github_observed",
   "user_supplied",
   "local_metadata",
@@ -93,7 +93,7 @@ const scenarioBranchStateSchema = z
 
 export type ScenarioBranchState = z.infer<typeof scenarioBranchStateSchema>;
 
-export const agentScenarioInputSchema = z
+const agentScenarioInputSchema = z
   .object({
     version: z.literal(SCENARIO_INPUT_VERSION),
     scenarioType: z.enum(scenarioTypes),

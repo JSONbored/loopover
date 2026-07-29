@@ -45,7 +45,7 @@ import type { IssueRecord, RepositorySettings } from "../types";
 import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso } from "../utils/json";
 
-export const ISSUE_PLAN_DRAFT_MARKER_PREFIX = "loopover-issue-plan-draft";
+const ISSUE_PLAN_DRAFT_MARKER_PREFIX = "loopover-issue-plan-draft";
 
 export function issuePlanDraftMarker(fingerprint: string): string {
   return `<!-- ${ISSUE_PLAN_DRAFT_MARKER_PREFIX}:${fingerprint} -->`;
@@ -90,7 +90,7 @@ export function findDuplicateIssuePlanDraft(
   return null;
 }
 
-export const ISSUE_PLAN_DRAFT_DECLINED_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
+const ISSUE_PLAN_DRAFT_DECLINED_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 const DECLINED_ISSUE_PLAN_WONTFIX_LABELS = new Set(["wontfix", "wont-fix", "invalid", "duplicate", "not-planned"]);
 
 /** Mirrors contributor-issue-draft.ts's findDeclinedContributorDraft exactly (same wontfix/cooldown/maintainer-

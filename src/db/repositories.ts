@@ -1892,7 +1892,7 @@ export async function persistUpstreamSourceSnapshots(env: Env, snapshots: Upstre
   }
 }
 
-export async function listLatestUpstreamSourceSnapshots(env: Env, limit = 20): Promise<UpstreamSourceSnapshotRecord[]> {
+async function listLatestUpstreamSourceSnapshots(env: Env, limit = 20): Promise<UpstreamSourceSnapshotRecord[]> {
   const db = getDb(env.DB);
   const rows = await db.select().from(upstreamSourceSnapshots).orderBy(desc(upstreamSourceSnapshots.fetchedAt)).limit(limit);
   return rows.map(toUpstreamSourceSnapshotRecord);
@@ -3090,7 +3090,7 @@ export async function hasRecentAuditEvent(env: Env, actor: string, eventType: st
   return rows.length > 0;
 }
 
-export async function hasRecentAuditEventForOtherTarget(env: Env, actor: string, eventType: string, currentTargetKey: string, sinceIso: string): Promise<boolean> {
+async function hasRecentAuditEventForOtherTarget(env: Env, actor: string, eventType: string, currentTargetKey: string, sinceIso: string): Promise<boolean> {
   const db = getDb(env.DB);
   const rows = await db
     .select({ id: auditEvents.id })
@@ -6363,7 +6363,7 @@ export async function upsertAgentRecommendationOutcome(env: Env, outcome: AgentR
   return (await getAgentRecommendationOutcome(env, outcome.actionId))!;
 }
 
-export async function getAgentRecommendationOutcome(env: Env, actionId: string): Promise<AgentRecommendationOutcomeRecord | null> {
+async function getAgentRecommendationOutcome(env: Env, actionId: string): Promise<AgentRecommendationOutcomeRecord | null> {
   const [row] = await getDb(env.DB).select().from(agentRecommendationOutcomes).where(eq(agentRecommendationOutcomes.actionId, actionId)).limit(1);
   return row ? toAgentRecommendationOutcomeRecord(row) : null;
 }

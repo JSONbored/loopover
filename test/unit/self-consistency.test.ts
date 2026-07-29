@@ -236,6 +236,106 @@ describe("rotated-exemplar self-consistency (#8834)", () => {
       expect(usage?.n).toBe(2); // every extra run rides the SAME budget sum the quota gate reads
     });
 
+    it("REGRESSION (#9821): a guardrail hit ESCALATES runs end-to-end — env off, gate.guardrailEscalation.selfConsistencyRuns=3 delivers 2 extra judged calls", async () => {
+      // The review blocker on #9821 was that resolveReviewKnobs was computed and dropped. This drives the
+      // whole pipeline: manifest -> settings -> orchestration (isGuardrailHit on src/a.ts) -> reviewKnobs ->
+      // runLoopOverAiReview's runs override (the `input.reviewKnobs?.selfConsistencyRuns` branch) -> the
+      // planner -> two extra rotated-exemplar calls. AI_REVIEW_SELF_CONSISTENCY_RUNS is deliberately UNSET:
+      // every extra call here exists only because the escalation reached the invocation.
+      const prompts: string[] = [];
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async (_model: string, options: { messages?: Array<{ role: string; content: string }> }) => {
+          prompts.push(options.messages?.find((m) => m.role === "system")?.content ?? "");
+          return { response: JSON.stringify({ assessment: "Fine.", blockers: [], nits: [], suggestions: [] }) };
+        } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seed(env);
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+        settings: {
+          commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", reviewCheckMode: "required", aiReviewMode: "block",
+          hardGuardrailGlobs: ["src/**"], // the PR's one changed file is src/a.ts -- a guardrail hit
+        },
+        gate: { guardrailEscalation: { selfConsistencyRuns: 3 } },
+      });
+
+      await reReviewStoredPullRequest(env, "sc-escalated-900", 123, "JSONbored/gittensory", 900);
+
+      const judgeCalls = prompts.filter((prompt) => prompt.length > 0);
+      expect(judgeCalls.length).toBeGreaterThanOrEqual(3); // 1 primary + 2 escalated extras
+      expect(judgeCalls.filter((prompt) => prompt.includes("Calibration examples"))).toHaveLength(2);
+    });
+
+    it("REGRESSION (#9821 review blocker): an escalated EFFORT/MODEL reaches the provider options, not just runs", async () => {
+      // The reviewer's exact objection: only selfConsistencyRuns was consumed, so "choose model, effort" was
+      // unimplemented where it takes effect. runLoopOverAiReview folds reviewKnobs into the AiRunCorrelation,
+      // which is what becomes the provider's per-call options (claudeModel/claudeEffort/... at ai-review.ts's
+      // provider dispatch). Capturing those options is therefore the honest end-to-end assertion.
+      const seenOptions: Array<Record<string, unknown>> = [];
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async (_model: string, options: Record<string, unknown>) => {
+          seenOptions.push(options);
+          return { response: JSON.stringify({ assessment: "Fine.", blockers: [], nits: [], suggestions: [] }) };
+        } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seed(env);
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+        settings: {
+          commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", reviewCheckMode: "required", aiReviewMode: "block",
+          hardGuardrailGlobs: ["src/**"],
+        },
+        gate: { guardrailEscalation: { effort: "xhigh", model: "escalated-model-x" } },
+      });
+
+      await reReviewStoredPullRequest(env, "sc-effort-900", 123, "JSONbored/gittensory", 900);
+
+      // At least one provider call carries BOTH escalated values.
+      const escalated = seenOptions.filter((o) => o.claudeEffort === "xhigh" && o.claudeModel === "escalated-model-x");
+      expect(escalated.length).toBeGreaterThan(0);
+      // And the HTTP-API provider fields carry the same resolved model (whichever provider actually runs).
+      expect(escalated[0]?.anthropicModel).toBe("escalated-model-x");
+      expect(escalated[0]?.codexEffort).toBe("xhigh");
+    });
+
+    it("INVARIANT (#9821): the same escalation block is INERT when no changed file hits a guardrail glob", async () => {
+      let aiCalls = 0;
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => {
+          aiCalls += 1;
+          return { response: JSON.stringify({ assessment: "Fine.", blockers: [], nits: [], suggestions: [] }) };
+        } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seed(env);
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+        settings: {
+          commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", reviewCheckMode: "required", aiReviewMode: "block",
+          hardGuardrailGlobs: ["migrations/**"], // src/a.ts does NOT match -- no hit, no escalation
+        },
+        gate: { guardrailEscalation: { selfConsistencyRuns: 3 } },
+      });
+
+      await reReviewStoredPullRequest(env, "sc-inert-900", 123, "JSONbored/gittensory", 900);
+      // Counted via the selfConsistency usage marker, not raw AI.run calls: other pipeline consumers (the
+      // slop advisory, summaries) legitimately also call AI.run -- the precise claim is that the ESCALATED
+      // runs never fired, same discipline as the flag-off baseline above.
+      const usage = await env.DB.prepare(
+        "select count(*) as n from ai_usage_events where json_extract(metadata_json, '$.selfConsistency') = 1",
+      ).first<{ n: number }>();
+      expect(usage?.n).toBe(0);
+      expect(aiCalls).toBeGreaterThan(0); // the pass itself still reviewed
+    });
+
     it("INVARIANT: flag off (default) spends nothing extra and adds no self-consistency usage rows", async () => {
       let aiCalls = 0;
       const env = createTestEnv({

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildEvalScoreRecordsFromRulePrecision,
   EVAL_SCORE_RECORD_SCHEMA_VERSION,
+  evalScoreCoverage,
   filterEvalScoreRecords,
   ORB_GATE_SUBJECT_ID,
   OUTCOME_CONFIRMED_PRECISION_SCORING_RULE_VERSION,
@@ -26,6 +27,18 @@ const PRECISION_WITH_FREEZE_POINT: PublicRulePrecision = {
   reversals: { reopened: 2, reverted: 1, superseded: 3 },
   latestBacktestRun: { corpusChecksum: "abc123def456", at: "2026-07-27T10:00:00.000Z" },
 };
+
+describe("evalScoreCoverage (#9643)", () => {
+  it("is #9215's decided/(decided+abstained), so a validator re-deriving it agrees with the published field", () => {
+    expect(evalScoreCoverage(25, 0)).toBe(1); // no abstention concept: everything seen was decided
+    expect(evalScoreCoverage(3, 1)).toBe(0.75); // a kind that DOES abstain needs no second implementation
+    expect(evalScoreCoverage(0, 4)).toBe(0); // decided nothing of what it saw -- a real 0, not undefined
+  });
+
+  it("returns null only when nothing was seen at all (0/0 is undefined, never a masked 0)", () => {
+    expect(evalScoreCoverage(0, 0)).toBeNull();
+  });
+});
 
 describe("buildEvalScoreRecordsFromRulePrecision (#9266)", () => {
   it("returns an empty array when there is no persisted backtest run to commit to", async () => {
@@ -72,11 +85,37 @@ describe("buildEvalScoreRecordsFromRulePrecision (#9266)", () => {
   it("carries decided/confirmed/precision through verbatim, with recall null and abstained 0 (not applicable to this work-unit kind)", async () => {
     const records = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT);
     const withPrecision = records.find((r) => r.workUnit.kind === "outcome_confirmed_precision" && r.workUnit.ruleId === "ai_consensus_defect");
-    expect(withPrecision?.score).toEqual({ decided: 25, confirmed: 20, precision: 0.8, recall: null, coverage: null, abstained: 0 });
+    // coverage is 1, not null: abstained is structurally 0 here, so 25/(25+0) is fully determined (#9643).
+    expect(withPrecision?.score).toEqual({ decided: 25, confirmed: 20, precision: 0.8, recall: null, coverage: 1, abstained: 0 });
 
     const sparse = records.find((r) => r.workUnit.kind === "outcome_confirmed_precision" && r.workUnit.ruleId === "sparse_rule");
     // Below the public sample floor: precision is null (never a misleading 0), decided/confirmed still real counts.
-    expect(sparse?.score).toEqual({ decided: 9, confirmed: 9, precision: null, recall: null, coverage: null, abstained: 0 });
+    // coverage is still 1 -- the sample floor gates precision only, and 9 decided of 9 seen is full coverage.
+    expect(sparse?.score).toEqual({ decided: 9, confirmed: 9, precision: null, recall: null, coverage: 1, abstained: 0 });
+  });
+
+  it("REGRESSION (#9643): a rule that decided nothing keeps coverage null -- 0/0 is undefined, not zero", async () => {
+    // The one case where null is the honest answer, and the arm that makes `coverage: 1` a computation rather
+    // than a hardcoded constant. Previously EVERY record published null, including the 25-decided one above,
+    // so a validator re-deriving decided/(decided+abstained) per #9215 computed 1 and disagreed with the field.
+    const records = await buildEvalScoreRecordsFromRulePrecision(
+      { ...PRECISION_WITH_FREEZE_POINT, rules: [{ ruleId: "never_fired", decided: 0, confirmed: 0, precision: null }] },
+      ISSUED_AT,
+    );
+    expect(records).toHaveLength(1);
+    expect(records[0]?.score).toEqual({ decided: 0, confirmed: 0, precision: null, recall: null, coverage: null, abstained: 0 });
+  });
+
+  it("REGRESSION (#9643): records built after the coverage change still verify against their own digest", async () => {
+    // recordDigest is computed over the whole record, so changing coverage changes the digest. Records are
+    // built on read (routes.ts), never persisted, so nothing needs migrating -- but the round-trip a consumer
+    // runs to verify a fetched record must still hold.
+    const records = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT);
+    expect(records).toHaveLength(2);
+    for (const record of records) {
+      expect(record.score.coverage).toBe(1);
+      await expect(verifyEvalScoreRecordDigest(record)).resolves.toBe(true);
+    }
   });
 
   it("each record's recordDigest is the sha256 of its own canonical content (independently recomputable)", async () => {

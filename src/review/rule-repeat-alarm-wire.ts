@@ -26,7 +26,7 @@ import { createSignalStore } from "./signal-tracking-wire";
 
 /** How far back to look for repeat fires. Matches #7983's own "e.g. 1-24h, tunable" proposal — chosen at the
  *  wide end so a slow-burn (not just a fast-burst) repeat still gets caught. */
-export const RULE_REPEAT_ALARM_WINDOW_MS = 24 * 60 * 60 * 1000;
+const RULE_REPEAT_ALARM_WINDOW_MS = 24 * 60 * 60 * 1000;
 /** Distinct-target count that trips the alarm. #7983's own proposal ("e.g. >= 3 within 24h") and its own
  *  validation bar ("should have alerted after the 2nd or 3rd occurrence" against the real incident replay). */
 export const RULE_REPEAT_ALARM_THRESHOLD = 3;

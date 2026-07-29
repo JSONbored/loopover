@@ -243,7 +243,11 @@ describe("runScheduledLedgerAnchor (#9274)", () => {
   it("uses the REAL submitToRekor by default when no submitRekor is injected", async () => {
     const { env } = await keyedEnv();
     await seedOneDecision(env);
-    const fetchSpy = vi.fn().mockResolvedValue(new Response(JSON.stringify({ x: { logIndex: 1, uuid: "u", logId: { keyId: "k" } } }), { status: 201 }));
+    // #9851: the real Rekor v2 TransparencyLogEntry -- the entry directly, logIndex as a proto3-int64 string.
+    // This mock was previously the v1 uuid-keyed wrapper, which the parser no longer accepts.
+    const fetchSpy = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ logIndex: "1", logId: { keyId: "k" }, inclusionProof: { checkpoint: { envelope: "cp" } } }), { status: 201 }),
+    );
     vi.stubGlobal("fetch", fetchSpy);
     try {
       await runScheduledLedgerAnchor(env, { isHourly: true }); // no deps at all -- exercises the real default

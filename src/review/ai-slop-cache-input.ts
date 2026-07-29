@@ -4,7 +4,7 @@ import { sha256Hex } from "../utils/crypto";
 // (title/body) plus the currently-built diff and deterministic band. Those can drift for the same head when a PR
 // is edited, retargeted, or re-evaluated under changed settings, so they are hashed alongside the provider
 // identity to avoid replaying an advisory written for a different prompt.
-export const AI_SLOP_CACHE_INPUT_VERSION = "ai-slop-input:v2";
+const AI_SLOP_CACHE_INPUT_VERSION = "ai-slop-input:v2";
 
 export type AiSlopCacheInput = {
   title?: string | null | undefined;

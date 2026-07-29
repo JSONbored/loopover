@@ -185,7 +185,7 @@ export function findDuplicateContributorDraft(
   return null;
 }
 
-export const CONTRIBUTOR_ISSUE_DRAFT_DECLINED_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
+const CONTRIBUTOR_ISSUE_DRAFT_DECLINED_COOLDOWN_MS = 30 * 24 * 60 * 60 * 1000;
 const DECLINED_DRAFT_WONTFIX_LABELS = new Set(["wontfix", "wont-fix", "invalid", "duplicate", "not-planned"]);
 
 /**

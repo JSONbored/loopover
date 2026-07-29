@@ -22,7 +22,7 @@ const SECRET_SCAN_PATCH_FALLBACK_MAX_CONCURRENT = 4;
 /** Aggregate Contents API read budget for one PR secret-scan fallback pass. */
 export const SECRET_SCAN_PATCH_FALLBACK_MAX_FETCHES = 100;
 /** Max patch-less paths listed in the fail-closed advisory detail (title still reports the full count). */
-export const INCOMPLETE_PATCH_LESS_PATH_DETAIL_MAX = 5;
+const INCOMPLETE_PATCH_LESS_PATH_DETAIL_MAX = 5;
 
 /** Lines present in `head` but not in `base` (multiset), for scanning only the additions on a modified file. */
 export function addedLinesForSecretScan(base: string, head: string): string[] {

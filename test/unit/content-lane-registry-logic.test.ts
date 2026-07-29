@@ -676,6 +676,38 @@ describe("checkContentLaneDeliverable (generic, spec-driven — #content-lane-de
     expect(checkContentLaneDeliverable(entryOnlySpec, issueText, ["tests/foo.test.mjs"]).verdict).toBe("missing");
   });
 
+  // #9667: the issue-body scan must canonicalize each token before testing it against the spec (globToRegExp
+  // compiles the patterns against a canonicalized/lowercased path with no `i` flag), exactly as the changedFiles
+  // side already does — while quoting the ORIGINAL, non-canonicalized token in the public-comment mentionedPath.
+  describe("canonicalizes the issue-body path token before matching (#9667)", () => {
+    it("is 'missing' for a mixed-case issue path the PR doesn't deliver, quoting the ORIGINAL token verbatim", () => {
+      const issueText = "Add the missing surfaces to Registry/Subnets/Foo.json please.";
+      expect(checkContentLaneDeliverable(spec, issueText, ["tests/foo-verify.test.mjs"])).toEqual({
+        verdict: "missing",
+        mentionedPath: "Registry/Subnets/Foo.json",
+      });
+    });
+
+    it("is 'delivered' for that mixed-case issue path when the PR changes the canonical file", () => {
+      const issueText = "Add the missing surfaces to Registry/Subnets/Foo.json please.";
+      expect(checkContentLaneDeliverable(spec, issueText, ["registry/subnets/foo.json"])).toEqual({ verdict: "delivered" });
+    });
+
+    it("keeps the all-lowercase path behaviour byte-identical (both delivered and missing)", () => {
+      const issueText = "Add the missing surfaces to registry/subnets/foo.json.";
+      expect(checkContentLaneDeliverable(spec, issueText, ["registry/subnets/foo.json"])).toEqual({ verdict: "delivered" });
+      expect(checkContentLaneDeliverable(spec, issueText, ["tests/foo-verify.test.mjs"])).toEqual({
+        verdict: "missing",
+        mentionedPath: "registry/subnets/foo.json",
+      });
+    });
+
+    it("stays not-applicable for a mixed-case path token that matches NO spec pattern (not over-broadened)", () => {
+      const issueText = "See the config in Docs/Guide/Setup.md for details.";
+      expect(checkContentLaneDeliverable(spec, issueText, ["registry/subnets/foo.json"])).toEqual({ verdict: "not-applicable" });
+    });
+  });
+
   // #content-lane-deliverable follow-up (metagraphed #7060-class gap): the literal-path scan alone is BLIND
   // to metagraphed's own ~120 "MCP execute: verify + wire SN*" issues, whose bodies write the registry path
   // with a generic `<slug>` documentation placeholder rather than the real resolved filename — confirmed

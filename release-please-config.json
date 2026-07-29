@@ -4,7 +4,11 @@
     "packages/loopover-mcp": {
       "release-type": "node",
       "component": "mcp",
-      "package-name": "@loopover/mcp"
+      "package-name": "@loopover/mcp",
+      "extra-files": [
+        { "type": "json", "path": "/server.json", "jsonpath": "$.version" },
+        { "type": "json", "path": "/server.json", "jsonpath": "$.packages[0].version" }
+      ]
     },
     "packages/loopover-engine": {
       "release-type": "node",

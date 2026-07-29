@@ -20901,11 +20901,25 @@
           },
           "400": {
             "description": "Malformed JSON or invalid payload shape"
+          },
+          "401": {
+            "description": "Missing or invalid ingest credential"
+          },
+          "403": {
+            "description": "Instance not authenticated"
+          },
+          "413": {
+            "description": "Batch exceeds the 1 MiB (MAX_ORB_INGEST_BODY_BYTES) body ceiling"
           }
         },
         "operationId": "postOrbIngest",
         "tags": [
           "ORB"
+        ],
+        "security": [
+          {
+            "OrbBearer": []
+          }
         ]
       }
     },
@@ -26063,7 +26077,7 @@
           }
         ],
         "responses": {
-          "202": {
+          "200": {
             "description": "Batch accepted"
           },
           "400": {
@@ -26071,6 +26085,9 @@
           },
           "401": {
             "description": "Missing or invalid ingest credential"
+          },
+          "413": {
+            "description": "Batch exceeds the 1 MiB (MAX_ORB_INGEST_BODY_BYTES) body ceiling"
           }
         }
       }

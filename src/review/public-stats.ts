@@ -55,6 +55,7 @@ import { validateCalibrationPayload } from "./risk-control";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import { errorMessage } from "../utils/json";
+import { retentionCutoffIsoForTable } from "../db/retention";
 
 /** FALLBACK estimate of maintainer review/triage time saved per reviewed PR, used ONLY when the real per-PR
  *  average (`estimateReviewEffort`'s minutes, persisted at publish time — see `reviewEffortMinutes` in the
@@ -164,12 +165,47 @@ function filteredPct(reviewed: number, merged: number): number | null {
   return Math.round(((reviewed - merged) / reviewed) * 1000) / 10;
 }
 
-/** Reversal-grounded accuracy over the irreversible auto-actions (merged + closed); null until there is signal. */
+/** The auto-actions a reversal is recorded against. `recordReversalSignals` only ever fires for a PR this
+ *  deployment itself auto-merged or auto-closed, so with zero of these rows in the retained window a
+ *  `reversal_*` event cannot exist — and `1 - 0/N` is then a structural zero, not a measurement. */
+export const AUTO_ACTION_EVENT_TYPES = ["agent.action.close", "agent.action.merge"] as const;
+
+/**
+ * Whether a reversal is OBSERVABLE on this deployment: did it record any terminal auto-action in the window a
+ * reversal could still be attributed to? Reversal signals are written only by the review-execution pipeline
+ * (`recordReversalSignals`, reached via the `github-webhook` job), which a runtime that does not execute
+ * reviews acks-and-drops — so on such a runtime `reversed` is pinned at 0 forever while the merged/closed
+ * denominator keeps growing, and every reversal-grounded percentage converges on a fake 100%.
+ *
+ * Publishing that as accuracy is the exact failure #8820 called out for the fleet number ("the old formula
+ * overstated accuracy") and #7449 fixed for the global one. This is the same discipline the rest of this
+ * surface already applies — a sparse rule's precision is null, `gamingFlagsCaught` is null below three
+ * instances — extended to the case where the numerator's WRITER, not just its sample, is absent.
+ */
+export async function loadReversalObservability(env: Env, knownReversals = 0): Promise<boolean> {
+  // A recorded reversal is itself proof the pipeline that records them runs here -- no probe needed, and no
+  // query on the hot path for any deployment that has ever overturned an auto-action.
+  if (knownReversals > 0) return true;
+  const rows = await safeAll<{ n: number }>(
+    env,
+    `SELECT COUNT(*) AS n FROM audit_events
+      WHERE event_type IN (${AUTO_ACTION_EVENT_TYPES.map((type) => `'${type}'`).join(", ")})
+        AND created_at >= ?`,
+    retentionCutoffIsoForTable("audit_events"),
+  );
+  return (rows[0]?.n ?? 0) > 0;
+}
+
+/** Reversal-grounded accuracy over the irreversible auto-actions (merged + closed); null until there is signal,
+ *  and null when a reversal is not observable at all on this deployment (see {@link loadReversalObservability}) —
+ *  an unmeasurable quantity stays unknown rather than rendering as a perfect score. */
 function accuracyPct(
   merged: number,
   closed: number,
   reversed: number,
+  reversalObservable: boolean,
 ): number | null {
+  if (!reversalObservable) return null;
   const decided = merged + closed;
   if (decided <= 0) return null;
   // `reversed` counts engine auto-actions regardless of a PR's CURRENT disposition, so a reopened
@@ -426,6 +462,10 @@ export async function getPublicStats(
     error: 0,
     reversed: 0,
   };
+  // Resolved before byProject so every published accuracy figure -- per repo and global -- answers the same
+  // question about the same deployment, rather than one of them silently disagreeing with the others.
+  const totalReversals = [...reversedByProject.values()].reduce((sum, n) => sum + n, 0);
+  const reversalObservable = await loadReversalObservability(env, totalReversals);
   const byProject = dispositions
     .map((d) => {
       const merged = d.merged ?? 0;
@@ -445,7 +485,7 @@ export async function getPublicStats(
         reviewed,
         merged,
         closed,
-        accuracyPct: accuracyPct(merged, closed, reversed),
+        accuracyPct: accuracyPct(merged, closed, reversed, reversalObservable),
       };
     })
     .filter((r) => r.reviewed > 0)
@@ -573,7 +613,7 @@ export async function getPublicStats(
       // Option 1 of #7449: compute the global accuracy from the OWN-LEDGER merged/closed snapshot (not the
       // fleet-folded totals.merged/closed), so its numerator (own-ledger reversed) and denominator are drawn
       // from the same population. See the ownLedgerMerged/ownLedgerClosed snapshot above the Orb fold for why.
-      accuracyPct: accuracyPct(ownLedgerMerged, ownLedgerClosed, totals.reversed),
+      accuracyPct: accuracyPct(ownLedgerMerged, ownLedgerClosed, totals.reversed, reversalObservable),
       minutesSaved,
     },
     weekly: { reviewed: w.reviewed ?? 0, merged: w.merged ?? 0 },

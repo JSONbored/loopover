@@ -36,6 +36,13 @@ export const DEFAULT_TENANT_CONFIG: TenantConfig = {
   preferences: { maxConcurrentLoops: 1, pauseOnFailure: true, allowedActionClasses: ["open_pr", "comment"] },
 };
 
+// Mirrors the finiteNonNegativeInt discipline already applied in tenant-quota.ts / loop-consumption.ts /
+// worktree-pool.ts of this same #4778 family: a non-finite, negative, or fractional maxConcurrentLoops can
+// never reach a loop-scheduling decision as NaN/negative/fractional (`??` does not catch NaN) (#9614).
+function finiteNonNegativeInt(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
 /**
  * Resolve a tenant's effective config from the defaults plus their overrides. Pure and fully isolated: the
  * returned config shares no mutable reference with the defaults or any other resolution — the action-class list
@@ -52,9 +59,23 @@ export function resolveTenantConfig(overrides: TenantConfigOverrides = {}): Tena
   return {
     autonomyLevel,
     preferences: {
-      maxConcurrentLoops: prefs.maxConcurrentLoops ?? base.preferences.maxConcurrentLoops,
+      maxConcurrentLoops: finiteNonNegativeInt(prefs.maxConcurrentLoops ?? base.preferences.maxConcurrentLoops),
       pauseOnFailure: prefs.pauseOnFailure ?? base.preferences.pauseOnFailure,
       allowedActionClasses: [...(prefs.allowedActionClasses ?? base.preferences.allowedActionClasses)],
+    },
+  };
+}
+
+/** Deep-copy a resolved config so a returned value never shares a mutable reference (the `preferences` object
+ *  or its action-class list) with the immutable store — the same freshly-copied-collections guarantee
+ *  `resolveTenantConfig` gives, applied to an already-stored config (#9614). */
+function copyTenantConfig(config: TenantConfig): TenantConfig {
+  return {
+    autonomyLevel: config.autonomyLevel,
+    preferences: {
+      maxConcurrentLoops: config.preferences.maxConcurrentLoops,
+      pauseOnFailure: config.preferences.pauseOnFailure,
+      allowedActionClasses: [...config.preferences.allowedActionClasses],
     },
   };
 }
@@ -77,7 +98,11 @@ export function setTenantConfig(
   return Object.freeze({ ...store, [tenantId]: resolveTenantConfig(overrides) });
 }
 
-/** Read a tenant's effective config, falling back to a fresh copy of the defaults when they've set none. */
+/** Read a tenant's effective config, falling back to a fresh copy of the defaults when they've set none.
+ *  Always returns a FRESH copy: the store holds an immutable config, and a caller mutating the returned
+ *  value (e.g. pushing to `preferences.allowedActionClasses`) must never rewrite the stored tenant config
+ *  — the leak `Object.freeze`'s shallow freeze left open on the hit path (#9614). */
 export function getTenantConfig(store: TenantConfigStore, tenantId: string): TenantConfig {
-  return store[tenantId] ?? resolveTenantConfig();
+  const stored = store[tenantId];
+  return stored ? copyTenantConfig(stored) : resolveTenantConfig();
 }

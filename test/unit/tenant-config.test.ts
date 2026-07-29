@@ -68,3 +68,43 @@ describe("tenant config store (#4787)", () => {
     expect(DEFAULT_TENANT_CONFIG.preferences.allowedActionClasses).not.toContain("delete_repo");
   });
 });
+
+describe("getTenantConfig same-tenant isolation + maxConcurrentLoops normalization (#9614)", () => {
+  it("returns a fresh copy on a HIT — a caller mutating it never rewrites that tenant's stored config", () => {
+    const store = setTenantConfig(EMPTY_TENANT_CONFIG_STORE, "acme");
+    const first = getTenantConfig(store, "acme");
+    // The read-path leak (#9614): before the fix, this pushed straight into the stored object.
+    (first.preferences.allowedActionClasses as string[]).push("merge_pr");
+    first.preferences.maxConcurrentLoops = 99;
+
+    const second = getTenantConfig(store, "acme");
+    expect(second.preferences.allowedActionClasses).toEqual(["open_pr", "comment"]);
+    expect(second.preferences.maxConcurrentLoops).toBe(1);
+    // No shared mutable reference between reads.
+    expect(second.preferences).not.toBe(first.preferences);
+    expect(second.preferences.allowedActionClasses).not.toBe(first.preferences.allowedActionClasses);
+  });
+
+  it("falls back to a fresh copy of the defaults on a MISS, and mutating it never touches the shared default", () => {
+    const a = getTenantConfig(EMPTY_TENANT_CONFIG_STORE, "unknown");
+    expect(a).toEqual(DEFAULT_TENANT_CONFIG);
+    (a.preferences.allowedActionClasses as string[]).push("x");
+    expect(getTenantConfig(EMPTY_TENANT_CONFIG_STORE, "unknown").preferences.allowedActionClasses).toEqual(["open_pr", "comment"]);
+    expect(DEFAULT_TENANT_CONFIG.preferences.allowedActionClasses).not.toContain("x");
+  });
+
+  it("normalizes a non-finite / negative / fractional maxConcurrentLoops to a non-negative integer", () => {
+    for (const [input, expected] of [
+      [-5, 0],
+      [0.5, 0],
+      [3.9, 3],
+      [Number.NaN, 0],
+      [Number.POSITIVE_INFINITY, 0],
+      [2, 2],
+    ] as const) {
+      expect(resolveTenantConfig({ preferences: { maxConcurrentLoops: input } }).preferences.maxConcurrentLoops).toBe(expected);
+    }
+    // An absent override inherits the already-valid default (the `??` fallback side).
+    expect(resolveTenantConfig().preferences.maxConcurrentLoops).toBe(1);
+  });
+});

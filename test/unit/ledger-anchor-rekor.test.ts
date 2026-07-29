@@ -84,12 +84,44 @@ describe("submitToRekor (#9272)", () => {
     );
   });
 
-  it("uses the default shard URL when unconfigured", async () => {
+  it("uses the default shard URL when unconfigured -- pinned EXACTLY, because a shard that does not exist still matches a substring", async () => {
+    // #9844: this assertion used to be `stringContaining("rekor.sigstore.dev")`, which passed happily while
+    // the default pointed at log2026-1 -- a shard Sigstore never deployed. Every deployment that enabled
+    // anchoring without overriding the env var recorded `fetch failed` forever and published no anchor, and
+    // this test could not have caught it. The exact host is the thing under test, so it is asserted exactly.
     const env = createTestEnv();
     const { signed, publicKeySpki } = await realSignedAnchor();
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(REKOR_RESPONSE), { status: 201 }));
     await submitToRekor(env, signed, publicKeySpki, fetchMock);
-    expect(fetchMock).toHaveBeenCalledWith(expect.stringContaining("rekor.sigstore.dev"), expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("https://log2025-1.rekor.sigstore.dev/api/v2/log/entries", expect.anything());
+  });
+
+  it("REGRESSION (#9844): a thrown fetch error records WHICH endpoint failed, not a bare 'fetch failed'", async () => {
+    // Node's own message is "fetch failed" with no URL, so an operator cannot tell a shard hostname that does
+    // not resolve from blocked egress from a log that is down -- three different fixes. #9271 publishes these
+    // failures so anyone can see anchoring is broken; naming the endpoint is what makes that actionable.
+    const env = createTestEnv({ LOOPOVER_LEDGER_ANCHOR_REKOR_SHARD_URL: "https://log-does-not-exist.example" });
+    const { signed, publicKeySpki } = await realSignedAnchor();
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("fetch failed"));
+
+    await expect(submitToRekor(env, signed, publicKeySpki, fetchMock)).resolves.toBeUndefined();
+
+    const { anchors } = await loadPublicLedgerAnchors(env);
+    expect(anchors[0]).toMatchObject({ backend: "rekor", status: "failed" });
+    expect(anchors[0]!.error).toContain("https://log-does-not-exist.example/api/v2/log/entries");
+    expect(anchors[0]!.error).toContain("fetch failed"); // the original cause is still legible
+  });
+
+  it("wraps a non-Error thrown value without losing it", async () => {
+    const env = createTestEnv();
+    const { signed, publicKeySpki } = await realSignedAnchor();
+    const fetchMock = vi.fn().mockRejectedValue("a bare string, not an Error");
+
+    await submitToRekor(env, signed, publicKeySpki, fetchMock);
+
+    const { anchors } = await loadPublicLedgerAnchors(env);
+    expect(anchors[0]!.error).toContain("a bare string, not an Error");
+    expect(anchors[0]!.error).toContain("log2025-1.rekor.sigstore.dev");
   });
 
   it("records status:'failed' on a non-2xx response, and does NOT throw", async () => {
@@ -124,6 +156,10 @@ describe("submitToRekor (#9272)", () => {
     await expect(submitToRekor(env, signed, publicKeySpki, fetchMock)).resolves.toBeUndefined();
 
     const { anchors } = await loadPublicLedgerAnchors(env);
-    expect(anchors[0]).toMatchObject({ status: "failed", error: "network down" });
+    // #9844: the cause is still legible, now alongside the endpoint that was attempted -- "network down" on
+    // its own could not tell an operator which of the backends or which URL had the problem.
+    expect(anchors[0]).toMatchObject({ status: "failed" });
+    expect(anchors[0]!.error).toContain("network down");
+    expect(anchors[0]!.error).toContain("/api/v2/log/entries");
   });
 });

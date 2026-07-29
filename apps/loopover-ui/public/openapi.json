@@ -10191,6 +10191,12 @@
           "guardrailEscalationSelfConsistencyRuns": {
             "type": "number",
             "nullable": true
+          },
+          "priorityEligibilityWindowMinutes": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0,
+            "maximum": 1440
           }
         },
         "required": [

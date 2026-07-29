@@ -1377,6 +1377,11 @@ export type RepositorySettings = {
    *  force -- a `mergeable_state: clean` read is trusted exactly as it is today. Layered like every other
    *  settings field (`.loopover.yml` `gate.requireFreshRebaseWindow` > DB > `null`). */
   requireFreshRebaseWindowMinutes?: number | null | undefined;
+  /** `gate.priorityEligibilityWindow` (#9738): minutes a `gittensor:priority` label must have been publicly
+   *  present before a PR closing that issue is gate-eligible. A PR inside the window is HELD with a neutral
+   *  comment naming the moment it opens, never rejected, and proceeds once the window elapses. `0` disables
+   *  the rule; absent means the shipped 30-minute default. Config-as-code only. */
+  priorityEligibilityWindowMinutes?: number | null | undefined;
   /** Stale-base auto-rebase threshold (#review-grounding stale-base fact): a commit count. When the repo's
    *  current default branch is at least this many commits ahead of a PR's own base commit, the pre-review
    *  readiness gate (`prReadyForReview`) forces an `update_branch`, independent of GitHub's own

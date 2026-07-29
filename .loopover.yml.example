@@ -407,6 +407,22 @@ gate:
   # DB-backed (dashboard-settable too); this overrides the stored value.
   requireFreshRebaseWindow: 10
 
+  # Priority-issue eligibility window (#9738) — minutes a `gittensor:priority` label must have been publicly
+  # present before a PR that closes that issue is gate-eligible.
+  #
+  # Priority carries the highest payout, so assignment fairness matters most there, and first-come pickup is
+  # only fair if everyone can SEE the issue before anyone can act on it: a PR opened moments after the label
+  # lands means the window between "issue becomes valuable" and "issue is claimed" was effectively zero for
+  # everyone else watching the repo.
+  #
+  # A PR arriving inside the window is NOT rejected. It is HELD, with a neutral comment naming the moment it
+  # becomes eligible, and proceeds normally once the window elapses — no penalty beyond waiting, and the
+  # contributor keeps their work. The clock is anchored to the EARLIEST time the label was applied, so
+  # re-applying it never resets the window for anyone.
+  #
+  # Whole number of minutes, 0 to 1440. `0` turns the rule off. Default: 30. Config-as-code only.
+  priorityEligibilityWindow: 30
+
   # Stale-base auto-rebase threshold. When the repository's current default branch is at least this many
   # commits ahead of a PR's own base commit, the pre-review readiness gate forces an update_branch before
   # review runs — independent of GitHub's own mergeable_state "behind" signal, which only fires when the

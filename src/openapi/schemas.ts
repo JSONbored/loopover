@@ -4,6 +4,7 @@ import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS, FEASIBILITY_VERDICTS, PUBLIC_SUR
 // #9773: the request bodies these routes really accept, from the one place they are defined.
 import { checkBeforeStartSchema, slopRiskSchema, validateFocusManifestSchema, validateLinkedIssueSchema } from "@loopover/contract/api-requests";
 import { MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
+import { MAX_PRIORITY_ELIGIBILITY_WINDOW_MINUTES } from "../review/priority-eligibility-window";
 import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP } from "../types";
 import {
   MAX_FIND_OPPORTUNITIES_TARGETS,
@@ -759,6 +760,8 @@ export const RepositorySettingsSchema = z
     gateDryRun: z.boolean().optional(),
     premergeContentRecheck: z.boolean().optional(),
     requireFreshRebaseWindowMinutes: z.number().int().positive().nullable().optional(),
+    // #9738: non-negative, not positive -- 0 is the documented way to turn the window off.
+    priorityEligibilityWindowMinutes: z.number().int().min(0).max(MAX_PRIORITY_ELIGIBILITY_WINDOW_MINUTES).nullable().optional(),
     staleBaseAheadByThreshold: z.number().int().positive().nullable().optional(),
     mergeReadinessGateMode: z.enum(["off", "advisory", "block"]),
     manifestPolicyGateMode: z.enum(["off", "advisory", "block"]),

@@ -444,6 +444,11 @@ export type AgentActionPlanInput = {
   // missing linked issue is never a close reason" -- it only ever downgrades a would-merge into a held-for-
   // review state so a human can confirm the match before it's credited.
   unlinkedIssueMatchHold?: { reason: string; comment: string } | undefined;
+  // #9738: the linked `gittensor:priority` issue's eligibility window has not elapsed. Priority carries the
+  // highest payout, so first-come pickup is only fair if everyone can see the issue before anyone can act on
+  // it. Same risk profile as the two holds above -- SUPPRESSES the merge (folded into `heldForManualReview`),
+  // never closes, and clears itself once the window passes with no action from the contributor.
+  priorityEligibilityHold?: { reason: string; comment: string } | undefined;
   // Same guardrail as unlinkedIssueMatchHold, but for a CONFIRMED REPEAT by the same contributor (tracked via
   // audit_events, see resolveUnlinkedIssueMatchDisposition) -- a second occurrence is no longer a coincidence
   // worth a human's benefit of the doubt, so this closes the PR one-shot instead of holding it. Deliberately
@@ -1116,6 +1121,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     guardrailHit,
     migrationCollisionHold: input.migrationCollisionHold !== undefined,
     unlinkedIssueMatchHold: input.unlinkedIssueMatchHold !== undefined,
+    priorityEligibilityHold: input.priorityEligibilityHold !== undefined,
     advisoryCheckHold: input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0,
     // Deliberately conjoined with "nothing else adverse": an unstable state is only attributed to the ignore
     // list when our own aggregate found NO failing check of any kind. If some other non-required check is
@@ -1266,6 +1272,21 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       label: labels.manualReview,
       labelOp: "add",
       comment: sanitizePublicComment(input.unlinkedIssueMatchHold.comment),
+    });
+  }
+
+  // 1d-priority) priority-eligibility hold (#9738) — mirrors 1d exactly. The PR is EARLY, not wrong: it is
+  // held with a neutral comment naming the moment work opens, and nothing else about it changes. The label
+  // is the same generic manual-review one, so the hold is visible on the surfaces a maintainer already reads.
+  if (reviewGood && input.priorityEligibilityHold !== undefined && labels.manualReview !== null && acting("merge") && !hasLabelOrPlanned(input.pr.labels, actions, labels.manualReview)) {
+    actions.push({
+      actionClass: "label",
+      autonomyClass: "merge",
+      requiresApproval: approval("merge"),
+      reason: `verdict=${conclusion}; ${input.priorityEligibilityHold.reason}`,
+      label: labels.manualReview,
+      labelOp: "add",
+      comment: sanitizePublicComment(input.priorityEligibilityHold.comment),
     });
   }
 

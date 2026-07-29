@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assessMergeableState, derivePrDisposition, isCommentMergeStateHeld, type PrDispositionInput } from "../../src/settings/pr-disposition";
+import { MERGE_HOLD_INPUT_KEYS, assessMergeableState, derivePrDisposition, isCommentMergeStateHeld, type MergeHoldInput, type PrDispositionInput } from "../../src/settings/pr-disposition";
 import { AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, planAgentMaintenanceActions, type AgentActionPlanInput } from "../../src/settings/agent-actions";
 import { deriveUnifiedStatus, type UnifiedReviewInput } from "../../src/review/unified-comment";
 import type { GateCheckConclusion } from "../../src/rules/advisory";
@@ -10,17 +10,18 @@ import type { GateCheckConclusion } from "../../src/rules/advisory";
 // renderer agreeing with it through the bridge-passed boolean. A regression that re-introduces a
 // private raw-string interpretation in any surface shows up here as a cross-surface disagreement.
 
+/** Every declared merge-hold input, off. */
+const NO_HOLDS = Object.fromEntries(MERGE_HOLD_INPUT_KEYS.map((key) => [key, false])) as Record<MergeHoldInput, boolean>;
+
 const RAW_STATES = ["clean", "dirty", "behind", "unstable", "blocked", "unknown", "", null, undefined] as const;
 
 function dispositionInput(over: Partial<PrDispositionInput> = {}): PrDispositionInput {
   return {
     mergeableState: "clean",
     reviewGood: true,
-    guardrailHit: false,
-    migrationCollisionHold: false,
-    unlinkedIssueMatchHold: false,
-    advisoryCheckHold: false,
-    unlinkedIssueMatchCloseWithoutCloseActing: false,
+    // Every hold OFF, derived from the table rather than restated -- a new hold joins this fixture by
+    // existing, which is what stops a hold from being added and silently never exercised here (#9738).
+    ...NO_HOLDS,
     ...over,
   };
 }
@@ -179,10 +180,8 @@ describe("cross-surface: deriveUnifiedStatus consumes the bridge-resolved boolea
 });
 
 describe("unstable explained only by an IGNORED check (#9810 follow-up)", () => {
-  const base = {
-    reviewGood: true, guardrailHit: false, migrationCollisionHold: false, unlinkedIssueMatchHold: false,
-    advisoryCheckHold: false, unlinkedIssueMatchCloseWithoutCloseActing: false,
-  };
+  // Same derivation as `dispositionInput` above: the holds come from the table, never restated here.
+  const base = { reviewGood: true, ...NO_HOLDS };
 
   it("REGRESSION: an unstable state the ignore list fully explains no longer holds", () => {
     // The live half-fix: gate.ignoredCheckRuns removed the check from LoopOver's CI aggregate, but

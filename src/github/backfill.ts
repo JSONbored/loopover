@@ -3559,6 +3559,46 @@ export async function fetchLivePullRequestMergedAt(
   return result === undefined ? undefined : (result.data.merged_at ?? null);
 }
 
+/**
+ * When a label FIRST landed on an issue, ISO-8601, or null when it never did / cannot be read (#9738).
+ *
+ * `first: N` on purpose: the eligibility window is anchored to the EARLIEST labeling so re-applying the label
+ * cannot reset the clock for anyone. GitHub returns timeline items chronologically, so the first LABELED_EVENT
+ * naming this label is the moment the issue became publicly valuable.
+ *
+ * Reads at most one page. A maintainer who has labeled and unlabeled an issue more times than that has an
+ * issue whose history is not what this rule is for, and a null here FAILS OPEN (no hold) rather than guessing.
+ */
+export async function fetchIssueLabelFirstAppliedAt(
+  env: Env,
+  repoFullName: string,
+  issueNumber: number,
+  labelName: string,
+  token: string | undefined,
+  admissionKey?: GitHubRateLimitAdmissionKey,
+): Promise<string | null> {
+  if (!token || !labelName) return null;
+  const { owner, name } = repoParts(repoFullName);
+  if (!owner || !name) return null;
+  const query = `query LoopOverIssueLabeledAt { repository(owner: ${JSON.stringify(owner)}, name: ${JSON.stringify(name)}) { issue(number: ${issueNumber}) { timelineItems(first: 100, itemTypes: [LABELED_EVENT]) { nodes { __typename ... on LabeledEvent { createdAt label { name } } } } } } }`;
+  const result = await githubGraphQl<{
+    data?: {
+      repository?: {
+        issue?: { timelineItems?: { nodes?: Array<{ createdAt?: string | null; label?: { name?: string | null } | null } | null> | null } | null } | null;
+      } | null;
+    };
+    errors?: unknown[];
+  }>(env, query, token, admissionKey).catch(() => undefined);
+  if (result === undefined) return null;
+  if (Array.isArray(result.errors) && result.errors.length > 0) return null;
+  const wanted = labelName.toLowerCase();
+  for (const node of result.data?.repository?.issue?.timelineItems?.nodes ?? []) {
+    const label = node?.label?.name;
+    if (typeof label === "string" && label.toLowerCase() === wanted && typeof node?.createdAt === "string") return node.createdAt;
+  }
+  return null;
+}
+
 export type LinkedIssueClosureByPullRequestResult = "closed_by_pull_request" | "not_closed_by_pull_request" | "fetch_error";
 
 /** Verifies whether GitHub attributes this issue's closure to the specific PR, via GraphQL's `ClosedEvent.closer`

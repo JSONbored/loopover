@@ -106,6 +106,7 @@ import {
   backfillRepositorySegment,
   fetchAndStorePullRequestFilesForReview,
   fetchBaseAheadBy,
+  fetchIssueLabelFirstAppliedAt,
   fetchLinkedIssueFacts,
   fetchLiveBaseBranchAdvancedAt,
   invalidateCiStateCache,
@@ -199,6 +200,7 @@ import {
   PRIORITY_LABEL_POLICY_URL,
   resolvePriorityLabelEnforcement,
 } from "../review/priority-label-eligibility";
+import { DEFAULT_PRIORITY_ELIGIBILITY_WINDOW_MINUTES, resolvePriorityEligibilityHold } from "../review/priority-eligibility-window";
 import { fetchLinkedIssueLabelsForPropagation } from "../review/linked-issue-label-propagation-fetch";
 import { shouldPublishReviewCheck } from "../review/check-names";
 import { fetchPublicContributorProfile } from "../github/public";
@@ -2803,6 +2805,7 @@ function buildAgentMaintenancePlanInput(args: {
   linkedIssueRulesConfig: Awaited<ReturnType<typeof loadLinkedIssueHardRules>>;
   migrationCollisionHold: AgentActionPlanInput["migrationCollisionHold"];
   unlinkedIssueMatchHold: AgentActionPlanInput["unlinkedIssueMatchHold"];
+  priorityEligibilityHold: AgentActionPlanInput["priorityEligibilityHold"];
   aiReviewLowConfidenceHold: AgentActionPlanInput["aiReviewLowConfidenceHold"];
   unlinkedIssueMatchClose: AgentActionPlanInput["unlinkedIssueMatchClose"];
   liveMergeState: string | undefined;
@@ -2842,6 +2845,7 @@ function buildAgentMaintenancePlanInput(args: {
     linkedIssueRulesConfig,
     migrationCollisionHold,
     unlinkedIssueMatchHold,
+    priorityEligibilityHold,
     aiReviewLowConfidenceHold,
     unlinkedIssueMatchClose,
     liveMergeState,
@@ -2920,6 +2924,7 @@ function buildAgentMaintenancePlanInput(args: {
     },
     ...(migrationCollisionHold !== undefined ? { migrationCollisionHold } : {}),
     ...(unlinkedIssueMatchHold !== undefined ? { unlinkedIssueMatchHold } : {}),
+    ...(priorityEligibilityHold !== undefined ? { priorityEligibilityHold } : {}),
     ...(aiReviewLowConfidenceHold !== undefined ? { aiReviewLowConfidenceHold } : {}),
     ...(unlinkedIssueMatchClose !== undefined ? { unlinkedIssueMatchClose } : {}),
     manualReviewLockContentionResolved,
@@ -3460,6 +3465,24 @@ async function runAgentMaintenancePlanAndExecute(
         })
       : undefined;
   const unlinkedIssueMatchHold = unlinkedIssueMatchDisposition?.kind === "hold" ? unlinkedIssueMatchDisposition : undefined;
+
+  // Priority-issue eligibility window (#9738). A PR closing a `gittensor:priority` issue is gate-eligible
+  // only once the label has been publicly present for the configured window, so first-come pickup is fair to
+  // everyone watching the repo rather than to whoever was already looking. Resolved here (not in the planner)
+  // because it needs a GitHub read; the DECISION is the pure evaluator, unit-tested on its own.
+  //
+  // FAIL-OPEN throughout: a fetch that throws, a label that was never applied, or a timestamp we cannot parse
+  // all yield no hold. Holding a contributor's PR on a fact we could not read is a penalty for our own gap.
+  const priorityEligibilityHold = await resolvePriorityEligibilityHold({
+    env,
+    repoFullName,
+    linkedIssues: pr.linkedIssues,
+    prCreatedAt: pr.createdAt ?? null,
+    windowMinutes: settings.priorityEligibilityWindowMinutes ?? DEFAULT_PRIORITY_ELIGIBILITY_WINDOW_MINUTES,
+    priorityLabel: settings.typeLabels?.priority ?? DEFAULT_TYPE_LABELS.priority,
+    token: ciToken,
+    fetchLabeledAt: (repo, issueNumber, label) => fetchIssueLabelFirstAppliedAt(env, repo, issueNumber, label, ciToken),
+  }).catch(() => undefined);
   const unlinkedIssueMatchClose = unlinkedIssueMatchDisposition?.kind === "close" ? unlinkedIssueMatchDisposition : undefined;
 
   // Contributor blacklist (#1425): resolve whether the PR author is on the repo's blacklist (the shared/global
@@ -3661,6 +3684,7 @@ async function runAgentMaintenancePlanAndExecute(
       linkedIssueRulesConfig,
       migrationCollisionHold,
       unlinkedIssueMatchHold,
+      priorityEligibilityHold,
       aiReviewLowConfidenceHold: aiReviewLowConfidenceHold ?? aiReviewSalvageableHold,
       unlinkedIssueMatchClose,
       liveMergeState,

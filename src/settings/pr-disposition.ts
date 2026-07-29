@@ -51,16 +51,38 @@ export function assessMergeableState(state: string | null | undefined): Mergeabl
   }
 }
 
+/**
+ * Every input that SUPPRESSES a would-merge into a manual hold, as DATA (#9738).
+ *
+ * The input type, the `heldForManualReview` formula, and every test fixture are derived from this table, so
+ * adding a hold is one entry rather than three edits that can each be forgotten independently -- which is
+ * exactly how a hold gets declared and then silently not folded into the decision. The value documents WHY
+ * the input holds; nothing reads it as text today, and it is the natural place for a ledger reason to come
+ * from when one is wanted.
+ *
+ * A hold NEVER closes a PR. Each of these downgrades a merge into a held-for-review state and nothing more.
+ */
+export const MERGE_HOLD_INPUTS = {
+  guardrailHit: "the PR touches a hard-guardrail path",
+  migrationCollisionHold: "two migrations claim the same number",
+  unlinkedIssueMatchHold: "an unlinked issue appears to match this work",
+  advisoryCheckHold: "an advisory check the maintainer configured is not passing",
+  priorityEligibilityHold: "the linked priority issue's eligibility window has not elapsed",
+  unlinkedIssueMatchCloseWithoutCloseActing: "a repeat unlinked-issue match while close autonomy is off",
+} as const;
+
+export type MergeHoldInput = keyof typeof MERGE_HOLD_INPUTS;
+
+/** The table's keys, resolved once. Exported so a caller (or a test fixture) can enumerate every hold
+ *  without restating them -- the restatement is the thing this table exists to remove. */
+export const MERGE_HOLD_INPUT_KEYS = Object.keys(MERGE_HOLD_INPUTS) as MergeHoldInput[];
+
 /** The hold inputs every surface must agree on. Each field mirrors the planner input of the same name —
  *  the caller (planner or processors.ts) resolves them once and both surfaces read the same values. */
-export type PrDispositionInput = {
+export type PrDispositionInput = Record<MergeHoldInput, boolean> & {
   mergeableState: string | null | undefined;
   /** Gate conclusion success/neutral AND required CI passed — the only thing that earns approve/merge. */
   reviewGood: boolean;
-  guardrailHit: boolean;
-  migrationCollisionHold: boolean;
-  unlinkedIssueMatchHold: boolean;
-  advisoryCheckHold: boolean;
   /** #9810 follow-up: GitHub says `unstable`, but the ONLY non-passing check explaining it is one the
    *  maintainer listed in `gate.ignoredCheckRuns`. LoopOver's own CI aggregate already excludes such a run --
    *  yet `mergeable_state` is GitHub's computation, not ours, and it stays "unstable" while the check exists
@@ -68,9 +90,6 @@ export type PrDispositionInput = {
    *  held anyway (observed on JSONbored/loopover#9816, reason "mergeable_state is unstable — non-required
    *  check(s) not passing: Contributor trust"). Set ONLY when nothing else adverse was seen. */
   unstableExplainedByIgnoredChecks?: boolean | undefined;
-  /** A confirmed repeat unlinked-issue-match while `close` autonomy is NOT acting (the planner's own
-   *  fold-into-hold escape hatch — see agent-actions.ts's heldForManualReview doc). */
-  unlinkedIssueMatchCloseWithoutCloseActing: boolean;
 };
 
 export type PrDisposition = {
@@ -99,13 +118,9 @@ export function derivePrDisposition(input: PrDispositionInput): PrDisposition {
   // An "unstable" state that ONLY an ignored check explains carries no signal a maintainer asked to act on:
   // they explicitly declared that check meaningless for this repo. Every other unstable cause still holds.
   const unstableHolds = mergeable === "unstable" && input.unstableExplainedByIgnoredChecks !== true;
-  const heldForManualReview =
-    input.guardrailHit ||
-    input.migrationCollisionHold ||
-    input.unlinkedIssueMatchHold ||
-    input.advisoryCheckHold ||
-    unstableHolds ||
-    input.unlinkedIssueMatchCloseWithoutCloseActing;
+  // Derived from MERGE_HOLD_INPUTS, so a hold declared in that table is folded in by construction and a
+  // new one can never be added-but-not-honoured.
+  const heldForManualReview = MERGE_HOLD_INPUT_KEYS.some((key) => input[key] === true) || unstableHolds;
   const heldForUnstableMergeState = unstableHolds;
   const wouldApprove = input.reviewGood && !heldForManualReview && mergeable !== "conflict";
   const wouldMerge = input.reviewGood && !heldForManualReview && mergeable === "clean";

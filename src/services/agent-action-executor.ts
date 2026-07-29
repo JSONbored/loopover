@@ -45,7 +45,7 @@ import { incr } from "../selfhost/metrics";
 import { MERGE_TRAIN_MAX_WAIT_MS, shouldWaitForOlderSiblings } from "../review/merge-train";
 import { capturePostHogError } from "../selfhost/posthog";
 import { claimContributorCapLock, releaseContributorCapLock } from "../queue/transient-locks";
-import { buildDecisionRecord, persistDecisionRecord, type DecisionRecord } from "../review/decision-record";
+import { buildDecisionRecord, persistDecisionRecord, type DecisionRecord, type ReevaluationContext } from "../review/decision-record";
 
 // The agent actor name on every audit record — the App acts on the maintainer's behalf per their configured
 // autonomy (the config IS the authorization; there is no human commenter to authorize, unlike #824).
@@ -289,6 +289,13 @@ export type DecisionRecordContext =
        *  below when a caller has nothing richer to say. Compute via `contentDigest(settings)`
        *  (decision-record.ts) the SAME way the gate-evaluation call site already does. */
       configDigest: string;
+      /** #9742: WHY this evaluation is running, for the case where the head SHA already carries a
+       *  verdict. REQUIRED, and deliberately not defaulted: a repeat verdict whose cause nobody
+       *  declared is exactly what this invariant exists to refuse, so a future call site must answer
+       *  it at the type level rather than inherit a plausible-looking guess. Callers driven by a job
+       *  derive it with `deriveReevaluationReason(deliveryId)`; a human-driven one names its own
+       *  cause. Ignored entirely on a first evaluation, which is most writes. */
+      reevaluation: ReevaluationContext;
       gatePack?: string | null | undefined;
       ciState?: string | null | undefined;
       baseSha?: string | null | undefined;
@@ -358,7 +365,7 @@ async function recordCompletedDecision(env: Env, ctx: AgentActionExecutionContex
     aiConfidence: dr.aiConfidence ?? null,
     salvageability: dr.salvageability ?? null,
   });
-  const recordId = await persistDecisionRecord(env, record, recordDigest);
+  const recordId = await persistDecisionRecord(env, record, recordDigest, 3, dr.reevaluation);
   if (recordId !== null && dr.afterPersist) await dr.afterPersist(recordId, record);
 }
 

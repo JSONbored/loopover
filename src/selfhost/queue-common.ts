@@ -16,6 +16,7 @@ import {
 import { githubWebhookCoalesceKey } from "../github/webhook-coalesce";
 import type { GitHubWebhookPayload, JobMessage } from "../types";
 import { extractPayloadType } from "./audit";
+import { deliveryIdOrigin } from "../queue/delivery-id";
 
 const DEFAULT_RATE_LIMIT_JITTER_MS = 5 * 60_000;
 const DEFAULT_STARTUP_JITTER_MS = 3 * 60_000;
@@ -196,7 +197,7 @@ export function isGitHubBudgetBackgroundJob(message: JobMessage): boolean {
 // as background admission and parked behind a conservative maintenance floor even though they were reconciling
 // a live contributor PR someone was waiting on).
 export function isScheduledRegateSweepJob(deliveryId: string | null | undefined): boolean {
-  return typeof deliveryId === "string" && deliveryId.startsWith("regate-sweep:");
+  return deliveryIdOrigin(deliveryId) === "regateSweep";
 }
 
 export function buildSelfHostQueueSnapshot(

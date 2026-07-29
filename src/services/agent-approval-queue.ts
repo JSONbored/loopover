@@ -551,7 +551,13 @@ export async function decidePendingAgentAction(env: Env, input: { id: string; de
       // generic policy_close:<kind> reasonCode derivation still applies here — coarser than the immediate
       // gate-evaluation path's blockerClass-based reasonCode for a replayed HEURISTIC close (this path has no
       // `gate` object to re-derive that from), an accepted, documented gap rather than a re-run evaluation.
-      decisionRecord: { configDigest: await contentDigest(settings) },
+      // #9742: the one path whose re-evaluation cause is a named person rather than a derived one. A
+      // staged action executes when a human accepts it, at a head SHA that may already carry the
+      // verdict staged against -- so the repeat verdict is attributed to whoever accepted.
+      decisionRecord: {
+        configDigest: await contentDigest(settings),
+        reevaluation: { reason: "maintainer_request", actor: input.decidedBy },
+      },
     },
     plan,
   );

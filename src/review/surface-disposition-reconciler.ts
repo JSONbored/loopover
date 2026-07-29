@@ -1,5 +1,6 @@
 import { recordAuditEvent } from "../db/repositories";
 import { errorMessage } from "../utils/json";
+import { deliveryIdFor } from "../queue/delivery-id";
 
 /**
  * #8997 — rescue a PR left wearing a decisive panel with no matching disposition.
@@ -79,7 +80,7 @@ export async function reconcileSurfaceWithoutDisposition(env: Env, nowMs: number
   for (const row of rows) {
     const sent = await env.JOBS.send({
       type: "agent-regate-pr",
-      deliveryId: `surface-without-disposition:${row.repoFullName}#${row.number}#${row.headSha}`,
+      deliveryId: deliveryIdFor("surfaceWithoutDisposition", `${row.repoFullName}#${row.number}#${row.headSha}`),
       repoFullName: row.repoFullName,
       prNumber: row.number,
       installationId: row.installationId,

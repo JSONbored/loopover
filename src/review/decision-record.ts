@@ -45,6 +45,7 @@
 //   - `ciState` is populated from the live CI aggregate already in scope at the call site (was hardcoded null).
 // #9135 (also v4): `divertedByHoldout` records when the randomized close-audit holdout (#8831) converted this
 // decision's plan from a heuristic close to a hold — see that field's own doc comment.
+import { deliveryIdOrigin, type DeliveryIdOrigin } from "../queue/delivery-id";
 import { errorMessage, nowIso } from "../utils/json";
 import { retentionCutoffIsoForTable } from "../db/retention";
 
@@ -193,7 +194,124 @@ export async function buildDecisionRecord(
  * swallowed failure) so a caller needing to key a private sibling row (e.g. decision-replay.ts's replay
  * input) targets the SAME row this call produced, including a supersession's revisioned id.
  */
-export async function persistDecisionRecord(env: Env, record: DecisionRecord, recordDigest: string, attempts = 3): Promise<string | null> {
+/**
+ * Why a head SHA was evaluated more than once (#9742).
+ *
+ * A CLOSED set, because the point of recording it is that an outsider can count re-evaluations by cause
+ * without interpreting free text. A new head SHA (force-push, new commits) is NOT a re-evaluation and needs
+ * no code -- that path is a fresh verdict by definition.
+ */
+export const REEVALUATION_REASONS = [
+  /** Routine scheduled re-gate: the periodic sweep, or a sibling PR's churn waking this one. No new
+   *  information is claimed -- this is by far the highest-volume cause, and naming it is what keeps
+   *  the other four meaningful rather than making every repeat verdict look like an incident. */
+  "scheduled_recheck",
+  /** The prior evaluation did not complete or produced an unusable result. */
+  "pipeline_error",
+  /** Repo configuration or calibrated policy changed, so the prior verdict was computed under rules that no
+   *  longer apply. */
+  "config_change",
+  /** A maintainer explicitly asked for the PR to be re-gated. */
+  "maintainer_request",
+  /** External state the verdict depended on (CI, upstream) settled differently after the fact. */
+  "upstream_state_change",
+] as const;
+
+export type ReevaluationReason = (typeof REEVALUATION_REASONS)[number];
+
+export function isReevaluationReason(value: unknown): value is ReevaluationReason {
+  return typeof value === "string" && (REEVALUATION_REASONS as readonly string[]).includes(value);
+}
+
+/**
+ * Which cause each synthetic delivery-id origin represents (#9742).
+ *
+ * `Record<DeliveryIdOrigin, ...>` deliberately: adding a producer to DELIVERY_ID_PREFIXES without
+ * saying why its re-evaluations happen is a build failure, not a silently-wrong verdict record. This
+ * is the whole reason the prefixes were consolidated into one module.
+ */
+export const REEVALUATION_REASON_BY_ORIGIN: Record<DeliveryIdOrigin, ReevaluationReason> = {
+  regateSweep: "scheduled_recheck",
+  regateRepair: "pipeline_error",
+  manualRegate: "maintainer_request",
+  backlogConvergence: "pipeline_error",
+  panelRetriggerRecovery: "maintainer_request",
+  linkedIssueVerify: "upstream_state_change",
+  reconcile: "pipeline_error",
+  surfaceWithoutDisposition: "pipeline_error",
+};
+
+/**
+ * The re-evaluation reason a job's delivery id implies.
+ *
+ * A raw GitHub delivery id (no synthetic prefix) means a real event on the PR moved something the
+ * verdict depends on -- CI settling, a label changing, a sibling merging -- which is
+ * `upstream_state_change`. Mechanical, so no call site has to judge its own cause.
+ */
+export function deriveReevaluationReason(deliveryId: string | null | undefined): ReevaluationReason {
+  const origin = deliveryIdOrigin(deliveryId);
+  return origin === null ? "upstream_state_change" : REEVALUATION_REASON_BY_ORIGIN[origin];
+}
+
+/** A re-evaluation's provenance: why it happened, and which verdict it supersedes. */
+export type ReevaluationContext = {
+  reason: ReevaluationReason;
+  /** The `decision_records.id` this supersedes. Resolved by the writer when absent. */
+  supersedesRecordId?: string | undefined;
+  /** WHO caused it, when that is a person: the operator behind a manual re-gate, the maintainer who
+   *  ran the review command. Absent for the machine-paced causes, which is most of them. */
+  actor?: string | null | undefined;
+};
+
+/** Thrown when a repeat evaluation of a head SHA arrives without declaring why (#9742). */
+export class UndeclaredReevaluationError extends Error {
+  constructor(readonly target: string, readonly priorCount: number) {
+    super(
+      `Refusing to write a repeat verdict for ${target}: this head SHA already has ${priorCount} verdict(s), so the write must declare a re-evaluation reason (one of ${REEVALUATION_REASONS.join(", ")}). A new head SHA needs no reason.`,
+    );
+    this.name = "UndeclaredReevaluationError";
+  }
+}
+
+/** A resolved re-evaluation: the declared reason and the record it supersedes. Null for a first evaluation. */
+type ResolvedReevaluation = { reason: ReevaluationReason; supersedesRecordId: string; actor: string | null };
+
+/**
+ * The whole re-evaluation decision in one place (#9742): a first evaluation resolves to null and needs no
+ * reason, a repeat one must declare a valid reason or the write is refused.
+ *
+ * Separate from the write so the invariant is stated once and `isReevaluationReason` narrows the reason to
+ * `ReevaluationReason` for the caller -- the row's two columns are then either both set or both null, with
+ * no third state to represent or test for.
+ */
+function resolveReevaluation(
+  priorCount: number,
+  baseId: string,
+  context: ReevaluationContext | undefined,
+  target: string,
+): ResolvedReevaluation | null {
+  if (priorCount === 0) return null;
+  const reason = context?.reason;
+  if (!isReevaluationReason(reason)) throw new UndeclaredReevaluationError(target, priorCount);
+  return {
+    reason,
+    // Whatever the caller names, else the immediately-prior revision, which `:revN` numbering makes derivable.
+    supersedesRecordId: context?.supersedesRecordId ?? (priorCount === 1 ? baseId : `${baseId}:rev${priorCount}`),
+    // Trimmed to null rather than stored as "" so "no actor" is one value, not two.
+    actor: context?.actor?.trim() ? context.actor.trim() : null,
+  };
+}
+
+export async function persistDecisionRecord(
+  env: Env,
+  record: DecisionRecord,
+  recordDigest: string,
+  attempts = 3,
+  /** #9742: required when this head SHA already carries a verdict. Absent on a first evaluation, which is
+   *  every ordinary write. The check lives HERE, at the ledger-write layer, so no caller can bypass it by
+   *  writing the row itself. */
+  reevaluation?: ReevaluationContext | undefined,
+): Promise<string | null> {
   const baseId = `record:${record.repoFullName}#${record.pullNumber}@${record.headSha}`.slice(0, 250);
   try {
     for (let attempt = 1; ; attempt += 1) {
@@ -203,13 +321,17 @@ export async function persistDecisionRecord(env: Env, record: DecisionRecord, re
       /* v8 ignore next -- defensive: a bare COUNT(*) always returns exactly one row (even {n: 0} against an
        * empty table); the `?? 0` only satisfies .first<T>()'s optional-by-signature TS return type. */
       const priorCount = prior?.n ?? 0;
+      // #9742: a repeat evaluation of the SAME head SHA must say why. Without this, "evaluated once" and
+      // "evaluated three times and one result was kept" are indistinguishable in the public record. A new
+      // head SHA never reaches here with priorCount > 0, so the ordinary path is untouched.
+      const reevaluated = resolveReevaluation(priorCount, baseId, reevaluation, `${record.repoFullName}#${record.pullNumber}@${record.headSha}`);
       const id = priorCount === 0 ? baseId : `${baseId}:rev${priorCount + 1}`;
       try {
         await env.DB.prepare(
-          `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at, reevaluation_reason, supersedes_record_id, reevaluation_actor)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-          .bind(id, record.repoFullName.slice(0, 200), record.pullNumber, record.headSha, record.action, record.reasonCode.slice(0, 200), recordDigest, canonicalJson(record), record.decidedAt)
+          .bind(id, record.repoFullName.slice(0, 200), record.pullNumber, record.headSha, record.action, record.reasonCode.slice(0, 200), recordDigest, canonicalJson(record), record.decidedAt, reevaluated?.reason ?? null, reevaluated?.supersedesRecordId ?? null, reevaluated?.actor ?? null)
           .run();
       } catch (error) {
         if (attempt >= attempts) throw error;
@@ -243,6 +365,11 @@ export async function persistDecisionRecord(env: Env, record: DecisionRecord, re
       return id;
     }
   } catch (error) {
+    // #9742: a REFUSED re-evaluation is a policy answer, not a persistence failure, and must not be
+    // flattened into the same `null` every transient D1 fault returns -- a caller that cannot tell them
+    // apart cannot honour the refusal. Everything else keeps the historical swallow: a decision record
+    // failing to persist must never break the review that produced it.
+    if (error instanceof UndeclaredReevaluationError) throw error;
     console.warn(JSON.stringify({ event: "decision_record_persist_error", target: `${record.repoFullName}#${record.pullNumber}`, message: errorMessage(error).slice(0, 160) }));
     return null;
   }

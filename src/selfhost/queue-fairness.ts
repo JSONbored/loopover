@@ -7,6 +7,8 @@
 // which repo to serve next — the queue backends (sqlite-queue.ts / pg-queue.ts) consult them before falling
 // back to the existing unscoped foreground claim. Pure + deterministic; no wall-clock, no hidden state.
 
+import { DELIVERY_ID_PREFIXES } from "../queue/delivery-id";
+
 export type ForegroundLane = "backlog" | "fresh" | null;
 
 const FRESH_PULL_REQUEST_ACTIONS = new Set(["opened", "reopened", "synchronize", "ready_for_review"]);
@@ -15,7 +17,7 @@ const FRESH_PULL_REQUEST_ACTIONS = new Set(["opened", "reopened", "synchronize",
 // selfhost/backlog-convergence.ts) — distinct from sweep-originated (`regate-sweep:`) or manual
 // (`manual-regate:`) origins, which are intentionally left unclassified (lane `null`): their relative
 // ordering against everything else is unaffected by this fairness mechanism.
-const BACKLOG_CONVERGENCE_DELIVERY_PREFIX = "backlog-convergence:";
+const BACKLOG_CONVERGENCE_DELIVERY_PREFIX = DELIVERY_ID_PREFIXES.backlogConvergence;
 
 /**
  * Classify a job's foreground fairness lane from its type + raw payload — `"fresh"` for a webhook-driven PR

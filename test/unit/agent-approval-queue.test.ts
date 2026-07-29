@@ -101,7 +101,7 @@ function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecut
     agentDryRun: false,
     installationPermissions: { contents: "write", pull_requests: "write", issues: "write" },
     // #9134: required on every context — default keeps every pre-existing test byte-identical.
-    decisionRecord: { configDigest: "test-config-digest" },
+    decisionRecord: { configDigest: "test-config-digest", reevaluation: { reason: "scheduled_recheck" } },
     ...over,
   };
 }

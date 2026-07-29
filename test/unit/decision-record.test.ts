@@ -6,10 +6,16 @@ import {
   DECISION_RECORD_SCHEMA_VERSION,
   parseLedgerContentWaiver,
   persistDecisionRecord,
+  deriveReevaluationReason,
+  REEVALUATION_REASON_BY_ORIGIN,
+  REEVALUATION_REASONS,
+  UndeclaredReevaluationError,
+  isReevaluationReason,
   renderDecisionRecordSection,
   sha256Hex,
   type DecisionRecord,
 } from "../../src/review/decision-record";
+import { DELIVERY_ID_ORIGINS, deliveryIdFor, deliveryIdOrigin } from "../../src/queue/delivery-id";
 import { appendDecisionLedger, LEDGER_GENESIS_HASH, loadDecisionLedgerTip, loadDecisionRecordCollapsible, loadPublicDecisionRecord, verifyDecisionLedger } from "../../src/review/decision-record";
 import { createTestEnv } from "../helpers/d1";
 
@@ -109,7 +115,9 @@ describe("buildDecisionRecord / persistDecisionRecord", () => {
     // documented extract query) already expects.
     expect(firstId).toBe(`record:o/r#7@abc1234def`);
     const second = await buildDecisionRecord(recordInput({ action: "close", reasonCode: "policy_close:contributor_cap", decidedAt: "2026-07-26T01:00:00Z" } as never));
-    const secondId = await persistDecisionRecord(env, second.record, second.recordDigest);
+    // #9742: a repeat evaluation of the same head SHA must now DECLARE why. The revisioning this test pins
+    // is unchanged; only the requirement to say why is new.
+    const secondId = await persistDecisionRecord(env, second.record, second.recordDigest, 3, { reason: "config_change" });
     expect(secondId).toBe(`record:o/r#7@abc1234def:rev2`);
     const rows = (
       await env.DB.prepare("SELECT id, action, reason_code, record_digest, record_json FROM decision_records ORDER BY id").all<{ id: string; action: string; reason_code: string; record_digest: string; record_json: string }>()
@@ -133,8 +141,8 @@ describe("buildDecisionRecord / persistDecisionRecord", () => {
     const two = await buildDecisionRecord(recordInput({ decidedAt: "2026-07-26T01:00:00Z" } as never));
     const three = await buildDecisionRecord(recordInput({ decidedAt: "2026-07-26T02:00:00Z" } as never));
     const idOne = await persistDecisionRecord(env, one.record, one.recordDigest);
-    const idTwo = await persistDecisionRecord(env, two.record, two.recordDigest);
-    const idThree = await persistDecisionRecord(env, three.record, three.recordDigest);
+    const idTwo = await persistDecisionRecord(env, two.record, two.recordDigest, 3, { reason: "config_change" });
+    const idThree = await persistDecisionRecord(env, three.record, three.recordDigest, 3, { reason: "config_change" });
     expect([idOne, idTwo, idThree]).toEqual([`record:o/r#7@abc1234def`, `record:o/r#7@abc1234def:rev2`, `record:o/r#7@abc1234def:rev3`]);
   });
 
@@ -316,7 +324,7 @@ describe("loadPublicDecisionRecord (#9123)", () => {
     const first = await buildDecisionRecord(recordInput({ action: "merge", decidedAt: "2026-07-26T00:00:00Z" } as never));
     await persistDecisionRecord(env, first.record, first.recordDigest);
     const second = await buildDecisionRecord(recordInput({ action: "close", decidedAt: "2026-07-26T01:00:00Z" } as never));
-    await persistDecisionRecord(env, second.record, second.recordDigest);
+    await persistDecisionRecord(env, second.record, second.recordDigest, 3, { reason: "config_change" });
     const published = await loadPublicDecisionRecord(env, "o/r", 7);
     expect(published!.recordDigest).toBe(second.recordDigest);
     expect(published!.record.action).toBe("close");
@@ -357,9 +365,11 @@ describe("loadDecisionLedgerTip (#9274)", () => {
 });
 
 describe("decision ledger (#8837)", () => {
-  const persist = async (env: Env, pull: number, action = "close") => {
+  /** #9742: `reevaluation` is threaded so a helper that deliberately re-persists the SAME target can say
+   *  why, exactly as a real re-evaluation must. A first persist passes none, like every ordinary write. */
+  const persist = async (env: Env, pull: number, action = "close", reevaluation?: { reason: "config_change" }) => {
     const { record, recordDigest } = await buildDecisionRecord(recordInput({ pullNumber: pull, action }));
-    await persistDecisionRecord(env, record, recordDigest);
+    await persistDecisionRecord(env, record, recordDigest, 3, reevaluation);
     return recordDigest;
   };
 
@@ -368,7 +378,7 @@ describe("decision ledger (#8837)", () => {
     await persist(env, 1);
     await persist(env, 2);
     // A rewrite of the SAME record id appends a THIRD row — supersessions are visible history.
-    await persist(env, 1, "merge");
+    await persist(env, 1, "merge", { reason: "config_change" });
     const rows = (await env.DB.prepare("SELECT seq, prev_hash AS prevHash, row_hash AS rowHash FROM decision_ledger ORDER BY seq").all<{ seq: number; prevHash: string; rowHash: string }>()).results!;
     expect(rows.map((r) => r.seq)).toEqual([1, 2, 3]);
     expect(rows[0]!.prevHash).toBe(LEDGER_GENESIS_HASH);
@@ -821,5 +831,196 @@ describe("content waiver applied by verifyDecisionLedger (#9850)", () => {
     await seedChained(env, 4);
     const verified = await verifyDecisionLedger(env);
     expect(verified).toMatchObject({ ok: true, waivedContentMismatches: 0, contentWaiver: { fromSeq: 2, toSeq: 3 } });
+  });
+});
+
+// #9742: a verdict's integrity was provable, its UNIQUENESS was not -- nothing distinguished "evaluated
+// once" from "evaluated three times and one result was kept". The enforcement lives at the ledger-write
+// layer so no caller can bypass it by writing the row itself.
+describe("verdict immutability per head SHA (#9742)", () => {
+  const target = (over: Record<string, unknown> = {}) => recordInput({ action: "merge", reasonCode: "success", ...over } as never);
+
+  it("REFUSES a repeat evaluation of the same head SHA that does not say why", async () => {
+    const env = createTestEnv();
+    const first = await buildDecisionRecord(target({ decidedAt: "2026-07-29T00:00:00Z" }));
+    await persistDecisionRecord(env, first.record, first.recordDigest);
+
+    const repeat = await buildDecisionRecord(target({ action: "close", decidedAt: "2026-07-29T01:00:00Z" }));
+    await expect(persistDecisionRecord(env, repeat.record, repeat.recordDigest)).rejects.toThrow(UndeclaredReevaluationError);
+    // And nothing was written: a refused re-evaluation must not leave a partial row behind.
+    const rows = (await env.DB.prepare("SELECT id FROM decision_records").all<{ id: string }>()).results!;
+    expect(rows).toHaveLength(1);
+  });
+
+  it("rejects a reason outside the closed set, so the dimension cannot be widened by free text", async () => {
+    const env = createTestEnv();
+    const first = await buildDecisionRecord(target({ decidedAt: "2026-07-29T00:00:00Z" }));
+    await persistDecisionRecord(env, first.record, first.recordDigest);
+    const repeat = await buildDecisionRecord(target({ action: "close", decidedAt: "2026-07-29T01:00:00Z" }));
+    await expect(
+      persistDecisionRecord(env, repeat.record, repeat.recordDigest, 3, { reason: "because i said so" as never }),
+    ).rejects.toThrow(UndeclaredReevaluationError);
+  });
+
+  it("records a reason-coded re-run as a LINKED chain: both retained, the later naming what it supersedes", async () => {
+    const env = createTestEnv();
+    const first = await buildDecisionRecord(target({ decidedAt: "2026-07-29T00:00:00Z" }));
+    const firstId = await persistDecisionRecord(env, first.record, first.recordDigest);
+    const second = await buildDecisionRecord(target({ action: "close", decidedAt: "2026-07-29T01:00:00Z" }));
+    const secondId = await persistDecisionRecord(env, second.record, second.recordDigest, 3, { reason: "pipeline_error" });
+
+    const rows = (
+      await env.DB.prepare(
+        "SELECT id, reevaluation_reason AS reason, supersedes_record_id AS supersedes FROM decision_records ORDER BY id",
+      ).all<{ id: string; reason: string | null; supersedes: string | null }>()
+    ).results!;
+    expect(rows).toHaveLength(2);
+    // The FIRST evaluation carries neither -- it superseded nothing and needed no reason.
+    expect(rows.find((row) => row.id === firstId)).toMatchObject({ reason: null, supersedes: null });
+    expect(rows.find((row) => row.id === secondId)).toMatchObject({ reason: "pipeline_error", supersedes: firstId });
+  });
+
+  it("chains a THIRD evaluation to the second, not back to the first", async () => {
+    const env = createTestEnv();
+    const first = await buildDecisionRecord(target({ decidedAt: "2026-07-29T00:00:00Z" }));
+    await persistDecisionRecord(env, first.record, first.recordDigest);
+    const second = await buildDecisionRecord(target({ action: "close", decidedAt: "2026-07-29T01:00:00Z" }));
+    const secondId = await persistDecisionRecord(env, second.record, second.recordDigest, 3, { reason: "pipeline_error" });
+    const third = await buildDecisionRecord(target({ action: "hold", decidedAt: "2026-07-29T02:00:00Z" }));
+    const thirdId = await persistDecisionRecord(env, third.record, third.recordDigest, 3, { reason: "config_change" });
+
+    const row = await env.DB.prepare("SELECT supersedes_record_id AS supersedes FROM decision_records WHERE id = ?")
+      .bind(thirdId)
+      .first<{ supersedes: string }>();
+    expect(row?.supersedes).toBe(secondId);
+  });
+
+  it("honours an explicitly-named superseded record over the derived one", async () => {
+    const env = createTestEnv();
+    const first = await buildDecisionRecord(target({ decidedAt: "2026-07-29T00:00:00Z" }));
+    const firstId = await persistDecisionRecord(env, first.record, first.recordDigest);
+    const second = await buildDecisionRecord(target({ action: "close", decidedAt: "2026-07-29T01:00:00Z" }));
+    await persistDecisionRecord(env, second.record, second.recordDigest, 3, { reason: "maintainer_request" });
+    const third = await buildDecisionRecord(target({ action: "hold", decidedAt: "2026-07-29T02:00:00Z" }));
+    const thirdId = await persistDecisionRecord(env, third.record, third.recordDigest, 3, {
+      reason: "upstream_state_change",
+      supersedesRecordId: firstId!,
+    });
+
+    const row = await env.DB.prepare("SELECT supersedes_record_id AS supersedes FROM decision_records WHERE id = ?")
+      .bind(thirdId)
+      .first<{ supersedes: string }>();
+    expect(row?.supersedes).toBe(firstId);
+  });
+
+  it("leaves a NEW head SHA completely unaffected — that is a fresh verdict, not a re-evaluation", async () => {
+    const env = createTestEnv();
+    const first = await buildDecisionRecord(target({ decidedAt: "2026-07-29T00:00:00Z" }));
+    await persistDecisionRecord(env, first.record, first.recordDigest);
+    // A force-push moves the head; no reason code is required or recorded.
+    const pushed = await buildDecisionRecord(target({ headSha: "def5678abc", decidedAt: "2026-07-29T01:00:00Z" }));
+    const pushedId = await persistDecisionRecord(env, pushed.record, pushed.recordDigest);
+    expect(pushedId).toBe("record:o/r#7@def5678abc");
+
+    const row = await env.DB.prepare("SELECT reevaluation_reason AS reason, supersedes_record_id AS supersedes FROM decision_records WHERE id = ?")
+      .bind(pushedId)
+      .first<{ reason: string | null; supersedes: string | null }>();
+    expect(row).toMatchObject({ reason: null, supersedes: null });
+  });
+
+  it("keeps the reason vocabulary closed and machine-readable", async () => {
+    // The point of recording it is that an outsider can count re-evaluations BY CAUSE without interpreting
+    // prose, so the set is closed and each member is a code rather than a sentence.
+    expect(REEVALUATION_REASONS).toContain("pipeline_error");
+    expect(REEVALUATION_REASONS).toContain("config_change");
+    for (const reason of REEVALUATION_REASONS) expect(reason).toMatch(/^[a-z][a-z_]*$/);
+    expect(isReevaluationReason("pipeline_error")).toBe(true);
+    expect(isReevaluationReason("nope")).toBe(false);
+    expect(isReevaluationReason(undefined)).toBe(false);
+  });
+
+  it("records WHO asked, when a person did, and nothing when a schedule did", async () => {
+    const env = createTestEnv();
+    const first = await buildDecisionRecord(target({ decidedAt: "2026-07-29T00:00:00Z" }));
+    await persistDecisionRecord(env, first.record, first.recordDigest);
+
+    const second = await buildDecisionRecord(target({ decidedAt: "2026-07-29T00:05:00Z" }));
+    await persistDecisionRecord(env, second.record, second.recordDigest, 3, {
+      reason: "maintainer_request",
+      actor: "  JSONbored  ",
+    });
+    const third = await buildDecisionRecord(target({ decidedAt: "2026-07-29T00:10:00Z" }));
+    await persistDecisionRecord(env, third.record, third.recordDigest, 3, { reason: "scheduled_recheck" });
+
+    const rows = await env.DB.prepare(
+      "SELECT reevaluation_actor AS actor FROM decision_records WHERE reevaluation_reason IS NOT NULL ORDER BY created_at",
+    ).all<{ actor: string | null }>();
+    // Trimmed, and a machine-paced cause never invents a "system" actor to sit beside a real name.
+    expect(rows.results.map((row) => row.actor)).toEqual(["JSONbored", null]);
+  });
+
+  it("treats a blank or absent actor as no actor rather than as an empty name", async () => {
+    const env = createTestEnv();
+    const first = await buildDecisionRecord(target({ decidedAt: "2026-07-29T00:00:00Z" }));
+    await persistDecisionRecord(env, first.record, first.recordDigest);
+    const second = await buildDecisionRecord(target({ decidedAt: "2026-07-29T00:05:00Z" }));
+    const id = await persistDecisionRecord(env, second.record, second.recordDigest, 3, {
+      reason: "maintainer_request",
+      actor: "   ",
+    });
+
+    const row = await env.DB.prepare("SELECT reevaluation_actor AS actor FROM decision_records WHERE id = ?")
+      .bind(id)
+      .first<{ actor: string | null }>();
+    expect(row?.actor).toBeNull();
+  });
+});
+
+// The cause is DERIVED from the job's delivery id rather than judged at each call site (#9742) -- these
+// pin the mapping that makes that mechanical.
+describe("deriveReevaluationReason", () => {
+  it("names the routine scheduled sweep as such", () => {
+    // By volume this is the dominant cause. If it were not its own reason, every sweep tick past the
+    // first would have to borrow one of the incident-shaped codes and drown them.
+    expect(deriveReevaluationReason(deliveryIdFor("regateSweep", "o/r#7"))).toBe("scheduled_recheck");
+  });
+
+  it("treats a repair fan-out as a pipeline error, not routine", () => {
+    for (const origin of ["regateRepair", "backlogConvergence", "reconcile", "surfaceWithoutDisposition"] as const) {
+      expect(deriveReevaluationReason(deliveryIdFor(origin, "o/r#7")), origin).toBe("pipeline_error");
+    }
+  });
+
+  it("attributes an operator-driven re-gate to a maintainer request", () => {
+    expect(deriveReevaluationReason(deliveryIdFor("manualRegate", "uuid"))).toBe("maintainer_request");
+    expect(deriveReevaluationReason(deliveryIdFor("panelRetriggerRecovery", "o/r#7"))).toBe("maintainer_request");
+  });
+
+  it("reads a RAW GitHub delivery id as external state having moved", () => {
+    // No synthetic prefix means a real event on the PR -- CI settling, a label changing, a sibling merging.
+    expect(deriveReevaluationReason("f7a1c4e0-1234-4321-9876-0badc0ffee00")).toBe("upstream_state_change");
+    expect(deriveReevaluationReason(null)).toBe("upstream_state_change");
+    expect(deriveReevaluationReason(undefined)).toBe("upstream_state_change");
+    expect(deriveReevaluationReason("")).toBe("upstream_state_change");
+  });
+
+  it("assigns a reason to EVERY origin, and only valid ones", () => {
+    // The map is `Record<DeliveryIdOrigin, ReevaluationReason>`, so a new prefix without a reason is a
+    // build failure -- this asserts the runtime side of that same guarantee.
+    for (const origin of DELIVERY_ID_ORIGINS) {
+      const reason = REEVALUATION_REASON_BY_ORIGIN[origin];
+      expect(isReevaluationReason(reason), origin).toBe(true);
+      expect(deriveReevaluationReason(deliveryIdFor(origin, "o/r#7")), origin).toBe(reason);
+    }
+    expect(DELIVERY_ID_ORIGINS.length).toBeGreaterThan(0);
+  });
+
+  it("resolves the LONGEST matching prefix, so one origin cannot shadow another", () => {
+    // `regate-sweep:` and `regate-repair:` share a stem; a first-match scan could mis-attribute a repair
+    // as routine maintenance, which is exactly the distinction the record exists to preserve.
+    expect(deliveryIdOrigin(deliveryIdFor("regateRepair", "o/r#7"))).toBe("regateRepair");
+    expect(deliveryIdOrigin(deliveryIdFor("regateSweep", "o/r#7"))).toBe("regateSweep");
+    expect(deliveryIdOrigin("not-a-known-prefix:o/r#7")).toBeNull();
+    expect(deliveryIdOrigin(null)).toBeNull();
   });
 });

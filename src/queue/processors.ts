@@ -2506,6 +2506,16 @@ export function agentHoldAuditDetail(args: {
   ciState: string;
   ciHasPending: boolean;
   mergeableState: string | null | undefined;
+  /** #9862: the durable merge block the PLANNER already consults (activeMergeBlockedSha + the stored
+   *  reason). GitHub can refuse a merge for reasons no gate models -- a stacked PR is unmergeable via the
+   *  REST API at all (403), and a repo merge policy can refuse with a 405 -- so the executor records the
+   *  refusal against that head and stops retrying. Without these here the resolver fell through to its
+   *  residual "no merge action was planned", which is technically true and useless: it hides a condition
+   *  that requires the MAINTAINER to act (merge in the web UI), and reads as the bot silently doing
+   *  nothing. Only trusted when the block is for THIS head; a block from an older push is stale. */
+  mergeBlockedSha?: string | null | undefined;
+  mergeBlockedReason?: string | null | undefined;
+  headSha?: string | null | undefined;
   approvalsSatisfied: boolean;
   authorIsOwner: boolean;
   authorIsAdmin: boolean;
@@ -2546,6 +2556,12 @@ export function agentHoldAuditDetail(args: {
       return "merge withheld because required approvals are not satisfied";
     if (args.mergeAutonomy !== "auto" && args.mergeAutonomy !== "auto_with_approval")
       return boundAgentHoldAuditReason(`merge withheld because merge autonomy is ${args.mergeAutonomy}`);
+    // A recorded refusal for THIS head is the most specific thing we know, and the only hold reason here
+    // that a maintainer must personally resolve. Checked last among the specifics but before the residual:
+    // everything above is a state LoopOver itself can still change, this one is not.
+    const blockedThisHead =
+      args.mergeBlockedReason && args.mergeBlockedSha && args.headSha && args.mergeBlockedSha === args.headSha;
+    if (blockedThisHead) return boundAgentHoldAuditReason(`merge withheld because GitHub refused the merge: ${args.mergeBlockedReason}`);
     return "merge withheld because no merge action was planned";
   }
   if (args.gateBlockerCodes.length > 0) {
@@ -3866,6 +3882,13 @@ async function runAgentMaintenancePlanAndExecute(
       ciState: ciAggregate.ciState,
       ciHasPending: ciAggregate.hasPending,
       mergeableState: liveMergeState ?? pr.mergeableState,
+      // The PASS's recorded instant (#9492), never a fresh Date.now(): a second clock read can disagree with
+      // the one the planner used inside a single pass, and replayDecision would then certify a decision made
+      // on an unrecorded read as "match" -- a false certification rather than a caught divergence. Same
+      // decisionClock the plan input above was built from, so planner and reporter cannot disagree.
+      mergeBlockedSha: activeMergeBlockedSha(pr, pr.headSha, decisionClock.nowMs),
+      mergeBlockedReason: pr.mergeBlockedReason,
+      headSha: pr.headSha,
       approvalsSatisfied,
       authorIsOwner,
       authorIsAdmin,
@@ -12889,6 +12912,21 @@ async function maybePublishPrPublicSurface(
         // A preflight HOLD (e.g. the review lane is unavailable → the review is incomplete) must never render as
         // "safe to merge"; the renderer downgrades an otherwise-ready status to a manual-review hold. (#2002)
         preflightHeld: preflight.status === "hold",
+        // #9862: GitHub's own durable refusal for THIS head, so the comment can never claim "safe to merge"
+        // on a PR the executor has already been told it may not merge -- a stacked PR (403) or a repo merge
+        // policy (405) is invisible in mergeable_state, which reads perfectly `clean`.
+        //
+        // Matched on the head SHA alone, deliberately NOT through activeMergeBlockedSha: that helper resolves
+        // the retry-cooldown expiry, which needs the decision pass's recorded instant (#9492), and this is
+        // the PUBLISH path -- a reporting surface with no decision clock, reached from callers that have
+        // none either. Threading one here would either invent a second clock (the exact false-certification
+        // hazard #9492 forbids) or thread a decision concept through a path that makes no decisions. The
+        // distinction costs nothing that matters: `merge_blocked_until` bounds when LoopOver may RETRY, not
+        // whether GitHub refused this commit. The refusal is a fact about this SHA either way, and if a
+        // later retry succeeds the PR merges and this comment stops existing.
+        ...(pr.mergeBlockedReason && pr.mergeBlockedSha && pr.headSha && pr.mergeBlockedSha === pr.headSha
+          ? { mergeBlockedReason: pr.mergeBlockedReason }
+          : {}),
         extraCollapsibles: [...buildPublicSafeCollapsibles({
           repo,
           pr,

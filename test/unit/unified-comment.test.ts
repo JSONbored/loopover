@@ -1059,3 +1059,44 @@ describe("shouldPostReviewingPlaceholder", () => {
     expect(shouldPostReviewingPlaceholder({ reviewWillRun: true, mode: "live", willComment: false })).toBe(false);
   });
 });
+
+describe("a GitHub merge refusal must never render as safe to merge (#9862)", () => {
+  // Observed live on JSONbored/loopover#9856: the panel said "Suggested Action - Approve/Merge / safe to
+  // merge" and the bot posted "LoopOver approves — the gate is satisfied and CI is green", while GitHub had
+  // already refused the merge with a 403 ("Merging stacked PRs via this API is not supported"). Everything
+  // the gate measures WAS green; mergeable_state read `clean`; the refusal is invisible to all of it. The
+  // maintainer saw a green, approved PR sit unmerged with no stated reason — repeatedly, across weeks.
+  const STACKED_403 = "merge forbidden (403): Merging stacked PRs via this API is not supported. Use the web interface instead.";
+  const blockedBase = { decision: "merge" as const, readiness: { ciState: "passed" as const } };
+
+  it("REGRESSION: an otherwise-ready PR with a merge block renders HELD, not ready", () => {
+    expect(deriveUnifiedStatus(blockedBase as never, { mergeBlockedReason: STACKED_403 })).toBe("held");
+  });
+
+  it("INVARIANT: downgrade-only — it never upgrades a blocked or advisory status", () => {
+    // Same discipline as the guardrail hold: a real gate/CI block above must still win, and an advisory
+    // review must not become a hold just because a stale block string is present.
+    expect(deriveUnifiedStatus({ ...blockedBase, readiness: { ciState: "failed" } } as never, { mergeBlockedReason: STACKED_403 })).not.toBe("held");
+    expect(deriveUnifiedStatus({ ...blockedBase, decision: "advisory" } as never, { mergeBlockedReason: STACKED_403 })).toBe("advisory");
+  });
+
+  it("INVARIANT: no block ⇒ unchanged, so every unblocked PR reads exactly as before", () => {
+    expect(deriveUnifiedStatus(blockedBase as never, {})).toBe("ready");
+    expect(deriveUnifiedStatus(blockedBase as never, { mergeBlockedReason: undefined })).toBe("ready");
+  });
+
+  it("the rendered comment NAMES GitHub's refusal and tells the maintainer what to do", () => {
+    // Uses the file's own full fixture: the renderer needs a complete input, and the point of this test is
+    // the verdict box's content, not the minimal-shape handling the status tests above already cover.
+    const body = renderUnifiedReviewComment(
+      { ...base, summary: "The change is sound.", decision: "merge", readiness: { ciState: "passed" }, reviewerCount: 1 } as never,
+      { mergeBlockedReason: STACKED_403 } as never,
+    );
+    expect(body).toContain("Manual Review");
+    expect(body).toContain("GitHub refused an automated merge");
+    expect(body).toContain("stacked PRs via this API is not supported");
+    expect(body).toContain("merge this pull request yourself");
+    // And it must NOT still be claiming the thing that cannot happen.
+    expect(body).not.toContain("safe to merge");
+  });
+});

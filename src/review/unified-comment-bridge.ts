@@ -444,6 +444,9 @@ export type UnifiedCommentBridgeArgs = {
   /** Preflight is holding this PR (e.g. the review lane is unavailable) — an otherwise-ready comment then renders
    *  "held", never "safe to merge". (#2002) */
   preflightHeld?: boolean | undefined;
+  /** #9862: GitHub's own durable refusal for THIS head (stacked-PR 403, repo merge-policy 405). Resolved by
+   *  the caller from the stored block, so this module stays clock-free like every other bridge input. */
+  mergeBlockedReason?: string | undefined;
   /** Public freshness marker for the posted/updated review comment. Defaults to the current publish time. */
   reviewedAt?: string | number | Date | undefined;
   /** Linked-issue satisfaction advisory (#1961/#3906): the resolved {status, rationale} the processor computed
@@ -996,6 +999,7 @@ export function buildUnifiedCommentBody(args: UnifiedCommentBridgeArgs): string 
       ...(args.heldForReview ? { heldForReview: true } : {}),
       ...(args.neverClosed ? { neverClosed: true } : {}),
       ...(args.preflightHeld ? { preflightHeld: true } : {}),
+      ...(args.mergeBlockedReason ? { mergeBlockedReason: args.mergeBlockedReason } : {}),
       commentVerbosity: args.commentVerbosity,
     },
     extraCollapsibles,

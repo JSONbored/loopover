@@ -221,8 +221,11 @@ export function resolveEffectiveAiReviewPlan(
 export type LoopOverAiReviewInput = {
   /** #9808/#9821: the effective review knobs the caller resolved for THIS PR (resolveReviewKnobs) -- already
    *  layered escalation > per-repo > global, so this module never re-derives precedence. Absent ⇒ the env
-   *  defaults exactly as before. `selfConsistencyRuns` here outranks AI_REVIEW_SELF_CONSISTENCY_RUNS; the
-   *  model/effort/provider fields ride through to the provider invocation. */
+   *  defaults exactly as before. Consumed HERE: `selfConsistencyRuns` outranks
+   *  AI_REVIEW_SELF_CONSISTENCY_RUNS, and `model`/`effort` outrank the review.ai_model fields on the
+   *  AiRunCorrelation that rides to every provider invocation. `provider` is the one field NOT consumed in
+   *  this module: it governs the BYOK key selection, which happens at the orchestration BEFORE this runs
+   *  (a mismatched stored key is dropped there) -- it is carried on this object for logging/replay only. */
   reviewKnobs?: { provider?: string | null; model?: string | null; effort?: string | null; selfConsistencyRuns?: number | null } | undefined;
   repoFullName: string;
   prNumber: number;
@@ -3111,18 +3114,21 @@ export async function runLoopOverAiReview(
     jobId: input.jobId,
     repoFullName: input.repoFullName,
     pullNumber: input.prNumber,
-    claudeModel: input.claudeModel ?? undefined,
-    claudeEffort: input.claudeEffort ?? undefined,
-    codexModel: input.codexModel ?? undefined,
-    codexEffort: input.codexEffort ?? undefined,
+    // #9821: reviewKnobs (per-repo gate.aiReview.*, or the guardrailEscalation override on a guarded path)
+    // outrank the review.ai_model fields -- the same precedence the orchestration pre-applies; folding it
+    // here too makes THIS module honor the knobs for any caller, and is idempotent when both did.
+    claudeModel: input.reviewKnobs?.model ?? input.claudeModel ?? undefined,
+    claudeEffort: input.reviewKnobs?.effort ?? input.claudeEffort ?? undefined,
+    codexModel: input.reviewKnobs?.model ?? input.codexModel ?? undefined,
+    codexEffort: input.reviewKnobs?.effort ?? input.codexEffort ?? undefined,
     claudeTimeoutMs: input.claudeTimeoutMs ?? undefined,
     codexTimeoutMs: input.codexTimeoutMs ?? undefined,
     claudeFirstOutputTimeoutMs: input.claudeFirstOutputTimeoutMs ?? undefined,
     codexFirstOutputTimeoutMs: input.codexFirstOutputTimeoutMs ?? undefined,
-    ollamaModel: input.ollamaModel ?? undefined,
-    openaiModel: input.openaiModel ?? undefined,
-    openaiCompatibleModel: input.openaiCompatibleModel ?? undefined,
-    anthropicModel: input.anthropicModel ?? undefined,
+    ollamaModel: input.reviewKnobs?.model ?? input.ollamaModel ?? undefined,
+    openaiModel: input.reviewKnobs?.model ?? input.openaiModel ?? undefined,
+    openaiCompatibleModel: input.reviewKnobs?.model ?? input.openaiCompatibleModel ?? undefined,
+    anthropicModel: input.reviewKnobs?.model ?? input.anthropicModel ?? undefined,
   };
   if (input.providerKey) {
     const outcome = await runProviderReview(

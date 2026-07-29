@@ -269,6 +269,41 @@ describe("rotated-exemplar self-consistency (#8834)", () => {
       expect(judgeCalls.filter((prompt) => prompt.includes("Calibration examples"))).toHaveLength(2);
     });
 
+    it("REGRESSION (#9821 review blocker): an escalated EFFORT/MODEL reaches the provider options, not just runs", async () => {
+      // The reviewer's exact objection: only selfConsistencyRuns was consumed, so "choose model, effort" was
+      // unimplemented where it takes effect. runLoopOverAiReview folds reviewKnobs into the AiRunCorrelation,
+      // which is what becomes the provider's per-call options (claudeModel/claudeEffort/... at ai-review.ts's
+      // provider dispatch). Capturing those options is therefore the honest end-to-end assertion.
+      const seenOptions: Array<Record<string, unknown>> = [];
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async (_model: string, options: Record<string, unknown>) => {
+          seenOptions.push(options);
+          return { response: JSON.stringify({ assessment: "Fine.", blockers: [], nits: [], suggestions: [] }) };
+        } } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seed(env);
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", {
+        settings: {
+          commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", reviewCheckMode: "required", aiReviewMode: "block",
+          hardGuardrailGlobs: ["src/**"],
+        },
+        gate: { guardrailEscalation: { effort: "xhigh", model: "escalated-model-x" } },
+      });
+
+      await reReviewStoredPullRequest(env, "sc-effort-900", 123, "JSONbored/gittensory", 900);
+
+      // At least one provider call carries BOTH escalated values.
+      const escalated = seenOptions.filter((o) => o.claudeEffort === "xhigh" && o.claudeModel === "escalated-model-x");
+      expect(escalated.length).toBeGreaterThan(0);
+      // And the HTTP-API provider fields carry the same resolved model (whichever provider actually runs).
+      expect(escalated[0]?.anthropicModel).toBe("escalated-model-x");
+      expect(escalated[0]?.codexEffort).toBe("xhigh");
+    });
+
     it("INVARIANT (#9821): the same escalation block is INERT when no changed file hits a guardrail glob", async () => {
       let aiCalls = 0;
       const env = createTestEnv({

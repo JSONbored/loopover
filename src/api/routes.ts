@@ -3537,6 +3537,25 @@ export function createApp() {
     const [settings, pullRequest] = await Promise.all([resolveRepositorySettings(c.env, fullName), getPullRequest(c.env, fullName, number)]);
     if (!pullRequest) return c.json({ error: "pull_request_not_found" }, 404);
 
+    // When chat Q&A is disabled for the repo, generateChatQaAnswer is guaranteed to return `disabled` -- but only
+    // after this route has already spent a slot in the shared @loopover-chat rate-limit budget AND paid for the
+    // planNextWork grounding bundle (#9714). Gate on the SAME predicate the maintainer dashboard reads
+    // (isRepoChatQaEnabled at the capability map above), so the two can never disagree, and return
+    // generateChatQaAnswer's own disabled result (bundle unused on that path) rather than a second copy of it.
+    if (!isRepoChatQaEnabled(settings)) {
+      return c.json(
+        await generateChatQaAnswer(c.env, {
+          bundle: null,
+          question: parsed.data.question,
+          advisoryAiRouting: settings.advisoryAiRouting,
+          repoFullName: fullName,
+          issueNumber: number,
+          actor: resolveChatQaActor(gate.identity),
+          route: "app.maintainer_dashboard.chat_qa",
+        }),
+      );
+    }
+
     const actor = resolveChatQaActor(gate.identity);
     const targetKey = `${fullName}#${number}#chat`;
     const { policy, maxPerWindow, windowHours } = resolveChatQaRateLimit(settings);

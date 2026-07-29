@@ -104,6 +104,37 @@ describe("POST /v1/repos/:owner/:repo/pulls/:number/chat-qa (#6489)", () => {
     await expect(res.json()).resolves.toEqual({ status: "disabled", reason: "Chat Q&A is not enabled on this instance (settings.advisoryAiRouting.chatQa is off)." });
   });
 
+  it("#9714: a disabled repo does NOT record a rate-limit audit row (it must not spend the shared @loopover-chat budget)", async () => {
+    const env = createTestEnv();
+    await seedRepoWithPull(env);
+    // chatQa is off (no .loopover.yml stub). The request still returns disabled, but must not have consumed a slot.
+    const res = await app.request("/v1/repos/owner/repo/pulls/11/chat-qa", { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ question: "why is this blocked?" }) }, env);
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ status: "disabled" });
+
+    const invocationRows = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'github_app.command_invocation' and target_key = 'owner/repo#11#chat'").first<{ n: number }>();
+    expect(invocationRows?.n).toBe(0);
+  });
+
+  it("#9714: a disabled repo does NOT call planNextWork (it must not pay for the grounding bundle)", async () => {
+    vi.resetModules();
+    const planNextWork = vi.fn();
+    vi.doMock("../../src/services/agent-orchestrator", async () => {
+      const actual = await vi.importActual<typeof import("../../src/services/agent-orchestrator")>("../../src/services/agent-orchestrator");
+      return { ...actual, planNextWork };
+    });
+    const { createApp: createMockedApp } = await import("../../src/api/routes");
+    const mockedApp = createMockedApp();
+
+    const env = createTestEnv();
+    await seedRepoWithPull(env);
+    // chatQa off (no stub): the short-circuit must return before the planNextWork grounding-bundle build.
+    const res = await mockedApp.request("/v1/repos/owner/repo/pulls/11/chat-qa", { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ question: "why?" }) }, env);
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toMatchObject({ status: "disabled" });
+    expect(planNextWork).not.toHaveBeenCalled();
+  });
+
   it("builds a bundle via planNextWork and passes it, the question, and settings through to generateChatQaAnswer, returning its result verbatim", async () => {
     vi.resetModules();
     const generateChatQaAnswer = vi.fn().mockResolvedValue({ status: "ok", model: "test-model", estimatedNeurons: 12, text: "This PR is blocked on a failing check." });
@@ -153,6 +184,9 @@ describe("POST /v1/repos/:owner/:repo/pulls/:number/chat-qa (#6489)", () => {
 
     const env = createTestEnv();
     await seedRepoWithPull(env, { authorLogin: null });
+    // chatQa must be ENABLED for this test to reach planNextWork -- it exercises the grounding-login fallback on
+    // the enabled path. (#9714 now short-circuits a disabled repo before planNextWork, so the enable is explicit.)
+    stubChatQaManifestFetch();
 
     const res = await mockedApp.request("/v1/repos/owner/repo/pulls/11/chat-qa", { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ question: "why is this blocked?" }) }, env);
     expect(res.status).toBe(200);

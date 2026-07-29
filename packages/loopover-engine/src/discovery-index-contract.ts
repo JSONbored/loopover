@@ -11,6 +11,8 @@
 // miner-goal-spec.ts / fleet-run-manifest.ts: every field optional, malformed input degrades to a documented
 // default with a warning rather than throwing.
 
+import { isValidRepoSegment } from "./repo-segment.js";
+
 export const DISCOVERY_INDEX_CONTRACT_VERSION = 1;
 
 const MAX_QUERY_ITEMS = 200;
@@ -124,10 +126,12 @@ function normalizeStringList(value: unknown, transform: (entry: string) => strin
   return result;
 }
 
-/** `owner/repo` with exactly one slash and non-empty halves; anything else → null (mirrors normalizeCandidate). */
+/** `owner/repo` with exactly one slash and non-empty, path-safe halves — a "." / ".." traversal segment
+ *  fails the shared isValidRepoSegment guard; anything else → null (mirrors normalizeCandidate). */
 function normalizeRepoFullName(value: string): string | null {
   const [owner, repo, extra] = value.trim().split("/");
   if (!owner || !repo || extra !== undefined) return null;
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) return null;
   return `${owner}/${repo}`;
 }
 

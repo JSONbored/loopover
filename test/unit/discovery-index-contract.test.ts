@@ -196,3 +196,26 @@ describe("discovery-index API contract (#4300)", () => {
     });
   });
 });
+
+describe("repo-segment path safety in candidate normalization (#9610)", () => {
+  it("returns null for a candidate whose repoFullName carries a '.'/'..' traversal segment", () => {
+    expect(normalizeDiscoveryIndexCandidate({ repoFullName: "../evil", issueNumber: 1, title: "x" })).toBeNull();
+    expect(normalizeDiscoveryIndexCandidate({ repoFullName: "evil/..", issueNumber: 1, title: "x" })).toBeNull();
+    expect(normalizeDiscoveryIndexCandidate({ repoFullName: "./evil", issueNumber: 1, title: "x" })).toBeNull();
+  });
+
+  it("drops a traversal-segment candidate from a response with the existing invalid-candidate warning", () => {
+    const parsed = normalizeDiscoveryIndexResponse({
+      candidates: [{ repoFullName: "../evil", issueNumber: 1, title: "x" }, VALID_CANDIDATE],
+    });
+    expect(parsed.response.candidates.map((candidate) => candidate.repoFullName)).toEqual(["owner/repo"]);
+    expect(parsed.warnings).toContain("DiscoveryIndexResponse dropped an invalid or boundary-violating candidate.");
+  });
+
+  it("still round-trips a valid owner/repo unchanged through candidate normalization", () => {
+    const normalized = normalizeDiscoveryIndexCandidate(VALID_CANDIDATE);
+    expect(normalized?.repoFullName).toBe("owner/repo");
+    expect(normalized?.owner).toBe("owner");
+    expect(normalized?.repo).toBe("repo");
+  });
+});

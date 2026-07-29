@@ -85,3 +85,15 @@ describe("soft-claim coordination request builder (#4302)", () => {
     }
   });
 });
+
+describe("repo-segment path safety in soft-claim requests (#9610)", () => {
+  it("returns null for a claim whose repoFullName carries a '.'/'..' traversal segment", () => {
+    expect(buildSoftClaimRequest({ ...ACTIVE_CLAIM, repoFullName: "../evil" })).toBeNull();
+    expect(buildSoftClaimRequest({ ...ACTIVE_CLAIM, repoFullName: "evil/.." })).toBeNull();
+    expect(buildSoftClaimRequest({ ...ACTIVE_CLAIM, repoFullName: "./evil" })).toBeNull();
+  });
+
+  it("still round-trips a valid owner/repo unchanged", () => {
+    expect(buildSoftClaimRequest(ACTIVE_CLAIM)?.repoFullName).toBe("owner/repo");
+  });
+});

@@ -320,3 +320,23 @@ describe("buildClaimPlan — routes a scored task-graph into a loop claim plan (
     expect(plan.graphVerdict).toBe("avoid"); // least-favorable across the graph
   });
 });
+
+describe("validateIdeaSubmission targetRepo path safety (#9610)", () => {
+  it("rejects a '.'/'..' traversal segment in the bare-string targetRepo with target_repo_malformed", () => {
+    for (const targetRepo of ["../evilrepo", "./x", "a/..", "../.."]) {
+      expect(validateIdeaSubmission(rawIdea({ targetRepo }))).toEqual({ ok: false, errors: ["target_repo_malformed"] });
+    }
+  });
+
+  it("still rejects empty halves, extra segments, and non-slug characters", () => {
+    for (const targetRepo of ["/x", "x/", "a/b/c", "no-slash", "evil repo/x", "acme/widg!ts"]) {
+      expect(validateIdeaSubmission(rawIdea({ targetRepo }))).toEqual({ ok: false, errors: ["target_repo_malformed"] });
+    }
+  });
+
+  it("still accepts a well-formed owner/name and resolves it as an existing-repo target", () => {
+    const r = validateIdeaSubmission(rawIdea({ targetRepo: "acme/widgets" }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.idea.targetRepo).toEqual({ kind: "existing", repo: "acme/widgets" });
+  });
+});

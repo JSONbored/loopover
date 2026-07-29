@@ -193,6 +193,7 @@ export {
   type GovernorLedgerEventType,
   type NormalizedGovernorLedgerEvent,
 } from "./governor-ledger.js";
+export { REPO_SEGMENT_PATTERN, isValidRepoSegment } from "./repo-segment.js";
 export {
   MINER_TELEMETRY_EVENT_TYPES,
   MINER_TELEMETRY_OUTCOME_BUCKETS,

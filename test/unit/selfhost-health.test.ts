@@ -552,7 +552,7 @@ describe("browser_endpoint authenticates (#9487 follow-up)", () => {
     // The live failure: browserless v2 started with a TOKEN (the documented way) 401s an unauthenticated
     // /json/version, so browser_endpoint reported false forever while capture worked fine. Readiness that
     // cannot pass on a healthy backend trains operators to ignore readiness.
-    const seen: Array<{ url: string; headers?: Record<string, string> }> = [];
+    const seen: Array<{ url: string; headers: Record<string, string> | undefined }> = [];
     const probe = browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: TOKENED }, (url, init) => {
       seen.push({ url, headers: init?.headers });
       // Model the real server: 401 unless credentials are presented.
@@ -586,7 +586,7 @@ describe("browser_endpoint authenticates (#9487 follow-up)", () => {
   });
 
   it("wss maps to https and still carries the header", () => {
-    const seen: Array<{ url: string; headers?: Record<string, string> }> = [];
+    const seen: Array<{ url: string; headers: Record<string, string> | undefined }> = [];
     browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: "wss://remote.example:443?token=t" }, (url, init) => {
       seen.push({ url, headers: init?.headers });
       return Promise.resolve({ ok: true });

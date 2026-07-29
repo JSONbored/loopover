@@ -42,7 +42,7 @@ import {
   type ModerationTier,
 } from "../settings/moderation-rules";
 import { incr } from "../selfhost/metrics";
-import { shouldWaitForOlderSiblings } from "../review/merge-train";
+import { MERGE_TRAIN_MAX_WAIT_MS, shouldWaitForOlderSiblings } from "../review/merge-train";
 import { capturePostHogError } from "../selfhost/posthog";
 import { claimContributorCapLock, releaseContributorCapLock } from "../queue/transient-locks";
 import { buildDecisionRecord, persistDecisionRecord, type DecisionRecord } from "../review/decision-record";
@@ -60,6 +60,7 @@ const AGENT_ACTOR = "loopover";
 // retried PR, so it should page sooner. A 1h window catches a wedge well inside its first hour -- far ahead of
 // both the 24h staleness cap and the 4h it took a human to notice the confirmed #8735 incident (57 denials,
 // 5 PRs blocked).
+const MERGE_TRAIN_WAIT_COMMENT_EVENT_TYPE = "agent.action.merge_train_wait_comment";
 const MERGE_TRAIN_WEDGE_ALERT_THRESHOLD = 5;
 const MERGE_TRAIN_WEDGE_WINDOW_MS = 60 * 60 * 1000;
 const MERGE_TRAIN_WEDGE_EVENT_TYPE = "agent.action.merge_train_blocked";
@@ -732,6 +733,43 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
           }
         }
         if (ctx.mergeTrainMode === "enforce") {
+          // #merge-train-honest-comment (observed live on JSONbored/loopover#9837): the published surface said
+          // the PR was MERGING -- the planner's disposition legitimately concluded wouldMerge before this
+          // step-8 check ran -- and then this branch denied it with an AUDIT-ONLY record. Publicly the PR
+          // claimed an action that never happened, which reads as the bot silently breaking its word.
+          //
+          // Post the truth once per (waiting PR, blocker) pair. Dedup via the AUDIT TRAIL, not a transient
+          // lock: claimTransientLock fails OPEN ({acquired:true}) on any deployment without a transient
+          // cache bound, which would repeat this comment on every denial pass -- and the comment's own audit
+          // row is already the exact "did we say this" fact, durable on every deployment. The target key
+          // carries the blocker so a NEW blocker (a genuinely new fact) gets its own line. Fail-open on the
+          // comment itself: a post failure never blocks the denial bookkeeping.
+          const waitCommentTargetKey = `${ctx.repoFullName}#${ctx.pullNumber}:merge-train-wait-comment-for-${decision.blockingPr}`;
+          const alreadyToldSinceIso = new Date(Date.now() - MERGE_TRAIN_MAX_WAIT_MS).toISOString();
+          const alreadyTold = await countRecentAuditEventsForActorAndTarget(env, AGENT_ACTOR, MERGE_TRAIN_WAIT_COMMENT_EVENT_TYPE, waitCommentTargetKey, alreadyToldSinceIso).catch(() => 0);
+          if (alreadyTold === 0) {
+            const posted = await createIssueComment(
+              env,
+              ctx.installationId,
+              ctx.repoFullName,
+              ctx.pullNumber,
+              `Queued in the merge train behind #${decision.blockingPr}, which touches overlapping work and was opened first. ` +
+                `This PR merges automatically once #${decision.blockingPr} completes (or leaves the train). No action needed. ` +
+                `This is an automated maintenance action.`,
+            ).then(() => true).catch(() => false);
+            // Recorded ONLY after a successful post: a failed post leaves no row, so the next pass retries
+            // rather than believing the contributor was told when they never were.
+            if (posted) {
+              await recordAuditEvent(env, {
+                eventType: MERGE_TRAIN_WAIT_COMMENT_EVENT_TYPE,
+                actor: AGENT_ACTOR,
+                targetKey: waitCommentTargetKey,
+                outcome: "completed",
+                detail: `told the contributor this PR is queued behind #${decision.blockingPr}`,
+                metadata: { repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, blockingPr: decision.blockingPr },
+              }).catch(() => undefined);
+            }
+          }
           await audit("denied", `merge train: waiting for older mergeable sibling #${decision.blockingPr} — action not executed`);
           continue;
         }

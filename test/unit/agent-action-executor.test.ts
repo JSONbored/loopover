@@ -2271,6 +2271,29 @@ describe("executeAgentMaintenanceActions merge-train gate (#selfhost-merge-train
     expect(mergePullRequest).not.toHaveBeenCalled();
   });
 
+  it("REGRESSION (#merge-train-honest-comment): an enforce-mode train denial tells the contributor, once", async () => {
+    // Observed live on JSONbored/loopover#9837: the published surface said the PR was MERGING (the planner
+    // legitimately concluded wouldMerge before the executor's train check), then the denial was recorded
+    // audit-only -- publicly the PR claimed an action that never happened. The denial must say so on the PR,
+    // and repeated passes behind the SAME blocker must not repeat the comment (transient-lock dedup).
+    const env = createTestEnv({});
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Older overlapping sibling", state: "open", user: { login: "c" }, head: { sha: "sha3" }, labels: [], body: "Fixes #1", created_at: "2026-07-05T08:00:00.000Z" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "Fixes #1", created_at: "2026-07-05T10:00:00.000Z" });
+
+    await executeAgentMaintenanceActions(env, ctx({ mergeTrainMode: "enforce", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z", pullRequestLinkedIssues: [1] }), [merge]);
+    expect(createIssueComment).toHaveBeenCalledTimes(1);
+    const [, , , commentPr, commentBody] = vi.mocked(createIssueComment).mock.calls[0]!;
+    expect(commentPr).toBe(7);
+    expect(commentBody).toContain("merge train");
+    expect(commentBody).toContain("#3");
+    expect(commentBody).toContain("merges automatically");
+
+    // Second pass behind the SAME blocker: still denied, but no second comment.
+    await executeAgentMaintenanceActions(env, ctx({ mergeTrainMode: "enforce", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z", pullRequestLinkedIssues: [1] }), [merge]);
+    expect(createIssueComment).toHaveBeenCalledTimes(1);
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it("does NOT hold an enforce-mode merge behind an older sibling that shares no linked issue or changed file (#selfhost-merge-train-overlap)", async () => {
     const env = createTestEnv({});
     await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Unrelated older sibling", state: "open", user: { login: "c" }, head: { sha: "sha3" }, labels: [], body: "Fixes #99", created_at: "2026-07-05T08:00:00.000Z" });

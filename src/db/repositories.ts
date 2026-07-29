@@ -6614,7 +6614,7 @@ export async function listStaleActiveReviewTracking(
  * Returns the terminalized (repo, PR) pairs so the caller can log one line per healed row.
  */
 /**
- * Everything an orphan re-queue needs that the active_review_tracking row does not carry (#9866): the
+ * Everything an orphan re-queue needs that the active_review_tracking row does not carry (#9870): the
  * installation the repo is registered under, and the PR's own GitHub creation time.
  *
  * `prCreatedAt` is not optional politeness -- omitting it INVERTS the queue order. jobClaimSortKey falls back

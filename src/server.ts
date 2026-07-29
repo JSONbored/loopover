@@ -893,7 +893,7 @@ async function main(): Promise<void> {
     const { terminalizeActiveReviewsFromBeforeBoot, loadOrphanRequeueContext } = await import("./db/repositories");
     const healed = await terminalizeActiveReviewsFromBeforeBoot(env, new Date().toISOString());
     for (const row of healed) {
-      // #9866: healing the ROW is only half of it. The interrupted pass had already published the
+      // #9870: healing the ROW is only half of it. The interrupted pass had already published the
       // "LoopOver is reviewing..." placeholder comment, and terminalizing its tracking row does not replace
       // that comment -- it only stops the next pass bouncing off a stale lock. Nothing else re-drives the PR
       // either: the head has not changed, so no webhook fires, and the published review cache is empty

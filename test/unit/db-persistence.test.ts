@@ -605,7 +605,7 @@ describe("active-review tracking (#review-evasion-protection)", () => {
   });
 });
 
-describe("loadOrphanRequeueContext (#9866)", () => {
+describe("loadOrphanRequeueContext (#9870)", () => {
   it("returns the installation id AND the PR's real creation time", async () => {
     // The boot sweep heals the tracking row, but re-queueing the pass needs both — and the tracking row
     // carries neither. Without this the placeholder comment stays published forever.

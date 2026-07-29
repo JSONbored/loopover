@@ -40,6 +40,10 @@ export function requiresApiToken(path: string): boolean {
   // #9266: the eval-scores transport is unauthenticated by the same design as every /v1/public/* sibling
   // above -- committed to a corpus checksum, independently re-derivable, nothing gated behind a token.
   if (path === "/v1/public/eval-scores") return false;
+  // #9636: same posture as its sibling above -- the corpus is redacted at the source (no target keys, no
+  // repos, no metadata beyond the one confidence field replay needs), so there is nothing here an
+  // Authorization header would be protecting.
+  if (path === "/v1/public/eval-corpus") return false;
   // #9269: the single-row read, added in the SAME PR as its route so the two can never drift the way #9120's
   // sibling did. Regex (not a literal) because of the :seq path parameter.
   if (/^\/v1\/public\/decision-ledger\/row\/[^/]+$/.test(path)) return false;

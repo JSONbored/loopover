@@ -126,27 +126,20 @@ jobs:
             echo "Unexpected file in package tarball"
             exit 1
           fi
-          # Secret scan, with ONE deliberate exclusion. Unlike its sibling packages, this one SHIPS the
-          # redaction logic: dist/telemetry.js defines SECRET_VALUE_PATTERN, whose source text contains
-          # a literal `-----BEGIN [A-Z ]*PRIVATE KEY-----` alternative (plus a doc comment quoting a
-          # full PEM header, describing the bug that alternative fixes). Scanning it with the siblings'
-          # verbatim pattern is a guaranteed false positive on EVERY release -- verified against the
-          # 0.1.0 bootstrap tarball. Excluding the module by name keeps the check meaningful for the
-          # other 92 files rather than weakening the pattern for all of them; if a second module ever
-          # legitimately needs excluding, that is a signal to reconsider the approach, not to extend
-          # this list quietly.
+          # Secret scan over EVERY packed file, including dist/telemetry.js.
+          #
+          # This package is unusual: it SHIPS the redaction logic, so dist/telemetry.js contains
+          # SECRET_VALUE_PATTERN, whose source text carries a literal `-----BEGIN [A-Z ]*PRIVATE KEY-----`
+          # alternative. That form does NOT match the pattern below (`[A-Z ]*` sits where the pattern wants
+          # `(RSA |EC |OPENSSH )?`), so the module scans clean and needs no exclusion -- verified against the
+          # packed tarball. The module's doc comment DESCRIBES that header rather than quoting it, for
+          # exactly this reason (see the comment above SECRET_VALUE_PATTERN); scripts/check-contract-package.ts
+          # runs the same scan in test:ci, so a regression fails pre-merge rather than at release time.
           SCAN_DIR="$(mktemp -d)"
           tar -xzf "$TARBALL_PATH" -C "$SCAN_DIR"
           if grep -rqE '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|github_pat_|gh[pousr]_|gts_[0-9a-f]{64}|[A-Z0-9_]*(TOKEN|SECRET|PRIVATE_KEY)=)' \
-               "$SCAN_DIR/package" \
-               --exclude='telemetry.js' --exclude='telemetry.js.map' --exclude='telemetry.d.ts'; then
+               "$SCAN_DIR/package"; then
             echo "Secret-like content found in package tarball"
-            exit 1
-          fi
-          # And prove the exclusion stayed narrow: the excluded module must still be the ONLY thing that
-          # would have tripped the scan. If a real secret ever lands in telemetry.js this still fires.
-          if grep -rqE '(github_pat_|gh[pousr]_[A-Za-z0-9]{16,}|gts_[0-9a-f]{64})' "$SCAN_DIR/package"; then
-            echo "Real token-shaped content found in package tarball (including the redaction module)"
             exit 1
           fi
           TMP="$(mktemp -d)"

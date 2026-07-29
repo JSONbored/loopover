@@ -1972,6 +1972,22 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/public/eval-corpus",
+    operationId: "getPublicEvalCorpus",
+    tags: ["Public"],
+    summary: "The redacted, checksummed corpus behind one rule's published precision — downloadable without credentials",
+    request: { query: z.object({ ruleId: z.string() }) },
+    responses: {
+      200: {
+        description:
+          "{ ruleId, windowDays, caseCount, truncated, checksum, cases: [{ ruleId, outcome, label, firedAt, decidedAt, metadata?: { confidence } }] } — `targetKey` and every other metadata key are DROPPED, not hashed, so no repo or PR identity is published; `metadata.confidence` stays nested where buildConfidenceThresholdClassifier reads it. Timestamps are truncated to the UTC day. `checksum` is sha256 over canonicalJson(cases), i.e. it commits to the artifact you can actually download",
+      },
+      400: { description: "`ruleId` is required — a corpus is only meaningful for one rule" },
+      404: { description: "Public stats are disabled for this deployment" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/public/eval-scores",
     operationId: "listPublicEvalScores",
     tags: ["Public"],

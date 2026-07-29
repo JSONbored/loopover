@@ -47,4 +47,9 @@ export const RELEASE_AUTOMATION_WATCHED_PATHS: readonly string[] = Object.freeze
   ".github/workflows/publish-mcp.yml",
   ".github/workflows/publish-engine.yml",
   ".github/workflows/publish-miner.yml",
+  // #9749/#9654: the contract package is a RUNTIME dependency of the two published CLIs, so losing any
+  // of these three silently returns it to the unpublished state that would break their next release.
+  "packages/loopover-contract/package.json",
+  "packages/loopover-contract/CHANGELOG.md",
+  ".github/workflows/publish-contract.yml",
 ]);

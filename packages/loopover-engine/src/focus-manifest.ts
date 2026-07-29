@@ -4290,6 +4290,7 @@ export const FOCUS_MANIFEST_TOP_LEVEL_FIELDS = [
   "maintainerRecap",
   "ops",
   "publicStats",
+  "publicProof",
   "draftFlow",
   "upstreamDriftIssues",
   "sweepWatchdog",

@@ -84,6 +84,189 @@ export const CollisionClusterSchema = z
     items: z.array(CollisionItemSchema),
   });
 
+export const ContributorProfileSchema = z
+  .object({
+    login: z.string(),
+    generatedAt: z.string(),
+    github: z.object({
+      login: z.string(),
+      name: z.string().nullable().optional(),
+      bio: z.string().nullable().optional(),
+      company: z.string().nullable().optional(),
+      publicRepos: z.number().optional(),
+      followers: z.number().optional(),
+      createdAt: z.string().optional(),
+      updatedAt: z.string().optional(),
+      topLanguages: z.array(z.string()),
+      source: z.enum(["github", "unavailable"]),
+    }),
+    source: z.enum(["gittensor_api", "github_cache"]),
+    gittensor: z
+      .object({
+        githubId: z.string(),
+        githubUsername: z.string(),
+        uid: z.number().optional(),
+        hotkey: z.string().optional(),
+        evaluatedAt: z.string().optional(),
+        updatedAt: z.string().optional(),
+        isEligible: z.boolean(),
+        credibility: z.number(),
+        eligibleRepoCount: z.number(),
+        issueDiscoveryScore: z.number(),
+        issueTokenScore: z.number(),
+        issueCredibility: z.number(),
+        isIssueEligible: z.boolean(),
+        issueEligibleRepoCount: z.number(),
+        alphaPerDay: z.number(),
+        taoPerDay: z.number(),
+        usdPerDay: z.number(),
+        totals: z.object({
+          pullRequests: z.number(),
+          mergedPullRequests: z.number(),
+          openPullRequests: z.number(),
+          closedPullRequests: z.number(),
+          openIssues: z.number(),
+          closedIssues: z.number(),
+          solvedIssues: z.number(),
+          validSolvedIssues: z.number(),
+        }),
+        repositories: z.array(
+          z.object({
+            repoFullName: z.string(),
+            pullRequests: z.number(),
+            mergedPullRequests: z.number(),
+            openPullRequests: z.number(),
+            closedPullRequests: z.number(),
+            openIssues: z.number(),
+            closedIssues: z.number(),
+            solvedIssues: z.number(),
+            validSolvedIssues: z.number(),
+            isEligible: z.boolean(),
+            isIssueEligible: z.boolean(),
+            credibility: z.number(),
+            issueCredibility: z.number(),
+            totalScore: z.number(),
+            baseTotalScore: z.number(),
+          }),
+        ),
+      })
+      .optional(),
+    registeredRepoActivity: z.object({
+      pullRequests: z.number(),
+      mergedPullRequests: z.number(),
+      issues: z.number(),
+      reposTouched: z.array(z.string()),
+      dominantLabels: z.array(z.string()),
+    }),
+    trustSignals: z.object({
+      evidenceScore: z.number(),
+      level: z.enum(["new", "emerging", "established"]),
+      unlinkedOpenPullRequests: z.number(),
+      maintainerAssociatedPullRequests: z.number(),
+    }),
+  });
+
+export const ContributorOpenPrNextStepPacketSchema = z
+  .object({
+    repoFullName: z.string(),
+    number: z.number(),
+    title: z.string(),
+    classification: z.enum([
+      "approved",
+      "blocked",
+      "stale",
+      "needs_author",
+      "failing_checks",
+      "missing_tests",
+      "duplicate_prone",
+      "reviewable",
+      "should_close_or_withdraw",
+      "maintainer_lane",
+      "draft",
+    ]),
+    summary: z.string(),
+    reasons: z.array(z.string()),
+    nextSteps: z.array(z.string()),
+  });
+
+export const ContributorOpenPrMonitorSchema = z
+  .object({
+    login: z.string(),
+    generatedAt: z.string(),
+    openPrCount: z.number(),
+    registeredRepoCount: z.number(),
+    cleanupFirst: z.boolean(),
+    summary: z.string(),
+    guidance: z.array(z.string()),
+    pendingScenarios: z.array(
+      z.object({
+        repoFullName: z.string(),
+        detection: z.object({
+          source: z.enum(["github_observed", "user_supplied"]),
+          pendingMergedPrCount: z.number(),
+          pendingClosedPrCount: z.number(),
+          approvedPrCount: z.number(),
+          expectedOpenPrCountAfterMerge: z.number().optional(),
+          scenarioNotes: z.array(z.string()),
+          classified: z.array(
+            z.object({
+              repoFullName: z.string(),
+              number: z.number(),
+              title: z.string(),
+              classification: z.string(),
+              reasons: z.array(z.string()),
+            }),
+          ),
+        }),
+      }),
+    ),
+    pullRequests: z.array(ContributorOpenPrNextStepPacketSchema),
+  });
+
+export const NotificationFeedItemSchema = z
+  .object({
+    id: z.string(),
+    eventType: z.string(),
+    repoFullName: z.string(),
+    pullNumber: z.number().nullable(),
+    title: z.string(),
+    body: z.string(),
+    deeplink: z.string(),
+    status: z.enum(["delivered", "read"]),
+    createdAt: z.string(),
+  });
+
+export const NotificationFeedSchema = z
+  .object({
+    login: z.string(),
+    unreadCount: z.number(),
+    notifications: z.array(NotificationFeedItemSchema),
+  });
+
+export const NotificationsMarkedSchema = z
+  .object({
+    login: z.string(),
+    marked: z.number(),
+  });
+
+/**
+ * Request body for POST/DELETE /v1/contributors/{login}/watches. Mirrors `watchSubscriptionBodySchema`
+ * in src/api/routes.ts (repoFullName + optional labels) — #9306.
+ */
+export const ContributorOpportunitySchema = z
+  .object({
+    repoFullName: z.string(),
+    issueNumber: z.number().optional(),
+    title: z.string(),
+    fit: z.enum(["good", "caution", "hold"]),
+    score: z.number(),
+    lane: z.enum(["direct_pr", "issue_discovery", "split", "inactive", "unknown"]),
+    multiplierTier: z.enum(["maintainer_created", "community"]),
+    availability: z.enum(["ready", "maintainer_wip"]),
+    reasons: z.array(z.string()),
+    warnings: z.array(z.string()),
+  });
+
 export const PreflightResultSchema = z
   .object({
     repoFullName: z.string(),
@@ -106,6 +289,36 @@ export const LocalDiffPreflightResultSchema = PreflightResultSchema.extend({
     summary: z.string(),
   }),
 });
+
+export const BountySourceContextSchema = z.object({
+  sourceUrl: z.string().nullable().optional(),
+  discoveredAt: z.string().nullable().optional(),
+  updatedAt: z.string().nullable().optional(),
+  observedAt: z.string().nullable().optional(),
+  ageDays: z.number().nullable(),
+  freshness: z.enum(["fresh", "stale", "unknown"]),
+});
+
+export const BountyLinkedPrSchema = z.object({
+  number: z.number(),
+  state: z.enum(["open", "closed", "merged", "unknown"]),
+  isActive: z.boolean(),
+});
+
+export const BountyAdvisorySchema = z
+  .object({
+    id: z.string(),
+    repoFullName: z.string(),
+    issueNumber: z.number(),
+    status: z.string(),
+    lifecycle: z.enum(["active", "historical", "completed", "cancelled", "stale", "ambiguous", "unknown"]),
+    isActiveOpportunity: z.boolean(),
+    fundingStatus: z.enum(["funded", "target_only", "unknown"]),
+    consensusRisk: z.enum(["low", "medium", "high"]),
+    source: BountySourceContextSchema,
+    linkedPrs: z.array(BountyLinkedPrSchema),
+    findings: z.array(FindingSchema),
+  });
 
 export const SkippedPrAuditExportSchema = z
   .object({
@@ -407,6 +620,222 @@ export const ReviewRiskExplanationSchema = z
     roleContext: RoleContextSchema.nullable(),
     recommendation: z.enum(["likely_duplicate", "maintainer_lane", "needs_author", "review", "watch"]),
     summary: z.string(),
+  });
+
+export const ContributorOutcomeCountsSchema = z.object({
+  pullRequests: z.number(),
+  mergedPullRequests: z.number(),
+  openPullRequests: z.number(),
+  closedPullRequests: z.number(),
+  issues: z.number(),
+  openIssues: z.number(),
+  closedIssues: z.number(),
+  solvedIssues: z.number(),
+  validSolvedIssues: z.number(),
+});
+
+export const ContributorOutcomeTotalsSchema = ContributorOutcomeCountsSchema.extend({
+  closedPullRequestRate: z.number(),
+  credibility: z.number(),
+  issueCredibility: z.number(),
+});
+
+export const ContributorReconciliationReportSchema = z.object({
+  login: z.string(),
+  generatedAt: z.string(),
+  source: z.enum(["gittensor_api", "github_cache"]),
+  officialAuthoritative: z.boolean(),
+  totals: z.object({
+    official: ContributorOutcomeTotalsSchema.optional(),
+    cached: ContributorOutcomeTotalsSchema,
+    effective: ContributorOutcomeTotalsSchema,
+  }),
+  repos: z.array(
+    z.object({
+      repoFullName: z.string(),
+      maintainerLane: z.boolean(),
+      official: ContributorOutcomeCountsSchema.optional(),
+      cached: ContributorOutcomeCountsSchema,
+      effective: ContributorOutcomeCountsSchema,
+      discrepancyReasons: z.array(z.string()),
+      freshness: z.object({
+        officialUpdatedAt: z.string().optional(),
+        cachedLastActivityAt: z.string().optional(),
+      }),
+    }),
+  ),
+  findings: z.array(FindingSchema),
+  summary: z.string(),
+});
+
+export const ContributorOutcomeHistorySchema = z
+  .object({
+    login: z.string(),
+    generatedAt: z.string(),
+    source: z.enum(["gittensor_api", "github_cache"]),
+    reconciliation: ContributorReconciliationReportSchema.optional(),
+    totals: z.record(z.string(), z.number()),
+    repoOutcomes: z.array(z.record(z.string(), z.unknown())),
+    successPatterns: z.array(z.record(z.string(), z.unknown())),
+    failurePatterns: z.array(z.record(z.string(), z.unknown())),
+    summary: z.string(),
+  });
+
+export const DecisionPackFreshnessSchema = z.enum(["fresh", "stale", "rebuilding", "missing"]);
+
+export const AgentRecommendationOutcomeStateSchema = z.enum(["accepted", "rejected", "ignored", "stale", "merged", "closed", "improved"]);
+
+export const AgentRecommendationOutcomeStateBucketSchema = z
+  .object({
+    state: AgentRecommendationOutcomeStateSchema,
+    count: z.number(),
+  });
+
+export const AgentRecommendationOutcomeRepoSummarySchema = z
+  .object({
+    repoFullName: z.string(),
+    total: z.number(),
+    accepted: z.number(),
+    rejected: z.number(),
+    ignored: z.number(),
+    stale: z.number(),
+    merged: z.number(),
+    closed: z.number(),
+    improved: z.number(),
+    positive: z.number(),
+    negative: z.number(),
+    maintainerLaneTotal: z.number(),
+    latestOutcomeAt: z.string().nullable().optional(),
+    signal: z.enum(["positive", "negative", "mixed", "neutral"]),
+  });
+
+export const AgentRecommendationOutcomeSummarySchema = z
+  .object({
+    login: z.string(),
+    generatedAt: z.string(),
+    windowDays: z.number(),
+    totals: z.object({
+      total: z.number(),
+      accepted: z.number(),
+      rejected: z.number(),
+      ignored: z.number(),
+      stale: z.number(),
+      merged: z.number(),
+      closed: z.number(),
+      improved: z.number(),
+      positive: z.number(),
+      negative: z.number(),
+      maintainerLaneTotal: z.number(),
+    }),
+    sources: z.object({
+      explicit: z.number(),
+      inferred: z.number(),
+    }),
+    states: z.array(AgentRecommendationOutcomeStateBucketSchema),
+    repos: z.array(AgentRecommendationOutcomeRepoSummarySchema),
+    maintainerLane: z.object({
+      total: z.number(),
+      states: z.array(AgentRecommendationOutcomeStateBucketSchema),
+    }),
+    privateSummary: z.string(),
+  });
+
+export const DecisionRecommendationSchema = z.enum(["pursue", "cleanup_first", "maintainer_lane", "avoid_for_now", "watch"]);
+
+export const DecisionActionKindSchema = z
+  .enum(["cleanup_existing_prs", "land_existing_prs", "open_new_direct_pr", "file_issue_discovery", "maintainer_lane_improve_repo", "maintainer_cut_readiness"]);
+
+export const ActionPortfolioBucketNameSchema = z.enum(["cleanup", "wait", "direct_pr", "issue_discovery", "avoid", "maintainer_lane"]);
+
+export const ActionPortfolioItemSchema = z
+  .object({
+    bucket: ActionPortfolioBucketNameSchema,
+    repoFullName: z.string(),
+    actionKind: DecisionActionKindSchema.optional(),
+    priorityScore: z.number(),
+    recommendation: DecisionRecommendationSchema,
+    status: z.enum(["recommended", "blocked", "watch"]),
+    whyNow: z.array(z.string()),
+    scoreabilityImpact: z.string(),
+    riskImpact: z.string(),
+    maintainerImpact: z.string(),
+    blockedBy: z.array(z.string()),
+    rerunWhen: z.string(),
+    publicSafeSummary: z.string(),
+    nextActions: z.array(z.string()),
+    publicNextActions: z.array(z.string()),
+    source: z.enum(["decision_pack"]),
+    scenarioProjection: z
+      .object({
+        source: z.enum(["github_observed", "user_supplied"]),
+        pendingMergedPrCount: z.number(),
+        pendingClosedPrCount: z.number(),
+        approvedPrCount: z.number(),
+        expectedOpenPrCountAfterMerge: z.number().optional(),
+        notes: z.array(z.string()),
+      })
+      .optional(),
+  });
+
+export const ActionPortfolioSchema = z
+  .object({
+    generatedAt: z.string(),
+    bucketOrder: z.array(ActionPortfolioBucketNameSchema),
+    buckets: z.array(
+      z.object({
+        bucket: ActionPortfolioBucketNameSchema,
+        label: z.string(),
+        summary: z.string(),
+        actions: z.array(ActionPortfolioItemSchema),
+      }),
+    ),
+    topActions: z.array(ActionPortfolioItemSchema),
+    counts: z.record(z.string(), z.number()),
+    summary: z.string(),
+  });
+
+export const ContributorDecisionPackSchema = z
+  .object({
+    status: z.enum(["ready"]),
+    source: z.enum(["computed", "snapshot"]),
+    login: z.string(),
+    generatedAt: z.string(),
+    snapshotAgeSeconds: z.number().optional(),
+    stale: z.boolean(),
+    freshness: DecisionPackFreshnessSchema,
+    rebuildEnqueued: z.boolean(),
+    scoringModelSnapshotId: z.string(),
+    profile: z.record(z.string(), z.unknown()),
+    outcomeHistory: ContributorOutcomeHistorySchema,
+    roleContexts: z.array(RoleContextSchema),
+    opportunities: z.array(ContributorOpportunitySchema),
+    repoDecisions: z.array(z.record(z.string(), z.unknown())),
+    topActions: z.array(z.record(z.string(), z.unknown())),
+    actionPortfolio: ActionPortfolioSchema,
+    cleanupFirst: z.array(z.record(z.string(), z.unknown())),
+    pursueRepos: z.array(z.record(z.string(), z.unknown())),
+    avoidRepos: z.array(z.record(z.string(), z.unknown())),
+    maintainerLaneRepos: z.array(z.record(z.string(), z.unknown())),
+    scoreBlockers: z.array(z.record(z.string(), z.unknown())),
+    recommendationOutcomeFeedback: AgentRecommendationOutcomeSummarySchema,
+    evidenceGraph: z.record(z.string(), z.unknown()).optional(),
+    dataQuality: z.record(z.string(), z.unknown()),
+    summary: z.string(),
+    nextActions: z.array(z.string()),
+    openPrMonitor: ContributorOpenPrMonitorSchema.optional(),
+  });
+
+export const RepoDecisionResponseSchema = z
+  .object({
+    status: z.enum(["ready"]),
+    login: z.string(),
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    source: z.enum(["computed", "snapshot"]),
+    freshness: DecisionPackFreshnessSchema,
+    rebuildEnqueued: z.boolean(),
+    decision: z.record(z.string(), z.unknown()),
+    dataQuality: z.record(z.string(), z.unknown()),
   });
 
 export const RewardRiskActionSchema = z
@@ -883,8 +1312,51 @@ export const CLI_RESPONSE_SCHEMAS = {
   "/v1/validate/focus-manifest": ValidateFocusManifestResponseSchema,
 } as const;
 
+/**
+ * The same, for the PARAMETERISED paths (#9773) -- keyed by the document's own `{param}` template.
+ *
+ * Separate from the table above because these cannot be looked up by an exact string: the CLI builds them
+ * with interpolation, so the match happens at the type level (see MatchApiPath) rather than by key.
+ */
+export const CLI_PARAMETERISED_RESPONSE_SCHEMAS = {
+  "/v1/agent/runs/{id}": AgentRunBundleSchema,
+  "/v1/bounties/{id}/advisory": BountyAdvisorySchema,
+  "/v1/contributors/{login}/decision-pack": ContributorDecisionPackSchema,
+  "/v1/contributors/{login}/notifications": NotificationFeedSchema,
+  "/v1/contributors/{login}/notifications/read": NotificationsMarkedSchema,
+  "/v1/contributors/{login}/open-pr-monitor": ContributorOpenPrMonitorSchema,
+  "/v1/contributors/{login}/profile": ContributorProfileSchema,
+  "/v1/contributors/{login}/repos/{owner}/{repo}/decision": RepoDecisionResponseSchema,
+} as const;
+
 /** A path the client validates. */
 export type ValidatedApiPath = keyof typeof CLI_RESPONSE_SCHEMAS;
 
 /** The parsed response type for a validated path -- what the CLI call sites get instead of `any`. */
 export type ApiResponse<Path extends ValidatedApiPath> = z.infer<(typeof CLI_RESPONSE_SCHEMAS)[Path]>;
+
+/** A parameterised path pattern the client validates. */
+export type ParameterisedApiPath = keyof typeof CLI_PARAMETERISED_RESPONSE_SCHEMAS;
+
+/**
+ * A pattern with every `{param}` widened to `${string}`, so a concrete path can be matched against it.
+ *
+ * Recursive because a pattern can carry several parameters
+ * (`/v1/contributors/{login}/repos/{owner}/{repo}/decision`).
+ */
+export type TemplatedApiPath<Pattern extends string> = Pattern extends `${infer Head}{${string}}${infer Tail}`
+  ? `${Head}${string}${TemplatedApiPath<Tail>}`
+  : Pattern;
+
+/**
+ * The pattern a CONCRETE path matches, or `never` when it matches none.
+ *
+ * This is what lets the CLI keep writing its natural interpolated template and still get the exact response
+ * type: the mapped type distributes over every known pattern and keeps only the arms the string satisfies.
+ */
+export type MatchApiPath<Path extends string> = {
+  [Pattern in ParameterisedApiPath]: Path extends TemplatedApiPath<Pattern> ? Pattern : never;
+}[ParameterisedApiPath];
+
+/** The parsed response for a concrete parameterised path. */
+export type ParameterisedApiResponse<Path extends string> = z.infer<(typeof CLI_PARAMETERISED_RESPONSE_SCHEMAS)[MatchApiPath<Path>]>;

@@ -43,6 +43,52 @@ export function cliApiPaths(binSource: string): string[] {
   return [...paths].sort();
 }
 
+/**
+ * Every PARAMETERISED `/v1/...` path the CLI calls, normalised to the document's own `{param}` form (#9773).
+ *
+ * `cliApiPaths` above deliberately rejects anything containing a `$`, so until now the 53 template call
+ * sites -- every per-contributor and per-repo endpoint -- fell through to the untyped overload. That, not
+ * an oversight in the call sites, is why the stdio bin still reads those payloads as `any`.
+ *
+ * Each `${...}` becomes `{}` first (its own contents can be an arbitrary expression, including nested
+ * braces and a `?:` with slashes in both arms), then the segments are re-keyed positionally against the
+ * document's parameter names, so the emitted key is exactly the string `openapi.json` uses.
+ */
+export function cliParameterisedApiPaths(binSource: string, document: OpenApiDocument): string[] {
+  const documented = Object.keys(document.paths).filter((path) => path.includes("{"));
+  const shapes = new Map<string, string>();
+  for (const documentPath of documented) shapes.set(documentPath.replace(/\{[^}]+\}/g, "{}"), documentPath);
+
+  const found = new Set<string>();
+  for (const match of binSource.matchAll(/api(?:Get|Post|Delete|Fetch)\(\s*`(\/v1\/[^`]*)`/g)) {
+    const raw = match[1]!;
+    if (!raw.includes("${")) continue;
+    // Collapse each interpolation, honouring nested braces, then drop any trailing query the template adds.
+    let collapsed = "";
+    for (let index = 0; index < raw.length; index += 1) {
+      if (raw[index] === "$" && raw[index + 1] === "{") {
+        let depth = 1;
+        index += 2;
+        while (index < raw.length && depth > 0) {
+          if (raw[index] === "{") depth += 1;
+          else if (raw[index] === "}") depth -= 1;
+          index += 1;
+        }
+        index -= 1;
+        collapsed += "{}";
+      } else {
+        collapsed += raw[index];
+      }
+    }
+    const withoutQuery = collapsed.split("?")[0]!.replace(/\/+$/, "");
+    // A template whose interpolation spans a slash (a conditional query suffix, say) cannot be a path
+    // shape; it simply will not match a documented one, and is left unvalidated exactly as before.
+    const documentPath = shapes.get(withoutQuery);
+    if (documentPath) found.add(documentPath);
+  }
+  return [...found].sort();
+}
+
 type SchemaBlock = { name: string; source: string; exported: boolean };
 
 /** Every top-level `const XSchema = ...` in the source, in declaration order, with its full body. */
@@ -108,8 +154,10 @@ import { z } from "zod";
 `;
 
 export function renderApiSchemas(sourceText: string, documentText: string, binSource: string): string {
-  const byPath = responseSchemaByPath(JSON.parse(documentText) as OpenApiDocument, cliApiPaths(binSource));
-  const blocks = closure(parseSchemaBlocks(sourceText), [...new Set(byPath.values())]);
+  const document = JSON.parse(documentText) as OpenApiDocument;
+  const byPath = responseSchemaByPath(document, cliApiPaths(binSource));
+  const byPattern = responseSchemaByPath(document, cliParameterisedApiPaths(binSource, document));
+  const blocks = closure(parseSchemaBlocks(sourceText), [...new Set([...byPath.values(), ...byPattern.values()])]);
   const body = blocks
     .map((block) =>
       block.source
@@ -122,7 +170,11 @@ export function renderApiSchemas(sourceText: string, documentText: string, binSo
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([path, schema]) => `  "${path}": ${schema},`)
     .join("\n");
-  return `${HEADER}${body.trimEnd()}\n\n${TABLE_HEADER}${table}\n} as const;\n\n${TABLE_TYPES}`;
+  const patternTable = [...byPattern.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([path, schema]) => `  "${path}": ${schema},`)
+    .join("\n");
+  return `${HEADER}${body.trimEnd()}\n\n${TABLE_HEADER}${table}\n} as const;\n\n${PATTERN_TABLE_HEADER}${patternTable}\n} as const;\n\n${TABLE_TYPES}`;
 }
 
 const TABLE_HEADER = `/**
@@ -135,11 +187,46 @@ const TABLE_HEADER = `/**
 export const CLI_RESPONSE_SCHEMAS = {
 `;
 
+const PATTERN_TABLE_HEADER = `/**
+ * The same, for the PARAMETERISED paths (#9773) -- keyed by the document's own \`{param}\` template.
+ *
+ * Separate from the table above because these cannot be looked up by an exact string: the CLI builds them
+ * with interpolation, so the match happens at the type level (see MatchApiPath) rather than by key.
+ */
+export const CLI_PARAMETERISED_RESPONSE_SCHEMAS = {
+`;
+
 const TABLE_TYPES = `/** A path the client validates. */
 export type ValidatedApiPath = keyof typeof CLI_RESPONSE_SCHEMAS;
 
 /** The parsed response type for a validated path -- what the CLI call sites get instead of \`any\`. */
 export type ApiResponse<Path extends ValidatedApiPath> = z.infer<(typeof CLI_RESPONSE_SCHEMAS)[Path]>;
+
+/** A parameterised path pattern the client validates. */
+export type ParameterisedApiPath = keyof typeof CLI_PARAMETERISED_RESPONSE_SCHEMAS;
+
+/**
+ * A pattern with every \`{param}\` widened to \`\${string}\`, so a concrete path can be matched against it.
+ *
+ * Recursive because a pattern can carry several parameters
+ * (\`/v1/contributors/{login}/repos/{owner}/{repo}/decision\`).
+ */
+export type TemplatedApiPath<Pattern extends string> = Pattern extends \`\${infer Head}{\${string}}\${infer Tail}\`
+  ? \`\${Head}\${string}\${TemplatedApiPath<Tail>}\`
+  : Pattern;
+
+/**
+ * The pattern a CONCRETE path matches, or \`never\` when it matches none.
+ *
+ * This is what lets the CLI keep writing its natural interpolated template and still get the exact response
+ * type: the mapped type distributes over every known pattern and keeps only the arms the string satisfies.
+ */
+export type MatchApiPath<Path extends string> = {
+  [Pattern in ParameterisedApiPath]: Path extends TemplatedApiPath<Pattern> ? Pattern : never;
+}[ParameterisedApiPath];
+
+/** The parsed response for a concrete parameterised path. */
+export type ParameterisedApiResponse<Path extends string> = z.infer<(typeof CLI_PARAMETERISED_RESPONSE_SCHEMAS)[MatchApiPath<Path>]>;
 `;
 
 export function generate(deps: { readFile?: (path: string) => string } = {}): string {

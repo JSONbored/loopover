@@ -1,5 +1,6 @@
 import { withInstallationTokenRetry } from "./app";
 import { githubRateLimitAdmissionKeyForInstallation, makeInstallationOctokit } from "./client";
+import { PRIORITY_LABEL_COMMENT_MARKER } from "../review/priority-label-eligibility";
 import type { AgentActionMode } from "../settings/agent-execution";
 
 export const PR_PANEL_COMMENT_MARKER = "<!-- gittensory-pr-panel:v1 -->";
@@ -115,6 +116,19 @@ export async function createOrUpdateAgentCommandComment(
   mode: AgentActionMode = "live",
 ): Promise<{ id: number; html_url?: string; changed: boolean } | null> {
   return createOrUpdateIssueCommentWithMarker(env, installationId, repoFullName, issueNumber, body, AGENT_COMMAND_COMMENT_MARKER, { mode });
+}
+
+/** #9737: the priority-label policy notice. Marked like its siblings so a RE-label updates the existing
+ *  comment instead of posting a second one -- the rule re-runs on every label event by design. */
+export async function createOrUpdatePriorityLabelPolicyComment(
+  env: Env,
+  installationId: number,
+  repoFullName: string,
+  issueNumber: number,
+  body: string,
+  mode: AgentActionMode = "live",
+): Promise<{ id: number; html_url?: string; changed: boolean } | null> {
+  return createOrUpdateIssueCommentWithMarker(env, installationId, repoFullName, issueNumber, body, PRIORITY_LABEL_COMMENT_MARKER, { mode });
 }
 
 // #6724 (review-burst): `changed` distinguishes a genuine no-op (the rendered body was byte-identical to what's

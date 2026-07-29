@@ -1,0 +1,69 @@
+---
+title: Label policy — which labels carry scoring weight, and the rules for each
+description: The labels that affect a contribution's score, who may apply them, and when work on them opens. Every rule here is enforced mechanically in the pipeline, not by judgement, and every enforcement is written to the ledger.
+eyebrow: Contributors
+---
+
+Three labels categorise an issue, and they are not equal: `gittensor:priority` carries the
+highest scoring multiplier. That makes it the one label whose application has to be
+constrained by a **rule** rather than by judgement — otherwise the highest-value label is
+whatever anyone says it is.
+
+Both rules below are enforced by the pipeline, on every label event. Neither is a
+discretionary decision, neither is applied to some contributors and not others, and each
+enforcement is written to the decision ledger with its rule id, so the history is
+independently checkable.
+
+## The scoring labels
+
+| Label | Meaning | Who may apply it |
+| --- | --- | --- |
+| `gittensor:bug` | A fix, test, doc, chore, refactor, perf, ci, build or style change | Anyone |
+| `gittensor:feature` | Genuinely new functionality | Anyone |
+| `gittensor:priority` | Work the maintainer originated and triaged as most valuable | **Only valid on maintainer-authored issues** |
+
+## Rule 1 — priority is only valid on maintainer-authored issues
+
+`gittensor:priority` marks work **the maintainer originated**. If it is applied to an issue
+somebody else authored — by anyone, including a maintainer — the pipeline removes it and
+posts a single comment linking here.
+
+**Maintainer of record** is read from the repository's own permissions (`admin` or
+`maintain`), never a hardcoded list of names, so the rule means the same thing on every repo
+LoopOver manages. `write` access is deliberately *not* enough: handing out push access would
+otherwise widen who can mint the highest multiplier.
+
+The rule **fails open**. If the author's permission cannot be read, nothing is stripped — a
+label is never removed on the strength of a failed lookup, and the issue is re-judged next
+time it is labelled.
+
+Removing the label is not a judgement about the issue. It stays open, and contributions to
+it remain welcome under its other labels.
+
+Rule id: `priority-label-author-eligibility`.
+
+## Rule 2 — priority issues open for work after a short window
+
+Priority issues carry the highest payout, so assignment fairness matters most there. First-come
+pickup is only fair if everyone can *see* the issue before anyone can act on it: a PR opened
+moments after the label lands means the window between "issue becomes valuable" and "issue is
+claimed" was effectively zero for everyone else watching the repo.
+
+So a PR closing a priority issue becomes gate-eligible once the label has been publicly present
+for a short window — **30 minutes by default**, configurable per repo via
+`gate.priorityEligibilityWindow`, and `0` turns it off.
+
+A PR opened inside that window is **not rejected**. It is held, with a comment naming the exact
+moment it becomes eligible, and it proceeds normally once the window passes. There is no penalty
+beyond waiting and nothing to resubmit.
+
+The clock is anchored to the **earliest** time the label was applied, so re-applying the label
+never resets the window for anyone, and "when does this issue open for work" is a single instant
+that cannot move.
+
+Rule id: `priority-eligibility-window`.
+
+## What is not in scope
+
+The multiplier *values* themselves are registry-side and are not set here. These two rules govern
+which issues may carry the label and when work on them opens — not what the label is worth.

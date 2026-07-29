@@ -412,7 +412,7 @@ describe("sanitizePublicComment — allowBareScoreTerm option (#public-score-ter
     }
   });
 
-  it("REGRESSION (#9432): an allowlisted repo keeps a sentence using ordinary review English — 'reviewability', 'ranking', 'reward'", () => {
+  it("REGRESSION (#9432): an allowlisted repo keeps a sentence using ordinary review English — 'reviewability', 'ranking', 'cohort'", () => {
     // These are words a safe review of this codebase's own gate code uses naturally. Before the tiering they
     // were matched unconditionally, so a sentence like "this improves reviewability" was dropped from the
     // published narrative for every repo, allowlisted or not.
@@ -436,10 +436,37 @@ describe("sanitizePublicComment — allowBareScoreTerm option (#public-score-ter
 
   it("SECURITY: a QUALIFIED private value stays blocked for an allowlisted repo even though its bare noun is exempt", () => {
     // The decisive property behind the tiering: a leaked value is always qualified, and the qualified form
-    // lives in the always-forbidden tier. "reward" is exempt; "reward estimate 12 TAO" is not.
+    // lives in the always-forbidden tier. "ranking" is exempt; "private ranking" is not.
     expect(() => sanitizePublicComment("the reward estimate is 12 TAO", { allowBareScoreTerm: true })).toThrow();
     expect(() => sanitizePublicComment("raw trust score 0.82 for this miner", { allowBareScoreTerm: true })).toThrow();
     expect(() => sanitizePublicComment("wallet 5Gv... and hotkey", { allowBareScoreTerm: true })).toThrow();
+  });
+});
+
+describe("sanitizePublicComment — bare 'reward' is never skippable (#9702)", () => {
+  it("REGRESSION (#9702): a bare 'reward' is rejected even for an allowlisted repo — the doc's safety claim now holds in code", () => {
+    // Before #9702, allowBareScoreTerm swapped in ALWAYS_FORBIDDEN, which did not contain a bare "reward" --
+    // so `ghs_`-style installation-token adjacent gittensor "reward" language reached an allowlisted repo's
+    // public surface verbatim, contradicting the JSDoc that claimed "reward" was NEVER skippable.
+    expect(() => sanitizePublicComment("12 TAO reward for this", { allowBareScoreTerm: true })).toThrow(/reward/i);
+    expect(() => sanitizePublicComment("nice rewards here", { allowBareScoreTerm: true })).toThrow(/reward/i);
+  });
+
+  it("preserves the intended relaxation: a bare 'score' still passes for an allowlisted repo", () => {
+    expect(sanitizePublicComment("this scores well", { allowBareScoreTerm: true })).toBe("this scores well");
+  });
+
+  it("is not a behaviour swap: a bare 'reward' still throws with the flag off (unchanged default)", () => {
+    expect(() => sanitizePublicComment("12 TAO reward for this")).toThrow(/reward/i);
+  });
+
+  it("INVARIANT (#9702): 'reward'/'rewards' live in the always-forbidden tier and never in the ambiguous tier", () => {
+    const always = new Set<string>(ALWAYS_FORBIDDEN_PUBLIC_COMMENT_WORDS);
+    const ambiguous = new Set<string>(AMBIGUOUS_PUBLIC_COMMENT_WORDS);
+    for (const neverSkippable of ["reward", "rewards"]) {
+      expect(always.has(neverSkippable), neverSkippable).toBe(true);
+      expect(ambiguous.has(neverSkippable), neverSkippable).toBe(false);
+    }
   });
 });
 

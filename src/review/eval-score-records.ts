@@ -70,6 +70,17 @@ async function finalizeRecord(input: EvalScoreRecordDigestInput): Promise<EvalSc
   return { ...input, recordDigest };
 }
 
+/** #9215's coverage definition -- `decided / (decided + abstained)` -- as the single implementation every
+ *  work-unit kind derives from, so a record's published `coverage` and a validator's re-derivation of it can
+ *  never disagree. `null` only when nothing was seen at all (`0/0` is undefined, not zero): that is the same
+ *  guard-the-denominator-else-null shape {@link PublicRulePrecisionRow.precision} uses below its sample floor
+ *  (`public-rule-precision.ts`), never a masked `0`. Exported so a future emitter (#9265's `benchmark_run`)
+ *  states coverage by calling this rather than restating the formula. */
+export function evalScoreCoverage(decided: number, abstained: number): number | null {
+  const total = decided + abstained;
+  return total > 0 ? decided / total : null;
+}
+
 /**
  * Build `EvalScoreRecord`s from the already-computed public rule-precision block. Returns an empty array
  * when there is no persisted backtest run yet (`latestBacktestRun === null`) -- per #9215's own requirement,
@@ -99,8 +110,13 @@ async function finalizeRecord(input: EvalScoreRecordDigestInput): Promise<EvalSc
  * `recall` and `abstained` do not apply to this work-unit kind: ORB's gate rules fire deterministically (no
  * agent choosing to abstain) and this data measures precision, not a false-negative rate. `recall` is
  * `null` (genuinely inapplicable, never a misleading `0`); `abstained` is `0` (there is no abstention
- * concept here, so `0` is the correct value, not a masked null). PURE -- no IO, no clock (the caller
- * supplies `issuedAt`).
+ * concept here, so `0` is the correct value, not a masked null). `coverage` follows from that `abstained`:
+ * with no abstention concept the denominator is just `decided`, so every rule that decided anything covered
+ * all of it and states `1` -- computed via {@link evalScoreCoverage}, never hardcoded, so it stays correct
+ * for a kind that does abstain. It was previously `null` by symmetry with `recall`, which published "coverage
+ * unknown" for a quantity the record's own `decided`/`abstained` pin down exactly, so a validator re-deriving
+ * per #9215 computed `1` and disagreed with the field (#9643). Only `decided === 0` is genuinely undefined
+ * (`0/0`) and stays `null`. PURE -- no IO, no clock (the caller supplies `issuedAt`).
  */
 export async function buildEvalScoreRecordsFromRulePrecision(
   precision: PublicRulePrecision,
@@ -136,7 +152,9 @@ export async function buildEvalScoreRecordsFromRulePrecision(
           confirmed: row.confirmed,
           precision: row.precision,
           recall: null,
-          coverage: null,
+          // Same literal `0` the sibling `abstained` publishes, passed rather than re-stated, so the two can
+          // never drift into a record whose coverage contradicts its own abstention count.
+          coverage: evalScoreCoverage(row.decided, 0),
           abstained: 0,
         },
         commitments: {

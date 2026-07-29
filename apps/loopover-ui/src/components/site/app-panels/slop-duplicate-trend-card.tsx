@@ -81,6 +81,7 @@ export function SlopDuplicateTrendCard({ trend }: { trend: MaintainerSlopDuplica
           values={chartValuesForSeries(trend.weeks, "slop")}
           stroke="var(--mint)"
           fill="color-mix(in oklab, var(--mint) 18%, transparent)"
+          label="Slop flag rate trend"
         />
         <TrendPanel
           title="Duplicate flag rate"
@@ -89,6 +90,7 @@ export function SlopDuplicateTrendCard({ trend }: { trend: MaintainerSlopDuplica
           values={chartValuesForSeries(trend.weeks, "duplicate")}
           stroke="var(--warning)"
           fill="color-mix(in oklab, var(--warning) 18%, transparent)"
+          label="Duplicate flag rate trend"
         />
       </div>
 
@@ -104,20 +106,29 @@ function TrendPanel({
   values,
   stroke,
   fill,
+  label,
 }: {
   title: string;
   emptyMessage: string;
   hasSignal: boolean;
-  values: number[];
+  values: ReadonlyArray<number | null>;
   stroke: string;
   fill: string;
+  label: string;
 }) {
   return (
     <div className="rounded-token border border-border bg-background/40 p-3">
       <div className="text-token-xs font-medium text-foreground">{title}</div>
       {hasSignal ? (
         <div className="mt-2 h-20">
-          <TrendChart values={values} stroke={stroke} fill={fill} height={80} showAxis />
+          <TrendChart
+            values={values}
+            stroke={stroke}
+            fill={fill}
+            height={80}
+            showAxis
+            label={label}
+          />
         </div>
       ) : (
         <p className="mt-2 text-token-xs text-muted-foreground">{emptyMessage}</p>

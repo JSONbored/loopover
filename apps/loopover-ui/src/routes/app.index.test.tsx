@@ -78,6 +78,19 @@ describe("SparkStat loading state (#6984)", () => {
   });
 });
 
+// #9674: TrendChart's aria-label was the fixed string "Trend chart" on every instance -- SparkStat
+// now passes a per-tile label so each metric's chart announces itself distinctly to a screen reader.
+describe("SparkStat trend chart label (#9674)", () => {
+  it("labels the chart with the tile's own metric label, not a shared constant", () => {
+    render(
+      <TooltipProvider>
+        <SparkStat label="Open PRs" value="4" values={[1, 2, 3, 4]} live statusLabel="live" />
+      </TooltipProvider>,
+    );
+    expect(screen.getByLabelText("Open PRs trend")).toBeTruthy();
+  });
+});
+
 // #8668: the overview metrics ErrorState passed only title/description (both fixed strings), never
 // errorKind or onRetry -- so a network outage always rendered the generic AlertTriangle treatment
 // with no retry action, even though `overview.errorKind`/`overview.reload` were both already

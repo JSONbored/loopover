@@ -31,9 +31,10 @@ export function calibrationHasSamples(calibration: GateCalibration): boolean {
   return calibration.bins.some((bin) => bin.sampleSize > 0);
 }
 
-/** Kept-rate curve values for TrendChart — empty-sample bins read as 0 on the chart axis. */
-export function calibrationTrendValues(bins: CalibrationBin[]): number[] {
-  return bins.map((bin) => (bin.keptRate === null ? 0 : bin.keptRate * 100));
+/** Kept-rate curve values for TrendChart — an empty-sample bin's null `keptRate` is preserved as
+ *  null so TrendChart renders a gap there instead of a fabricated 0% point. */
+export function calibrationTrendValues(bins: CalibrationBin[]): Array<number | null> {
+  return bins.map((bin) => (bin.keptRate === null ? null : bin.keptRate * 100));
 }
 
 export function calibrationStatus(calibration: GateCalibration): {

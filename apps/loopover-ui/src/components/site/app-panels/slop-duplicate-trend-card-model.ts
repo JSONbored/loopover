@@ -25,11 +25,10 @@ export function formatTrendRatePct(value: number | null | undefined): string {
 export function chartValuesForSeries(
   weeks: SlopDuplicateTrendWeek[],
   series: "slop" | "duplicate",
-): number[] {
-  return weeks.map((week) => {
-    const value = series === "slop" ? week.slopFlagRatePct : week.duplicateFlagRatePct;
-    return value ?? 0;
-  });
+): Array<number | null> {
+  return weeks.map((week) =>
+    series === "slop" ? week.slopFlagRatePct : week.duplicateFlagRatePct,
+  );
 }
 
 export function seriesHasSignal(

@@ -99,3 +99,29 @@ describe("ProductAnalytics window preference rebrand migration (#8699)", () => {
     expect(window.localStorage.getItem("gittensory.analytics.windowDays")).toBeNull();
   });
 });
+
+// #9674: TrendChart's aria-label was the fixed string "Trend chart" on every instance -- each
+// operational trend signal now passes its own label so screen readers hear which chart is which.
+describe("ProductAnalytics operational trend signal chart labels (#9674)", () => {
+  it("labels each signal's chart with its own metric label, not a shared constant", () => {
+    useApiResource.mockReturnValue({
+      status: "ready",
+      data: {
+        metrics: [{ label: "Active repos", value: "12", delta: "+2" }],
+        noiseReduction: [
+          { label: "False-positive rate", value: 4, spark: [10, 8, 6] },
+          { label: "Repo coverage", value: 92, spark: [80, 85, 92] },
+        ],
+      },
+      error: null,
+      loadedAt: "2026-07-17T00:00:00.000Z",
+      reload: () => {},
+    });
+
+    render(<ProductAnalytics />);
+
+    expect(screen.getByLabelText("False-positive rate trend")).toBeTruthy();
+    expect(screen.getByLabelText("Repo coverage trend")).toBeTruthy();
+    expect(screen.queryByLabelText("Trend chart")).toBeNull();
+  });
+});

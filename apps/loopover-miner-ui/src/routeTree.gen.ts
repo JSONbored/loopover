@@ -9,37 +9,17 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as RunHistoryRouteImport } from './routes/run-history'
-import { Route as RankedCandidatesRouteImport } from './routes/ranked-candidates'
-import { Route as PortfolioRouteImport } from './routes/portfolio'
-import { Route as LedgersRouteImport } from './routes/ledgers'
-import { Route as EarningsRouteImport } from './routes/earnings'
-import { Route as AttemptsRouteImport } from './routes/attempts'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AttemptsRouteImport } from './routes/attempts'
+import { Route as EarningsRouteImport } from './routes/earnings'
+import { Route as LedgersRouteImport } from './routes/ledgers'
+import { Route as PortfolioRouteImport } from './routes/portfolio'
+import { Route as RankedCandidatesRouteImport } from './routes/ranked-candidates'
+import { Route as RunHistoryRouteImport } from './routes/run-history'
 
-const RunHistoryRoute = RunHistoryRouteImport.update({
-  id: '/run-history',
-  path: '/run-history',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const RankedCandidatesRoute = RankedCandidatesRouteImport.update({
-  id: '/ranked-candidates',
-  path: '/ranked-candidates',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PortfolioRoute = PortfolioRouteImport.update({
-  id: '/portfolio',
-  path: '/portfolio',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const LedgersRoute = LedgersRouteImport.update({
-  id: '/ledgers',
-  path: '/ledgers',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EarningsRoute = EarningsRouteImport.update({
-  id: '/earnings',
-  path: '/earnings',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AttemptsRoute = AttemptsRouteImport.update({
@@ -47,9 +27,29 @@ const AttemptsRoute = AttemptsRouteImport.update({
   path: '/attempts',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const EarningsRoute = EarningsRouteImport.update({
+  id: '/earnings',
+  path: '/earnings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const LedgersRoute = LedgersRouteImport.update({
+  id: '/ledgers',
+  path: '/ledgers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PortfolioRoute = PortfolioRouteImport.update({
+  id: '/portfolio',
+  path: '/portfolio',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RankedCandidatesRoute = RankedCandidatesRouteImport.update({
+  id: '/ranked-candidates',
+  path: '/ranked-candidates',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RunHistoryRoute = RunHistoryRouteImport.update({
+  id: '/run-history',
+  path: '/run-history',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -123,39 +123,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/run-history': {
-      id: '/run-history'
-      path: '/run-history'
-      fullPath: '/run-history'
-      preLoaderRoute: typeof RunHistoryRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/ranked-candidates': {
-      id: '/ranked-candidates'
-      path: '/ranked-candidates'
-      fullPath: '/ranked-candidates'
-      preLoaderRoute: typeof RankedCandidatesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/portfolio': {
-      id: '/portfolio'
-      path: '/portfolio'
-      fullPath: '/portfolio'
-      preLoaderRoute: typeof PortfolioRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/ledgers': {
-      id: '/ledgers'
-      path: '/ledgers'
-      fullPath: '/ledgers'
-      preLoaderRoute: typeof LedgersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/earnings': {
-      id: '/earnings'
-      path: '/earnings'
-      fullPath: '/earnings'
-      preLoaderRoute: typeof EarningsRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/attempts': {
@@ -165,11 +137,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AttemptsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/earnings': {
+      id: '/earnings'
+      path: '/earnings'
+      fullPath: '/earnings'
+      preLoaderRoute: typeof EarningsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ledgers': {
+      id: '/ledgers'
+      path: '/ledgers'
+      fullPath: '/ledgers'
+      preLoaderRoute: typeof LedgersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/portfolio': {
+      id: '/portfolio'
+      path: '/portfolio'
+      fullPath: '/portfolio'
+      preLoaderRoute: typeof PortfolioRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/ranked-candidates': {
+      id: '/ranked-candidates'
+      path: '/ranked-candidates'
+      fullPath: '/ranked-candidates'
+      preLoaderRoute: typeof RankedCandidatesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/run-history': {
+      id: '/run-history'
+      path: '/run-history'
+      fullPath: '/run-history'
+      preLoaderRoute: typeof RunHistoryRouteImport
       parentRoute: typeof rootRouteImport
     }
   }

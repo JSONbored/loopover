@@ -285,23 +285,39 @@ describe("checkSubmittedSourceEvidence — invalid / non-fetchable source URLs",
     expect(item?.outcome).toBe("invalid_url");
   });
 
-  it("treats a non-https (http) URL as a non-blocking 'passed' (source_host_not_checked)", async () => {
-    // validateFetchableSourceUrl: http passes the protocol check but fails isSafeHttpUrl (needs https),
-    // so the outcome is source_host_not_checked → checkOneSourceUrl maps non-invalid to status 'passed'.
-    const src = mdx({ githubUrl: "http://github.com/acme/x" });
+  it("#9669: a non-https (http) canonical URL is a hard failure on the first hop and fails the report", async () => {
+    // validateFetchableSourceUrl: http passes the protocol check but fails isSafeHttpUrl (needs https), so the
+    // outcome is source_host_not_checked. Before #9669 the first hop mislabelled that "passed"; it is a
+    // hard_failure now, identical to the redirect path -- and a canonical hard-failure with no verifiable
+    // canonical to fall back on fails the whole report (today: "passed").
+    const src = mdx({ githubUrl: "http://example.com/x" });
     const report = await checkSubmittedSourceEvidence(src, fakeFetch({}));
     const item = report.urls.find((u) => u.field === "githubUrl");
-    expect(item?.status).toBe("passed");
+    expect(item?.status).toBe("hard_failure");
     expect(item?.outcome).toBe("source_host_not_checked");
-    expect(report.status).toBe("passed");
+    expect(report.status).toBe("failed");
   });
 
-  it("treats an https loopback host as source_host_not_checked (SSRF guard), status passed", async () => {
-    const src = mdx({ githubUrl: "https://127.0.0.1/repo" });
+  it("#9669: an https loopback host is a hard failure on the first hop (SSRF guard, source_host_not_checked)", async () => {
+    const src = mdx({ githubUrl: "https://127.0.0.1/x" });
     const report = await checkSubmittedSourceEvidence(src, fakeFetch({}));
     const item = report.urls.find((u) => u.field === "githubUrl");
-    expect(item?.status).toBe("passed");
+    expect(item?.status).toBe("hard_failure");
     expect(item?.outcome).toBe("source_host_not_checked");
+  });
+
+  it("#9669 REGRESSION: a distribution-role http:// source stays non-blocking via the downgrade when a verifiable canonical exists", async () => {
+    // githubUrl is a reachable PRIMARY canonical -> hasVerifiableCanonicalSource is true; packageUrl is a
+    // distribution field whose http:// value is source_host_not_checked -> hard_failure, then downgraded to
+    // blocking:false by downgradeInconclusiveSourceWarnings (the intended relaxation, via the correct mechanism).
+    const src = mdx({ githubUrl: "https://github.com/acme/x", packageUrl: "http://dist.example/pkg" });
+    const spec = customSpec({ primaryCanonicalSourceFields: new Set(["githubUrl"]) });
+    const report = await checkSubmittedSourceEvidence(src, fakeFetch({ "https://github.com/acme/x": 200 }), spec);
+    const dist = report.urls.find((u) => u.field === "packageUrl");
+    expect(dist?.role).toBe("distribution");
+    expect(dist?.status).toBe("hard_failure");
+    expect(dist?.outcome).toBe("source_host_not_checked");
+    expect(dist?.blocking).toBe(false);
   });
 });
 
@@ -751,13 +767,13 @@ describe("checkOneSourceUrl branches", () => {
     expect(getCalls).toBe(0);
   });
 
-  it("non-invalid validation failure → status 'passed' (invalidProtocol false branch)", async () => {
-    // source_host_not_checked (https loopback) is a non-invalid validation failure: invalidProtocol=false
-    // → status 'passed'. Distinct from invalid_url (which is hard_failure).
+  it("#9669: a non-invalid validation failure (source_host_not_checked) is now a hard failure — the invalidProtocol branch is gone", async () => {
+    // Both validateFetchableSourceUrl failure outcomes now hard-fail on the first hop, identical to the
+    // redirect-loop path; an https-loopback source_host_not_checked is no longer mislabelled "passed".
     const src = mdx({ githubUrl: "https://127.0.0.1/repo" });
     const report = await checkSubmittedSourceEvidence(src, fakeFetch({}));
     const item = report.urls.find((u) => u.field === "githubUrl");
-    expect(item?.status).toBe("passed");
+    expect(item?.status).toBe("hard_failure");
     expect(item?.outcome).toBe("source_host_not_checked");
   });
 

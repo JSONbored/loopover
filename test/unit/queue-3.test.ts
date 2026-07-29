@@ -2502,6 +2502,53 @@ describe("queue processors", () => {
       await upsertPullRequestFromGitHub(env, "owner/repo", { number: prNumber, title: "Migration PR", state: "open", user: { login: "contributor" }, head: { sha: "sha1" }, base: { ref: "main" }, labels: [], body: "" });
     }
 
+    it("holds a would-otherwise-merge PR while its linked priority issue is still inside the eligibility window (#9738)", async () => {
+      // The end-to-end shape of the rule: a clean, approved, green PR that would MERGE is held instead,
+      // because the priority issue it closes only became public minutes ago. Held, never closed -- the PR
+      // is early, not wrong.
+      const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+      await seedMigrationRecheckRepo(env, 61);
+      await upsertPullRequestFromGitHub(env, "owner/repo", {
+        number: 61,
+        title: "Fix the thing",
+        state: "open",
+        user: { login: "contributor" },
+        head: { sha: "sha1" },
+        base: { ref: "main" },
+        labels: [],
+        body: "Closes #7",
+        created_at: new Date(Date.now() - 60_000).toISOString(),
+      } as never);
+      const seen = { closed: false, merged: false, labels: [] as string[], comments: [] as string[], treeCalls: 0 };
+      stubMigrationRecheckFetch(61, { filename: "src/a.ts", status: "modified" }, [], seen);
+      // The one extra fact the rule needs: the priority label landed on issue #7 a minute ago, so the
+      // 30-minute window has not elapsed.
+      const inner = globalThis.fetch as typeof fetch;
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === "https://api.github.com/graphql" && String(init?.body ?? "").includes("LABELED_EVENT")) {
+          return Response.json({
+            data: {
+              repository: {
+                issue: {
+                  timelineItems: {
+                    nodes: [{ createdAt: new Date(Date.now() - 60_000).toISOString(), label: { name: "gittensor:priority" } }],
+                  },
+                },
+              },
+            },
+          });
+        }
+        return inner(input as never, init as never);
+      });
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "priority-eligibility-hold", repoFullName: "owner/repo", prNumber: 61, installationId: 123 });
+
+      expect(seen.merged, "an unelapsed window must stop the auto-merge").toBe(false);
+      expect(seen.closed, "a hold is never a close -- the contributor keeps their work").toBe(false);
+      expect(seen.comments.some((c) => c.includes("continues normally")), "the comment reads as a wait, not a rejection").toBe(true);
+    });
+
     it("holds a would-otherwise-merge PR when the live base has a colliding migration number, with the distinct label + rebase comment", async () => {
       const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
       await seedMigrationRecheckRepo(env, 60, { premergeContentRecheck: true });

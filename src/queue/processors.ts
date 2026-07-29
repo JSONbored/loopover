@@ -3480,10 +3480,10 @@ async function runAgentMaintenancePlanAndExecute(
     windowMinutes: settings.priorityEligibilityWindowMinutes ?? DEFAULT_PRIORITY_ELIGIBILITY_WINDOW_MINUTES,
     priorityLabel: resolvePriorityTypeLabel(settings.typeLabels),
     token: ciToken,
-    /* v8 ignore next -- defensive: resolvePriorityEligibilityHold catches its own GitHub read, so it has no
-       reject path today. The guard stays so a future edit inside it degrades to "no hold" rather than
-       failing the whole maintenance pass -- which is the fail-open posture the rest of this rule has. */
-  }).catch(() => undefined);
+    // No `.catch` here on purpose: resolvePriorityEligibilityHold catches its own GitHub read and returns
+    // undefined, so it has no reject path. A guard for one that cannot happen is unreachable code that
+    // reads as tested-and-fine while never running.
+  });
   const unlinkedIssueMatchClose = unlinkedIssueMatchDisposition?.kind === "close" ? unlinkedIssueMatchDisposition : undefined;
 
   // Contributor blacklist (#1425): resolve whether the PR author is on the repo's blacklist (the shared/global

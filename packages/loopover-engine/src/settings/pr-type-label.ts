@@ -22,10 +22,16 @@ export type { PrTypeLabelSet } from "../types/manifest-deps-types.js";
  *  assumption (#label-modularity): a self-hoster's `typeLabels` fully replaces the category set these
  *  keys are drawn from. The built-in categories are mutually exclusive by default (see
  *  `resolvePrTypeLabel`'s `removeLabels`) unless a propagation mapping is explicitly additive. */
+/** The built-in PRIORITY label, named on its own so it reads as `string`. `PrTypeLabelSet` is an open
+ *  `Record`, which makes `DEFAULT_TYPE_LABELS.priority` optional to the type system even though the
+ *  built-in set always defines it -- naming the value is what lets `resolvePriorityTypeLabel` return it
+ *  without a fallback branch nothing can ever take. */
+export const DEFAULT_PRIORITY_LABEL = "gittensor:priority";
+
 export const DEFAULT_TYPE_LABELS: PrTypeLabelSet = {
   bug: "gittensor:bug",
   feature: "gittensor:feature",
-  priority: "gittensor:priority",
+  priority: DEFAULT_PRIORITY_LABEL,
 };
 
 export const MAX_TYPE_LABEL_CATEGORIES = 32;
@@ -153,9 +159,7 @@ export type PrTypeLabelDecision = {
 export function resolvePriorityTypeLabel(labels: PrTypeLabelSet | null | undefined): string {
   const configured = labels?.priority;
   if (typeof configured === "string" && configured.trim().length > 0) return configured;
-  /* v8 ignore next -- noUncheckedIndexedAccess: PrTypeLabelSet is a Record<string, string>, so this reads
-     as possibly-undefined to the type system though the built-in set always defines `priority`. */
-  return DEFAULT_TYPE_LABELS.priority ?? "gittensor:priority";
+  return DEFAULT_PRIORITY_LABEL;
 }
 
 export function resolvePrTypeLabel(input: {

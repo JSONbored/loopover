@@ -81,6 +81,12 @@ function toRecord(provider: string, repoFullName: string | null, stats: MutableS
  * a labeled corpus, per the join semantics documented in this module's header. Deterministic ordering:
  * providers ascending, and within each provider the overall rollup (repoFullName null) first, then repos
  * ascending. Aggregates only — provider ids, repo names, and numbers; never target keys or vote payloads.
+ *
+ * INPUT-ORDER CONTRACT: `signals` MUST already be in ascending chronological order. The per-(provider,
+ * targetKey) dedup below is last-write-wins, which here means the LAST element of the input array wins — so a
+ * provider that re-reviews the same PR is represented by its latest vote ONLY IF the caller feeds rows
+ * oldest-first. The sole production caller, `loadLiveProviderTrackRecords`, guarantees this with
+ * `ORDER BY created_at ASC, id ASC` (#9638); an unordered feed makes the surviving stance nondeterministic.
  */
 export function computeProviderTrackRecords(
   signals: readonly ProviderReviewSignal[],

@@ -74,11 +74,42 @@ describe("validateIdeaSubmission", () => {
     if (provision.ok) expect(provision.idea.targetRepo).toEqual({ kind: "provision" });
   });
 
-  it("rejects an object targetRepo that is not a provision request", () => {
-    for (const targetRepo of [{}, { kind: "existing" }]) {
+  it("rejects an object targetRepo whose kind is neither existing nor provision", () => {
+    for (const targetRepo of [{}, { kind: "bogus" }]) {
       const r = validateIdeaSubmission(rawIdea({ targetRepo }));
       expect(r.ok).toBe(false);
-      if (!r.ok) expect(r.errors).toContain("target_repo_required");
+      if (!r.ok) expect(r.errors).toEqual(["target_repo_required"]);
+    }
+  });
+
+  it("accepts the canonical { kind: 'existing', repo } object the validator itself returns (#9609)", () => {
+    const r = validateIdeaSubmission(rawIdea({ targetRepo: { kind: "existing", repo: "acme/widgets" } }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.idea.targetRepo).toEqual({ kind: "existing", repo: "acme/widgets" });
+  });
+
+  it("round-trips its own output: re-validating a validated idea succeeds with targetRepo unchanged (#9609)", () => {
+    for (const targetRepo of ["acme/widgets", { kind: "provision" }]) {
+      const first = validateIdeaSubmission(rawIdea({ targetRepo }));
+      expect(first.ok).toBe(true);
+      if (!first.ok) continue;
+      const second = validateIdeaSubmission(first.idea);
+      expect(second.ok).toBe(true);
+      if (second.ok) expect(second.idea.targetRepo).toEqual(first.idea.targetRepo);
+    }
+  });
+
+  it("flags a recognised-but-malformed { kind: 'existing' } repo as target_repo_malformed (#9609)", () => {
+    const r = validateIdeaSubmission(rawIdea({ targetRepo: { kind: "existing", repo: "not-a-slug" } }));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.errors).toEqual(["target_repo_malformed"]);
+  });
+
+  it("flags an { kind: 'existing' } target whose repo is missing, empty, or not a string as target_repo_malformed (#9609)", () => {
+    for (const targetRepo of [{ kind: "existing" }, { kind: "existing", repo: "" }, { kind: "existing", repo: "   " }, { kind: "existing", repo: 42 }]) {
+      const r = validateIdeaSubmission(rawIdea({ targetRepo }));
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.errors).toEqual(["target_repo_malformed"]);
     }
   });
 

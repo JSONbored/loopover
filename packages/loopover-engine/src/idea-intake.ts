@@ -85,6 +85,10 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+// The "owner/name" slug check shared by both existing-repo input shapes (bare string and
+// `{ kind: "existing", repo }`): each segment must be a GitHub-legal slug.
+const TARGET_REPO_SLUG_PATTERN = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/;
+
 /** Validate + normalize a raw renter submission (spec §1). Returns every failure at once (never folds with
  *  `??`/`||`) so a caller can surface all problems in one pass rather than one-at-a-time. */
 export function validateIdeaSubmission(raw: unknown): IdeaValidationResult {
@@ -98,10 +102,17 @@ export function validateIdeaSubmission(raw: unknown): IdeaValidationResult {
   else if (input.body.length > IDEA_BODY_MAX_CHARS) errors.push("body_too_long");
   // Back-compat wire form: a bare "owner/name" string means an existing repo (each segment a GitHub-legal
   // slug -- an uninstallable/malformed repo is rejected at intake, never scored, since it can never produce a
-  // `go`). A `{ kind: "provision" }` object requests a not-yet-created repo (#7589). Anything else is missing.
+  // `go`). A canonical `{ kind: "existing", repo }` object — the exact shape this validator itself returns,
+  // and what a TypeScript caller building against the exported `IdeaTarget` union constructs — resolves the
+  // same way, with the same slug check, so `validateIdeaSubmission` round-trips its own output (#9609). A
+  // `{ kind: "provision" }` object requests a not-yet-created repo (#7589). Anything else is missing.
   let resolvedTarget: IdeaTarget | undefined;
   if (isNonEmptyString(input.targetRepo)) {
-    if (/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(input.targetRepo)) resolvedTarget = { kind: "existing", repo: input.targetRepo };
+    if (TARGET_REPO_SLUG_PATTERN.test(input.targetRepo)) resolvedTarget = { kind: "existing", repo: input.targetRepo };
+    else errors.push("target_repo_malformed");
+  } else if (typeof input.targetRepo === "object" && input.targetRepo !== null && (input.targetRepo as Record<string, unknown>).kind === "existing") {
+    const repo = (input.targetRepo as Record<string, unknown>).repo;
+    if (typeof repo === "string" && TARGET_REPO_SLUG_PATTERN.test(repo)) resolvedTarget = { kind: "existing", repo };
     else errors.push("target_repo_malformed");
   } else if (typeof input.targetRepo === "object" && input.targetRepo !== null && (input.targetRepo as Record<string, unknown>).kind === "provision") {
     resolvedTarget = { kind: "provision" };

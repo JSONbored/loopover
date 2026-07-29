@@ -209,6 +209,12 @@ export type FocusManifestGateConfig = {
    *  (byte-identical to today) — a discrete positive-minutes count, not a score, so it is neither clamped
    *  nor rounded; an invalid value (fractional, non-positive, non-finite) is dropped with a warning. */
   requireFreshRebaseWindowMinutes: number | null;
+  /** `gate.priorityEligibilityWindow` (#9738): minutes a `gittensor:priority` label must have been publicly
+   *  present before a PR closing that issue is gate-eligible. Priority issues carry the highest payout, so
+   *  first-come pickup is only fair if everyone can see the issue before anyone can act on it. A PR inside
+   *  the window is HELD with a neutral comment, never rejected, and proceeds once the window elapses.
+   *  `0` disables the rule; null means the shipped default (30). */
+  priorityEligibilityWindowMinutes: number | null;
   /** `gate.staleBaseAheadByThreshold` (#review-grounding stale-base fact): a commit count. When the repo's
    *  current default branch is at least this many commits ahead of a PR's own base commit, the pre-review
    *  readiness gate forces an `update_branch` (same action class as the existing `mergeableState: "behind"`
@@ -1386,6 +1392,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   dryRun: null,
   premergeContentRecheck: null,
   requireFreshRebaseWindowMinutes: null,
+  priorityEligibilityWindowMinutes: null,
   staleBaseAheadByThreshold: null,
   claMode: null,
   claConsentPhrase: null,
@@ -1837,6 +1844,7 @@ const GATE_TOP_LEVEL_KEYS = new Set<string>([
   "dryRun",
   "premergeContentRecheck",
   "requireFreshRebaseWindow",
+  "priorityEligibilityWindow",
   "staleBaseAheadByThreshold",
   "claMode",
   "cla",
@@ -1941,6 +1949,8 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     dryRun: normalizeOptionalBoolean(record.dryRun, "gate.dryRun", warnings),
     premergeContentRecheck: normalizeOptionalBoolean(record.premergeContentRecheck, "gate.premergeContentRecheck", warnings),
     requireFreshRebaseWindowMinutes: normalizeOptionalPositiveInteger(record.requireFreshRebaseWindow, "gate.requireFreshRebaseWindow", warnings),
+    // Zero is MEANINGFUL here (it turns the rule off), so this cannot use normalizeOptionalPositiveInteger.
+    priorityEligibilityWindowMinutes: normalizeOptionalNonNegativeInteger(record.priorityEligibilityWindow, "gate.priorityEligibilityWindow", warnings, MAX_PRIORITY_ELIGIBILITY_WINDOW_MINUTES),
     staleBaseAheadByThreshold: normalizeOptionalPositiveInteger(record.staleBaseAheadByThreshold, "gate.staleBaseAheadByThreshold", warnings),
     claMode: normalizeOptionalGateMode(record.claMode, "gate.claMode", warnings),
     claConsentPhrase: parsePublicSafeText(claRecord?.consentPhrase, "gate.cla.consentPhrase", warnings),
@@ -2004,6 +2014,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.dryRun !== null ||
     gate.premergeContentRecheck !== null ||
     gate.requireFreshRebaseWindowMinutes !== null ||
+    gate.priorityEligibilityWindowMinutes !== null ||
     gate.staleBaseAheadByThreshold !== null ||
     gate.claMode !== null ||
     gate.claConsentPhrase !== null ||
@@ -2122,6 +2133,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   if (gate.dryRun !== null) out.dryRun = gate.dryRun;
   if (gate.premergeContentRecheck !== null) out.premergeContentRecheck = gate.premergeContentRecheck;
   if (gate.requireFreshRebaseWindowMinutes !== null) out.requireFreshRebaseWindow = gate.requireFreshRebaseWindowMinutes;
+  if (gate.priorityEligibilityWindowMinutes !== null) out.priorityEligibilityWindow = gate.priorityEligibilityWindowMinutes;
   if (gate.staleBaseAheadByThreshold !== null) out.staleBaseAheadByThreshold = gate.staleBaseAheadByThreshold;
   if (gate.claMode !== null) out.claMode = gate.claMode;
   if (gate.claConsentPhrase !== null || gate.claCheckRunName !== null || gate.claCheckRunAppSlug !== null) {
@@ -2221,6 +2233,17 @@ export function experimentalConfigToJson(experimental: FocusManifestExperimental
   return out;
 }
 
+/** A NON-NEGATIVE integer, for a field where zero is a real setting rather than an absence -- e.g.
+ *  `gate.priorityEligibilityWindow: 0` deliberately turns the window off, which `normalizeOptionalPositiveInteger`
+ *  below would reject as invalid and silently replace with the shipped default (#9738). Bounded above so a typo
+ *  cannot set a window that never opens. */
+function normalizeOptionalNonNegativeInteger(value: JsonValue | undefined, field: string, warnings: string[], max: number): number | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= max) return value;
+  warnings.push(`Manifest field "${field}" must be a whole number between 0 and ${max}; ignoring it.`);
+  return null;
+}
+
 /** A positive INTEGER count (not a score/confidence) — e.g. `contentLane.maxAppendedEntries` counts discrete
  *  surfaces[] entries, so a fractional value (a likely typo) would render a nonsensical contributor-facing close
  *  message ("append between 1 and 2.5 entries"). Rejects fractional and non-positive values alike. */
@@ -2232,6 +2255,9 @@ function normalizeOptionalPositiveInteger(value: JsonValue | undefined, field: s
 }
 
 const MAX_CONTRIBUTOR_OPEN_ITEM_CAP = 100;
+
+/** A day. Long enough for any deliberate cool-off, short enough that a typo cannot park work indefinitely. */
+const MAX_PRIORITY_ELIGIBILITY_WINDOW_MINUTES = 24 * 60;
 
 function normalizeOptionalContributorOpenItemCap(value: JsonValue | undefined, field: string, warnings: string[]): number | null {
   const parsed = normalizeOptionalPositiveInteger(value, field, warnings);

@@ -952,3 +952,7 @@ export {
   type PlanProgress,
 } from "./plan-dag.js";
 export { isDone as isPlanStepDone, nextReadySteps } from "./plan-step-readiness.js";
+
+// #9743: the priority label's single resolution, exported so the engine's OWN behaviour suite can test
+// it -- the `engine` Codecov flag credits engine source from that suite, not from the root vitest run.
+export { DEFAULT_PRIORITY_LABEL, resolvePriorityTypeLabel } from "./settings/pr-type-label.js";

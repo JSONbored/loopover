@@ -2646,3 +2646,74 @@ describe("screenshot-table gate short-circuit (#2006)", () => {
     expect(plan[0]).toMatchObject({ closeKind: "blacklist" });
   });
 });
+
+describe("priority-eligibility hold (#9738)", () => {
+  const held = {
+    priorityEligibilityHold: {
+      reason: "priority-eligibility-window: issue #7 opens for work at 2026-07-29T12:30:00.000Z",
+      comment: "This PR is held until 2026-07-29T12:30:00.000Z, then continues normally — no action is needed from you.",
+    },
+  };
+
+  it("does NOT auto-merge a clean+approved+passing PR while the window is still open", () => {
+    const plan = classes(
+      planAgentMaintenanceActions(
+        input({ conclusion: "success", autonomy: { merge: "auto" }, ...held, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }),
+      ),
+    );
+    expect(plan).not.toContain("merge");
+  });
+
+  it("labels the PR manual-review with the window reason, and never closes it", () => {
+    // The PR is EARLY, not wrong. A close here would take a contributor's work for arriving too fast.
+    const plan = planAgentMaintenanceActions(
+      input({ conclusion: "success", autonomy: { review_state_label: "auto", merge: "auto", close: "auto" }, ...held, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }),
+    );
+    const label = plan.find((a) => a.actionClass === "label");
+    expect(label?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
+    expect(label?.reason).toContain("priority-eligibility-window");
+    expect(classes(plan)).not.toContain("close");
+  });
+
+  it("attaches the wait-not-rejection comment to the label action", () => {
+    const plan = planAgentMaintenanceActions(
+      input({ conclusion: "success", autonomy: { merge: "auto", review_state_label: "auto" }, ...held, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }),
+    );
+    const label = plan.find((a) => a.actionClass === "label");
+    expect(label?.comment).toContain("continues normally");
+  });
+
+  it("does nothing at all when merge autonomy is not acting — there is no merge to hold", () => {
+    // The rule exists solely to keep an early PR from auto-merging. With merge off, nothing is being
+    // prevented, so labelling the PR would be noise a maintainer has to clear by hand.
+    const plan = planAgentMaintenanceActions(
+      input({ conclusion: "success", autonomy: { review_state_label: "auto" }, ...held, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }),
+    );
+    expect(plan.some((a) => a.actionClass === "label" && a.comment === held.priorityEligibilityHold.comment)).toBe(false);
+  });
+
+  it("falls back to manual-review (+ the comment) when review_state_label is OFF", () => {
+    const plan = planAgentMaintenanceActions(
+      input({ conclusion: "success", autonomy: { merge: "auto" }, ...held, pr: { labels: [], mergeableState: "clean" } }),
+    );
+    expect(plan).toEqual([
+      expect.objectContaining({ actionClass: "label", autonomyClass: "merge", label: AGENT_LABEL_NEEDS_REVIEW, labelOp: "add", comment: held.priorityEligibilityHold.comment }),
+    ]);
+  });
+
+  it("does not duplicate the manual-review label when it is already present", () => {
+    const plan = planAgentMaintenanceActions(
+      input({ conclusion: "success", autonomy: { merge: "auto" }, ...held, pr: { labels: [AGENT_LABEL_NEEDS_REVIEW], mergeableState: "clean" } }),
+    );
+    expect(plan.filter((a) => a.actionClass === "label")).toHaveLength(0);
+  });
+
+  it("absent (undefined) is byte-identical to today — a clean approved PR still merges", () => {
+    const plan = classes(
+      planAgentMaintenanceActions(
+        input({ conclusion: "success", autonomy: { merge: "auto" }, pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }),
+      ),
+    );
+    expect(plan).toContain("merge");
+  });
+});

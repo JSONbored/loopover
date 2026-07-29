@@ -44,6 +44,7 @@ import {
   refreshContributorActivity,
   refreshInstallationHealth,
   refreshPullRequestDetails,
+  fetchIssueLabelFirstAppliedAt,
 } from "../../src/github/backfill";
 import {
   clearGitHubResponseCacheForTest,
@@ -4996,5 +4997,138 @@ describe("fetchLinkedIssueClosedByPullRequest (#5385)", () => {
       input.toString() === "https://api.github.com/graphql" ? Response.json(closerBody(null)) : new Response("not found", { status: 404 }),
     );
     expect(await fetchLinkedIssueClosedByPullRequest(env, "owner/repo", 100, 200, "test-token")).toBe("not_closed_by_pull_request");
+  });
+});
+
+// The priority-eligibility window (#9738) anchors on the EARLIEST labeling, so this read is what decides
+// whether a contributor's PR is held. Every way it can decline to answer must FAIL OPEN with null -- a hold
+// on a fact we could not establish is a penalty for our own gap.
+describe("fetchIssueLabelFirstAppliedAt (#9738)", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function stubTimeline(nodes: unknown[], captured?: { query?: string }) {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(String(input)).toBe("https://api.github.com/graphql");
+      if (captured && typeof init?.body === "string") captured.query = String(JSON.parse(init.body).query);
+      return Response.json({ data: { repository: { issue: { timelineItems: { nodes } } } } });
+    });
+  }
+
+  it("returns the FIRST labeling of the wanted label, ignoring later ones", async () => {
+    const env = createTestEnv();
+    stubTimeline([
+      { __typename: "LabeledEvent", createdAt: "2026-07-29T10:00:00Z", label: { name: "gittensor:bug" } },
+      { __typename: "LabeledEvent", createdAt: "2026-07-29T11:00:00Z", label: { name: "gittensor:priority" } },
+      // A re-application must NOT reset the clock -- that is the whole point of anchoring on the earliest.
+      { __typename: "LabeledEvent", createdAt: "2026-07-29T15:00:00Z", label: { name: "gittensor:priority" } },
+    ]);
+
+    await expect(fetchIssueLabelFirstAppliedAt(env, "owner/repo", 7, "gittensor:priority", "tok")).resolves.toBe(
+      "2026-07-29T11:00:00Z",
+    );
+  });
+
+  it("matches the label case-insensitively", async () => {
+    const env = createTestEnv();
+    stubTimeline([{ __typename: "LabeledEvent", createdAt: "2026-07-29T11:00:00Z", label: { name: "Gittensor:Priority" } }]);
+    await expect(fetchIssueLabelFirstAppliedAt(env, "owner/repo", 7, "gittensor:priority", "tok")).resolves.toBe(
+      "2026-07-29T11:00:00Z",
+    );
+  });
+
+  it("asks only for LABELED_EVENT items, one page, oldest first", async () => {
+    // `first:` rather than `last:` is load-bearing: `last:` would return the most RECENT labeling, which is
+    // exactly the value re-applying the label could use to push a contributor's window back.
+    const env = createTestEnv();
+    const captured: { query?: string } = {};
+    stubTimeline([], captured);
+    await fetchIssueLabelFirstAppliedAt(env, "owner/repo", 7, "gittensor:priority", "tok");
+    expect(captured.query).toContain("itemTypes: [LABELED_EVENT]");
+    expect(captured.query).toContain("first: 100");
+    expect(captured.query).not.toContain("last:");
+    expect(captured.query).toContain("issue(number: 7)");
+  });
+
+  it("escapes the owner and name rather than interpolating them raw", async () => {
+    const env = createTestEnv();
+    const captured: { query?: string } = {};
+    stubTimeline([], captured);
+    await fetchIssueLabelFirstAppliedAt(env, 'ow"ner/re"po', 7, "gittensor:priority", "tok");
+    expect(captured.query).toContain('owner: "ow\\"ner"');
+    expect(captured.query).toContain('name: "re\\"po"');
+  });
+
+  it("FAILS OPEN on every input it cannot use, without making a request", async () => {
+    const env = createTestEnv();
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      return Response.json({ data: {} });
+    });
+
+    const cases: Array<[string, Promise<string | null>]> = [
+      ["no token", fetchIssueLabelFirstAppliedAt(env, "owner/repo", 7, "gittensor:priority", undefined)],
+      ["empty token", fetchIssueLabelFirstAppliedAt(env, "owner/repo", 7, "gittensor:priority", "")],
+      ["no label", fetchIssueLabelFirstAppliedAt(env, "owner/repo", 7, "", "tok")],
+      ["no owner", fetchIssueLabelFirstAppliedAt(env, "/repo", 7, "gittensor:priority", "tok")],
+      ["no name", fetchIssueLabelFirstAppliedAt(env, "owner/", 7, "gittensor:priority", "tok")],
+      ["not a repo path", fetchIssueLabelFirstAppliedAt(env, "nope", 7, "gittensor:priority", "tok")],
+    ];
+    for (const [name, promise] of cases) await expect(promise, name).resolves.toBeNull();
+    expect(calls, "an unusable input costs no GitHub read").toBe(0);
+  });
+
+  it("FAILS OPEN when the label was never applied, or the timeline is empty or absent", async () => {
+    const env = createTestEnv();
+    for (const nodes of [[], [{ __typename: "LabeledEvent", createdAt: "2026-07-29T11:00:00Z", label: { name: "other" } }]]) {
+      stubTimeline(nodes);
+      await expect(fetchIssueLabelFirstAppliedAt(env, "owner/repo", 7, "gittensor:priority", "tok")).resolves.toBeNull();
+    }
+    // The whole `data` shape missing, and each nullable link in the chain.
+    for (const body of [{ data: {} }, { data: { repository: null } }, { data: { repository: { issue: null } } }, { data: { repository: { issue: { timelineItems: null } } } }, { data: { repository: { issue: { timelineItems: { nodes: null } } } } }]) {
+      vi.stubGlobal("fetch", async () => Response.json(body));
+      await expect(fetchIssueLabelFirstAppliedAt(env, "owner/repo", 7, "gittensor:priority", "tok"), JSON.stringify(body)).resolves.toBeNull();
+    }
+  });
+
+  it("FAILS OPEN on a malformed node rather than throwing on it", async () => {
+    const env = createTestEnv();
+    stubTimeline([
+      null,
+      { __typename: "LabeledEvent", createdAt: "2026-07-29T10:00:00Z", label: null },
+      { __typename: "LabeledEvent", createdAt: "2026-07-29T10:30:00Z", label: { name: null } },
+      // Right label, but no usable timestamp -- skipped, not returned as null-the-value.
+      { __typename: "LabeledEvent", createdAt: null, label: { name: "gittensor:priority" } },
+      { __typename: "LabeledEvent", createdAt: "2026-07-29T12:00:00Z", label: { name: "gittensor:priority" } },
+    ]);
+    await expect(fetchIssueLabelFirstAppliedAt(env, "owner/repo", 7, "gittensor:priority", "tok")).resolves.toBe(
+      "2026-07-29T12:00:00Z",
+    );
+  });
+
+  it("FAILS OPEN when GraphQL answers with errors, or the request throws outright", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async () => Response.json({ errors: [{ message: "RATE_LIMITED" }] }));
+    await expect(fetchIssueLabelFirstAppliedAt(env, "owner/repo", 7, "gittensor:priority", "tok")).resolves.toBeNull();
+
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("socket hang up");
+    });
+    await expect(fetchIssueLabelFirstAppliedAt(env, "owner/repo", 7, "gittensor:priority", "tok")).resolves.toBeNull();
+  });
+
+  it("treats an EMPTY errors array as no errors", async () => {
+    const env = createTestEnv();
+    vi.stubGlobal("fetch", async () =>
+      Response.json({
+        errors: [],
+        data: { repository: { issue: { timelineItems: { nodes: [{ __typename: "LabeledEvent", createdAt: "2026-07-29T11:00:00Z", label: { name: "gittensor:priority" } }] } } } },
+      }),
+    );
+    await expect(fetchIssueLabelFirstAppliedAt(env, "owner/repo", 7, "gittensor:priority", "tok")).resolves.toBe(
+      "2026-07-29T11:00:00Z",
+    );
   });
 });

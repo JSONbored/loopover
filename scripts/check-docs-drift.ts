@@ -190,6 +190,7 @@ export const SETTINGS_ALIAS_MANIFEST: AliasManifestRow[] = [
   { field: "aiReviewOnMerge", aliases: ["onMerge"] },
   { field: "aiReviewReviewers", aliases: ["reviewers:"] },
   { field: "requireFreshRebaseWindowMinutes", aliases: ["requireFreshRebaseWindow"] },
+  { field: "priorityEligibilityWindowMinutes", aliases: ["priorityEligibilityWindow"] },
   { field: "sizeGateMaxFiles", aliases: ["maxFiles"] },
   { field: "sizeGateMaxLines", aliases: ["maxLines"] },
 ];

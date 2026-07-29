@@ -352,6 +352,7 @@ describe(".loopover.yml.example field-exhaustiveness (#1670)", () => {
     copycatMode: "copycat:",
     copycatMinScore: "copycat:",
     closeAuditHoldoutPct: "closeAuditHoldoutPct:",
+    priorityEligibilityWindowMinutes: "priorityEligibilityWindow:",
   } satisfies Record<Exclude<keyof FocusManifestGateConfig, "present">, string>;
 
   it.each(Object.entries(GATE_FIELD_TOKENS))("documents gate.%s", (_field, token) => {
@@ -1011,7 +1012,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewEffort: null, aiReviewSelfConsistencyRuns: null, guardrailEscalationProvider: null, guardrailEscalationModel: null, guardrailEscalationEffort: null, guardrailEscalationSelfConsistencyRuns: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewSalvageabilityMinScore: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, ignoredCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
+      gate: { present: false, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewEffort: null, aiReviewSelfConsistencyRuns: null, guardrailEscalationProvider: null, guardrailEscalationModel: null, guardrailEscalationEffort: null, guardrailEscalationSelfConsistencyRuns: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewSalvageabilityMinScore: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, priorityEligibilityWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, ignoredCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, activeReviewReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
       features: { present: false, rag: null, reputation: null, safety: null, grounding: null, e2eTests: null, screenshots: null, improvementSignal: null, amsReputationBridge: null },
@@ -1205,7 +1206,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewEffort: null, aiReviewSelfConsistencyRuns: null, guardrailEscalationProvider: null, guardrailEscalationModel: null, guardrailEscalationEffort: null, guardrailEscalationSelfConsistencyRuns: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewSalvageabilityMinScore: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, ignoredCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewEffort: null, aiReviewSelfConsistencyRuns: null, guardrailEscalationProvider: null, guardrailEscalationModel: null, guardrailEscalationEffort: null, guardrailEscalationSelfConsistencyRuns: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewSalvageabilityMinScore: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, priorityEligibilityWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, ignoredCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
   });
 
   it("parses gate.mergeReadiness, round-trips it, and warns on a bad value (#822)", () => {
@@ -6474,5 +6475,43 @@ describe("an explicitly-undefined manifest setting does not punch a hole in the 
   it("still lets a DEFINED manifest value win, including a falsy one", () => {
     expect(resolveEffectiveSettings({ typeLabelsEnabled: true } as RepositorySettings, manifestWithSettings({ typeLabelsEnabled: false })).typeLabelsEnabled).toBe(false);
     expect(resolveEffectiveSettings({ typeLabelsEnabled: false } as RepositorySettings, manifestWithSettings({ typeLabelsEnabled: true })).typeLabelsEnabled).toBe(true);
+  });
+});
+
+describe("gate.priorityEligibilityWindow priority-issue eligibility config (#9738)", () => {
+  it("parses gate.priorityEligibilityWindow, sets present, round-trips, and resolves into effective settings", () => {
+    const m = parseFocusManifest({ gate: { priorityEligibilityWindow: 45 } });
+    expect(m.gate.priorityEligibilityWindowMinutes).toBe(45);
+    expect(m.gate.present).toBe(true);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ priorityEligibilityWindow: 45 });
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, m);
+    expect(eff.priorityEligibilityWindowMinutes).toBe(45);
+  });
+
+  it("defaults to unset/undefined when omitted — byte-identical to today", () => {
+    const m = parseFocusManifest({});
+    expect(m.gate.priorityEligibilityWindowMinutes).toBeNull();
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, m);
+    expect(eff.priorityEligibilityWindowMinutes).toBeUndefined();
+  });
+
+  it("accepts 0 as an explicit OFF rather than treating it as absent", () => {
+    // 0 disables the rule; if it were dropped as falsy, a repo that deliberately turned the window off
+    // would silently inherit the 30-minute default instead.
+    const m = parseFocusManifest({ gate: { priorityEligibilityWindow: 0 } });
+    expect(m.gate.priorityEligibilityWindowMinutes).toBe(0);
+    expect(resolveEffectiveSettings({} as unknown as RepositorySettings, m).priorityEligibilityWindowMinutes).toBe(0);
+  });
+
+  it("warns and drops a fractional, negative, or out-of-range value rather than silently coercing it", () => {
+    for (const value of [2.5, -1, 1441]) {
+      const parsed = parseFocusManifest({ gate: { priorityEligibilityWindow: value } });
+      expect(parsed.gate.priorityEligibilityWindowMinutes, String(value)).toBeNull();
+      expect(parsed.warnings.some((w) => /gate\.priorityEligibilityWindow/i.test(w)), String(value)).toBe(true);
+    }
+  });
+
+  it("accepts the maximum exactly, so the bound is inclusive", () => {
+    expect(parseFocusManifest({ gate: { priorityEligibilityWindow: 1440 } }).gate.priorityEligibilityWindowMinutes).toBe(1440);
   });
 });

@@ -22,10 +22,16 @@ export type { PrTypeLabelSet } from "../types/manifest-deps-types.js";
  *  assumption (#label-modularity): a self-hoster's `typeLabels` fully replaces the category set these
  *  keys are drawn from. The built-in categories are mutually exclusive by default (see
  *  `resolvePrTypeLabel`'s `removeLabels`) unless a propagation mapping is explicitly additive. */
+/** The built-in PRIORITY label, named on its own so it reads as `string`. `PrTypeLabelSet` is an open
+ *  `Record`, which makes `DEFAULT_TYPE_LABELS.priority` optional to the type system even though the
+ *  built-in set always defines it -- naming the value is what lets `resolvePriorityTypeLabel` return it
+ *  without a fallback branch nothing can ever take. */
+export const DEFAULT_PRIORITY_LABEL = "gittensor:priority";
+
 export const DEFAULT_TYPE_LABELS: PrTypeLabelSet = {
   bug: "gittensor:bug",
   feature: "gittensor:feature",
-  priority: "gittensor:priority",
+  priority: DEFAULT_PRIORITY_LABEL,
 };
 
 export const MAX_TYPE_LABEL_CATEGORIES = 32;
@@ -142,6 +148,20 @@ export type PrTypeLabelDecision = {
  * misconfigured additive mapping's `prLabel` happens to collide with a type-label-set name (it is
  * excluded from removal since it is also being applied). Pure + total.
  */
+/**
+ * The PRIORITY label as this repo names it, falling back to the built-in default.
+ *
+ * One resolution rather than the ad-hoc `settings.typeLabels?.priority ?? DEFAULT_TYPE_LABELS.priority`
+ * each caller used to spell for itself: the label-author rule (#9737) and the eligibility window (#9738)
+ * both act on this exact label, and a repo that renamed it would be enforced inconsistently if the two
+ * ever disagreed about which label they mean.
+ */
+export function resolvePriorityTypeLabel(labels: PrTypeLabelSet | null | undefined): string {
+  const configured = labels?.priority;
+  if (typeof configured === "string" && configured.trim().length > 0) return configured;
+  return DEFAULT_PRIORITY_LABEL;
+}
+
 export function resolvePrTypeLabel(input: {
   title: string | undefined;
   linkedIssueLabels?: string[] | undefined;

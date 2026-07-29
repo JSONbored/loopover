@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TYPE_LABELS, MAX_TYPE_LABEL_CATEGORIES, MAX_TYPE_LABEL_NAME_LENGTH, deriveKindFromTitle, normalizeTypeLabelSet, resolvePrTypeLabel } from "../../src/settings/pr-type-label";
+import { DEFAULT_TYPE_LABELS, MAX_TYPE_LABEL_CATEGORIES, MAX_TYPE_LABEL_NAME_LENGTH, deriveKindFromTitle, normalizeTypeLabelSet, resolvePrTypeLabel, resolvePriorityTypeLabel } from "../../src/settings/pr-type-label";
 import type { LinkedIssueLabelPropagationConfig } from "../../src/types";
 
 describe("deriveKindFromTitle", () => {
@@ -400,5 +400,33 @@ describe("normalizeTypeLabelSet (#priority-linked-issue-gate)", () => {
       expect(normalizeTypeLabelSet({ security: "   " }, warnings)).toEqual(DEFAULT_TYPE_LABELS);
       expect(warnings.some((w) => w.includes("settings.typeLabels.security"))).toBe(true);
     });
+  });
+});
+
+// One resolution of the priority label, shared by the label-author rule (#9737) and the eligibility
+// window (#9738) -- the two rules act on the same label, so they must never disagree about its name.
+describe("resolvePriorityTypeLabel (#9738)", () => {
+  it("uses the repo's configured name when it has one", () => {
+    expect(resolvePriorityTypeLabel({ ...DEFAULT_TYPE_LABELS, priority: "team:top" })).toBe("team:top");
+  });
+
+  it("falls back to the built-in default when the repo configured none", () => {
+    expect(resolvePriorityTypeLabel(undefined)).toBe(DEFAULT_TYPE_LABELS.priority);
+    expect(resolvePriorityTypeLabel(null)).toBe(DEFAULT_TYPE_LABELS.priority);
+    expect(resolvePriorityTypeLabel({} as never)).toBe(DEFAULT_TYPE_LABELS.priority);
+  });
+
+  it("treats a blank or whitespace-only configured name as unconfigured", () => {
+    // An empty label name would match nothing and silently disable both rules, which is worse than
+    // falling back to the default the repo would otherwise have had.
+    for (const priority of ["", "   "]) {
+      expect(resolvePriorityTypeLabel({ ...DEFAULT_TYPE_LABELS, priority }), JSON.stringify(priority)).toBe(DEFAULT_TYPE_LABELS.priority);
+    }
+  });
+
+  it("always returns a usable, non-empty label", () => {
+    for (const input of [undefined, null, {} as never, { ...DEFAULT_TYPE_LABELS, priority: "x" }]) {
+      expect(resolvePriorityTypeLabel(input).length).toBeGreaterThan(0);
+    }
   });
 });

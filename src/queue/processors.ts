@@ -192,13 +192,14 @@ import {
   reviewedPullRequestHeadSha,
   type PullRequestFreshness,
 } from "../github/pr-freshness";
-import { DEFAULT_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
+import { DEFAULT_TYPE_LABELS, resolvePriorityTypeLabel, resolvePrTypeLabel } from "../settings/pr-type-label";
 import {
   PRIORITY_LABEL_AUTHOR_RULE_ID,
   PRIORITY_LABEL_ENFORCEMENT_EVENT,
   PRIORITY_LABEL_POLICY_URL,
   resolvePriorityLabelEnforcement,
 } from "../review/priority-label-eligibility";
+import { DEFAULT_PRIORITY_ELIGIBILITY_WINDOW_MINUTES, resolvePriorityEligibilityHold } from "../review/priority-eligibility-window";
 import { fetchLinkedIssueLabelsForPropagation } from "../review/linked-issue-label-propagation-fetch";
 import { shouldPublishReviewCheck } from "../review/check-names";
 import { fetchPublicContributorProfile } from "../github/public";
@@ -2804,6 +2805,7 @@ function buildAgentMaintenancePlanInput(args: {
   linkedIssueRulesConfig: Awaited<ReturnType<typeof loadLinkedIssueHardRules>>;
   migrationCollisionHold: AgentActionPlanInput["migrationCollisionHold"];
   unlinkedIssueMatchHold: AgentActionPlanInput["unlinkedIssueMatchHold"];
+  priorityEligibilityHold: AgentActionPlanInput["priorityEligibilityHold"];
   aiReviewLowConfidenceHold: AgentActionPlanInput["aiReviewLowConfidenceHold"];
   unlinkedIssueMatchClose: AgentActionPlanInput["unlinkedIssueMatchClose"];
   liveMergeState: string | undefined;
@@ -2843,6 +2845,7 @@ function buildAgentMaintenancePlanInput(args: {
     linkedIssueRulesConfig,
     migrationCollisionHold,
     unlinkedIssueMatchHold,
+    priorityEligibilityHold,
     aiReviewLowConfidenceHold,
     unlinkedIssueMatchClose,
     liveMergeState,
@@ -2921,6 +2924,7 @@ function buildAgentMaintenancePlanInput(args: {
     },
     ...(migrationCollisionHold !== undefined ? { migrationCollisionHold } : {}),
     ...(unlinkedIssueMatchHold !== undefined ? { unlinkedIssueMatchHold } : {}),
+    ...(priorityEligibilityHold !== undefined ? { priorityEligibilityHold } : {}),
     ...(aiReviewLowConfidenceHold !== undefined ? { aiReviewLowConfidenceHold } : {}),
     ...(unlinkedIssueMatchClose !== undefined ? { unlinkedIssueMatchClose } : {}),
     manualReviewLockContentionResolved,
@@ -3461,6 +3465,26 @@ async function runAgentMaintenancePlanAndExecute(
         })
       : undefined;
   const unlinkedIssueMatchHold = unlinkedIssueMatchDisposition?.kind === "hold" ? unlinkedIssueMatchDisposition : undefined;
+
+  // Priority-issue eligibility window (#9738). A PR closing a `gittensor:priority` issue is gate-eligible
+  // only once the label has been publicly present for the configured window, so first-come pickup is fair to
+  // everyone watching the repo rather than to whoever was already looking. Resolved here (not in the planner)
+  // because it needs a GitHub read; the DECISION is the pure evaluator, unit-tested on its own.
+  //
+  // FAIL-OPEN throughout: a fetch that throws, a label that was never applied, or a timestamp we cannot parse
+  // all yield no hold. Holding a contributor's PR on a fact we could not read is a penalty for our own gap.
+  const priorityEligibilityHold = await resolvePriorityEligibilityHold({
+    env,
+    repoFullName,
+    linkedIssues: pr.linkedIssues,
+    prCreatedAt: pr.createdAt ?? null,
+    windowMinutes: settings.priorityEligibilityWindowMinutes ?? DEFAULT_PRIORITY_ELIGIBILITY_WINDOW_MINUTES,
+    priorityLabel: resolvePriorityTypeLabel(settings.typeLabels),
+    token: ciToken,
+    // No `.catch` here on purpose: resolvePriorityEligibilityHold catches its own GitHub read and returns
+    // undefined, so it has no reject path. A guard for one that cannot happen is unreachable code that
+    // reads as tested-and-fine while never running.
+  });
   const unlinkedIssueMatchClose = unlinkedIssueMatchDisposition?.kind === "close" ? unlinkedIssueMatchDisposition : undefined;
 
   // Contributor blacklist (#1425): resolve whether the PR author is on the repo's blacklist (the shared/global
@@ -3688,6 +3712,7 @@ async function runAgentMaintenancePlanAndExecute(
       linkedIssueRulesConfig,
       migrationCollisionHold,
       unlinkedIssueMatchHold,
+      priorityEligibilityHold,
       aiReviewLowConfidenceHold: aiReviewLowConfidenceHold ?? aiReviewSalvageableHold,
       unlinkedIssueMatchClose,
       liveMergeState,
@@ -6889,9 +6914,7 @@ async function maybeHandlePriorityLabelEligibility(
   if (issue.pull_request !== undefined && issue.pull_request !== null) return false;
 
   const settings = await resolveRepositorySettings(env, repoFullName).catch(() => undefined);
-  /* v8 ignore next 2 -- noUncheckedIndexedAccess fallback: PrTypeLabelSet is a Record<string, string>, so
-     DEFAULT_TYPE_LABELS.priority reads as possibly-undefined to the type system though it is always set. */
-  const priorityLabel: string = settings?.typeLabels?.priority ?? DEFAULT_TYPE_LABELS.priority ?? "gittensor:priority";
+  const priorityLabel = resolvePriorityTypeLabel(settings?.typeLabels);
   const labels = (issue.labels ?? []).map((label) => label?.name ?? "").filter((name) => name.length > 0);
   // Only the labelled event for THIS label matters; anything else is another label's business.
   if (!labels.some((name) => name.toLowerCase() === priorityLabel.toLowerCase())) return false;

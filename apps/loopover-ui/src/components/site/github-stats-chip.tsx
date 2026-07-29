@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Github, Star, GitFork, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
@@ -20,11 +20,47 @@ function finiteCount(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : 0;
 }
 
-function readCache(): Cached | null {
+/** `mounted` as an external store: it never changes after hydration, so the subscription is a no-op and
+ *  the two snapshots carry the whole signal. */
+const subscribeToHydration = () => () => {};
+const isHydrated = () => true;
+const isNotHydrated = () => false;
+
+/** sessionStorage is not observable and is only written by this chip, so there is nothing to subscribe to.
+ *  The snapshot is memoized on the raw string so `useSyncExternalStore` sees a stable object between
+ *  changes -- re-parsing per call would return a fresh object every render and loop forever. */
+const subscribeToStatsCache = () => () => {};
+let cachedStatsRaw: string | null = null;
+let cachedStatsValue: Cached | null = null;
+
+function readCachedStats(): Cached | null {
+  const raw = readCacheRaw();
+  if (raw !== cachedStatsRaw) {
+    cachedStatsRaw = raw;
+    cachedStatsValue = readCache();
+  }
+  return cachedStatsValue;
+}
+
+function readNoCachedStats(): Cached | null {
+  return null;
+}
+
+/** The cache's raw string, which is what the memo above compares -- a primitive, so it is a sound
+ *  identity for "has the cache changed". Disabled storage reads as absent. */
+function readCacheRaw(): string | null {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.sessionStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
+    return window.sessionStorage.getItem(CACHE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function readCache(): Cached | null {
+  const raw = readCacheRaw();
+  if (!raw) return null;
+  try {
     const parsed = JSON.parse(raw) as Cached;
     return parsed?.stats ? parsed : null;
   } catch {
@@ -79,13 +115,13 @@ async function fetchRepo(): Promise<RepoStats> {
 const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 });
 
 export function GithubStatsChip({ className }: { className?: string }) {
-  // Avoid SSR/CSR mismatch: only read sessionStorage after mount.
-  const [mounted, setMounted] = useState(false);
-  const [cached, setCached] = useState<Cached | null>(null);
-  useEffect(() => {
-    setCached(readCache());
-    setMounted(true);
-  }, []);
+  // Avoid SSR/CSR mismatch: sessionStorage is only readable after mount. Both facts are read as external
+  // stores (#9588) rather than copied into state by a mount effect -- sessionStorage IS one, and "have we
+  // hydrated yet" is exactly the server-snapshot-vs-client-snapshot distinction useSyncExternalStore
+  // exists to express. The cached stats are therefore available on the first client render, so the chip
+  // seeds react-query below without a cascading render in between.
+  const mounted = useSyncExternalStore(subscribeToHydration, isHydrated, isNotHydrated);
+  const cached = useSyncExternalStore(subscribeToStatsCache, readCachedStats, readNoCachedStats);
 
   const { data, isError, isFetching, isLoading, refetch } = useQuery({
     queryKey: ["gh-repo", REPO],

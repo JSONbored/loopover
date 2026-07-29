@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderWithQueryClient as render } from "@/lib/test-query-client";
 import { describe, expect, it, vi } from "vitest";
 
 // A maintainer session + a path-aware data hook: the dashboard call resolves with a minimal payload; every

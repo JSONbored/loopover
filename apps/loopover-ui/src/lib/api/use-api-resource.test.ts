@@ -1,4 +1,6 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { renderHook as renderHookBare, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { createElement, type ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
 const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }));
@@ -8,6 +10,17 @@ vi.mock("@/lib/api/request", () => ({
 vi.mock("@/lib/api/origin", () => ({ getApiOrigin: () => "https://api.test" }));
 
 import { useApiResource } from "@/lib/api/use-api-resource";
+
+/** The hook reads through react-query, so it needs the same client the app provides at its root. A fresh
+ *  client per test keeps one case's cache from answering the next one's request. */
+function renderHook<T, P>(callback: (props: P) => T, options?: { initialProps?: P }) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  return renderHookBare(callback, {
+    ...options,
+    wrapper: ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client }, children),
+  });
+}
 
 describe("useApiResource loadedAt (#2219)", () => {
   it("stamps loadedAt when a load succeeds, so headers can show 'last refresh'", async () => {

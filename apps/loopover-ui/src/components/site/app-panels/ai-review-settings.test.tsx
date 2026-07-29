@@ -1,4 +1,5 @@
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { screen, fireEvent, waitFor } from "@testing-library/react";
+import { renderWithQueryClient as render } from "@/lib/test-query-client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock the API layer so the component never touches the network.

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 
@@ -31,20 +31,52 @@ async function fetchPublicStats(): Promise<PublicStats | null> {
   return result.data;
 }
 
+/**
+ * Whether a count-up may animate at all: motion is not suppressed, rAF exists, and the tab is visible.
+ *
+ * Read as an external store (#9588) rather than sampled inside the effect, because both inputs genuinely
+ * ARE subscribable -- a `matchMedia` change list and `visibilitychange`. That is what lets the
+ * no-animation case be DERIVED below instead of written to state synchronously from an effect body.
+ */
+const MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function subscribeToMotionAllowed(onChange: () => void): () => void {
+  const media = window.matchMedia?.(MOTION_QUERY);
+  media?.addEventListener("change", onChange);
+  document.addEventListener("visibilitychange", onChange);
+  return () => {
+    media?.removeEventListener("change", onChange);
+    document.removeEventListener("visibilitychange", onChange);
+  };
+}
+
+function motionAllowed(): boolean {
+  if (typeof window === "undefined" || typeof requestAnimationFrame === "undefined") return false;
+  if (window.matchMedia?.(MOTION_QUERY)?.matches) return false;
+  return typeof document === "undefined" || document.visibilityState === "visible";
+}
+
+/** No animation during server render -- the value is simply the target. */
+function motionAllowedOnServer(): boolean {
+  return false;
+}
+
 /** Count up to `target` once on mount (and on later increases), honoring prefers-reduced-motion. */
 function useCountUp(target: number, durationMs = 900): number {
-  const [value, setValue] = useState(0);
+  const canAnimate = useSyncExternalStore(
+    subscribeToMotionAllowed,
+    motionAllowed,
+    motionAllowedOnServer,
+  );
+  const shouldAnimate = canAnimate && target > 0;
+  const [progress, setProgress] = useState(0);
   const fromRef = useRef(0);
+
   useEffect(() => {
-    const reduce =
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    const canAnimate =
-      typeof requestAnimationFrame !== "undefined" &&
-      (typeof document === "undefined" || document.visibilityState === "visible");
-    if (reduce || target <= 0 || !canAnimate) {
+    // Not animating: the value IS the target, derived at the return below. Only the ref still needs
+    // updating, so a later increase counts up from where this one landed rather than from zero.
+    if (!shouldAnimate) {
       fromRef.current = target;
-      setValue(target);
       return;
     }
     const from = fromRef.current;
@@ -53,23 +85,24 @@ function useCountUp(target: number, durationMs = 900): number {
     const tick = (t: number) => {
       const p = Math.min(1, (t - start) / durationMs);
       const eased = 1 - Math.pow(1 - p, 3);
-      setValue(Math.round(from + (target - from) * eased));
+      setProgress(Math.round(from + (target - from) * eased));
       if (p < 1) raf = requestAnimationFrame(tick);
       else fromRef.current = target;
     };
     raf = requestAnimationFrame(tick);
-    // Safety net: rAF is throttled/never fires in a background tab, which would freeze the count at 0. Guarantee
+    // Safety net: rAF is throttled/never fires in a background tab, which would freeze the count. Guarantee
     // the real number lands regardless after the animation window.
     const settle = window.setTimeout(() => {
       fromRef.current = target;
-      setValue(target);
+      setProgress(target);
     }, durationMs + 250);
     return () => {
       cancelAnimationFrame(raf);
       window.clearTimeout(settle);
     };
-  }, [target, durationMs]);
-  return value;
+  }, [target, durationMs, shouldAnimate]);
+
+  return shouldAnimate ? progress : target;
 }
 
 function Num({ value }: { value: number }) {

@@ -510,20 +510,19 @@ function SurfacePreview({
   const [busy, setBusy] = useState(false);
   const repoParts = splitRepoFullName(form.repoFullName);
 
-  useEffect(() => {
-    if (!form.repoFullName && repoOptions[0]) {
-      setForm((current) => ({ ...current, repoFullName: repoOptions[0] }));
-    }
-  }, [form.repoFullName, repoOptions]);
-
-  useEffect(() => {
-    if (!initialRepoFullName) return;
+  // Seed the repo field from the panel's target, or the first available option when it has none, and
+  // re-seed whenever that target changes. Adjusted during render -- React's documented pattern for
+  // reacting to a changed input -- rather than from two effects (#9588), so the field is populated on the
+  // render that first sees the options instead of a frame later. `appliedSeed` is what keeps a user's own
+  // edit from being overwritten: once a seed has been applied, only a NEW seed replaces it.
+  const seedRepo = initialRepoFullName || repoOptions[0] || "";
+  const [appliedSeed, setAppliedSeed] = useState<string | null>(null);
+  if (seedRepo && appliedSeed !== seedRepo && (!form.repoFullName || initialRepoFullName)) {
+    setAppliedSeed(seedRepo);
     setForm((current) =>
-      current.repoFullName === initialRepoFullName
-        ? current
-        : { ...current, repoFullName: initialRepoFullName },
+      current.repoFullName === seedRepo ? current : { ...current, repoFullName: seedRepo },
     );
-  }, [initialRepoFullName]);
+  }
 
   async function runPreview(nextForm = form) {
     const target = splitRepoFullName(nextForm.repoFullName);

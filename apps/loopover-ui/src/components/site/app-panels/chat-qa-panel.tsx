@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { MessageCircle, RefreshCw, Send } from "lucide-react";
 
 import { StatusPill, type Status } from "@/components/site/control-primitives";
@@ -29,15 +29,15 @@ type ReviewabilityRow = { pr: string; title: string; chatQaEnabled: boolean };
  */
 export function ChatQaPanel({ reviewability }: { reviewability: ReviewabilityRow[] }) {
   const eligible = useMemo(() => reviewability.filter((row) => row.chatQaEnabled), [reviewability]);
-  const [selectedPr, setSelectedPr] = useState(eligible[0]?.pr ?? "");
+  // The chosen PR, or the first eligible one when nothing is chosen yet. DERIVED (#9588) rather than
+  // back-filled by an effect: the list arrives asynchronously, and the effect used to leave one render
+  // showing an empty select before correcting itself.
+  const [chosenPr, setChosenPr] = useState("");
+  const selectedPr = chosenPr || (eligible[0]?.pr ?? "");
   const [question, setQuestion] = useState("");
   const [result, setResult] = useState<ChatQaResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-
-  useEffect(() => {
-    if (!selectedPr && eligible[0]) setSelectedPr(eligible[0].pr);
-  }, [selectedPr, eligible]);
 
   if (eligible.length === 0) return null;
 
@@ -98,7 +98,7 @@ export function ChatQaPanel({ reviewability }: { reviewability: ReviewabilityRow
           <select
             value={selectedPr}
             onChange={(event) => {
-              setSelectedPr(event.target.value);
+              setChosenPr(event.target.value);
               setResult(null);
               setError(null);
             }}

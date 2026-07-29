@@ -1,4 +1,5 @@
-import { renderHook, waitFor } from "@testing-library/react";
+import { waitFor } from "@testing-library/react";
+import { renderHookWithQueryClient as renderHook } from "@/lib/test-query-client";
 import { describe, expect, it, vi } from "vitest";
 
 import {

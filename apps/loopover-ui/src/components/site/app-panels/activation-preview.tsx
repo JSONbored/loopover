@@ -1,5 +1,6 @@
 import { CheckCircle2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { StatusPill, type Status } from "@/components/site/control-primitives";
 import { TableScroll } from "@/components/site/data-table";
@@ -58,49 +59,34 @@ function repoApiBase(repoFullName: string): string | null {
 export function ActivationPreview({ reviewability }: { reviewability: Array<{ pr: string }> }) {
   const repoOptions = useMemo(() => extractPreviewRepoOptions(reviewability), [reviewability]);
   const [repoFullName, setRepoFullName] = useState(repoOptions[0] ?? "");
-  const [preview, setPreview] = useState<ActivationPreviewResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
   const base = repoApiBase(repoFullName);
   const hasRepos = repoOptions.length > 0;
 
-  const load = useCallback(
-    async (opts?: { cancelled?: () => boolean }) => {
-      const isCancelled = opts?.cancelled ?? (() => false);
-      const apiBase = repoApiBase(repoFullName);
-      if (!apiBase) {
-        setPreview(null);
-        setLoadError(null);
-        return;
-      }
-      setLoadError(null);
-      setLoading(true);
-      const result = await apiFetch<ActivationPreviewResponse>(`${apiBase}/activation-preview`, {
+  // react-query rather than a hand-rolled load effect (#9588): keying on the repo is what drops a
+  // response that a newer repo selection has already superseded, which the `cancelled` callback this
+  // replaces did by hand. Options are pinned to match the previous behaviour exactly -- one attempt, no
+  // refetch on focus, nothing cached across mounts.
+  const query = useQuery({
+    queryKey: ["activation-preview", base],
+    enabled: base !== null && base !== "",
+    retry: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    queryFn: async () => {
+      const result = await apiFetch<ActivationPreviewResponse>(`${base}/activation-preview`, {
         label: "Activation preview",
         credentials: "include",
         silentStatus: true,
       });
-      // Ignore responses after a newer repoFullName keyed a fresh load (#7784).
-      if (isCancelled()) return;
-      if (result.ok) {
-        setPreview(result.data);
-      } else {
-        setPreview(null);
-        setLoadError(result.message);
-      }
-      setLoading(false);
+      if (!result.ok) throw new Error(result.message);
+      return result.data;
     },
-    [repoFullName],
-  );
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    void load({ cancelled: () => cancelled });
-    return () => {
-      cancelled = true;
-    };
-  }, [load]);
+  const preview = query.data ?? null;
+  const loading = query.isFetching;
+  const loadError = query.isError ? query.error.message : null;
+  const load = () => void query.refetch();
 
   return (
     <section

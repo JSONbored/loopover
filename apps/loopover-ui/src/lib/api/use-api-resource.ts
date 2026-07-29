@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { getApiOrigin } from "./origin";
 import { apiFetch, type ApiFailureKind } from "./request";
@@ -20,6 +21,47 @@ type UseApiResourceOptions = {
   enabled?: boolean;
 };
 
+/** The synthetic sentinel a disabled resource reports. Frozen at module scope so every disabled resource
+ *  returns the same object rather than a fresh one per render. */
+const DISABLED_STATE: ResourceState<never> = Object.freeze({
+  status: "error",
+  data: null,
+  error: "disabled",
+  loadedAt: null,
+});
+
+const LOADING_STATE: ResourceState<never> = Object.freeze({
+  status: "loading",
+  data: null,
+  error: null,
+  loadedAt: null,
+});
+
+/** Carries `apiFetch`'s structured failure through react-query's error channel, which only speaks throws. */
+class ApiResourceError extends Error {
+  constructor(
+    message: string,
+    readonly kind: ApiFailureKind,
+    readonly httpStatus: number | undefined,
+  ) {
+    super(message);
+    this.name = "ApiResourceError";
+  }
+}
+
+/**
+ * Reads one API resource into the loading/ready/error shape every panel in this app renders.
+ *
+ * Backed by react-query (#9588) rather than a hand-rolled effect + state machine. The app already runs a
+ * QueryClient at the root, so this removes the second, parallel data layer -- and with it the effect that
+ * called setState on mount, the manual request-id guard against out-of-order responses, and the bespoke
+ * reload plumbing, all of which the library does correctly by keying on the request.
+ *
+ * The three options below are set EXPLICITLY, not inherited: react-query's defaults retry three times and
+ * refetch on window focus, neither of which this hook did. Pinning them means adopting the library changes
+ * no observable behaviour at any of its call sites; loosening them is a deliberate per-surface decision,
+ * not a side effect of this refactor.
+ */
 export function useApiResource<T>(
   path: string,
   label: string,
@@ -27,57 +69,45 @@ export function useApiResource<T>(
   options: UseApiResourceOptions = {},
 ) {
   const enabled = options.enabled ?? true;
-  const [state, setState] = useState<ResourceState<T>>({
-    status: "loading",
-    data: null,
-    error: null,
-    loadedAt: null,
+
+  const query = useQuery<T, ApiResourceError>({
+    queryKey: ["api-resource", path, label, token ?? null],
+    enabled,
+    retry: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    queryFn: async () => {
+      const headers: Record<string, string> = { Accept: "application/json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const result = await apiFetch<T>(`${getApiOrigin().replace(/\/$/, "")}${path}`, {
+        label,
+        headers,
+        credentials: "include",
+      });
+      if (!result.ok) throw new ApiResourceError(result.message, result.kind, result.status);
+      return result.data;
+    },
   });
 
-  const requestIdRef = useRef(0);
+  const reload = useCallback(async () => {
+    await query.refetch();
+  }, [query]);
 
-  const load = useCallback(async () => {
-    // Guard against out-of-order responses (#7785): when `path` changes (pagination offsets, free-text repo input,
-    // window selection) a new load starts while an older apiFetch is still in flight. Tag each load and, after the
-    // await, drop the result if a newer load has since superseded it — otherwise a stale page's response resolves
-    // last and silently overwrites the current one while the surrounding UI reflects the newer request.
-    const requestId = requestIdRef.current + 1;
-    requestIdRef.current = requestId;
-    if (!enabled) {
-      setState({ status: "error", data: null, error: "disabled", loadedAt: null });
-      return;
-    }
-    setState({ status: "loading", data: null, error: null, loadedAt: null });
-    const headers: Record<string, string> = { Accept: "application/json" };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    const result = await apiFetch<T>(`${getApiOrigin().replace(/\/$/, "")}${path}`, {
-      label,
-      headers,
-      credentials: "include",
-    });
-    // A newer load superseded this one (the path changed mid-flight); drop this stale response entirely.
-    if (requestId !== requestIdRef.current) return;
-    if (result.ok) {
-      setState({ status: "ready", data: result.data, error: null, loadedAt: Date.now() });
-    } else {
-      setState({
-        status: "error",
-        data: null,
-        error: result.message,
-        errorKind: result.kind,
-        errorStatus: result.status,
-        loadedAt: null,
-      });
-    }
-  }, [enabled, label, path, token]);
+  // Every branch is DERIVED from the query -- nothing is written into state from an effect (#9588).
+  const state: ResourceState<T> = !enabled
+    ? (DISABLED_STATE as ResourceState<T>)
+    : query.isSuccess
+      ? { status: "ready", data: query.data, error: null, loadedAt: query.dataUpdatedAt }
+      : query.isError
+        ? {
+            status: "error",
+            data: null,
+            error: query.error.message,
+            errorKind: query.error.kind,
+            errorStatus: query.error.httpStatus,
+            loadedAt: null,
+          }
+        : (LOADING_STATE as ResourceState<T>);
 
-  useEffect(() => {
-    if (!enabled) {
-      setState({ status: "error", data: null, error: "disabled", loadedAt: null });
-      return;
-    }
-    void load();
-  }, [enabled, load]);
-
-  return { ...state, reload: load };
+  return { ...state, reload };
 }

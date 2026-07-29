@@ -10,7 +10,11 @@ import { docsMdxComponents } from "@/lib/docs-mdx-components";
 // docs-source.ts -- never the live MDX component itself -- then this client loader turns that
 // path into the actual rendered content on both sides.
 export const docsClientLoader = browserCollections.docs.createClientLoader({
-  component({ default: MDXContent }, _props: Record<string, never>) {
+  // No props: that leaves the loader's `Props` as `undefined`, which is what makes `useContent(path)`
+  // callable without a props argument (#9588). `useContent` returns react NODES, where `getComponent`
+  // returns a component -- and minting a component inside a render is what react-hooks/static-components
+  // rejects, since a fresh identity each render remounts the whole subtree.
+  component({ default: MDXContent }) {
     return <MDXContent components={docsMdxComponents} />;
   },
 });

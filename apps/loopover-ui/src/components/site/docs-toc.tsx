@@ -9,6 +9,9 @@ interface Heading {
   level: 2 | 3;
 }
 
+/** A stable empty list, so a route with no headings does not hand the renderer a fresh array each time. */
+const EMPTY_HEADINGS: readonly Heading[] = Object.freeze([]);
+
 /** localStorage so the rail recalls the last section across full reloads and tabs. */
 const STORE_PREFIX = "docs-toc:v2:";
 
@@ -18,17 +21,24 @@ const STORE_PREFIX = "docs-toc:v2:";
  * if missing, and tracks the active section via IntersectionObserver.
  */
 export function DocsToc() {
-  const [items, setItems] = useState<Heading[]>([]);
-  const [active, setActive] = useState<string>("");
+  // Both the headings and the active id belong to ONE route, so both are stored under that route's path
+  // (#9588). Navigating therefore clears them by derivation -- a previous route's headings can never be
+  // read, and aria-current can never linger on one -- instead of two setState calls at the top of the
+  // effect below. The effect still runs: reading the rendered DOM and subscribing an IntersectionObserver
+  // is external-system work, which is exactly what an effect is for.
+  const [toc, setToc] = useState<{ path: string; items: readonly Heading[]; active: string }>({
+    path: "",
+    items: [],
+    active: "",
+  });
   const location = useLocation();
   const storageKey = `${STORE_PREFIX}${location.pathname}`;
 
-  useEffect(() => {
-    // Reset visible active when the path changes so aria-current never lingers
-    // on a heading from the previous route.
-    setActive("");
-    setItems([]);
+  const forThisPath = toc.path === location.pathname ? toc : null;
+  const items = forThisPath?.items ?? EMPTY_HEADINGS;
+  const active = forThisPath?.active ?? "";
 
+  useEffect(() => {
     const article = document.querySelector("article.prose-docs");
     if (!article) return;
     const nodes = Array.from(article.querySelectorAll<HTMLHeadingElement>("h2, h3"));
@@ -49,15 +59,17 @@ export function DocsToc() {
         level: (node.tagName === "H2" ? 2 : 3) as 2 | 3,
       };
     });
-    setItems(headings);
+    let activeId = "";
 
+    // No headings: nothing to record. The derived read above already yields an empty list for a path
+    // this state does not cover, which is exactly the "no TOC on this route" case.
     if (headings.length === 0) return;
 
     // Restore last-active section for this route (display only — does not scroll the page).
     // localStorage persists across full reloads and new tabs.
     try {
       const saved = window.localStorage.getItem(storageKey);
-      if (saved && headings.some((h) => h.id === saved)) setActive(saved);
+      if (saved && headings.some((h) => h.id === saved)) activeId = saved;
     } catch {
       /* noop */
     }
@@ -69,7 +81,11 @@ export function DocsToc() {
           .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
         if (visible[0]) {
           const id = visible[0].target.id;
-          setActive(id);
+          setToc((current) =>
+            current.active === id && current.path === location.pathname
+              ? current
+              : { path: location.pathname, items: headings, active: id },
+          );
           try {
             window.localStorage.setItem(storageKey, id);
           } catch {
@@ -79,9 +95,10 @@ export function DocsToc() {
       },
       { rootMargin: "-80px 0px -65% 0px", threshold: [0, 1] },
     );
+    setToc({ path: location.pathname, items: headings, active: activeId });
     nodes.forEach((n) => observer.observe(n));
     return () => observer.disconnect();
-  }, [storageKey]);
+  }, [storageKey, location.pathname]);
 
   if (items.length < 2) return null;
 
@@ -99,7 +116,7 @@ export function DocsToc() {
                 href={`#${h.id}`}
                 aria-current={isActive ? "location" : undefined}
                 onClick={() => {
-                  setActive(h.id);
+                  setToc({ path: location.pathname, items, active: h.id });
                   try {
                     window.localStorage.setItem(storageKey, h.id);
                   } catch {

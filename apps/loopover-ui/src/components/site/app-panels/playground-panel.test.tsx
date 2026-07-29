@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderWithQueryClient as render } from "@/lib/test-query-client";
 import { describe, expect, it, vi } from "vitest";
 
 // Keep the panel off the network — useSession()/live runs both go through apiFetch.

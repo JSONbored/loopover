@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 import { apiFetch } from "./request";
@@ -84,14 +85,31 @@ export function useSession() {
     return next;
   }, []);
 
+  // Subscribing to an external event is what effects are FOR, so this one stays -- what moved out of it is
+  // the mount-time fetch, which now runs as a react-query query (#9588). The listener only re-triggers that
+  // query; it sets no state of its own, and the query owns the request's lifecycle.
   useEffect(() => {
-    void refresh();
     const onChange = () => {
       void refresh();
     };
     window.addEventListener(SESSION_CHANGED_EVENT, onChange);
     return () => window.removeEventListener(SESSION_CHANGED_EVENT, onChange);
   }, [refresh]);
+
+  // The initial read. Its result is written into the same state the event listener and the sign-in/out
+  // paths write, so every consumer keeps seeing one session value from one place.
+  useQuery({
+    queryKey: ["browser-session"],
+    retry: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    queryFn: async () => {
+      await refresh();
+      // The value lives in state above; react-query only owns WHEN this runs, so the payload it caches
+      // would be a second copy of the truth. Returning null keeps it from becoming one.
+      return null;
+    },
+  });
 
   const signIn = () => {
     setAuth({ status: "starting" });

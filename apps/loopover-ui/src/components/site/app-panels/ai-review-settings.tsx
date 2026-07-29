@@ -1,5 +1,6 @@
 import { KeyRound, Loader2, Save, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { StatusPill } from "@/components/site/control-primitives";
 import { apiFetch } from "@/lib/api/request";
 import { getApiOrigin } from "@/lib/api/origin";
@@ -55,52 +56,55 @@ export function AiReviewSettings({ reviewability }: { reviewability: Array<{ pr:
   const [keyInput, setKeyInput] = useState("");
   const [keyStatus, setKeyStatus] = useState<AiKeyStatus | null>(null);
   const [busy, setBusy] = useState(false);
-  const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
 
   const base = repoApiBase(repoFullName);
   const hasRepos = repoOptions.length > 0;
 
-  const load = useCallback(
-    async (opts?: { cancelled?: () => boolean }) => {
-      const isCancelled = opts?.cancelled ?? (() => false);
-      const apiBase = repoApiBase(repoFullName);
-      if (!apiBase) return;
-      setMessage(null);
-      setLoading(true);
+  // react-query rather than a hand-rolled load effect (#9588): keying on the repo drops a response a newer
+  // selection has already superseded, which the `cancelled` callback this replaces did by hand. Options are
+  // pinned to the previous behaviour -- one attempt, no focus refetch, nothing cached across mounts.
+  const query = useQuery({
+    queryKey: ["ai-review-settings", base],
+    enabled: base !== null && base !== "",
+    retry: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    queryFn: async () => {
       const [settings, key] = await Promise.all([
-        apiFetch<RepoSettingsResponse>(`${apiBase}/settings`, {
+        apiFetch<RepoSettingsResponse>(`${base}/settings`, {
           label: "AI review settings",
           credentials: "include",
           silentStatus: true,
         }),
-        apiFetch<AiKeyStatus>(`${apiBase}/ai-key`, {
+        apiFetch<AiKeyStatus>(`${base}/ai-key`, {
           label: "AI key status",
           credentials: "include",
           silentStatus: true,
         }),
       ]);
-      // Ignore responses after a newer repoFullName keyed a fresh load (#7784).
-      if (isCancelled()) return;
-      if (settings.ok) {
-        setMode(settings.data.aiReviewMode ?? "off");
-        setByok(settings.data.aiReviewByok ?? false);
-        setProvider(settings.data.aiReviewProvider ?? "anthropic");
-        setModel(settings.data.aiReviewModel ?? "");
-      }
-      setKeyStatus(key.ok ? key.data : null);
-      setLoading(false);
+      return { settings: settings.ok ? settings.data : null, key: key.ok ? key.data : null };
     },
-    [repoFullName],
-  );
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    void load({ cancelled: () => cancelled });
-    return () => {
-      cancelled = true;
-    };
-  }, [load]);
+  const loading = query.isFetching;
+  const load = () => void query.refetch();
+
+  // Seed the editable fields from whatever the last response carried. Adjusted during render (React's
+  // documented pattern) and gated on `dataUpdatedAt`, so a fresh response re-seeds but a user's own edits
+  // survive every re-render in between.
+  const [seededAt, setSeededAt] = useState<number | null>(null);
+  if (query.data && seededAt !== query.dataUpdatedAt) {
+    setSeededAt(query.dataUpdatedAt);
+    const settings = query.data.settings;
+    if (settings) {
+      setMode(settings.aiReviewMode ?? "off");
+      setByok(settings.aiReviewByok ?? false);
+      setProvider(settings.aiReviewProvider ?? "anthropic");
+      setModel(settings.aiReviewModel ?? "");
+    }
+    setKeyStatus(query.data.key);
+  }
 
   async function saveKey() {
     if (!base) return;

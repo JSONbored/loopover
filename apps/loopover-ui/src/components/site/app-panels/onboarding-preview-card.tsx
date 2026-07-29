@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { X } from "lucide-react";
 
 import { StateBoundary } from "@/components/site/state-views";
@@ -57,48 +57,43 @@ export function OnboardingPreviewCard({ reviewability }: { reviewability: Review
     LEGACY_DISMISS_KEY,
   );
   const target = reviewability[0] ?? null;
-  const [preview, setPreview] = useState<SettingsPreviewResponse | null>(null);
-  const [loading, setLoading] = useState(Boolean(target));
-  const [error, setError] = useState<string | null>(null);
+  // react-query rather than a hand-rolled load effect (#9588). The unparseable-target case is a DERIVED
+  // error rather than a fetch that never happens: it depends only on the target, so it needs no request and
+  // no state. Options are pinned to the previous behaviour -- one attempt, no focus refetch, no cache.
+  const form = target ? reviewabilityRowToForm(target) : null;
+  const repoParts = form ? splitRepoFullName(form.repoFullName) : null;
+  const unparseable = target !== undefined && target !== null && (!form || !repoParts);
 
-  const load = useCallback(async () => {
-    if (!target) {
-      setPreview(null);
-      setError(null);
-      return;
-    }
-    const form = reviewabilityRowToForm(target);
-    const repoParts = form ? splitRepoFullName(form.repoFullName) : null;
-    if (!form || !repoParts) {
-      setPreview(null);
-      setError(`Couldn't parse a repository from ${target.pr}.`);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    const result = await apiFetch<SettingsPreviewResponse>(
-      `${getApiOrigin().replace(/\/$/, "")}/v1/repos/${encodeURIComponent(repoParts.owner)}/${encodeURIComponent(repoParts.repo)}/settings-preview`,
-      {
-        method: "POST",
-        label: "Onboarding preview",
-        credentials: "include",
-        headers: { Accept: "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify(buildSettingsPreviewRequest(form)),
-      },
-    );
-    setLoading(false);
-    if (result.ok) {
-      setPreview(result.data);
-    } else {
-      setPreview(null);
-      setError(result.message);
-    }
-  }, [target]);
+  const query = useQuery({
+    queryKey: ["onboarding-preview", repoParts?.owner ?? null, repoParts?.repo ?? null],
+    enabled: hydrated && !state.dismissed && form !== null && repoParts !== null,
+    retry: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    queryFn: async () => {
+      const result = await apiFetch<SettingsPreviewResponse>(
+        `${getApiOrigin().replace(/\/$/, "")}/v1/repos/${encodeURIComponent(repoParts!.owner)}/${encodeURIComponent(repoParts!.repo)}/settings-preview`,
+        {
+          method: "POST",
+          label: "Onboarding preview",
+          credentials: "include",
+          headers: { Accept: "application/json", "Content-Type": "application/json" },
+          body: JSON.stringify(buildSettingsPreviewRequest(form!)),
+        },
+      );
+      if (!result.ok) throw new Error(result.message);
+      return result.data;
+    },
+  });
 
-  useEffect(() => {
-    if (!hydrated || state.dismissed) return;
-    void load();
-  }, [load, hydrated, state.dismissed]);
+  const preview = query.data ?? null;
+  const loading = query.isFetching;
+  const error = unparseable
+    ? `Couldn't parse a repository from ${target?.pr}.`
+    : query.isError
+      ? query.error.message
+      : null;
+  const load = () => void query.refetch();
 
   if (!hydrated || state.dismissed) return null;
 

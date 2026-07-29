@@ -35,7 +35,12 @@ export function CommandsPanel() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [repoFullName, setRepoFullName] = useState("");
   const [pullNumber, setPullNumber] = useState("");
-  const [preview, setPreview] = useState<CommandPreviewResponse | null>(null);
+  // The preview is keyed by the exact inputs it was fetched for, so clearing it when they change is a
+  // DERIVATION rather than a synchronous write at the top of the effect (#9588). This also drops a stale
+  // in-flight response on the floor for free: it lands under the old key and can never be shown.
+  const [fetched, setFetched] = useState<{ key: string; preview: CommandPreviewResponse } | null>(
+    null,
+  );
   const selected =
     commands.status === "ready"
       ? (commands.data.commands.find((command) => command.id === selectedId) ??
@@ -47,8 +52,15 @@ export function CommandsPanel() {
     Number.isInteger(parsedPullNumber) &&
     parsedPullNumber > 0;
 
+  const previewKey = JSON.stringify([
+    selected?.id ?? null,
+    repoFullName.trim(),
+    parsedPullNumber,
+    validContext,
+  ]);
+  const preview = fetched !== null && fetched.key === previewKey ? fetched.preview : null;
+
   useEffect(() => {
-    setPreview(null);
     if (!selected || !validContext) return;
     let active = true;
     const origin = getApiOrigin().replace(/\/$/, "");
@@ -64,12 +76,12 @@ export function CommandsPanel() {
       }),
       silentStatus: true,
     }).then((result) => {
-      if (active && result.ok) setPreview(result.data);
+      if (active && result.ok) setFetched({ key: previewKey, preview: result.data });
     });
     return () => {
       active = false;
     };
-  }, [parsedPullNumber, repoFullName, selected, validContext]);
+  }, [parsedPullNumber, previewKey, repoFullName, selected, validContext]);
 
   return (
     <StateBoundary

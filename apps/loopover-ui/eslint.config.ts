@@ -21,15 +21,16 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      // #8608: eslint-plugin-react-hooks 5 -> 7 (forced by the eslint 10 security chain, GHSA-mh99-v99m-4gvg)
-      // introduced these React-Compiler-era rules, which flag 24 pre-existing files. Fixing setState-in-effect
-      // patterns is real UI refactoring with behaviour risk -- not something to smuggle into a dependency
-      // bump -- so exactly the NEW rules are demoted to warn, keeping every rule that existed in v5 at error.
-      // Follow-up (promote back to error file-by-file): see the issue this comment cites.
+      // #8608 demoted the four React-Compiler-era rules that arrived with eslint-plugin-react-hooks 5 -> 7
+      // because they flagged 24 pre-existing files. #9588 fixed them: purity, refs and static-components are
+      // now clean and back at error, where the recommended preset puts them.
+      //
+      // set-state-in-effect stays at warn for ONE remaining site: docs-toc reads its headings out of the
+      // rendered DOM. Sourcing them from the compiled MDX `toc` instead is the real fix, but the component
+      // lives in the docs LAYOUT while that data lives in the child route -- and it also serves docs pages
+      // that are not MDX at all and so have no compiled toc. That is its own change, tracked in #9872;
+      // every other call site in this app is already clean.
       "react-hooks/set-state-in-effect": "warn",
-      "react-hooks/purity": "warn",
-      "react-hooks/refs": "warn",
-      "react-hooks/static-components": "warn",
       "no-restricted-imports": [
         "error",
         {

@@ -42,12 +42,10 @@ export const Route = createFileRoute("/docs/$slug")({
 
 function DocsSlugPage() {
   const { path, title, description, eyebrow } = Route.useLoaderData();
-  const Content = docsClientLoader.getComponent(path);
+  const content = docsClientLoader.useContent(path);
   return (
     <DocsPage eyebrow={eyebrow} title={title} description={description}>
-      <Suspense fallback={<LoadingState />}>
-        <Content />
-      </Suspense>
+      <Suspense fallback={<LoadingState />}>{content}</Suspense>
     </DocsPage>
   );
 }

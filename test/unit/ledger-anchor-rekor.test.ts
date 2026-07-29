@@ -24,7 +24,18 @@ async function realSignedAnchor(): Promise<{ signed: SignedLedgerAnchor; publicK
   return { signed, publicKeySpki };
 }
 
-const REKOR_RESPONSE = { "24296fb24b8ad77a": { logIndex: 42, uuid: "24296fb24b8ad77a", logId: { keyId: "c2iga0d1" } } };
+// The real Rekor v2 TransparencyLogEntry shape: the entry DIRECTLY (no uuid-keyed wrapper), `logIndex` as a
+// proto3-int64 STRING, no `uuid` field, and the checkpoint nested under inclusionProof. The old fixture here
+// was the v1 shape, which is why the parser's v1 assumptions survived review -- the test agreed with the bug.
+const REKOR_RESPONSE = {
+  logIndex: "42",
+  logId: { keyId: "c2iga0d1" },
+  kindVersion: { kind: "hashedrekord", version: "0.0.2" },
+  integratedTime: "0",
+  inclusionPromise: null,
+  inclusionProof: { logIndex: "42", rootHash: "cm9vdA==", treeSize: "43", hashes: [], checkpoint: { envelope: "log2025-1.rekor.sigstore.dev\n43\ncm9vdA==\n" } },
+  canonicalizedBody: "Ym9keQ==",
+};
 
 describe("buildHashedRekordRequest (#9272)", () => {
   it("builds the exact hashedRekordRequestV002 shape Rekor v2 expects", async () => {
@@ -46,19 +57,24 @@ describe("buildHashedRekordRequest (#9272)", () => {
 });
 
 describe("parseRekorResponse", () => {
-  it("parses a real-shaped Rekor v2 response, reading the entry under its dynamic uuid key", () => {
-    expect(parseRekorResponse(REKOR_RESPONSE)).toEqual({ logIndex: 42, uuid: "24296fb24b8ad77a", logId: { keyId: "c2iga0d1" } });
+  // #9851: this block previously asserted the v1 shape -- its own title said "reading the entry under its
+  // dynamic uuid key", which was the mistaken premise, not a description of Rekor v2. Corrected rather than
+  // deleted, so the change of contract is visible in history.
+  it("parses a real-shaped Rekor v2 TransparencyLogEntry", () => {
+    expect(parseRekorResponse(REKOR_RESPONSE)).toEqual({
+      logIndex: 42,
+      logId: { keyId: "c2iga0d1" },
+      checkpoint: "log2025-1.rekor.sigstore.dev\n43\ncm9vdA==\n",
+    });
   });
 
   it("returns null (never throws) for any response shape it does not recognize", () => {
     expect(parseRekorResponse(null)).toBeNull();
     expect(parseRekorResponse("a string")).toBeNull();
     expect(parseRekorResponse({})).toBeNull();
-    expect(parseRekorResponse({ x: {} })).toBeNull();
-    expect(parseRekorResponse({ x: { logIndex: "not-a-number", uuid: "u", logId: { keyId: "k" } } })).toBeNull();
-    expect(parseRekorResponse({ x: { logIndex: 1, uuid: "u", logId: null } })).toBeNull();
-    expect(parseRekorResponse({ x: { logIndex: 1, uuid: "u" } })).toBeNull();
-    expect(parseRekorResponse({ x: { logIndex: 1, uuid: "u", logId: { keyId: 7 } } })).toBeNull();
+    // The old v1 wrapper is itself unrecognized now -- a log still speaking v1 must fail loudly rather than
+    // half-parse into a backendRef that points nowhere.
+    expect(parseRekorResponse({ "24296fb24b8ad77a": { logIndex: 42, uuid: "24296fb24b8ad77a", logId: { keyId: "c2iga0d1" } } })).toBeNull();
   });
 });
 
@@ -76,7 +92,7 @@ describe("submitToRekor (#9272)", () => {
       seq: 1,
       backend: "rekor",
       status: "ok",
-      backendRef: { shardBaseUrl: "https://log2026-1.rekor.sigstore.dev", logIndex: 42, logIdKeyId: "c2iga0d1", uuid: "24296fb24b8ad77a" },
+      backendRef: { shardBaseUrl: "https://log2026-1.rekor.sigstore.dev", logIndex: 42, logIdKeyId: "c2iga0d1", checkpoint: expect.stringContaining("log2025-1.rekor.sigstore.dev") },
     });
     expect(fetchMock).toHaveBeenCalledWith(
       "https://log2026-1.rekor.sigstore.dev/api/v2/log/entries",
@@ -161,5 +177,63 @@ describe("submitToRekor (#9272)", () => {
     expect(anchors[0]).toMatchObject({ status: "failed" });
     expect(anchors[0]!.error).toContain("network down");
     expect(anchors[0]!.error).toContain("/api/v2/log/entries");
+  });
+});
+
+// #9851: the request side was v2 from the start (hashedRekordRequestV002, POST /api/v2/log/entries) but the
+// response parser expected v1 -- a uuid-keyed wrapper, a numeric logIndex, and a uuid field. Rekor v2 sends
+// none of those, so this backend could never record a successful anchor even when the log accepted the
+// submission. Found on a live instance: the failure moved from "fetch failed" to "did not match the expected
+// TransparencyLogEntry shape" once the shard URL was corrected.
+describe("parseRekorResponse against the real v2 shape (#9851)", () => {
+  it("REGRESSION: parses the entry DIRECTLY, not from a uuid-keyed wrapper", () => {
+    const parsed = parseRekorResponse(REKOR_RESPONSE);
+    expect(parsed).toMatchObject({ logIndex: 42, logId: { keyId: "c2iga0d1" } });
+  });
+
+  it("REGRESSION: accepts logIndex as a proto3-int64 STRING, which is what v2 actually sends", () => {
+    expect(parseRekorResponse({ ...REKOR_RESPONSE, logIndex: "907" })?.logIndex).toBe(907);
+  });
+
+  it("still accepts a numeric logIndex, so a future revision or a hand-built mock is not rejected", () => {
+    expect(parseRekorResponse({ ...REKOR_RESPONSE, logIndex: 907 })?.logIndex).toBe(907);
+  });
+
+  it("rejects a logIndex that is not a number at all, rather than publishing NaN in a backendRef", () => {
+    for (const bad of ["", "  ", "not-a-number", null, undefined, {}, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(parseRekorResponse({ ...REKOR_RESPONSE, logIndex: bad })).toBeNull();
+    }
+  });
+
+  it("rejects a missing or malformed logId, which is what identifies the log that signed the entry", () => {
+    for (const bad of [undefined, null, "c2iga0d1", {}, { keyId: "" }, { keyId: 7 }]) {
+      expect(parseRekorResponse({ ...REKOR_RESPONSE, logId: bad })).toBeNull();
+    }
+  });
+
+  it("extracts the checkpoint from inclusionProof -- the v2 locator that replaced uuid", () => {
+    expect(parseRekorResponse(REKOR_RESPONSE)?.checkpoint).toContain("log2025-1.rekor.sigstore.dev");
+  });
+
+  it("accepts a bare-string checkpoint as well as the { envelope } encoding", () => {
+    const bare = { ...REKOR_RESPONSE, inclusionProof: { checkpoint: "a-raw-checkpoint" } };
+    expect(parseRekorResponse(bare)?.checkpoint).toBe("a-raw-checkpoint");
+  });
+
+  it("records the entry with a NULL checkpoint rather than failing when the proof omits one", () => {
+    // The entry is still in the log; only the offline re-check is unavailable. Dropping the whole anchor
+    // because one optional field is absent would lose a real, successful submission.
+    for (const proof of [undefined, null, {}, { checkpoint: 42 }, { checkpoint: {} }]) {
+      const parsed = parseRekorResponse({ ...REKOR_RESPONSE, inclusionProof: proof });
+      expect(parsed).toMatchObject({ logIndex: 42 });
+      expect(parsed?.checkpoint).toBeNull();
+    }
+  });
+
+  it("rejects a non-object body outright", () => {
+    for (const bad of [null, undefined, "string", 42, []]) {
+      // An array has no logIndex, so it fails the same way an unexpected object would.
+      expect(parseRekorResponse(bad)).toBeNull();
+    }
   });
 });

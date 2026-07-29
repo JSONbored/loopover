@@ -83,6 +83,28 @@ jobs:
             exit 0
           fi
           git fetch --depth=1 origin "$BASE_SHA"
+          # `git diff --check` reports a carriage return at end-of-line as "trailing whitespace":
+          # git's default core.whitespace is `blank-at-eol` with `cr-at-eol` OFF, so a CR really is
+          # trailing whitespace to it. The result names lines whose visible content is spotless, and
+          # nothing in the log says "CRLF" -- undiagnosable without cloning the branch and hexdumping
+          # the file (#9798). Name the real cause first, then fall through to the generic check for
+          # everything else. .gitattributes (`* text=auto eol=lf`) normalizes CRLF away on `git add`, so
+          # this can no longer be reached by an ordinary commit -- but checkin filters don't run on blobs
+          # written directly (the GitHub web editor, the Contents API) or on a merge of a branch cut
+          # before .gitattributes landed, and those still carry CRLF straight into the diff. Scoped to
+          # ADDED lines so it fires on exactly what `git diff --check` would have flagged anyway -- this
+          # relabels the failure, it does not fail anything new.
+          crlf=$(git diff "$BASE_SHA" HEAD | awk '
+            /^\+\+\+ / { f = $2; sub(/^b\//, "", f); next }
+            /^\+/      { if ($0 ~ /\r$/) n[f]++ }
+            END        { for (k in n) printf "  %s (%d added line(s) ending in CRLF)\n", k, n[k] }
+          ')
+          if [ -n "$crlf" ]; then
+            echo "::error::CRLF line endings in added lines -- this repo is LF-only (see .gitattributes)"
+            printf '%s\n' "$crlf"
+            echo "Fix: git add --renormalize <file> && git commit --amend"
+            exit 1
+          fi
           git diff --check "$BASE_SHA" HEAD
       - name: Filter changed paths
         id: filter

@@ -23,7 +23,7 @@ import {
   type Boundary,
   type Status,
 } from "@/components/site/control-primitives";
-import { useApiResource } from "@/lib/api/use-api-resource";
+import { API_RESOURCE_DISABLED, useApiResource } from "@/lib/api/use-api-resource";
 import { useSession } from "@/lib/api/session";
 import { EmptyState, StateActionButton, StateBoundary } from "@/components/site/state-views";
 import { RefreshMeta } from "@/components/site/refresh-meta";
@@ -183,7 +183,7 @@ export function RunsFilterBar({
   );
 }
 
-function AgentRuns() {
+export function AgentRuns() {
   const search = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const { session } = useSession();
@@ -278,18 +278,23 @@ function AgentRuns() {
   }, [runs, status, kind, q]);
 
   const grouped = useMemo(() => groupByDate(filtered), [filtered]);
-  const sourceStatus: Status =
-    canUseLiveRuns && liveRuns.status === "ready"
+  // !canUseLiveRuns ("no session") and canUseLiveRuns && status === "error" ("live API errored") are
+  // distinct failure modes with distinct causes (#9672) -- collapsing them into one "No session" label
+  // told a signed-in operator whose /v1/agent/runs request 500s that they weren't signed in at all.
+  const sourceStatus: Status = !canUseLiveRuns
+    ? "warn"
+    : liveRuns.status === "ready"
       ? "ready"
-      : canUseLiveRuns && liveRuns.status === "loading"
+      : liveRuns.status === "loading"
         ? "info"
-        : "warn";
-  const sourceLabel =
-    canUseLiveRuns && liveRuns.status === "ready"
+        : "blocked";
+  const sourceLabel = !canUseLiveRuns
+    ? "No session"
+    : liveRuns.status === "ready"
       ? "Live API"
-      : canUseLiveRuns && liveRuns.status === "loading"
+      : liveRuns.status === "loading"
         ? "Loading live API"
-        : "No session";
+        : "Live API error";
 
   // Keyboard navigation: ←/→ to cycle through filtered runs while drawer is open.
   useEffect(() => {
@@ -335,7 +340,9 @@ function AgentRuns() {
 
       <StateBoundary
         isLoading={canUseLiveRuns && liveRuns.status === "loading"}
-        isError={canUseLiveRuns && liveRuns.status === "error" && liveRuns.error !== "disabled"}
+        isError={
+          canUseLiveRuns && liveRuns.status === "error" && liveRuns.error !== API_RESOURCE_DISABLED
+        }
         errorKind={liveRuns.status === "error" ? liveRuns.errorKind : undefined}
         errorLabel="Agent runs"
         errorDescription={liveRuns.status === "error" ? liveRuns.error : undefined}

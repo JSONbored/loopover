@@ -21,12 +21,17 @@ type UseApiResourceOptions = {
   enabled?: boolean;
 };
 
-/** The synthetic sentinel a disabled resource reports. Frozen at module scope so every disabled resource
- *  returns the same object rather than a fresh one per render. */
+/** The synthetic sentinel a disabled resource reports, distinguishing "switched off" from a real
+ *  `apiFetch` failure that happens to share the `status: "error"` shape. Exported so call sites that
+ *  need to tell the two apart compare against this instead of a bare string literal (#9672). */
+export const API_RESOURCE_DISABLED = "disabled";
+
+/** Frozen at module scope so every disabled resource returns the same object rather than a fresh one
+ *  per render. */
 const DISABLED_STATE: ResourceState<never> = Object.freeze({
   status: "error",
   data: null,
-  error: "disabled",
+  error: API_RESOURCE_DISABLED,
   loadedAt: null,
 });
 

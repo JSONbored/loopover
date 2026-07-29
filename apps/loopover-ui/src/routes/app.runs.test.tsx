@@ -11,7 +11,30 @@ const { toastBase, success, error } = vi.hoisted(() => {
 });
 vi.mock("sonner", () => ({ toast: toastBase }));
 
+// Stubs for the routed AgentRuns component: a fake Route.useSearch() + a no-op useNavigate (mirroring
+// app.index.test.tsx's pattern) so it can render without a real router, and the data/session hooks so
+// it renders without touching the network.
+const { useSearchMock, useApiResourceMock, useSessionMock } = vi.hoisted(() => ({
+  useSearchMock: vi.fn(() => ({}) as Record<string, unknown>),
+  useApiResourceMock: vi.fn(),
+  useSessionMock: vi.fn(),
+}));
+vi.mock("@tanstack/react-router", () => ({
+  createFileRoute: () => (config: Record<string, unknown>) => ({
+    ...config,
+    useSearch: () => useSearchMock(),
+    fullPath: "/app/runs",
+  }),
+  useNavigate: () => () => Promise.resolve(),
+}));
+vi.mock("@/lib/api/use-api-resource", () => ({
+  useApiResource: (...args: unknown[]) => useApiResourceMock(...args),
+  API_RESOURCE_DISABLED: "disabled",
+}));
+vi.mock("@/lib/api/session", () => ({ useSession: () => useSessionMock() }));
+
 import {
+  AgentRuns,
   DrawerSurface,
   mapAgentRunBundle,
   mapAgentRunKind,
@@ -422,5 +445,46 @@ describe("SavedViews save/apply/remove flow (#8701)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(success).not.toHaveBeenCalled();
     expect(window.localStorage.getItem("loopover.runs.views")).toBeNull();
+  });
+});
+
+// #9672: sourceLabel's final `else` branch used to read "No session" whenever `canUseLiveRuns` was
+// false OR the live API call errored — so a signed-in operator whose /v1/agent/runs request failed saw
+// a pill claiming they weren't signed in at all.
+describe("AgentRuns source pill: no session vs live API error (#9672)", () => {
+  beforeEach(() => {
+    useSearchMock.mockReturnValue({});
+  });
+
+  it("labels a signed-in operator's live API failure distinctly from having no session", () => {
+    useSessionMock.mockReturnValue({ session: { login: "octocat", roles: ["miner"] } });
+    useApiResourceMock.mockReturnValue({
+      status: "error",
+      data: null,
+      error: "500 Internal Server Error",
+      errorKind: "http",
+      loadedAt: null,
+      reload: () => {},
+    });
+
+    render(<AgentRuns />);
+
+    expect(screen.queryByText("No session")).toBeNull();
+    expect(screen.getByText("Live API error")).toBeTruthy();
+  });
+
+  it('still reads "No session" when nobody is signed in', () => {
+    useSessionMock.mockReturnValue({ session: null });
+    useApiResourceMock.mockReturnValue({
+      status: "error",
+      data: null,
+      error: "disabled",
+      loadedAt: null,
+      reload: () => {},
+    });
+
+    render(<AgentRuns />);
+
+    expect(screen.getByText("No session")).toBeTruthy();
   });
 });

@@ -418,14 +418,14 @@ async function checkOneSourceUrl(
 ): Promise<SourceEvidenceItem> {
   const validation = validateFetchableSourceUrl(item.url);
   if (!validation.ok) {
-    const invalidProtocol = validation.outcome === "invalid_url";
+    // #9669: BOTH validator failure outcomes are a hard failure on the first hop, identical to the
+    // redirect-loop path -- a `source_host_not_checked` URL (plain http:// or a private/loopback host) used to
+    // fall through as "passed" here, so an unfetchable canonical source silently reported the whole item OK.
+    // A distribution-role http:// source is still made non-blocking, but only via the intended
+    // downgradeInconclusiveSourceWarnings mechanism, never by mislabelling it "passed" at this hop.
     return withSourceDefaults(
       item,
-      {
-        status: invalidProtocol ? "hard_failure" : "passed",
-        outcome: validation.outcome,
-        error: validation.error,
-      },
+      { status: "hard_failure", outcome: validation.outcome, error: validation.error },
       spec,
     );
   }

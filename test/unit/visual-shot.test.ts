@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { captureInteractionFrames, captureScrollFrames, captureShot, handleShot } from "../../src/review/visual/shot";
+import { captureInteractionFrames, captureScrollFrames, captureShot, handleShot, MAX_SCREENSHOT_HEIGHT, MAX_SCREENSHOT_PIXELS, MOBILE_VIEWPORT, DESKTOP_VIEWPORT } from "../../src/review/visual/shot";
 import { counterValue, resetMetrics } from "../../src/selfhost/metrics";
 
 const mocks = vi.hoisted(() => ({
@@ -1112,4 +1112,33 @@ describe("visual capture result metric (#9487)", () => {
     expect(counterValue("loopover_visual_capture_total", { result: "error" })).toBe(1);
   });
 
+});
+
+describe("a narrow-tall mobile page is judged by cost, not height alone", () => {
+  // Observed on the ORB: 64 mobile captures discarded in one hour, every one at width 390. An ordinary long
+  // docs page is ~10850px tall at that width -- 4.2M pixels against a 14.4M budget. The old 10000 height cap
+  // was derived for the 1440-wide DESKTOP viewport (MAX_SCREENSHOT_PIXELS is literally 1440 × 10000), so
+  // reusing it for mobile rejected captures costing a third as much, weakening the visual gate on exactly
+  // the viewport most likely to reveal a responsive regression.
+  it("REGRESSION: the real observed mobile page (390 × 10847) is now within both caps", () => {
+    const width = MOBILE_VIEWPORT.width;
+    const height = 10847;
+    expect(width).toBe(390);
+    expect(height).toBeLessThanOrEqual(MAX_SCREENSHOT_HEIGHT);
+    expect(width * height).toBeLessThanOrEqual(MAX_SCREENSHOT_PIXELS);
+  });
+
+  it("INVARIANT: desktop is unaffected — the pixel cap still rejects a wide page of the same height", () => {
+    // The cost ceiling must not have been widened by raising the height bound.
+    const area = DESKTOP_VIEWPORT.width * 10847;
+    expect(area).toBeGreaterThan(MAX_SCREENSHOT_PIXELS);
+  });
+
+  it("INVARIANT: the height cap is a sanity bound the renderer can actually satisfy", () => {
+    // 20000 is verified against this deployment's renderer (browserless v2 / Chrome 149): a 390 × 20000
+    // full-page capture returns 200 in ~157KB. If this is ever raised past what the renderer can produce,
+    // captures fail at request time instead of being cheaply rejected here.
+    expect(MAX_SCREENSHOT_HEIGHT).toBe(20000);
+    expect(MOBILE_VIEWPORT.width * MAX_SCREENSHOT_HEIGHT).toBeLessThanOrEqual(MAX_SCREENSHOT_PIXELS);
+  });
 });

@@ -68,8 +68,23 @@ type ScreenshotPage = {
 export const DESKTOP_VIEWPORT: Viewport = { width: 1440, height: 900 };
 export const MOBILE_VIEWPORT: Viewport = { width: 390, height: 844 }; // iPhone-class portrait
 const VIEWPORT = DESKTOP_VIEWPORT;
-export const MAX_SCREENSHOT_HEIGHT = 10000;
-export const MAX_SCREENSHOT_PIXELS = 14_400_000; // 1440 × 10000, matching the full-page cap.
+// A sanity bound against a pathological infinite-scroll page, NOT a cost proxy -- cost is bounded by
+// MAX_SCREENSHOT_PIXELS below, and separately by MAX_SCREENSHOT_BYTES.
+//
+// It used to be 10000, which was derived for the 1440-wide DESKTOP viewport (see the pixel cap's own
+// comment: 1440 × 10000). Applied unchanged to the 390-wide MOBILE viewport it rejected captures costing a
+// third as much: an ordinary long docs page renders ~10850px tall at 390 wide, which is 4.2M pixels against
+// a 14.4M budget -- comfortably affordable, silently dropped. On the ORB that was 64 mobile screenshots
+// discarded in a single hour, weakening the visual gate precisely on the viewport most likely to reveal a
+// responsive regression.
+//
+// 20000 is empirically verified against this deployment's own renderer (browserless v2 / Chrome 149):
+// a 390 × 20000 full-page capture returns 200 in ~157KB. The renderer was never the binding constraint.
+// Desktop is unaffected -- 1440 × 20000 is 28.8M pixels and still fails the pixel cap.
+export const MAX_SCREENSHOT_HEIGHT = 20000;
+// The real cost ceiling: width × height, so a narrow-tall page is judged by what it actually costs to
+// render rather than by height alone.
+export const MAX_SCREENSHOT_PIXELS = 14_400_000; // 1440 × 10000 — one full desktop-width page.
 export const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
 const SCREENSHOT_TIMEOUT_MS = 10000;
 const SCREENSHOT_HEIGHT_PROBE_TIMEOUT_MS = 2_000;

@@ -479,6 +479,56 @@ describe("fetchCandidateIssues (#2307)", () => {
     expect(result.rateLimitRemaining).toBe(42);
   });
 
+  it("#9678: an ABSENT x-ratelimit-remaining header records no budget (null), not 0", async () => {
+    // A forge/proxy that omits the header: headers.get() is null and Number(null) is 0 (finite) -- before
+    // #9678 this pinned rateLimitRemaining to 0 and serialized the whole fan-out against a budget never reported.
+    const bareContent = () =>
+      Response.json({ type: "file", encoding: "base64", content: Buffer.from("Contributions welcome.", "utf8").toString("base64") });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/contents/AI-USAGE.md")) return Response.json({}, { status: 404 });
+      if (url.endsWith("/contents/CONTRIBUTING.md")) return bareContent();
+      if (url.includes("/issues?")) return Response.json([issue(3)]);
+      return Response.json({}, { status: 404 });
+    });
+
+    const result = await fetchCandidateIssuesWithSummary([{ owner: "acme", repo: "widgets" }], "token", { apiBaseUrl: API });
+
+    expect(result.rateLimitRemaining).toBeNull();
+  });
+
+  it("#9678: a blank/whitespace-only x-ratelimit-remaining header is skipped (stays null), not recorded as 0", async () => {
+    const headers = { "x-ratelimit-remaining": "   " };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/contents/AI-USAGE.md")) return Response.json({}, { status: 404, headers });
+      if (url.endsWith("/contents/CONTRIBUTING.md"))
+        return Response.json({ type: "file", encoding: "base64", content: Buffer.from("Contributions welcome.", "utf8").toString("base64") }, { headers });
+      if (url.includes("/issues?")) return Response.json([issue(3)], { headers });
+      return Response.json({}, { status: 404, headers });
+    });
+
+    const result = await fetchCandidateIssuesWithSummary([{ owner: "acme", repo: "widgets" }], "token", { apiBaseUrl: API });
+
+    expect(result.rateLimitRemaining).toBeNull();
+  });
+
+  it("#9678: a genuinely-present '0' x-ratelimit-remaining is still recorded (real exhaustion is not lost)", async () => {
+    const headers = { "x-ratelimit-remaining": "0" };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/contents/AI-USAGE.md")) return Response.json({}, { status: 404, headers });
+      if (url.endsWith("/contents/CONTRIBUTING.md"))
+        return Response.json({ type: "file", encoding: "base64", content: Buffer.from("Contributions welcome.", "utf8").toString("base64") }, { headers });
+      if (url.includes("/issues?")) return Response.json([issue(3)], { headers });
+      return Response.json({}, { status: 404, headers });
+    });
+
+    const result = await fetchCandidateIssuesWithSummary([{ owner: "acme", repo: "widgets" }], "token", { apiBaseUrl: API });
+
+    expect(result.rateLimitRemaining).toBe(0);
+  });
+
   it("treats a malformed (array, not object) policy-doc payload as absent content, and passes through non-base64-encoded content unchanged", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = String(input);

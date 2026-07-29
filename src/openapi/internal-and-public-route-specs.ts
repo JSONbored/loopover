@@ -12,6 +12,7 @@
 import type { OpenAPIRegistry } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
 import { registerRouteSpec, type RouteAuth, type RouteMethod } from "./define-route";
+import { BittensorAnchorReportRequestSchema } from "../review/ledger-anchor-bittensor";
 
 type SpecEntry = {
   method: RouteMethod;
@@ -20,8 +21,11 @@ type SpecEntry = {
   tags: [string, ...string[]];
   summary: string;
   auth: RouteAuth;
-  /** Narrower path parameters than the derived string ones; only for a closed-set segment (#9707). */
-  request?: { params?: z.ZodObject };
+  /** Narrower path parameters than the derived string ones; only for a closed-set segment (#9707), plus the
+   *  request body for an operation that publishes one (#9770). Both are already honoured by
+   *  registerRouteSpec -- `body` was reachable through RouteSpecOptions but not through THIS local type, so
+   *  an entry here could not describe its own body even though the seam knew how to render it. */
+  request?: { params?: z.ZodObject; body?: z.ZodTypeAny };
   /** `schema` is optional: most entries here describe a status and nothing more, but an operation that
    *  already published a response body must not lose it on the way through the seam (#9707). */
   responses: Record<number, { description: string; schema?: z.ZodTypeAny }>;
@@ -492,6 +496,11 @@ const CREDENTIAL_GATED: SpecEntry[] = [
     // `orb`, not `token`: the gate is LOOPOVER_LEDGER_ANCHOR_REPORT_TOKEN, an ingest bearer that is not a
     // LoopOver API token -- the same posture the `orb` level already exists for.
     auth: "orb",
+    // #9770: this endpoint exists to be called by a submitter this repo deliberately does not ship, so the
+    // OpenAPI document is its only reference -- and it published responses with no body at all, leaving the
+    // whole shape discoverable only by reading the TypeScript that rejects it. The schema lives beside
+    // parseBittensorAnchorReport, which remains the runtime authority; a cross-check test holds them together.
+    request: { body: BittensorAnchorReportRequestSchema },
     responses: {
       200: { description: "{ recorded: true, status: 'ok' | 'failed' }" },
       400: { description: "Unparseable body, or a report whose named field failed validation" },

@@ -676,6 +676,32 @@ describe("checkContentLaneDeliverable (generic, spec-driven — #content-lane-de
     expect(checkContentLaneDeliverable(entryOnlySpec, issueText, ["tests/foo.test.mjs"]).verdict).toBe("missing");
   });
 
+  it("REGRESSION (#9667): is 'missing' for a MIXED-CASE issue-body path, preserving the original case in mentionedPath", () => {
+    // The spec patterns are compiled against a canonicalized (lowercased) path, so before the fix a mixed-case
+    // issue path produced no mentionedPath and the gate silently returned not-applicable.
+    const issueText = "Add the missing surfaces to Registry/Subnets/Foo.json before merging.";
+    expect(checkContentLaneDeliverable(spec, issueText, ["tests/foo-verify.test.mjs"])).toEqual({
+      verdict: "missing",
+      mentionedPath: "Registry/Subnets/Foo.json", // original case, as the contributor/maintainer see it
+    });
+  });
+
+  it("REGRESSION (#9667): is 'delivered' for that mixed-case issue body when the PR changes the real lowercase file", () => {
+    const issueText = "Add the missing surfaces to Registry/Subnets/Foo.json before merging.";
+    expect(checkContentLaneDeliverable(spec, issueText, ["registry/subnets/foo.json"])).toEqual({ verdict: "delivered" });
+  });
+
+  it("#9667: all-lowercase issue-path behaviour is unchanged (delivered when the file is touched, missing otherwise)", () => {
+    const issueText = "Add registry/subnets/foo.json.";
+    expect(checkContentLaneDeliverable(spec, issueText, ["registry/subnets/foo.json"])).toEqual({ verdict: "delivered" });
+    expect(checkContentLaneDeliverable(spec, issueText, ["tests/foo.test.mjs"])).toEqual({ verdict: "missing", mentionedPath: "registry/subnets/foo.json" });
+  });
+
+  it("#9667: an issue path matching NO spec pattern still returns not-applicable (the fix does not over-broaden)", () => {
+    // A mixed-case path that is not a registry entry/provider file must not now spuriously match.
+    expect(checkContentLaneDeliverable(spec, "See Docs/README.md for details.", ["docs/readme.md"])).toEqual({ verdict: "not-applicable" });
+  });
+
   // #content-lane-deliverable follow-up (metagraphed #7060-class gap): the literal-path scan alone is BLIND
   // to metagraphed's own ~120 "MCP execute: verify + wire SN*" issues, whose bodies write the registry path
   // with a generic `<slug>` documentation placeholder rather than the real resolved filename — confirmed

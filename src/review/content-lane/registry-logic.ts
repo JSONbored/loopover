@@ -930,7 +930,12 @@ export function checkContentLaneDeliverable(
   issueTitle?: string,
 ): ContentLaneDeliverableCheck {
   const matchesSpec = (candidate: string): boolean => spec.entryFilePattern.test(candidate) || (spec.providerFilePattern?.test(candidate) ?? false);
-  const mentionedPath = extractPathTokens(issueText).find(matchesSpec);
+  // #9667: entryFilePattern/providerFilePattern are compiled by globToRegExp against a CANONICALIZED path (no `i`
+  // flag), so they only match lowercase. Canonicalize each issue-body token before testing it, exactly as the
+  // changedFiles side already does below — otherwise an issue naming `Registry/Subnets/Foo.json` produces no
+  // mentionedPath and the deliverable gate silently doesn't run. `.find` still returns the ORIGINAL token, so the
+  // "missing" verdict's mentionedPath stays what the contributor/maintainer see in the issue body.
+  const mentionedPath = extractPathTokens(issueText).find((token) => matchesSpec(canonicalize(token)));
   const titleImplies = !mentionedPath && Boolean(issueTitle && spec.issueTitleImpliesEntryPattern?.test(issueTitle));
   if (!mentionedPath && !titleImplies) return { verdict: "not-applicable" };
   const delivered = changedFiles.some((file) => matchesSpec(canonicalize(file)));

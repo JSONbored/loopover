@@ -700,4 +700,33 @@ describe("listRecentSignalSnapshotsForTargets (#2202 — bulk recent-per-target 
     expect(result.get("owner/b")?.map((row) => row.id)).toEqual(["qh-b"]);
     expect(result.has("owner/c")).toBe(false);
   });
+
+  it("applies sinceIso inside the windowed subquery so only in-window rows are ranked and returned (#9699)", async () => {
+    const env = createTestEnv();
+    for (const [id, generatedAt] of [
+      ["old-1", "2026-01-01T00:00:00.000Z"], // before the boundary
+      ["old-2", "2026-01-15T00:00:00.000Z"], // before the boundary
+      ["new-1", "2026-03-01T00:00:00.000Z"], // in window
+      ["new-2", "2026-03-10T00:00:00.000Z"], // in window
+    ] as const) {
+      await persistSignalSnapshot(env, { id, signalType: "queue-health", targetKey: "owner/a", payload: {}, generatedAt });
+    }
+    // A generous per-target cap: without the time bound all four rows would return; the sinceIso must drop the two old ones.
+    const result = await listRecentSignalSnapshotsForTargets(env, "queue-health", ["owner/a"], 100, "2026-02-01T00:00:00.000Z");
+    expect(result.get("owner/a")?.map((row) => row.id)).toEqual(["new-2", "new-1"]);
+  });
+
+  it("is byte-identical to today when sinceIso is omitted (#9699)", async () => {
+    const env = createTestEnv();
+    for (const [id, generatedAt] of [
+      ["a", "2026-01-01T00:00:00.000Z"],
+      ["b", "2026-02-01T00:00:00.000Z"],
+    ] as const) {
+      await persistSignalSnapshot(env, { id, signalType: "queue-health", targetKey: "owner/a", payload: {}, generatedAt });
+    }
+    const withUndefined = await listRecentSignalSnapshotsForTargets(env, "queue-health", ["owner/a"], 16);
+    const withExplicitUndefined = await listRecentSignalSnapshotsForTargets(env, "queue-health", ["owner/a"], 16, undefined);
+    expect(withUndefined.get("owner/a")?.map((r) => r.id)).toEqual(["b", "a"]);
+    expect(withExplicitUndefined.get("owner/a")?.map((r) => r.id)).toEqual(["b", "a"]);
+  });
 });

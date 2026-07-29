@@ -321,7 +321,7 @@ import { loadAllKnobStatuses } from "../services/knob-loosening-run";
 import { loadPublicReuseRateTrend } from "../services/public-reuse-rate-trend";
 import { loadPublicReviewVolumeTrend } from "../services/public-review-volume-trend";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
-import { buildMaintainerSlopDuplicateTrend, SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT } from "../services/maintainer-slop-duplicate-trend";
+import { buildMaintainerSlopDuplicateTrend, SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT, SLOP_DUPLICATE_TREND_WEEKS } from "../services/maintainer-slop-duplicate-trend";
 import { buildFederatedBenchmark } from "../orb/federated-benchmark";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import { buildGateOutcomeBreakdown, GATE_OUTCOME_BREAKDOWN_WINDOW_DAYS } from "../services/gate-outcome-breakdown";
@@ -1354,11 +1354,15 @@ export function createApp() {
     const scopedSyncCompletions = allSyncStates.filter((state) => qualityRepoNames.has(state.repoFullName.toLowerCase())).map((state) => state.lastCompletedAt);
     const generatedAt = nowIso();
     const qualityStale = isMaintainerQualityDataStale({ lastCompletedAts: scopedSyncCompletions, repoCount: qualityRepos.length, nowMs: Date.parse(generatedAt) });
+    // Bound the read to the trend card's own 8-week window (#9699) so the row-count cap is a backstop, not the
+    // primary limit — otherwise the ranking kept only the most recent few days and the card covered ~4 days.
+    const slopTrendSinceIso = new Date(Date.parse(generatedAt) - SLOP_DUPLICATE_TREND_WEEKS * 7 * 86_400_000).toISOString();
     const queueHealthHistoriesByRepo = await listRecentSignalSnapshotsForTargets(
       c.env,
       "queue-health",
       qualityRepos.map((repo) => repo.fullName),
       SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT,
+      slopTrendSinceIso,
     );
     const slopDuplicateTrend = buildMaintainerSlopDuplicateTrend({
       repos: qualityRepoInputs.map((input) => {

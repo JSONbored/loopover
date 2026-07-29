@@ -130,6 +130,28 @@ describe("formatMaintainerRecap (#2240)", () => {
     expect(body).not.toContain("payout");
   });
 
+  it("renders n/a (not a percentage) for a below-floor report — Totals and Gate-outcomes agree (#9691)", () => {
+    const report: RecapReport = {
+      ...emptyReport(),
+      totals: {
+        ...emptyReport().totals,
+        reviewed: 2,
+        blocked: 2,
+        gateFalsePositives: 2,
+        gateFalsePositiveRate: null,
+      },
+      summary: ["Gate false-positive rate: not enough blocked PRs in the window to report."],
+    };
+    const body = formatMaintainerRecap(report);
+    // Totals still reports the raw counts, but the rate reads n/a — no contradictory percentage anywhere.
+    expect(body).toContain("- Gate false positives: 2/2 (n/a)");
+    expect(body).not.toMatch(/Gate false positives: 2\/2 \(\d+%\)/);
+    // The Gate-outcomes section's own below-floor copy is present and consistent.
+    expect(body).toContain("False-positive rate: n/a (fewer than 5 blocks in the last 7 day(s))");
+    // The summary's not-enough-blocked arm survives verbatim.
+    expect(body).toContain("- Gate false-positive rate: not enough blocked PRs in the window to report.");
+  });
+
   it("omits cohort diagnostics from the public recap even when totals.cohorts is present", () => {
     const report: RecapReport = {
       ...emptyReport(),

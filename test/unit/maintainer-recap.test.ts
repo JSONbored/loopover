@@ -30,9 +30,12 @@ function repoInput(
   const bands: OutcomeCalibration["slop"]["bands"] = c.emptyBands
     ? []
     : [{ band: "clean", sampleSize: 0, merged: c.merged ?? 0, closed: c.closed ?? 0, mergeRate: 0 }];
+  // Mirror gate-precision.ts's real per-cohort floor (#9691): a GatePrecisionReport nulls the rate below
+  // MIN_GATE_PRECISION_SAMPLE (5) blocks, so a fixture simulating that report must too — otherwise it feeds the
+  // recap a per-repo rate production would never produce.
   const cohortReport = (counts: { blocked: number; blockedThenMerged: number }) => ({
     perGateType: [],
-    overall: { blocked: counts.blocked, blockedThenMerged: counts.blockedThenMerged, falsePositiveRate: counts.blocked > 0 ? Math.round((counts.blockedThenMerged / counts.blocked) * 1000) / 1000 : null },
+    overall: { blocked: counts.blocked, blockedThenMerged: counts.blockedThenMerged, falsePositiveRate: counts.blocked >= 5 ? Math.round((counts.blockedThenMerged / counts.blocked) * 1000) / 1000 : null },
   });
   return {
     gatePrecision: {
@@ -145,13 +148,15 @@ describe("buildMaintainerRecap cohort split (#4521)", () => {
         }),
       ],
     });
+    // Both cohorts are below the 5-block floor, so their rate reads null (#9691) — per-repo (fed from the
+    // already-floored GatePrecisionReport) and the cross-repo aggregate alike. Raw counts are still reported.
     expect(report.repos[0]?.cohorts).toMatchObject({
-      miner: { blocked: 2, gateFalsePositives: 1, gateFalsePositiveRate: 0.5 },
-      human: { blocked: 4, gateFalsePositives: 1, gateFalsePositiveRate: 0.25 },
+      miner: { blocked: 2, gateFalsePositives: 1, gateFalsePositiveRate: null },
+      human: { blocked: 4, gateFalsePositives: 1, gateFalsePositiveRate: null },
     });
     expect(report.totals.cohorts).toMatchObject({
-      miner: { blocked: 2, gateFalsePositives: 1, gateFalsePositiveRate: 0.5 },
-      human: { blocked: 4, gateFalsePositives: 1, gateFalsePositiveRate: 0.25 },
+      miner: { blocked: 2, gateFalsePositives: 1, gateFalsePositiveRate: null },
+      human: { blocked: 4, gateFalsePositives: 1, gateFalsePositiveRate: null },
     });
     expect(report.summary).toHaveLength(3);
     expect(report.summary.join("\n")).not.toContain("Miner-originated");
@@ -166,9 +171,66 @@ describe("buildMaintainerRecap cohort split (#4521)", () => {
         repoInput("owner/repo-b", { blocked: 3, blockedThenMerged: 1, cohorts: { miner: { blocked: 1, blockedThenMerged: 0 }, human: { blocked: 2, blockedThenMerged: 1 } } }),
       ],
     });
+    // Both aggregated cohorts are below the 5-block floor → null rate, not 0 or 0.5 (#9691).
     expect(report.totals.cohorts).toMatchObject({
-      miner: { blocked: 3, gateFalsePositives: 0, gateFalsePositiveRate: 0 },
-      human: { blocked: 2, gateFalsePositives: 1, gateFalsePositiveRate: 0.5 },
+      miner: { blocked: 3, gateFalsePositives: 0, gateFalsePositiveRate: null },
+      human: { blocked: 2, gateFalsePositives: 1, gateFalsePositiveRate: null },
+    });
+  });
+
+  describe("aggregate gate false-positive rate honors the shared MIN_GATE_PRECISION_SAMPLE floor (#9691)", () => {
+    it("nulls the blended rate when two repos each block only once (2/2 total, below the 5-floor)", () => {
+      const report = buildMaintainerRecap({
+        generatedAt: GEN,
+        repos: [
+          repoInput("owner/repo-a", { blocked: 1, blockedThenMerged: 1 }),
+          repoInput("owner/repo-b", { blocked: 1, blockedThenMerged: 1 }),
+        ],
+      });
+      // Raw counts still reported; the rate reads null instead of a contradictory 100%.
+      expect(report.totals).toMatchObject({ blocked: 2, gateFalsePositives: 2, gateFalsePositiveRate: null });
+    });
+
+    it("reports the rate once the blended sample reaches the floor (blocked 5, fp 1 → 0.2)", () => {
+      const report = buildMaintainerRecap({
+        generatedAt: GEN,
+        repos: [
+          repoInput("owner/repo-a", { blocked: 3, blockedThenMerged: 1 }),
+          repoInput("owner/repo-b", { blocked: 2, blockedThenMerged: 0 }),
+        ],
+      });
+      expect(report.totals).toMatchObject({ blocked: 5, gateFalsePositives: 1, gateFalsePositiveRate: 0.2 });
+    });
+
+    it("floors each cohort against its OWN blocked denominator, not the blended one", () => {
+      const report = buildMaintainerRecap({
+        generatedAt: GEN,
+        repos: [
+          // Blended blocked = 8 (≥5), but the human cohort's own blocked is 2 and the miner's is 6.
+          repoInput("owner/repo-a", { blocked: 6, blockedThenMerged: 3, cohorts: { miner: { blocked: 6, blockedThenMerged: 3 }, human: { blocked: 0, blockedThenMerged: 0 } } }),
+          repoInput("owner/repo-b", { blocked: 2, blockedThenMerged: 1, cohorts: { miner: { blocked: 0, blockedThenMerged: 0 }, human: { blocked: 2, blockedThenMerged: 1 } } }),
+        ],
+      });
+      expect(report.totals.cohorts).toMatchObject({
+        miner: { blocked: 6, gateFalsePositives: 3, gateFalsePositiveRate: 0.5 }, // ≥5 → reported
+        human: { blocked: 2, gateFalsePositives: 1, gateFalsePositiveRate: null }, // <5 → null despite blended ≥5
+      });
+      // The blended rate itself is reported (total blocked 8 ≥ 5).
+      expect(report.totals.gateFalsePositiveRate).toBe(0.5);
+    });
+
+    it("reports each cohort rate when BOTH cohorts are at or above their own floor", () => {
+      const report = buildMaintainerRecap({
+        generatedAt: GEN,
+        repos: [
+          repoInput("owner/repo-a", { blocked: 10, blockedThenMerged: 5, cohorts: { miner: { blocked: 5, blockedThenMerged: 1 }, human: { blocked: 5, blockedThenMerged: 2 } } }),
+        ],
+      });
+      // Both cohorts' own blocked ≥ 5 → both report a number (the ≥-floor truthy arm on each).
+      expect(report.totals.cohorts).toMatchObject({
+        miner: { blocked: 5, gateFalsePositives: 1, gateFalsePositiveRate: 0.2 },
+        human: { blocked: 5, gateFalsePositives: 2, gateFalsePositiveRate: 0.4 },
+      });
     });
   });
 
@@ -351,7 +413,9 @@ describe("runMaintainerRecap (#2252 end-to-end orchestration)", () => {
 
   it("builds, formats, and fans out to BOTH channels when both webhooks are configured", async () => {
     const calls = stubRecapChannelFetch();
-    const result = await runMaintainerRecap(envWithBothWebhooks(), { repos: [repoInput("owner/repo-a", { blocked: 4, blockedThenMerged: 1, totalResolved: 2, merged: 1, closed: 1 })] });
+    // blocked: 5 keeps this fan-out check at or above the false-positive floor (#9691) so a rendered percentage
+    // still exists to assert against; the digest content itself is exercised in dedicated builder/format tests.
+    const result = await runMaintainerRecap(envWithBothWebhooks(), { repos: [repoInput("owner/repo-a", { blocked: 5, blockedThenMerged: 1, totalResolved: 2, merged: 1, closed: 1 })] });
     expect(result.skipped).toBe(false);
     if (result.skipped) return;
     expect(result.formatted).toContain("# Maintainer recap");

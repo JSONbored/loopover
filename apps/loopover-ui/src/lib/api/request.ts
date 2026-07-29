@@ -1,4 +1,4 @@
-import { createElement, useEffect, useState } from "react";
+import { createElement, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 
 import {
@@ -220,6 +220,35 @@ function runRetryWithProgress(
     });
 }
 
+// A 250ms clock as an external store (#9588). Reading `Date.now()` during render is impure, and the
+// setState-in-effect tick it replaces is exactly the pattern these rules exist to remove.
+//
+// The snapshot is CACHED rather than read per call: `useSyncExternalStore` requires a stable snapshot
+// between notifications, and a bare `() => Date.now()` returns a new value every single call, which
+// re-renders forever. One shared interval serves every mounted countdown and stops with the last one.
+let clockNow = Date.now();
+let clockTimer: number | null = null;
+const clockListeners = new Set<() => void>();
+
+function subscribeToClock(onChange: () => void): () => void {
+  clockListeners.add(onChange);
+  if (clockTimer === null) {
+    clockTimer = window.setInterval(() => {
+      clockNow = Date.now();
+      for (const listener of clockListeners) listener();
+    }, 250);
+  }
+  return () => {
+    clockListeners.delete(onChange);
+    if (clockListeners.size === 0 && clockTimer !== null) {
+      window.clearInterval(clockTimer);
+      clockTimer = null;
+    }
+  };
+}
+
+const getClockNow = () => clockNow;
+
 function RetryCountdown({
   label,
   startedAt,
@@ -229,11 +258,7 @@ function RetryCountdown({
   startedAt: number;
   timeoutMs: number;
 }) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const i = window.setInterval(() => setNow(Date.now()), 250);
-    return () => window.clearInterval(i);
-  }, []);
+  const now = useSyncExternalStore(subscribeToClock, getClockNow, getClockNow);
   const elapsed = Math.min(now - startedAt, timeoutMs);
   const remaining = Math.max(0, Math.ceil((timeoutMs - elapsed) / 1000));
   const pct = Math.min(100, Math.round((elapsed / timeoutMs) * 100));

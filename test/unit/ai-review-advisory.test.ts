@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildAiReviewDiff, claimAiReviewLock, runAiReviewForAdvisory, shouldStartAiReviewForAdvisory } from "../../src/queue/processors";
-import { resolveAiReviewableAuthor } from "../../src/queue/ai-review-orchestration";
+import { resolveAiReviewableAuthor, resolvePublicAiReviewGateSkipReason } from "../../src/queue/ai-review-orchestration";
 import { BEST_REVIEW_MODELS, INCOHERENT_DIFF_ASSESSMENT } from "../../src/services/ai-review";
 import * as posthogModule from "../../src/selfhost/posthog";
 import { recordAiUsageEvent, upsertRepositoryAiKey } from "../../src/db/repositories";
@@ -144,7 +144,7 @@ describe("resolveAiReviewableAuthor invariant (#orb-ai-review-always-review)", (
 
 describe("shouldStartAiReviewForAdvisory", () => {
   const enabledEnv = () => aiEnv(async () => ({ response: notesOnlyJson() }));
-  const base = { settings: { aiReviewMode: "advisory", gatePack: "gittensor" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", author: "alice", confirmedContributor: true };
+  const base = { mode: "live" as const, settings: { aiReviewMode: "advisory", gatePack: "gittensor" } as RepositorySettings, advisory: advisory(), repoFullName: "acme/widgets", author: "alice", confirmedContributor: true };
 
   it("matches the AI review entry gates before the reviewing placeholder is posted", async () => {
     await expect(shouldStartAiReviewForAdvisory(enabledEnv(), base)).resolves.toBe(true);
@@ -221,6 +221,50 @@ describe("shouldStartAiReviewForAdvisory", () => {
       shouldStartAiReviewForAdvisory(env, { ...base, forceAiReview: true, settings: { aiReviewMode: "off" } as RepositorySettings }),
     ).resolves.toBe(false);
     await expect(shouldStartAiReviewForAdvisory(env, { ...base, forceAiReview: true, skipAiReview: true })).resolves.toBe(false);
+  });
+
+  // #9692: a paused repo must never be told a review will run -- runAiReviewForAdvisory already refuses to
+  // spend on mode: "paused" as its own first check, and this predicate must agree, or the caller's "was a
+  // review expected" flag drifts out of sync with what actually happened (the root cause of the
+  // ai_review_public_summary_missing false alarm this issue fixes).
+  it("#9692: mode 'paused' never starts a review, even on an otherwise fully-eligible PR", async () => {
+    await expect(shouldStartAiReviewForAdvisory(enabledEnv(), { ...base, mode: "paused" })).resolves.toBe(false);
+    // forceAiReview bypasses only the reputation skip, never this hard gate.
+    await expect(shouldStartAiReviewForAdvisory(enabledEnv(), { ...base, mode: "paused", forceAiReview: true })).resolves.toBe(false);
+  });
+});
+
+describe("resolvePublicAiReviewGateSkipReason (#9692)", () => {
+  const gateEnv = () => aiEnv(async () => ({ response: notesOnlyJson() }));
+  const gateArgs = {
+    mode: "live" as const,
+    settings: { aiReviewMode: "advisory", gatePack: "gittensor" } as RepositorySettings,
+    advisory: advisory(),
+    repoFullName: "acme/widgets",
+    author: "alice",
+    confirmedContributor: true,
+  };
+
+  it("returns 'paused' for mode: 'paused' on an otherwise fully-eligible PR", () => {
+    expect(resolvePublicAiReviewGateSkipReason(gateEnv(), { ...gateArgs, mode: "paused" })).toBe("paused");
+  });
+
+  it("PRECEDENCE: 'paused' wins even when a different skip reason would also apply (skipAiReview / mode off)", () => {
+    expect(resolvePublicAiReviewGateSkipReason(gateEnv(), { ...gateArgs, mode: "paused", skipAiReview: true })).toBe("paused");
+    expect(
+      resolvePublicAiReviewGateSkipReason(gateEnv(), {
+        ...gateArgs,
+        mode: "paused",
+        settings: { aiReviewMode: "off" } as RepositorySettings,
+      }),
+    ).toBe("paused");
+  });
+
+  it("mode: 'live' or 'dry_run' falls through to the pre-existing reasons, never 'paused'", () => {
+    expect(resolvePublicAiReviewGateSkipReason(gateEnv(), { ...gateArgs, skipAiReview: true })).toBe("skip_ai_review_requested");
+    expect(resolvePublicAiReviewGateSkipReason(gateEnv(), { ...gateArgs, mode: "dry_run", skipAiReview: true })).toBe("skip_ai_review_requested");
+    expect(resolvePublicAiReviewGateSkipReason(gateEnv(), gateArgs)).toBeNull();
+    expect(resolvePublicAiReviewGateSkipReason(gateEnv(), { ...gateArgs, mode: "dry_run" })).toBeNull();
   });
 });
 

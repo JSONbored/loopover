@@ -133,3 +133,27 @@ describe("loopover-mcp CLI — boolean `--flag=value` parsing (#8689)", () => {
     expect(out).toContain("[mcp_servers.loopover]");
   });
 });
+
+// #9773: three crashes the `: any` on the option plumbing was hiding. Each is a real invocation a user can
+// type; each threw or lied before this. Typing parseOptions from CLI_FLAG_SPEC is what surfaced all three.
+describe("a flag given with no value (#9773)", () => {
+  it("does not let a bare repeatable flag poison the next one", async () => {
+    // `--issue --issue 5` stored `true` for the first, then spread it: "true is not iterable".
+    const out = await withEnv(AUTHED, () =>
+      captureStdout(() => mod.runCli(["preflight", "--login", "acme", "--repo", "acme/widgets", "--title", "t", "--body", "b", "--issue", "--issue", "5", "--json"])),
+    );
+    expect(out.length).toBeGreaterThan(0);
+  });
+
+  it("reports the usage error for `maintain --repo` instead of throwing a TypeError", async () => {
+    // Was: "repoFullName.includes is not a function" -- a bare flag parses to `true`, which passed the
+    // truthiness guard and then died on a string method.
+    await expect(withEnv(AUTHED, () => captureStdout(() => mod.runCli(["maintain", "list", "--repo"])))).rejects.toThrow("Pass --repo owner/repo.");
+  });
+
+  it("treats a bare --login as absent rather than as a contributor NAMED \"true\"", async () => {
+    // Was: `/v1/contributors/true/decision-pack` -- a real request for a real-looking login, answered with
+    // "not found", when the user had simply forgotten the value.
+    await expect(withEnv({ ...AUTHED, LOOPOVER_LOGIN: undefined, GITHUB_LOGIN: undefined }, () => captureStdout(() => mod.runCli(["decision-pack", "--login"])))).rejects.toThrow(/--login/);
+  });
+});

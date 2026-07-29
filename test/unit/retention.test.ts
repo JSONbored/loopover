@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { getDb } from "../../src/db/client";
 import { dedupeSignalSnapshots, pruneExpiredRecords, RETENTION_COMPOSITE_PK_TABLES, RETENTION_PK_COLUMN, RETENTION_POLICY, retentionCutoffIsoForTable } from "../../src/db/retention";
+import { computeFleetAnalytics } from "../../src/orb/analytics";
+import { listFleetInstances } from "../../src/orb/fleet-admin";
 import { getOrbGlobalStats } from "../../src/orb/outcomes";
 import { agentContextSnapshots, aiReviewCache, aiSlopCache, aiUsageEvents, groundingFileContentCache, linkedIssueSatisfactionCache, webhookEvents } from "../../src/db/schema";
 import { processJob, runRetentionPrune } from "../../src/queue/processors";
@@ -973,5 +975,168 @@ describe("retentionCutoffIsoForTable (#9474)", () => {
     expect(cutoff).not.toBeNull();
     // Within a second of a locally computed 180-day cutoff -- pins the default-arg arm without clock flake.
     expect(Math.abs(Date.parse(cutoff!) - (Date.now() - 180 * 86_400_000))).toBeLessThan(1000);
+  });
+});
+
+// #9783: orb_signals is a PUBLIC data source (computeFleetAnalytics' /fairness headline, #9775's weekly fleet
+// trend) AND carries a lifetime per-instance count, so it could not simply be pruned. These pin the property
+// that made a rule addable at all: the published numbers must be IDENTICAL either side of the prune.
+describe("orb_signals fold-before-delete (#9783)", () => {
+  const RULE = { table: "orb_signals", column: "received_at", days: 90 } as (typeof RETENTION_POLICY)[number];
+
+  const seedSignals = async (env: Env) => {
+    await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES ('reg', 1), ('stranger', 0)").run();
+    const rows: Array<[string, string, string, string, string, string]> = [
+      // instance, pr, verdict, outcome, reversal, when
+      ["reg", "p1", "merge", "merged", "none", daysAgo(100)],
+      ["reg", "p2", "merge", "merged", "none", daysAgo(100)],
+      ["reg", "p3", "merge", "closed", "none", daysAgo(100)],
+      ["reg", "p4", "close", "closed", "reopened", daysAgo(100)],
+      ["reg", "p5", "hold", "merged", "none", daysAgo(100)],
+      // an unregistered instance's history still folds -- it may be registered later
+      ["stranger", "p6", "merge", "merged", "none", daysAgo(100)],
+      // inside the window, must survive untouched
+      ["reg", "p7", "merge", "merged", "none", daysAgo(1)],
+    ];
+    for (const [instance, pr, verdict, outcome, reversal, at] of rows) {
+      await env.DB.prepare(
+        `INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket, decision_timestamp, received_at)
+         VALUES (?, 'r', ?, ?, ?, ?, 'quality', ?, ?)`,
+      )
+        .bind(instance, pr, verdict, outcome, reversal, at, at)
+        .run();
+    }
+  };
+
+  const bulkSignals = async (env: Env, rows: Array<{ pr: string; at: string; outcome?: string }>) => {
+    await env.DB.prepare("INSERT OR IGNORE INTO orb_instances (instance_id, registered) VALUES ('reg', 1)").run();
+    const values = rows
+      .map((r) => `('reg', 'r', '${r.pr}', 'merge', '${r.outcome ?? "merged"}', 'none', 'quality', '${r.at}', '${r.at}')`)
+      .join(",");
+    await env.DB.prepare(
+      `INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket, decision_timestamp, received_at) VALUES ${values}`,
+    ).run();
+  };
+  const rollupTotal = async (env: Env) =>
+    (await env.DB.prepare("SELECT COALESCE(SUM(n), 0) AS n FROM orb_signal_rollups").first<{ n: number }>())?.n;
+  const rawCount = async (env: Env) =>
+    (await env.DB.prepare("SELECT COUNT(*) AS n FROM orb_signals").first<{ n: number }>())?.n;
+
+  it("REGRESSION: deletes in BOUNDED slices, not one unbatched statement -- and every row still folds exactly once", async () => {
+    const env = createTestEnv();
+    await bulkSignals(env, Array.from({ length: 25 }, (_, i) => ({ pr: `p${i}`, at: daysAgo(200 - i) })));
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], batchSize: 10 });
+
+    expect(results[0]?.deleted).toBe(25); // every aged row removed, across multiple bounded slices
+    expect(await rawCount(env)).toBe(0);
+    expect(await rollupTotal(env)).toBe(25); // folded exactly once each -- no slice double-counted
+  });
+
+  it("INVARIANT: a run of rows sharing ONE timestamp still makes progress -- the inclusive slice boundary cannot spin", async () => {
+    // An exclusive `<` boundary against a tie run selects zero rows and loops forever. All 12 rows here share
+    // one received_at, so the first slice's boundary IS that timestamp: inclusive is what guarantees progress.
+    const env = createTestEnv();
+    const tied = daysAgo(150);
+    await bulkSignals(env, Array.from({ length: 12 }, (_, i) => ({ pr: `p${i}`, at: tied })));
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], batchSize: 5 });
+
+    expect(results[0]?.deleted).toBe(12);
+    expect(await rawCount(env)).toBe(0);
+    expect(await rollupTotal(env)).toBe(12); // one cell of n=12, folded once
+  });
+
+  it("INVARIANT: maxPerTable caps one run, and the fleet number is exact at every intermediate point", async () => {
+    const env = createTestEnv();
+    await bulkSignals(env, Array.from({ length: 20 }, (_, i) => ({ pr: `p${i}`, at: daysAgo(200 - i) })));
+    const before = await computeFleetAnalytics(env, { windowDays: 365 });
+
+    const first = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], batchSize: 5, maxPerTable: 10 });
+    expect(first[0]?.deleted).toBe(10);
+    expect(await rawCount(env)).toBe(10);
+    // Half folded, half still raw: the unioned read has to be exact HERE, not only once the cohort drains.
+    expect((await computeFleetAnalytics(env, { windowDays: 365 })).fleet.pooled.mergeVerdicts).toBe(20);
+    expect((await computeFleetAnalytics(env, { windowDays: 365 })).fleet.decisionAccuracy).toBe(before.fleet.decisionAccuracy);
+
+    const second = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], batchSize: 5, maxPerTable: 10 });
+    expect(second[0]?.deleted).toBe(10);
+    expect(await rawCount(env)).toBe(0);
+    expect(await rollupTotal(env)).toBe(20);
+    expect((await computeFleetAnalytics(env, { windowDays: 365 })).fleet.decisionAccuracy).toBe(before.fleet.decisionAccuracy);
+  });
+
+  it("INVARIANT: dryRun neither folds nor deletes", async () => {
+    const env = createTestEnv();
+    await seedSignals(env);
+    await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE], dryRun: true });
+    expect(await rawCount(env)).toBe(7);
+    expect(await rollupTotal(env)).toBe(0);
+  });
+
+  it("REGRESSION: fleet accuracy is IDENTICAL before and after the prune, and the aged raw rows are gone", async () => {
+    const env = createTestEnv();
+    await seedSignals(env);
+    const before = await computeFleetAnalytics(env, { windowDays: 365 });
+    // 4 scored verdicts among the aged rows (p5's hold is excluded) + 1 recent = 5; p1/p2/p7 confirmed,
+    // p3 merged-verdict-that-closed and p4 close-that-reopened disconfirmed.
+    expect(before.fleet.decisionAccuracy).toBeCloseTo(3 / 5, 10);
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE] });
+
+    expect(results[0]?.deleted).toBe(6); // every aged row, including the unregistered instance's
+    const remaining = await env.DB.prepare("SELECT pr_hash FROM orb_signals").all<{ pr_hash: string }>();
+    expect(remaining.results.map((row) => row.pr_hash)).toEqual(["p7"]);
+    // The whole point: the published number did not move.
+    const after = await computeFleetAnalytics(env, { windowDays: 365 });
+    expect(after.fleet.decisionAccuracy).toBe(before.fleet.decisionAccuracy);
+  });
+
+  it("preserves the confusion matrix per day, not just a count -- a scalar rollup would destroy accuracy", async () => {
+    const env = createTestEnv();
+    await seedSignals(env);
+    await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE] });
+
+    const cells = await env.DB
+      .prepare("SELECT instance_id, day, gate_verdict, outcome, reversal_flag, n FROM orb_signal_rollups ORDER BY instance_id, gate_verdict, outcome, reversal_flag")
+      .all<{ instance_id: string; day: string; gate_verdict: string; outcome: string; reversal_flag: string; n: number }>();
+    const rows = cells.results ?? [];
+    // Distinct cells survive as distinct rows; only the two identical merge/merged ones coalesce.
+    expect(rows.filter((r) => r.instance_id === "reg")).toHaveLength(4);
+    expect(rows.find((r) => r.gate_verdict === "merge" && r.outcome === "merged" && r.instance_id === "reg")?.n).toBe(2);
+    expect(rows.find((r) => r.gate_verdict === "close")?.reversal_flag).toBe("reopened");
+    expect(rows.every((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.day))).toBe(true);
+    // The unregistered instance's history is kept, so registering it later is not silently lossy.
+    expect(rows.some((r) => r.instance_id === "stranger")).toBe(true);
+  });
+
+  it("keeps signalCount a genuine LIFETIME count across the prune", async () => {
+    const env = createTestEnv();
+    await seedSignals(env);
+    const before = (await listFleetInstances(env)).instances.find((i) => i.instanceId === "reg")?.signalCount;
+    expect(before).toBe(6);
+
+    await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE] });
+
+    expect((await listFleetInstances(env)).instances.find((i) => i.instanceId === "reg")?.signalCount).toBe(before);
+  });
+
+  it("accumulates rather than overwriting when the same day folds across two prune runs", async () => {
+    // A day can be split by a slice boundary, or land in two runs when rows arrive late. `n` must ADD.
+    const env = createTestEnv();
+    await seedSignals(env);
+    await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE] });
+    await env.DB.prepare(
+      `INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket, decision_timestamp, received_at)
+       VALUES ('reg', 'r', 'late1', 'merge', 'merged', 'none', 'quality', ?1, ?1)`,
+    )
+      .bind(daysAgo(100))
+      .run();
+    await pruneExpiredRecords(env, { nowMs: NOW, policy: [RULE] });
+
+    const cell = await env.DB
+      .prepare("SELECT n FROM orb_signal_rollups WHERE instance_id = 'reg' AND gate_verdict = 'merge' AND outcome = 'merged' AND reversal_flag = 'none'")
+      .first<{ n: number }>();
+    expect(cell?.n).toBe(3); // 2 from the first run + 1 from the second, not overwritten to 1
   });
 });

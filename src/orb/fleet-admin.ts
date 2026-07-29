@@ -20,7 +20,12 @@ export async function listFleetInstances(env: Env): Promise<{ instances: FleetIn
   const rows = await env.DB.prepare(
     `SELECT i.instance_id AS instanceId, i.registered AS registered, i.first_seen_at AS firstSeenAt,
             i.last_seen_at AS lastSeenAt, i.registered_at AS registeredAt,
-            (SELECT COUNT(*) FROM orb_signals s WHERE s.instance_id = i.instance_id) AS signalCount
+            -- #9783: raw rows PLUS folded rollups, so this stays a genuine LIFETIME count after orb_signals
+            -- starts pruning at 90 days. Reading only the raw table would silently turn it into "signals in
+            -- the retention window" with no change of label -- one of the two reasons a plain prune could not
+            -- be added to this table.
+            ((SELECT COUNT(*) FROM orb_signals s WHERE s.instance_id = i.instance_id)
+             + COALESCE((SELECT SUM(r.n) FROM orb_signal_rollups r WHERE r.instance_id = i.instance_id), 0)) AS signalCount
      FROM orb_instances i ORDER BY i.last_seen_at DESC`,
   ).all<{ instanceId: string; registered: number; firstSeenAt: string; lastSeenAt: string; registeredAt: string | null; signalCount: number }>();
   return { instances: (rows.results ?? []).map((row) => ({ ...row, registered: row.registered === 1 })) };

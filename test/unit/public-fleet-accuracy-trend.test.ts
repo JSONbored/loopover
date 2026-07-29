@@ -124,6 +124,9 @@ describe("loadPublicFleetAccuracyTrend — end to end over orb_signals", () => {
 
   const thisWeek = `${isoWeekStart(NOW)}T09:00:00.000Z`;
 
+  const trendWeek = (trend: Awaited<ReturnType<typeof loadPublicFleetAccuracyTrend>>, weekStart: string) =>
+    trend.find((week) => week.weekStart === weekStart);
+
   it("scores a registered instance's week from real rows", async () => {
     const env = createTestEnv();
     await seed(env, {
@@ -193,6 +196,80 @@ describe("loadPublicFleetAccuracyTrend — end to end over orb_signals", () => {
     }
     const trend = await loadPublicFleetAccuracyTrend(env, NOW);
     for (const week of trend) expect(week).toMatchObject({ verdicts: null, accuracyPct: null });
+  });
+
+  // #9783: orb_signals now prunes at 90 days, folding into orb_signal_rollups. This series looks back 8
+  // weeks, so a week can outlive its raw rows only if the reader unions the rollup back in.
+  describe("reads folded history (#9783)", () => {
+    const foldedWeek = isoWeekStart(NOW - 3 * 7 * 86_400_000);
+    const foldCell = async (env: Env, over: { instance?: string; verdict?: string; outcome?: string; reversal?: string; bucket?: string; n: number }) => {
+      await env.DB
+        .prepare(
+          `INSERT INTO orb_signal_rollups (instance_id, day, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket, n, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, '2026-06-22T00:00:00.000Z')`,
+        )
+        .bind(over.instance ?? "inst-a", foldedWeek, over.verdict ?? "merge", over.outcome ?? "merged", over.reversal ?? "none", over.bucket ?? "quality", over.n)
+        .run();
+    };
+
+    it("reconstructs a week whose raw rows are gone, to the SAME number they would have shown", async () => {
+      const env = createTestEnv();
+      await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES ('inst-a', 1)").run();
+      await foldCell(env, { n: 8 });
+      await foldCell(env, { outcome: "closed", n: 2 });
+
+      const trend = await loadPublicFleetAccuracyTrend(env, NOW);
+      expect(trend.find((w) => w.weekStart === foldedWeek)).toEqual({ weekStart: foldedWeek, verdicts: 10, accuracyPct: 80 });
+    });
+
+    it("sums a week split across raw rows and folded cells rather than picking one side", async () => {
+      // The boundary week: part of it aged out and folded, part is still live. Both halves must count.
+      const env = createTestEnv();
+      await seed(env, { instance: "inst-a", registered: true, rows: Array.from({ length: 5 }, () => ({ verdict: "merge", outcome: "merged", decidedAt: `${foldedWeek}T09:00:00.000Z` })) });
+      await foldCell(env, { outcome: "closed", n: 5 });
+
+      expect(trendWeek(await loadPublicFleetAccuracyTrend(env, NOW), foldedWeek)).toMatchObject({ verdicts: 10, accuracyPct: 50 });
+    });
+
+    it("INVARIANT: an UNREGISTERED instance's folded history still never moves a published number", async () => {
+      // The fold deliberately keeps unregistered instances (they may be registered later), so the trust gate
+      // has to be re-applied at READ time -- otherwise pruning would quietly opt strangers in.
+      const env = createTestEnv();
+      await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES ('stranger', 0)").run();
+      await foldCell(env, { instance: "stranger", outcome: "closed", n: 40 });
+      for (const week of await loadPublicFleetAccuracyTrend(env, NOW)) expect(week).toMatchObject({ verdicts: null, accuracyPct: null });
+    });
+
+    it("REGRESSION: includes the window's FIRST day, which a bare `day >= ?1` string compare drops", async () => {
+      // day is 'YYYY-MM-DD' and the bound is a full ISO instant. '2026-05-04' < '2026-05-04T00:00:00.000Z'
+      // as strings -- a prefix sorts before the string it prefixes -- so the oldest week would silently
+      // vanish the moment its rows were folded.
+      const env = createTestEnv();
+      const oldestWeek = isoWeekStart(NOW - (PUBLIC_FLEET_TREND_WEEKS - 1) * 7 * 86_400_000);
+      await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES ('inst-a', 1)").run();
+      await env.DB
+        .prepare(
+          `INSERT INTO orb_signal_rollups (instance_id, day, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket, n, updated_at)
+           VALUES ('inst-a', ?, 'merge', 'merged', 'none', 'quality', 9, '2026-06-22T00:00:00.000Z')`,
+        )
+        .bind(oldestWeek)
+        .run();
+      expect(trendWeek(await loadPublicFleetAccuracyTrend(env, NOW), oldestWeek)).toMatchObject({ verdicts: 9 });
+    });
+
+    it("scores folded holds and policy_action cells exactly as the live path does", async () => {
+      // The fold keeps these cells rather than dropping them, and '' / the real bucket value must go on
+      // meaning the same thing to foldInstance after the round trip.
+      const env = createTestEnv();
+      await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES ('inst-a', 1)").run();
+      await foldCell(env, { n: 5 });
+      await foldCell(env, { verdict: "hold", n: 95 });
+      await foldCell(env, { verdict: "close", outcome: "closed", bucket: "policy_action", n: 50 });
+      // Empty-string verdict: the fold's COALESCE sentinel for a NULL gate_verdict, which foldInstance must
+      // treat as a hold (neither 'merge' nor 'close') exactly as NULL was treated.
+      await foldCell(env, { verdict: "", n: 30 });
+      expect(trendWeek(await loadPublicFleetAccuracyTrend(env, NOW), foldedWeek)).toMatchObject({ verdicts: 5, accuracyPct: 100 });
+    });
   });
 
   it("degrades to all-null weeks (never throws) when the read fails", async () => {

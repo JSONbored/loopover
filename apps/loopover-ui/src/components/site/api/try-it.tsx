@@ -55,7 +55,11 @@ export function TryIt({ op, server }: { op: OpenApiOperation; server: string }) 
         : "API timing out — actions paused"
       : null;
 
-  const [token, setToken] = useState("");
+  // Read once, lazily: localStorage is only touched on the client, and this component is keyed on the
+  // operation so a switch remounts it and re-reads rather than needing an effect to reset (#9588).
+  const [token, setToken] = useState(() =>
+    typeof window === "undefined" ? "" : readStoredSessionToken(window.localStorage),
+  );
   const [show, setShow] = useState(false);
   const [pathParams, setPathParams] = useState<Record<string, string>>({});
   const [queryParams, setQueryParams] = useState<Record<string, string>>({});
@@ -64,14 +68,6 @@ export function TryIt({ op, server }: { op: OpenApiOperation; server: string }) 
   const [result, setResult] = useState<Result | null>(null);
   const [error, setError] = useState<string | null>(null);
   const runRef = useRef<() => Promise<void>>(() => Promise.resolve());
-
-  useEffect(() => {
-    setToken(readStoredSessionToken(localStorage));
-    setResult(null);
-    setError(null);
-    setPathParams({});
-    setQueryParams({});
-  }, [op.id]);
 
   const saveToken = (v: string) => {
     setToken(v);

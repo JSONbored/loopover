@@ -355,7 +355,10 @@ function OperationPage() {
           <div className="mb-2 font-mono text-token-2xs uppercase tracking-wider text-muted-foreground">
             Try it
           </div>
-          <TryIt op={op} server={server} />
+          {/* Keyed on the operation so switching endpoints RESETS this panel's state (#9588). React's
+              documented way to reset state on an input change -- the effect it replaces cleared five
+              fields by hand and would silently miss any field added later. */}
+          <TryIt key={op.id} op={op} server={server} />
         </div>
 
         {!op.requiresAuth && (

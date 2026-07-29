@@ -38,8 +38,8 @@ describe("loadPublicRulePrecision (#8230)", () => {
     const block = await loadPublicRulePrecision(env, NOW);
     expect(block.windowDays).toBe(PUBLIC_PRECISION_WINDOW_DAYS);
     expect(block.rules).toEqual([
-      { ruleId: "ai_consensus_defect", decided: 25, confirmed: 20, precision: 0.8 },
-      { ruleId: "linked_issue_scope_mismatch", decided: 12, confirmed: 9, precision: 0.75 },
+      { ruleId: "ai_consensus_defect", decided: 25, confirmed: 20, precision: 0.8, unrecognized: 0 },
+      { ruleId: "linked_issue_scope_mismatch", decided: 12, confirmed: 9, precision: 0.75, unrecognized: 0 },
     ]);
   });
 
@@ -55,7 +55,9 @@ describe("loadPublicRulePrecision (#8230)", () => {
     });
 
     const block = await loadPublicRulePrecision(env, NOW);
-    expect(block.rules).toEqual([{ ruleId: "sparse_rule", decided: PUBLIC_PRECISION_MIN_DECIDED - 1, confirmed: PUBLIC_PRECISION_MIN_DECIDED - 1, precision: null }]);
+    expect(block.rules).toEqual([
+      { ruleId: "sparse_rule", decided: PUBLIC_PRECISION_MIN_DECIDED - 1, confirmed: PUBLIC_PRECISION_MIN_DECIDED - 1, precision: null, unrecognized: 0 },
+    ]);
   });
 
   it("REGRESSION: excludes counterfactual-replay rows whose label came from a DIFFERENT rule's human verdicts", async () => {
@@ -76,7 +78,7 @@ describe("loadPublicRulePrecision (#8230)", () => {
     }
 
     const block = await loadPublicRulePrecision(env, NOW);
-    expect(block.rules).toEqual([{ ruleId: "ai_consensus_defect", decided: 20, confirmed: 15, precision: 0.75 }]);
+    expect(block.rules).toEqual([{ ruleId: "ai_consensus_defect", decided: 20, confirmed: 15, precision: 0.75, unrecognized: 0 }]);
   });
 
   it("keeps synthesized rows whose labels ARE about the rule they are filed under", async () => {
@@ -95,7 +97,30 @@ describe("loadPublicRulePrecision (#8230)", () => {
     }
 
     const block = await loadPublicRulePrecision(env, NOW);
-    expect(block.rules).toEqual([{ ruleId: "ai_consensus_defect", decided: 12, confirmed: 9, precision: 0.75 }]);
+    expect(block.rules).toEqual([{ ruleId: "ai_consensus_defect", decided: 12, confirmed: 9, precision: 0.75, unrecognized: 0 }]);
+  });
+
+  it("REGRESSION (#9640): a missing or unrecognized $.verdict is counted as unrecognized, never folded into confirmed", async () => {
+    // Before the fix, `decided` was COUNT(*) and `confirmed = decided - reversed`, so any row whose verdict
+    // was absent or neither 'reversed' nor 'confirmed' inflated confirmed AND cleared the sample floor: this
+    // would have reported decided: 15, confirmed: 14, precision: 0.933.
+    const env = createTestEnv();
+    await seedVerdicts(env, "linked_issue_scope_mismatch", 9, 1);
+    for (let i = 0; i < 5; i += 1) {
+      await recordAuditEvent(env, {
+        eventType: "signal.human_override:linked_issue_scope_mismatch",
+        actor: "human",
+        targetKey: `acme/widgets#${i + 100}`,
+        outcome: "completed",
+        metadata: {},
+        createdAt: new Date(NOW - 2000 - i).toISOString(),
+      });
+    }
+
+    const block = await loadPublicRulePrecision(env, NOW);
+    expect(block.rules).toEqual([
+      { ruleId: "linked_issue_scope_mismatch", decided: 10, confirmed: 9, precision: 0.9, unrecognized: 5 },
+    ]);
   });
 
   it("counts all three reversal shapes over the window and surfaces the latest backtest run's corpus checksum", async () => {
@@ -156,7 +181,7 @@ describe("loadPublicRulePrecision (#8230)", () => {
     expect(block.latestBacktestRun).toBeNull();
     // The scores come from a different dataset (human-override events) and are unaffected -- an empty corpus
     // means the numbers are uncommitted, never that they are zero.
-    expect(block.rules).toEqual([{ ruleId: "ai_consensus_defect", decided: 20, confirmed: 15, precision: 0.75 }]);
+    expect(block.rules).toEqual([{ ruleId: "ai_consensus_defect", decided: 20, confirmed: 15, precision: 0.75, unrecognized: 0 }]);
   });
 
   it("EMPTY_CORPUS_CHECKSUM is the exporter's own checksum over zero cases", async () => {

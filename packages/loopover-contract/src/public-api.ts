@@ -21,7 +21,9 @@ import { z } from "zod";
  */
 export const PublicRulePrecisionSchema = z.object({
   windowDays: z.number(),
-  rules: z.array(z.object({ ruleId: z.string(), decided: z.number(), confirmed: z.number(), precision: z.number().nullable() })),
+  rules: z.array(
+    z.object({ ruleId: z.string(), decided: z.number(), confirmed: z.number(), precision: z.number().nullable(), unrecognized: z.number() }),
+  ),
   reversals: z.object({ reopened: z.number(), reverted: z.number(), superseded: z.number() }),
   latestBacktestRun: z.object({ corpusChecksum: z.string(), at: z.string() }).nullable(),
 });

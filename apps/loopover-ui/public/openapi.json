@@ -457,13 +457,17 @@
                     "precision": {
                       "type": "number",
                       "nullable": true
+                    },
+                    "unrecognized": {
+                      "type": "number"
                     }
                   },
                   "required": [
                     "ruleId",
                     "decided",
                     "confirmed",
-                    "precision"
+                    "precision",
+                    "unrecognized"
                   ]
                 }
               },

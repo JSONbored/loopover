@@ -174,6 +174,14 @@ export const SETTINGS_ALIAS_MANIFEST: AliasManifestRow[] = [
   { field: "aiReviewByok", aliases: ["byok"] },
   { field: "aiReviewProvider", aliases: ["aiReview:"] },
   { field: "aiReviewModel", aliases: ["aiReview:"] },
+  // #9821: nested under the same `aiReview:` mapping as provider/model above.
+  { field: "aiReviewEffort", aliases: ["aiReview:"] },
+  { field: "aiReviewSelfConsistencyRuns", aliases: ["selfConsistencyRuns"] },
+  // #9808/#9821: the guardrail-escalation block is its own nested mapping; every field documents under it.
+  { field: "guardrailEscalationProvider", aliases: ["guardrailEscalation:"] },
+  { field: "guardrailEscalationModel", aliases: ["guardrailEscalation:"] },
+  { field: "guardrailEscalationEffort", aliases: ["guardrailEscalation:"] },
+  { field: "guardrailEscalationSelfConsistencyRuns", aliases: ["guardrailEscalation:"] },
   { field: "aiReviewAllAuthors", aliases: ["allAuthors"] },
   { field: "aiReviewCloseConfidence", aliases: ["closeConfidence"] },
   { field: "aiReviewSalvageabilityMinScore", aliases: ["salvageabilityMinScore"] },

@@ -219,6 +219,11 @@ export function resolveEffectiveAiReviewPlan(
 }
 
 export type LoopOverAiReviewInput = {
+  /** #9808/#9821: the effective review knobs the caller resolved for THIS PR (resolveReviewKnobs) -- already
+   *  layered escalation > per-repo > global, so this module never re-derives precedence. Absent ⇒ the env
+   *  defaults exactly as before. `selfConsistencyRuns` here outranks AI_REVIEW_SELF_CONSISTENCY_RUNS; the
+   *  model/effort/provider fields ride through to the provider invocation. */
+  reviewKnobs?: { provider?: string | null; model?: string | null; effort?: string | null; selfConsistencyRuns?: number | null } | undefined;
   repoFullName: string;
   prNumber: number;
   title: string;
@@ -3279,7 +3284,14 @@ export async function runLoopOverAiReview(
   // review that produced no usable verdict would spend real money measuring nothing.
   const selfConsistencySamples: { reviewer: string; votedFail: boolean }[] = [];
   let selfConsistencyDegraded = false;
-  const configuredSelfConsistencyRuns = resolveSelfConsistencyRuns(env.AI_REVIEW_SELF_CONSISTENCY_RUNS);
+  // #9821: a caller-resolved value (per-repo, or escalated because this PR touched a guarded path) outranks
+  // the global env var. `?? undefined` not `|| undefined`: 0 is a real choice ("off"), and truthiness here
+  // would silently fall back to the env value on a repo that deliberately turned extra runs off.
+  const configuredSelfConsistencyRuns = resolveSelfConsistencyRuns(
+    input.reviewKnobs?.selfConsistencyRuns !== null && input.reviewKnobs?.selfConsistencyRuns !== undefined
+      ? String(input.reviewKnobs.selfConsistencyRuns)
+      : env.AI_REVIEW_SELF_CONSISTENCY_RUNS,
+  );
   if (configuredSelfConsistencyRuns >= 2 && reviewerVotes.length > 0) {
     const plan = planSelfConsistencyRuns({
       configuredTotalRuns: configuredSelfConsistencyRuns,

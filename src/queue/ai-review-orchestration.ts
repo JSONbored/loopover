@@ -14,6 +14,8 @@
 // (staying) and this file's own runAiReviewForAdvisory, so processors.ts imports it back rather than this
 // file importing it from processors.ts, keeping the dependency one-directional.
 
+import { describeReviewEscalation, resolveReviewKnobs } from "../review/review-knobs";
+import { isGuardrailHit } from "../signals/change-guardrail";
 import {
   claimTransientLock,
   releaseTransientLockIfOwner,
@@ -833,7 +835,41 @@ export async function runAiReviewForAdvisory(
       args.repoFullName,
       args.reviewInlineComments,
     );
+    // #9808/#9821: resolve the effective review knobs for THIS PR before invoking. A PR touching a
+    // `hardGuardrailGlobs` path escalates -- higher reasoning effort, more independent runs, optionally a
+    // different model/provider -- instead of reviewing identically to every other file and merely being held
+    // for a human afterwards. isGuardrailHit is the SHARED matcher (src/signals/change-guardrail.ts), never a
+    // second copy. Every layer unset ⇒ null throughout ⇒ byte-identical to the previous behavior.
+    const reviewKnobs = resolveReviewKnobs({
+      guardrailHit: isGuardrailHit(files.map((file) => file.path), args.settings.hardGuardrailGlobs ?? []),
+      escalation: {
+        provider: args.settings.guardrailEscalationProvider ?? null,
+        model: args.settings.guardrailEscalationModel ?? null,
+        effort: args.settings.guardrailEscalationEffort ?? null,
+        selfConsistencyRuns: args.settings.guardrailEscalationSelfConsistencyRuns ?? null,
+      },
+      repo: {
+        provider: args.settings.aiReviewProvider ?? null,
+        model: args.settings.aiReviewModel ?? null,
+        effort: args.settings.aiReviewEffort ?? null,
+        selfConsistencyRuns: args.settings.aiReviewSelfConsistencyRuns ?? null,
+      },
+    });
+    const escalationNote = describeReviewEscalation(reviewKnobs);
+    if (escalationNote) {
+      console.log(
+        JSON.stringify({
+          event: "ai_review_guardrail_escalated",
+          repo: args.repoFullName,
+          pr: args.pr.number,
+          fields: reviewKnobs.escalatedFields,
+          effort: reviewKnobs.effort,
+          selfConsistencyRuns: reviewKnobs.selfConsistencyRuns,
+        }),
+      );
+    }
     const result = await runLoopOverAiReview(env, {
+      reviewKnobs,
       repoFullName: args.repoFullName,
       prNumber: args.pr.number,
       title: args.pr.title,

@@ -7,7 +7,7 @@ import { TableScroll } from "@/components/site/data-table";
 import { Card, Section } from "@/components/site/primitives";
 import { StateBoundary } from "@/components/site/state-views";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { PublicStats } from "@/components/site/proof-of-power-stats-model";
+import { isFleetBasis, type PublicStats } from "@/components/site/proof-of-power-stats-model";
 
 // Fairness report (#fairness-analytics): a deeper, linkable page behind the homepage's "Decision accuracy" tile.
 // Reads the SAME /v1/public/stats payload proof-of-power-stats.tsx does (no new endpoint) -- this page just
@@ -126,15 +126,19 @@ export function FairnessReportPage() {
                   {headlineAccuracyPct != null ? `${pctFmt.format(headlineAccuracyPct)}%` : "—"}
                 </div>
                 <p className="mt-2 text-token-sm text-muted-foreground">
+                  {/* #9673: `fleetEligible` only gates volume; `basis` says whether this number is
+                      corroborated across operators or one instance's own self-report -- say which. */}
                   {fleetEligible
-                    ? `across ${intFmt.format(data.fleetAccuracy.instanceCount)} self-hosted instance${data.fleetAccuracy.instanceCount === 1 ? "" : "s"}, last ${data.fleetAccuracy.windowDays} days`
+                    ? isFleetBasis(data.fleetAccuracy)
+                      ? `across ${intFmt.format(data.fleetAccuracy.instanceCount)} self-hosted instance${data.fleetAccuracy.instanceCount === 1 ? "" : "s"}, last ${data.fleetAccuracy.windowDays} days`
+                      : `self-reported by one self-hosted instance, not corroborated across operators, last ${data.fleetAccuracy.windowDays} days`
                     : data.totals.reversed > 0
                       ? `${intFmt.format(data.totals.reversed)} human-reversed, lifetime`
                       : "reversal-grounded, lifetime"}
                 </p>
                 {/* #9168 computes `basis` precisely so this number is not read as corroborated-across-operators
                     when it is one operator's own disclosed outcomes; the page used to drop the field entirely. */}
-                {fleetEligible && data.fleetAccuracy.basis === "single_instance_self_report" ? (
+                {fleetEligible && !isFleetBasis(data.fleetAccuracy) ? (
                   <p className="mt-2 text-token-xs text-muted-foreground">
                     Self-reported by that single instance, not corroborated across operators
                     {data.fleetAccuracy.decidedCount != null
@@ -189,13 +193,17 @@ export function FairnessReportPage() {
                 or a self-assessment; both are counted after the fact from what actually happened on
                 GitHub, which is also why the two can differ.
               </p>
-              <p>
-                <span className="font-medium text-foreground">
-                  Why the fleet number, not just our own repos:
-                </span>{" "}
-                the self-hosted instance count above reflects the live fleet running ORB today, not
-                a historical snapshot of LoopOver's own repos alone.
-              </p>
+              {/* #9673: this paragraph asserts fleet corroboration -- render it only when `basis` says the
+                  headline actually IS a fleet aggregate, not one instance's own self-report. */}
+              {isFleetBasis(data.fleetAccuracy) ? (
+                <p>
+                  <span className="font-medium text-foreground">
+                    Why the fleet number, not just our own repos:
+                  </span>{" "}
+                  the self-hosted instance count above reflects the live fleet running ORB today,
+                  not a historical snapshot of LoopOver's own repos alone.
+                </p>
+              ) : null}
             </div>
 
             {data.byProject.length > 0 ? (

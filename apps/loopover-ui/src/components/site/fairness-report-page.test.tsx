@@ -307,6 +307,65 @@ describe("FairnessReportPage (#fairness-analytics)", () => {
     );
   });
 
+  it("#9673: renders the fleet-methodology paragraph when basis is a genuine fleet aggregate", async () => {
+    apiFetch.mockResolvedValue({ ok: true, data: FIXTURE, status: 200, durationMs: 10 });
+    renderWithClient(<FairnessReportPage />);
+
+    await waitFor(() => expect(screen.getByText("Decision accuracy")).toBeTruthy());
+    expect(screen.getByText(/Why the fleet number, not just our own repos/)).toBeTruthy();
+  });
+
+  it("#9673: hides the fleet-methodology paragraph when basis is one instance's own self-report", async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        ...FIXTURE,
+        fleetAccuracy: {
+          ...FIXTURE.fleetAccuracy,
+          instanceCount: 1,
+          basis: "single_instance_self_report",
+        },
+      },
+      status: 200,
+      durationMs: 10,
+    });
+    renderWithClient(<FairnessReportPage />);
+
+    await waitFor(() => expect(screen.getByText("Decision accuracy")).toBeTruthy());
+    expect(screen.queryByText(/Why the fleet number, not just our own repos/)).toBeNull();
+    // The card caption also drops the fleet framing rather than reporting "1 self-hosted instance" as corroboration.
+    expect(
+      screen.getByText(
+        "self-reported by one self-hosted instance, not corroborated across operators, last 90 days",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("REGRESSION #9673: a weekly trend row with merged/closed/reversed all null still renders as — without throwing", async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        ...FIXTURE,
+        accuracyTrend: [
+          {
+            weekStart: "2026-01-05",
+            merged: null,
+            closed: null,
+            reversed: null,
+            accuracyPct: null,
+          },
+        ],
+      },
+      status: 200,
+      durationMs: 10,
+    });
+    renderWithClient(<FairnessReportPage />);
+
+    await waitFor(() => expect(screen.getByText("Weekly trend")).toBeTruthy());
+    const row = screen.getByText("2026-01-05").closest("tr")!;
+    expect(row.textContent).toBe("2026-01-05————");
+  });
+
   it("#9068: renders the insufficient-instances state (not a fabricated zero) when gamingFlagsCaught is null", async () => {
     apiFetch.mockResolvedValue({
       ok: true,

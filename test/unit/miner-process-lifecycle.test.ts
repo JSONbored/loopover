@@ -240,6 +240,58 @@ describe("loopover-miner process lifecycle / crash-safety (#4826)", () => {
     expect(log.mock.calls.some((call) => String(call[0]).includes("cleanup boom"))).toBe(true);
   });
 
+  it("REGRESSION (#9688): a REJECTING captureError on uncaughtException is caught -- cleanup still runs and exit(1) still fires", async () => {
+    const { proc, handlers, exit } = makeFakeProcess();
+    const log = vi.fn();
+    const store = { close: vi.fn() };
+    registerCleanupResource(store);
+    const captureError = vi.fn(() => Promise.reject(new Error("sink flush failed")));
+    installCliSignalHandlers({ process: proc, log, exit, captureError });
+
+    await handlers.get("uncaughtException")?.(new Error("kaboom"));
+
+    expect(captureError).toHaveBeenCalledTimes(1);
+    expect(store.close).toHaveBeenCalledTimes(1); // the registered store was NOT left open
+    expect(cleanupResourceCount()).toBe(0);
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("error capture failed: "));
+    expect(log.mock.calls.some((call) => String(call[0]).includes("sink flush failed"))).toBe(true);
+  });
+
+  it("REGRESSION (#9688): a REJECTING captureError on unhandledRejection is caught -- cleanup still runs and exit(1) still fires", async () => {
+    const { proc, handlers, exit } = makeFakeProcess();
+    const log = vi.fn();
+    const store = { close: vi.fn() };
+    registerCleanupResource(store);
+    const captureError = vi.fn(() => Promise.reject(new Error("sink flush failed")));
+    installCliSignalHandlers({ process: proc, log, exit, captureError });
+
+    await handlers.get("unhandledRejection")?.("plain reason");
+
+    expect(captureError).toHaveBeenCalledTimes(1);
+    expect(store.close).toHaveBeenCalledTimes(1);
+    expect(cleanupResourceCount()).toBe(0);
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("error capture failed: "));
+  });
+
+  it("REGRESSION (#9688): a captureError that throws SYNCHRONOUSLY is also caught -- cleanup still runs and exit(1) still fires", async () => {
+    const { proc, handlers, exit } = makeFakeProcess();
+    const log = vi.fn();
+    const store = { close: vi.fn() };
+    registerCleanupResource(store);
+    const captureError = vi.fn(() => {
+      throw new Error("sync sink boom");
+    });
+    installCliSignalHandlers({ process: proc, log, exit, captureError });
+
+    await handlers.get("uncaughtException")?.(new Error("kaboom"));
+
+    expect(store.close).toHaveBeenCalledTimes(1);
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(log.mock.calls.some((call) => String(call[0]).includes("sync sink boom"))).toBe(true);
+  });
+
   it("defaults to the real process when none is injected", () => {
     withRealProcessCleanup(() => {
       expect(installCliSignalHandlers({ log: vi.fn(), exit: vi.fn(), force: true })).toBe(true);

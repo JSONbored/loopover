@@ -417,6 +417,7 @@ describe("review.auto_review wiring (#1954)", () => {
     const advisory = { headSha: "sha", findings: [] as unknown[] };
 
     const added = maybeAddPromptInjectionHold(blockingEnv, {
+      mode: "live",
       settings,
       advisory: advisory as never,
       repoFullName: "acme/widgets",
@@ -434,6 +435,7 @@ describe("review.auto_review wiring (#1954)", () => {
     const untouched = { headSha: "sha", findings: [] as unknown[] };
     expect(
       maybeAddPromptInjectionHold(blockingEnv, {
+        mode: "live",
         settings,
         advisory: untouched as never,
         repoFullName: "acme/widgets",
@@ -449,6 +451,7 @@ describe("review.auto_review wiring (#1954)", () => {
     const offAdvisory = { headSha: "sha", findings: [] as unknown[] };
     expect(
       maybeAddPromptInjectionHold(offEnv, {
+        mode: "live",
         settings: { gatePack: "oss-anti-slop", aiReviewMode: "off" } as never,
         advisory: offAdvisory as never,
         repoFullName: "acme/widgets",
@@ -468,6 +471,7 @@ describe("review.auto_review wiring (#1954)", () => {
     const settings = { gatePack: "oss-anti-slop", aiReviewMode: "block", aiReviewAllAuthors: false } as never;
     const advisory = { headSha: "sha", findings: [] as unknown[] };
     const added = maybeAddReputationSkipHold(blockingEnv, {
+      mode: "live",
       settings,
       advisory: advisory as never,
       repoFullName: "acme/widgets",
@@ -486,6 +490,7 @@ describe("review.auto_review wiring (#1954)", () => {
     const advisory = { headSha: "sha", findings: [] as unknown[] };
     expect(
       maybeAddReputationSkipHold(blockingEnv, {
+        mode: "live",
         settings,
         advisory: advisory as never,
         repoFullName: "acme/widgets",
@@ -502,6 +507,7 @@ describe("review.auto_review wiring (#1954)", () => {
     const settings = { gatePack: "oss-anti-slop", aiReviewMode: "block", aiReviewAllAuthors: false } as never;
     const advisory = { headSha: "sha", findings: [] as unknown[] };
     const added = maybeAddReputationSkipHold(blockingEnv, {
+      mode: "live",
       settings,
       advisory: advisory as never,
       repoFullName: "acme/widgets",
@@ -517,6 +523,7 @@ describe("review.auto_review wiring (#1954)", () => {
     const untouched = { headSha: "sha", findings: [] as unknown[] };
     expect(
       maybeAddReputationSkipHold(blockingEnv, {
+        mode: "live",
         settings,
         advisory: untouched as never,
         repoFullName: "acme/widgets",
@@ -532,6 +539,7 @@ describe("review.auto_review wiring (#1954)", () => {
     const reviewOff = { headSha: "sha", findings: [] as unknown[] };
     expect(
       maybeAddReputationSkipHold(blockingEnv, {
+        mode: "live",
         settings: { gatePack: "oss-anti-slop", aiReviewMode: "off", aiReviewAllAuthors: false } as never,
         advisory: reviewOff as never,
         repoFullName: "acme/widgets",
@@ -548,6 +556,7 @@ describe("review.auto_review wiring (#1954)", () => {
     const added = maybeAddRequiredAutoReviewSkipHold(
       { AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI: {} } as Env,
       {
+        mode: "live",
         settings: { gatePack: "oss-anti-slop", aiReviewMode: "block", aiReviewAllAuthors: false } as any,
         advisory,
         repoFullName: "acme/widgets",
@@ -569,6 +578,7 @@ describe("review.auto_review wiring (#1954)", () => {
     const trustedSkip = { headSha: "sha", findings: [] };
     expect(
       maybeAddRequiredAutoReviewSkipHold({ AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI: {} } as Env, {
+        mode: "live",
         settings: { gatePack: "oss-anti-slop", aiReviewMode: "block", aiReviewAllAuthors: false } as any,
         advisory: trustedSkip,
         repoFullName: "acme/widgets",
@@ -582,6 +592,7 @@ describe("review.auto_review wiring (#1954)", () => {
     const disabledAi = { headSha: "sha", findings: [] };
     expect(
       maybeAddRequiredAutoReviewSkipHold({ AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI: {} } as Env, {
+        mode: "live",
         settings: { gatePack: "oss-anti-slop", aiReviewMode: "off", aiReviewAllAuthors: false } as any,
         advisory: disabledAi,
         repoFullName: "acme/widgets",
@@ -591,6 +602,55 @@ describe("review.auto_review wiring (#1954)", () => {
       }),
     ).toBe(false);
     expect(disabledAi.findings).toEqual([]);
+  });
+
+  // #9692: a paused repo suppresses these holds the same way "AI review off" already does -- nothing was
+  // expected to run this pass, so a skip is not a suppression worth holding for.
+  it("#9692: mode 'paused' suppresses every sibling hold, even when its own skip condition fired", () => {
+    const blockingEnv = { AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI: {} } as Env;
+    const settings = { gatePack: "oss-anti-slop", aiReviewMode: "block", aiReviewAllAuthors: false } as never;
+
+    const reputationAdvisory = { headSha: "sha", findings: [] as unknown[] };
+    expect(
+      maybeAddReputationSkipHold(blockingEnv, {
+        mode: "paused",
+        settings,
+        advisory: reputationAdvisory as never,
+        repoFullName: "acme/widgets",
+        author: "burst-farmer",
+        confirmedContributor: false,
+        reputationSkipped: true,
+      }),
+    ).toBe(false);
+    expect(reputationAdvisory.findings).toEqual([]);
+
+    const injectionAdvisory = { headSha: "sha", findings: [] as unknown[] };
+    expect(
+      maybeAddPromptInjectionHold(blockingEnv, {
+        mode: "paused",
+        settings,
+        advisory: injectionAdvisory as never,
+        repoFullName: "acme/widgets",
+        author: "attacker",
+        confirmedContributor: false,
+        injectionDetected: true,
+      }),
+    ).toBe(false);
+    expect(injectionAdvisory.findings).toEqual([]);
+
+    const autoReviewAdvisory = { headSha: "sha", findings: [] as unknown[] };
+    expect(
+      maybeAddRequiredAutoReviewSkipHold(blockingEnv, {
+        mode: "paused",
+        settings: settings as any,
+        advisory: autoReviewAdvisory as never,
+        repoFullName: "acme/widgets",
+        author: "alice",
+        confirmedContributor: false,
+        autoReviewSkipReason: "review skipped (WIP title)",
+      }),
+    ).toBe(false);
+    expect(autoReviewAdvisory.findings).toEqual([]);
   });
 
 });

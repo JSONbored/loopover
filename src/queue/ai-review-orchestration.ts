@@ -286,6 +286,9 @@ export function aiReviewAttemptFailedResult(
 export async function shouldStartAiReviewForAdvisory(
   env: Env,
   args: {
+    // Threaded straight into shouldRequirePublicAiReviewForAdvisory's hard gate below -- a "paused" repo must
+    // never be told a review will run, matching runAiReviewForAdvisory's own mode==="paused" stop.
+    mode: AgentActionMode;
     settings: RepositorySettings;
     advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "headSha">;
     repoFullName: string;
@@ -352,6 +355,7 @@ export function resolveAiReviewableAuthor(
  *  exact reason whenever `aiReviewWillRun` ends up false for a cause none of the OTHER (already-audited) paths
  *  — author blacklist, manual-review freeze, auto-review skip, one-shot reuse, reputation skip — cover. */
 export type PublicAiReviewGateSkipReason =
+  | "paused"
   | "skip_ai_review_requested"
   | "ai_review_mode_off"
   | "author_not_reviewable"
@@ -363,6 +367,11 @@ export type PublicAiReviewGateSkipReason =
 export function resolvePublicAiReviewGateSkipReason(
   env: Env,
   args: {
+    // #9692: evaluated FIRST, ahead of every other reason -- a paused repo's publish pass still computes the
+    // gate verdict (only GitHub writes are suppressed), so this predicate must independently know about the
+    // same stop runAiReviewForAdvisory applies as its own first check, or the "expected a review" flag built
+    // from this function drifts out of sync with reality on every paused pass.
+    mode: AgentActionMode;
     settings: RepositorySettings;
     advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "headSha">;
     repoFullName: string;
@@ -372,6 +381,7 @@ export function resolvePublicAiReviewGateSkipReason(
   },
 ): PublicAiReviewGateSkipReason | null {
   const reviewableAuthor = resolveAiReviewableAuthor(args.settings, args.confirmedContributor);
+  if (args.mode === "paused") return "paused";
   if (args.skipAiReview) return "skip_ai_review_requested";
   if (args.settings.aiReviewMode === "off") return "ai_review_mode_off";
   if (!reviewableAuthor) return "author_not_reviewable";
@@ -385,6 +395,7 @@ export function resolvePublicAiReviewGateSkipReason(
 export function shouldRequirePublicAiReviewForAdvisory(
   env: Env,
   args: {
+    mode: AgentActionMode;
     settings: RepositorySettings;
     advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "headSha">;
     repoFullName: string;

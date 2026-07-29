@@ -8364,6 +8364,7 @@ async function resolvePullRequestFilesForReview(
 export function maybeAddRequiredAutoReviewSkipHold(
   env: Env,
   args: {
+    mode: AgentActionMode;
     settings: RepositorySettings;
     advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "headSha" | "findings">;
     repoFullName: string;
@@ -8410,6 +8411,7 @@ export function maybeAddRequiredAutoReviewSkipHold(
 export function maybeAddPromptInjectionHold(
   env: Env,
   args: {
+    mode: AgentActionMode;
     settings: RepositorySettings;
     advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "headSha" | "findings">;
     repoFullName: string;
@@ -8443,6 +8445,7 @@ export function maybeAddPromptInjectionHold(
 export function maybeAddReputationSkipHold(
   env: Env,
   args: {
+    mode: AgentActionMode;
     settings: RepositorySettings;
     advisory: Pick<Awaited<ReturnType<typeof buildPullRequestAdvisory>>, "headSha" | "findings">;
     repoFullName: string;
@@ -11204,6 +11207,7 @@ async function maybePublishPrPublicSurface(
     // inline findings at the publish site below, mirroring findingCategories.
     fixHandoffEnabledForReview = shouldEmitFixHandoff(env, repoFullName, reviewManifestForAutoReview?.review.fixHandoff ?? undefined);
     maybeAddRequiredAutoReviewSkipHold(env, {
+      mode,
       settings,
       advisory,
       repoFullName,
@@ -11227,6 +11231,7 @@ async function maybePublishPrPublicSurface(
     // auto-merge, i.e. suspicion would BUY less scrutiny. Exact sibling of the contributor-controlled skip
     // hold above; a no-op when the repo does not require blocking AI review, or when no skip fired.
     maybeAddReputationSkipHold(env, {
+      mode,
       settings,
       advisory,
       repoFullName,
@@ -11239,6 +11244,7 @@ async function maybePublishPrPublicSurface(
     // #9035: a caught reviewer-manipulation attempt is evidence of intent, not a code-quality observation, and
     // must not buy an automated decision. Same fail-closed shape as the two holds above.
     maybeAddPromptInjectionHold(env, {
+      mode,
       settings,
       advisory,
       repoFullName,
@@ -11268,6 +11274,7 @@ async function maybePublishPrPublicSurface(
       !autoReviewSkipReason &&
       !oneShotPriorReview &&
       (await shouldStartAiReviewForAdvisory(env, {
+        mode,
         settings,
         advisory,
         repoFullName,
@@ -11383,6 +11390,7 @@ async function maybePublishPrPublicSurface(
       // the remaining silent branch: a forced pass that ends with no fresh review always now has exactly one of
       // a reuse event, a reuse-unavailable event, a reputation-skip hold, or this event in the audit trail.
       const publicGateSkipReason = resolvePublicAiReviewGateSkipReason(env, {
+        mode,
         settings,
         advisory,
         repoFullName,

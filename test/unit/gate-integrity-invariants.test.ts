@@ -115,6 +115,7 @@ describe("reputation-triggered and contributor-controlled AI-review skips hold i
 
       const contributorAdvisory = advisoryStub();
       const contributorHeld = maybeAddRequiredAutoReviewSkipHold(env, {
+        mode: "live",
         settings,
         advisory: contributorAdvisory as never,
         repoFullName: "acme/widgets",
@@ -125,6 +126,7 @@ describe("reputation-triggered and contributor-controlled AI-review skips hold i
 
       const reputationAdvisory = advisoryStub();
       const reputationHeld = maybeAddReputationSkipHold(env, {
+        mode: "live",
         settings,
         advisory: reputationAdvisory as never,
         repoFullName: "acme/widgets",
@@ -150,6 +152,7 @@ describe("reputation-triggered and contributor-controlled AI-review skips hold i
       const contributorAdvisory = advisoryStub();
       expect(
         maybeAddRequiredAutoReviewSkipHold(env, {
+          mode: "live",
           settings,
           advisory: contributorAdvisory as never,
           repoFullName: "acme/widgets",
@@ -163,6 +166,7 @@ describe("reputation-triggered and contributor-controlled AI-review skips hold i
       const reputationAdvisory = advisoryStub();
       expect(
         maybeAddReputationSkipHold(env, {
+          mode: "live",
           settings,
           advisory: reputationAdvisory as never,
           repoFullName: "acme/widgets",

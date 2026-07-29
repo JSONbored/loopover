@@ -175,7 +175,12 @@ function loopOperationMeta(method: string, path: string, tag: string): { operati
  * that had to restate this list would go quiet the moment a new registrar was added, which is the rot the
  * anti-rot guards in this repo keep finding.
  */
-export const SPEC_REGISTRARS: ReadonlyArray<(registry: OpenAPIRegistry) => void> = [registerOrbAndControlRouteSpecs, registerInternalAndPublicRouteSpecs];
+export const SPEC_REGISTRARS: ReadonlyArray<(registry: OpenAPIRegistry) => void> = [
+  registerOrbAndControlRouteSpecs,
+  // #9526: served by this app and computed at request time from the contract registry.
+  registerDiscoveryRouteSpecs,
+  registerInternalAndPublicRouteSpecs,
+];
 
 export function buildOpenApiSpec() {
   const registry = new OpenAPIRegistry();
@@ -2249,16 +2254,7 @@ export function buildOpenApiSpec() {
   // Registered from their own module rather than inline here because each entry declares an auth
   // level that DERIVES its security stanza, instead of having one bolted on afterwards by
   // applySecurityMetadata's path-prefix guesswork.
-<<<<<<< HEAD
   for (const register of SPEC_REGISTRARS) register(registry);
-||||||| parent of 42b72c8f5 (feat(mcp): derive every client-config surface and tag proxied calls (#9526))
-  registerOrbAndControlRouteSpecs(registry);
-  registerInternalAndPublicRouteSpecs(registry);
-=======
-  registerOrbAndControlRouteSpecs(registry);
-  registerDiscoveryRouteSpecs(registry);
-  registerInternalAndPublicRouteSpecs(registry);
->>>>>>> 42b72c8f5 (feat(mcp): derive every client-config surface and tag proxied calls (#9526))
 
   const generator = new OpenApiGeneratorV3(registry.definitions);
   const document = generator.generateDocument({

@@ -125,6 +125,33 @@ describe("loopover-mcp CLI — basics", () => {
     await expect(runInProcess(["init-client", "--print", "claude", "--mode", "carrier-pigeon"])).rejects.toThrow(/Unsupported mode.*stdio, remote, miner/);
   });
 
+  it("names the hosts it accepts when told nothing, or something it does not know (#9526)", async () => {
+    // The error has to enumerate: "unsupported client" without the list leaves a reader guessing at a
+    // five-value set they cannot see from the outside.
+    await expect(runInProcess(["init-client"])).rejects.toThrow(/Pass --print with one of: codex, claude, cursor, mcp, vscode/);
+    await expect(runInProcess(["init-client", "--print", "emacs"])).rejects.toThrow(/Unsupported client: emacs.*codex, claude, cursor, mcp, vscode/);
+  });
+
+  it("accepts --client as well as --print, since both spellings reached this command (#9526)", async () => {
+    const viaClient = JSON.parse(await runInProcess(["init-client", "--client", "cursor", "--json"])) as { client: string; snippet: string };
+    expect(viaClient.client).toBe("cursor");
+    expect(viaClient.snippet).toBe(clientConfigSnippet("cursor", "stdio"));
+  });
+
+  it("refuses a host/mode pair it cannot vouch for, naming both (#9526)", async () => {
+    // The generic `mcpServers` bucket is an unnamed host; guessing its remote dialect would print config
+    // that fails on paste, and the stdio gateway already serves it the remote tools.
+    await expect(runInProcess(["init-client", "--print", "mcp", "--mode", "remote"])).rejects.toThrow(/cannot connect over the Remote streamable-http mode/);
+  });
+
+  it("carries the host's own remote caveat when it has one, and nothing when it does not (#9526)", async () => {
+    const codex = JSON.parse(await runInProcess(["init-client", "--print", "codex", "--mode", "remote", "--json"])) as { notes: string[] };
+    expect(codex.notes.join("\n")).toContain("experimental_use_rmcp_client");
+
+    const cursor = JSON.parse(await runInProcess(["init-client", "--print", "cursor", "--mode", "remote", "--json"])) as { notes: string[] };
+    expect(cursor.notes.join("\n")).not.toContain("experimental_use_rmcp_client");
+  });
+
   it("prints human-approved agent profile instructions for supported MCP clients", async () => {
     const payload = JSON.parse(await runInProcess(["init-client", "--print", "codex", "--agent-profile", "miner-planner", "--json"])) as {
       agentProfile: {

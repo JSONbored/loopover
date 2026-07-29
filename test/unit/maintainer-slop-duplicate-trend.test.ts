@@ -4,6 +4,7 @@ import { buildQueueHealth, buildCollisionReport } from "../../src/signals/engine
 import {
   buildMaintainerSlopDuplicateTrend,
   slopBandLabelFromRate,
+  SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT,
   SLOP_DUPLICATE_TREND_WEEKS,
   trendPointFromQueueHealth,
 } from "../../src/services/maintainer-slop-duplicate-trend";
@@ -111,6 +112,35 @@ describe("buildMaintainerSlopDuplicateTrend", () => {
       }
     }
     expect(JSON.stringify(trend)).not.toMatch(FORBIDDEN_PUBLIC_TERMS);
+  });
+
+  it("budgets the read cap for at least daily-plus snapshots across the window, not two per week (#9699)", () => {
+    // The cap must cover far more than the old "two per week" premise, so the sinceIso time bound (not the row
+    // cap) is what limits the read. At least WEEKS * 28 (or clamped to the query's 100 ceiling).
+    expect(SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT).toBeGreaterThanOrEqual(Math.min(SLOP_DUPLICATE_TREND_WEEKS * 28, 100));
+  });
+
+  it("populates at least 6 weekly buckets from 40 daily snapshots spanning 8 weeks (#9699)", () => {
+    // Before #9699 the read cap (SLOP_DUPLICATE_TREND_WEEKS * 2 = 16) kept only the most recent ~2 weeks of
+    // these daily snapshots, so at most 1-2 buckets ever populated. With the full 8-week set fed through, the
+    // builder must spread them across the window.
+    const generatedAt = "2026-06-29T12:00:00.000Z";
+    const nowMs = Date.parse(generatedAt);
+    const snapshots = Array.from({ length: 40 }, (_, i) =>
+      queueHealthSnapshot(new Date(nowMs - i * 86_400_000).toISOString(), {
+        openPullRequests: 10,
+        slopFlaggedPullRequests: 2,
+        duplicateFlaggedPullRequests: 1,
+      }),
+    );
+    const trend = buildMaintainerSlopDuplicateTrend({
+      generatedAt,
+      stale: false,
+      nowMs,
+      repos: [{ repoFullName: "octo/demo", queueHealthSnapshots: snapshots }],
+    });
+    const withRate = trend.weeks.filter((week) => week.slopFlagRatePct !== null);
+    expect(withRate.length).toBeGreaterThanOrEqual(6);
   });
 
   it("returns null slop series when snapshots lack slop counts but still shapes duplicate series", () => {

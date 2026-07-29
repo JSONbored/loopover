@@ -6060,10 +6060,15 @@ export async function listRecentSignalSnapshotsForTargets(
   signalType: string,
   targetKeys: readonly string[],
   maxPerTarget = 16,
+  sinceIso?: string,
 ): Promise<Map<string, SignalSnapshotRecord[]>> {
   const result = new Map<string, SignalSnapshotRecord[]>();
   if (targetKeys.length === 0) return result;
   const perTargetLimit = Math.max(1, Math.min(maxPerTarget, 100));
+  // The time bound (#9699) is applied INSIDE the windowed subquery so row_number() ranks over the in-window
+  // set, not the whole table — otherwise a repo with many recent snapshots could rank its cap entirely within
+  // the last few days and never surface the older weeks the trend card needs. maxPerTarget stays the backstop.
+  const sinceClause = sinceIso ? " AND generated_at >= ?" : "";
   for (let i = 0; i < targetKeys.length; i += SIGNAL_SNAPSHOT_TARGET_KEY_SQL_BATCH) {
     const batch = targetKeys.slice(i, i + SIGNAL_SNAPSHOT_TARGET_KEY_SQL_BATCH);
     const placeholders = batch.map(() => "?").join(", ");
@@ -6080,13 +6085,13 @@ export async function listRecentSignalSnapshotsForTargets(
             payload_json,
             row_number() OVER (PARTITION BY target_key ORDER BY generated_at DESC, rowid DESC) AS snapshot_rank
           FROM signal_snapshots
-          WHERE signal_type = ? AND target_key IN (${placeholders})
+          WHERE signal_type = ? AND target_key IN (${placeholders})${sinceClause}
         )
         WHERE snapshot_rank <= ?
         ORDER BY target_key, generated_at DESC
       `,
     )
-      .bind(signalType, ...batch, perTargetLimit)
+      .bind(signalType, ...batch, ...(sinceIso ? [sinceIso] : []), perTargetLimit)
       .all<{
         id: string;
         signal_type: string;

@@ -29,6 +29,11 @@
 // Exported so the federated bundle export (#1970, src/orb/federated-bundle.ts) gates its own published
 // precision on the SAME volume bar the fleet median uses — a bundle must not advertise a precision the fleet
 // would refuse to count.
+// #9783: the retention horizon is imported rather than restated, so the window this module trusts for cycle
+// time cannot drift from the window the prune actually enforces. retention.ts imports only a JSON util, so
+// this introduces no cycle.
+import { retentionCutoffIsoForTable } from "../db/retention";
+
 export const MIN_DECIDED = 5; // an instance needs at least this many decided PRs to count toward the fleet median
 const OUTLIER_BAND = 0.25; // |instance precision − fleet median| beyond this flags the instance
 const GAMING_VOLUME_MULTIPLIER = 2; // an instance's decided count more than this many times the fleet median
@@ -162,6 +167,11 @@ export interface FleetAnalytics {
    *  public surface can label them honestly instead of letting fleet framing imply corroboration that a
    *  single-instance sample cannot provide. */
   fleetFramingEligible: boolean;
+  /** #9783: whether cycleP50Ms/cycleP95Ms cover the REQUESTED window. False when the window reaches past
+   *  orb_signals' retention horizon: the folded rollups carry counts, not durations, so percentiles over the
+   *  surviving rows would describe a shorter window than the caller asked for. The percentiles are null in
+   *  that case rather than quietly narrowed -- this says which it is. */
+  cycleTimeObservable: boolean;
 }
 
 function median(xs: number[]): number | null {
@@ -254,7 +264,27 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
   const windowDays = Number.isFinite(opts.windowDays) && (opts.windowDays as number) > 0 ? Math.min(opts.windowDays as number, 365) : 90;
   // Date-only cutoff (like computeGateEval) so it compares correctly whether received_at is ISO ('…T…Z')
   // or SQLite's CURRENT_TIMESTAMP space format ('YYYY-MM-DD HH:MM:SS').
-  const cutoff = new Date(Date.now() - windowDays * 86_400_000).toISOString().slice(0, 10);
+  const nowMs = Date.now();
+  const cutoff = new Date(nowMs - windowDays * 86_400_000).toISOString().slice(0, 10);
+
+  // #9783 follow-up: cycle time is the ONE metric the rollup cannot carry. The confusion matrix folds into
+  // per-day cells and sums back exactly, but cycleP50Ms/cycleP95Ms are percentiles over individual
+  // time_to_close_ms values -- percentiles are not summable, so no per-day count can reconstruct them, and
+  // orb_signal_rollups deliberately stores counts rather than a sample of durations (an unbounded sample is
+  // the growth problem retention exists to solve).
+  //
+  // So a window reaching past the retention horizon would compute percentiles over only the rows that
+  // survived, and report them as if they described the whole window -- silently, exactly the failure this
+  // change exists to prevent for the matrix. Instead the percentiles go null and this flag says why, the
+  // same posture gamingDetectionEligible/fleetFramingEligible take: a public surface can label the gap
+  // rather than be handed a number that quietly means something narrower than its window.
+  //
+  // Compared as instants, before the date-truncation above: at the default windowDays === the retention
+  // window the two are equal and cycle time is fully observable. (The date-only cutoff then widens the query
+  // by under a day at the oldest edge, where the prune may already have taken rows -- a sub-day sliver out
+  // of ninety, which percentiles are robust to and which predates this change.)
+  const retentionCutoffIso = retentionCutoffIsoForTable("orb_signals", nowMs);
+  const cycleTimeObservable = retentionCutoffIso === null || nowMs - windowDays * 86_400_000 >= Date.parse(retentionCutoffIso);
 
   let cells: Cell[] = [];
   let cycleRows: CycleTime[] = [];
@@ -311,6 +341,10 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
       // claim a fleet aggregate. instanceCount is 0 here, so the public surface labels it a self-report and
       // publishes the nulls it already had.
       fleetFramingEligible: false,
+      // The cycle percentiles here are null because there is no data at all, not because the window outran
+      // retention -- so this reports the window's real observability rather than piling a second reason onto
+      // the same nulls.
+      cycleTimeObservable,
     };
   }
 
@@ -405,8 +439,8 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
       reversalRate: median(nums((i) => i.reversalRate)),
       decisionAccuracy: pooledDecisionAccuracy,
       decisionAccuracyMedian: median(nums((i) => i.decisionAccuracy)),
-      cycleP50Ms: percentile(cycle, 50),
-      cycleP95Ms: percentile(cycle, 95),
+      cycleP50Ms: cycleTimeObservable ? percentile(cycle, 50) : null,
+      cycleP95Ms: cycleTimeObservable ? percentile(cycle, 95) : null,
       pooled,
     },
     instances,
@@ -414,6 +448,7 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
     gamingPatternFlags,
     gamingDetectionEligible,
     fleetFramingEligible: eligible.length >= FLEET_FRAMING_MIN_INSTANCES,
+    cycleTimeObservable,
   };
 }
 

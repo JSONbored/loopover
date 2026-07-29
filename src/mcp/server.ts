@@ -6,10 +6,15 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { RequestHandlerExtra } from "@modelcontextprotocol/sdk/shared/protocol.js";
 import { ElicitResultSchema, type ServerNotification, type ServerRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
-// #9517: the pilot tools' schemas come from the shared contract instead of being declared here.
-// `.shape` is what the MCP SDK's registerTool wants; the same ZodObject also drives the JSON Schema
-// the agent-tool specs and the contract validator read, so there is one definition per tool rather
-// than one per server.
+// #9517: the pilot tools' schemas come from the shared contract instead of being declared here, so there
+// is one definition per tool rather than one per server.
+//
+// #9762: registerTool is handed the ZodObject, NOT its `.shape`. The SDK accepts either, but a raw shape is
+// re-wrapped in a plain `z.object` that DISCARDS the catchall -- so a `looseObject` input would be advertised
+// and enforced as `additionalProperties: false`, and every extra field the payload carries becomes a -32602
+// the caller cannot act on. That is #9518's defect class. None of these inputs is loose today, which is
+// precisely why the 23 sites that passed `.shape` were indistinguishable from the correct ones by reading;
+// test/unit/mcp-register-tool-shape-guard.test.ts is what keeps them that way.
 import {
   AdminGetConfigInput,
   AdminGetConfigOutput,
@@ -283,7 +288,7 @@ import {
   amsTenantHealthTool,
   amsTenantWakeTool,
 } from "@loopover/contract/tools";
-import { TOOL_CATEGORIES, type ToolCategory } from "@loopover/contract";
+import { ROTATABLE_SECRET_NAMES, TOOL_CATEGORIES, type ToolCategory } from "@loopover/contract";
 import {
   MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH,
   MAX_FIND_OPPORTUNITIES_LANGUAGES,
@@ -607,7 +612,7 @@ const findOpportunitiesShape = {
 // is not cosmetic: src/selfhost/load-file-secrets.ts only .trim()s the file, so a label line above the
 // value silently becomes part of the credential.
 const adminRotateSecretShape = {
-  secret: z.enum(["claude_code_oauth_token", "github_webhook_secret", "loopover_api_token", "loopover_mcp_token", "loopover_mcp_admin_token", "pagerduty_routing_key"]),
+  secret: z.enum(ROTATABLE_SECRET_NAMES),
   value: z
     .string()
     .min(1)
@@ -2436,22 +2441,22 @@ export class LoopoverMcp {
       );
       register(
         "loopover_admin_get_status",
-        { description: adminGetStatusTool.description, inputSchema: AdminGetStatusInput.shape, outputSchema: AdminGetStatusOutput, annotations: contractAnnotations(adminGetStatusTool) },
+        { description: adminGetStatusTool.description, inputSchema: AdminGetStatusInput, outputSchema: AdminGetStatusOutput, annotations: contractAnnotations(adminGetStatusTool) },
         async () => this.toolResult(await this.adminGetStatus()),
       );
       register(
         "loopover_admin_doctor",
-        { description: adminDoctorTool.description, inputSchema: AdminDoctorInput.shape, outputSchema: AdminDoctorOutput, annotations: contractAnnotations(adminDoctorTool) },
+        { description: adminDoctorTool.description, inputSchema: AdminDoctorInput, outputSchema: AdminDoctorOutput, annotations: contractAnnotations(adminDoctorTool) },
         async () => this.toolResult(await this.adminDoctor()),
       );
       register(
         "loopover_admin_tail_logs",
-        { description: adminTailLogsTool.description, inputSchema: AdminTailLogsInput.shape, outputSchema: AdminTailLogsOutput, annotations: contractAnnotations(adminTailLogsTool) },
+        { description: adminTailLogsTool.description, inputSchema: AdminTailLogsInput, outputSchema: AdminTailLogsOutput, annotations: contractAnnotations(adminTailLogsTool) },
         async (input) => this.toolResult(await this.adminTailLogs(input)),
       );
       register(
         "loopover_admin_get_backup_status",
-        { description: adminGetBackupStatusTool.description, inputSchema: AdminGetBackupStatusInput.shape, outputSchema: AdminGetBackupStatusOutput, annotations: contractAnnotations(adminGetBackupStatusTool) },
+        { description: adminGetBackupStatusTool.description, inputSchema: AdminGetBackupStatusInput, outputSchema: AdminGetBackupStatusOutput, annotations: contractAnnotations(adminGetBackupStatusTool) },
         async () => this.toolResult(await this.adminGetBackupStatus()),
       );
       register(
@@ -2557,7 +2562,7 @@ export class LoopoverMcp {
       "loopover_ops_list_dead_letter_jobs",
       {
         description: opsListDeadLetterJobsTool.description,
-        inputSchema: OpsListDeadLetterJobsInput.shape,
+        inputSchema: OpsListDeadLetterJobsInput,
         outputSchema: OpsListDeadLetterJobsOutput,
         annotations: contractAnnotations(opsListDeadLetterJobsTool),
       },
@@ -2567,7 +2572,7 @@ export class LoopoverMcp {
       "loopover_ops_replay_dead_letter_job",
       {
         description: opsReplayDeadLetterJobTool.description,
-        inputSchema: OpsReplayDeadLetterJobInput.shape,
+        inputSchema: OpsReplayDeadLetterJobInput,
         outputSchema: OpsReplayDeadLetterJobOutput,
         annotations: contractAnnotations(opsReplayDeadLetterJobTool),
       },
@@ -2577,7 +2582,7 @@ export class LoopoverMcp {
       "loopover_ops_delete_dead_letter_job",
       {
         description: opsDeleteDeadLetterJobTool.description,
-        inputSchema: OpsDeleteDeadLetterJobInput.shape,
+        inputSchema: OpsDeleteDeadLetterJobInput,
         outputSchema: OpsDeleteDeadLetterJobOutput,
         annotations: contractAnnotations(opsDeleteDeadLetterJobTool),
       },
@@ -2587,7 +2592,7 @@ export class LoopoverMcp {
       "loopover_ops_purge_dead_letter_jobs",
       {
         description: opsPurgeDeadLetterJobsTool.description,
-        inputSchema: OpsPurgeDeadLetterJobsInput.shape,
+        inputSchema: OpsPurgeDeadLetterJobsInput,
         outputSchema: OpsPurgeDeadLetterJobsOutput,
         annotations: contractAnnotations(opsPurgeDeadLetterJobsTool),
       },
@@ -2597,7 +2602,7 @@ export class LoopoverMcp {
       "loopover_ops_get_kill_switch",
       {
         description: opsGetKillSwitchTool.description,
-        inputSchema: OpsGetKillSwitchInput.shape,
+        inputSchema: OpsGetKillSwitchInput,
         outputSchema: OpsGetKillSwitchOutput,
         annotations: contractAnnotations(opsGetKillSwitchTool),
       },
@@ -2607,7 +2612,7 @@ export class LoopoverMcp {
       "loopover_ops_set_kill_switch",
       {
         description: opsSetKillSwitchTool.description,
-        inputSchema: OpsSetKillSwitchInput.shape,
+        inputSchema: OpsSetKillSwitchInput,
         outputSchema: OpsSetKillSwitchOutput,
         annotations: contractAnnotations(opsSetKillSwitchTool),
       },
@@ -2617,7 +2622,7 @@ export class LoopoverMcp {
       "loopover_ops_get_operator_dashboard",
       {
         description: opsGetOperatorDashboardTool.description,
-        inputSchema: OpsGetOperatorDashboardInput.shape,
+        inputSchema: OpsGetOperatorDashboardInput,
         outputSchema: OpsGetOperatorDashboardOutput,
         annotations: contractAnnotations(opsGetOperatorDashboardTool),
       },
@@ -2631,88 +2636,88 @@ export class LoopoverMcp {
     // checks -- so registration is never the gate.
     register(
       "loopover_fleet_list_instances",
-      { description: fleetListInstancesTool.description, inputSchema: FleetListInstancesInput.shape, outputSchema: FleetListInstancesOutput, annotations: contractAnnotations(fleetListInstancesTool) },
+      { description: fleetListInstancesTool.description, inputSchema: FleetListInstancesInput, outputSchema: FleetListInstancesOutput, annotations: contractAnnotations(fleetListInstancesTool) },
       async () => this.toolResult(await this.fleetListInstances()),
     );
     register(
       "loopover_fleet_register_instance",
-      { description: fleetRegisterInstanceTool.description, inputSchema: FleetRegisterInstanceInput.shape, outputSchema: FleetRegisterInstanceOutput, annotations: contractAnnotations(fleetRegisterInstanceTool) },
+      { description: fleetRegisterInstanceTool.description, inputSchema: FleetRegisterInstanceInput, outputSchema: FleetRegisterInstanceOutput, annotations: contractAnnotations(fleetRegisterInstanceTool) },
       async (input) => this.toolResult(await this.fleetRegisterInstance(input)),
     );
     register(
       "loopover_fleet_list_installations",
-      { description: fleetListInstallationsTool.description, inputSchema: FleetListInstallationsInput.shape, outputSchema: FleetListInstallationsOutput, annotations: contractAnnotations(fleetListInstallationsTool) },
+      { description: fleetListInstallationsTool.description, inputSchema: FleetListInstallationsInput, outputSchema: FleetListInstallationsOutput, annotations: contractAnnotations(fleetListInstallationsTool) },
       async () => this.toolResult(await this.fleetListInstallations()),
     );
     register(
       "loopover_fleet_register_installation",
-      { description: fleetRegisterInstallationTool.description, inputSchema: FleetRegisterInstallationInput.shape, outputSchema: FleetRegisterInstallationOutput, annotations: contractAnnotations(fleetRegisterInstallationTool) },
+      { description: fleetRegisterInstallationTool.description, inputSchema: FleetRegisterInstallationInput, outputSchema: FleetRegisterInstallationOutput, annotations: contractAnnotations(fleetRegisterInstallationTool) },
       async (input) => this.toolResult(await this.fleetRegisterInstallation(input)),
     );
     register(
       "loopover_fleet_backfill_installations",
-      { description: fleetBackfillInstallationsTool.description, inputSchema: FleetBackfillInstallationsInput.shape, outputSchema: FleetBackfillInstallationsOutput, annotations: contractAnnotations(fleetBackfillInstallationsTool) },
+      { description: fleetBackfillInstallationsTool.description, inputSchema: FleetBackfillInstallationsInput, outputSchema: FleetBackfillInstallationsOutput, annotations: contractAnnotations(fleetBackfillInstallationsTool) },
       async () => this.toolResult(await this.fleetBackfillInstallations()),
     );
     register(
       "loopover_fleet_issue_enrollment",
-      { description: fleetIssueEnrollmentTool.description, inputSchema: FleetIssueEnrollmentInput.shape, outputSchema: FleetEnrollmentOutput, annotations: contractAnnotations(fleetIssueEnrollmentTool) },
+      { description: fleetIssueEnrollmentTool.description, inputSchema: FleetIssueEnrollmentInput, outputSchema: FleetEnrollmentOutput, annotations: contractAnnotations(fleetIssueEnrollmentTool) },
       async (input) => this.toolResult(await this.fleetIssueEnrollment(input)),
     );
     register(
       "loopover_fleet_rotate_enrollment",
-      { description: fleetRotateEnrollmentTool.description, inputSchema: FleetRotateEnrollmentInput.shape, outputSchema: FleetEnrollmentOutput, annotations: contractAnnotations(fleetRotateEnrollmentTool) },
+      { description: fleetRotateEnrollmentTool.description, inputSchema: FleetRotateEnrollmentInput, outputSchema: FleetEnrollmentOutput, annotations: contractAnnotations(fleetRotateEnrollmentTool) },
       // Rotation IS issuance with rotate forced on -- one implementation, so the two can never diverge on
       // what "replace the live enrollment" means.
       async (input) => this.toolResult(await this.fleetIssueEnrollment({ ...input, rotate: true })),
     );
     register(
       "loopover_fleet_revoke_enrollment",
-      { description: fleetRevokeEnrollmentTool.description, inputSchema: FleetRevokeEnrollmentInput.shape, outputSchema: FleetRevokeEnrollmentOutput, annotations: contractAnnotations(fleetRevokeEnrollmentTool) },
+      { description: fleetRevokeEnrollmentTool.description, inputSchema: FleetRevokeEnrollmentInput, outputSchema: FleetRevokeEnrollmentOutput, annotations: contractAnnotations(fleetRevokeEnrollmentTool) },
       async (input, extra) => this.toolResult(await this.fleetRevokeEnrollment(input, extra, server)),
     );
 
     register(
       "loopover_fleet_config_push",
-      { description: fleetConfigPushTool.description, inputSchema: FleetConfigPushInput.shape, outputSchema: FleetConfigPushOutput, annotations: contractAnnotations(fleetConfigPushTool) },
+      { description: fleetConfigPushTool.description, inputSchema: FleetConfigPushInput, outputSchema: FleetConfigPushOutput, annotations: contractAnnotations(fleetConfigPushTool) },
       async (input, extra) => this.toolResult(await this.fleetConfigPush(input, extra, server)),
     );
     register(
       "loopover_fleet_run_job",
-      { description: fleetRunJobTool.description, inputSchema: FleetRunJobInput.shape, outputSchema: FleetRunJobOutput, annotations: contractAnnotations(fleetRunJobTool) },
+      { description: fleetRunJobTool.description, inputSchema: FleetRunJobInput, outputSchema: FleetRunJobOutput, annotations: contractAnnotations(fleetRunJobTool) },
       async (input) => this.toolResult(await this.fleetRunJob(input)),
     );
 
     // ── #9522 hosted-tenant tools ──────────────────────────────────────
     register(
       "loopover_tenant_create",
-      { description: tenantCreateTool.description, inputSchema: TenantCreateInput.shape, outputSchema: TenantCreateOutput, annotations: contractAnnotations(tenantCreateTool) },
+      { description: tenantCreateTool.description, inputSchema: TenantCreateInput, outputSchema: TenantCreateOutput, annotations: contractAnnotations(tenantCreateTool) },
       async (input) => this.toolResult(await this.tenantCreate(input)),
     );
     register(
       "loopover_tenant_list",
-      { description: tenantListTool.description, inputSchema: TenantListInput.shape, outputSchema: TenantListOutput, annotations: contractAnnotations(tenantListTool) },
+      { description: tenantListTool.description, inputSchema: TenantListInput, outputSchema: TenantListOutput, annotations: contractAnnotations(tenantListTool) },
       async () => this.toolResult(await this.tenantList()),
     );
     register(
       "loopover_tenant_set_orb_installation",
-      { description: tenantSetOrbInstallationTool.description, inputSchema: TenantSetOrbInstallationInput.shape, outputSchema: TenantSetOrbInstallationOutput, annotations: contractAnnotations(tenantSetOrbInstallationTool) },
+      { description: tenantSetOrbInstallationTool.description, inputSchema: TenantSetOrbInstallationInput, outputSchema: TenantSetOrbInstallationOutput, annotations: contractAnnotations(tenantSetOrbInstallationTool) },
       async (input) => this.toolResult(await this.tenantSetOrbInstallation(input)),
     );
     register(
       "loopover_tenant_destroy",
-      { description: tenantDestroyTool.description, inputSchema: TenantDestroyInput.shape, outputSchema: TenantDestroyOutput, annotations: contractAnnotations(tenantDestroyTool) },
+      { description: tenantDestroyTool.description, inputSchema: TenantDestroyInput, outputSchema: TenantDestroyOutput, annotations: contractAnnotations(tenantDestroyTool) },
       async (input, extra) => this.toolResult(await this.tenantDestroy(input, extra, server)),
     );
 
     register(
       "loopover_ams_tenant_health",
-      { description: amsTenantHealthTool.description, inputSchema: AmsTenantHealthInput.shape, outputSchema: AmsTenantHealthOutput, annotations: contractAnnotations(amsTenantHealthTool) },
+      { description: amsTenantHealthTool.description, inputSchema: AmsTenantHealthInput, outputSchema: AmsTenantHealthOutput, annotations: contractAnnotations(amsTenantHealthTool) },
       async (input) => this.toolResult(await this.amsTenantHealth(input)),
     );
     register(
       "loopover_ams_tenant_wake",
-      { description: amsTenantWakeTool.description, inputSchema: AmsTenantWakeInput.shape, outputSchema: AmsTenantWakeOutput, annotations: contractAnnotations(amsTenantWakeTool) },
+      { description: amsTenantWakeTool.description, inputSchema: AmsTenantWakeInput, outputSchema: AmsTenantWakeOutput, annotations: contractAnnotations(amsTenantWakeTool) },
       async (input) => this.toolResult(await this.amsTenantWake(input)),
     );
 

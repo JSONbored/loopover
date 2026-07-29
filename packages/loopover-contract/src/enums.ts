@@ -34,6 +34,27 @@ export type AutonomyLevel = (typeof AUTONOMY_LEVELS)[number];
  * Do not "sync" this to the engine's list; the difference is the point.
  */
 export const MAINTAIN_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label"] as const;
+
+/**
+ * The engine's FULL action-class list (#9762).
+ *
+ * A superset of MAINTAIN_ACTION_CLASSES: the autonomy record is keyed by every class the agent can take,
+ * while the maintain dial exposes only the operator-settable subset. Restated here and pinned against
+ * @loopover/engine's own by a meta-test, the posture limits.ts established -- the settings response schema
+ * needs this list and cannot import the engine.
+ */
+export const AGENT_ACTION_CLASSES = [
+  "review",
+  "request_changes",
+  "approve",
+  "merge",
+  "close",
+  "label",
+  "review_state_label",
+  "update_branch",
+  "assign",
+] as const;
+export type AgentActionClass = (typeof AGENT_ACTION_CLASSES)[number];
 export type MaintainActionClass = (typeof MAINTAIN_ACTION_CLASSES)[number];
 
 /**

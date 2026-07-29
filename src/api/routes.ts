@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { requiresApiToken } from "../auth/route-auth";
+import { handleAppError, nonErrorBoundary } from "./error-handler";
 import { createWorkerPostHogErrorMiddleware } from "./worker-posthog";
 import { z } from "zod";
 import { parsePositiveInt } from "../utils/json";
@@ -1164,6 +1165,13 @@ function internalOpsAgentConfig(env: Env): OpsAgentConfig {
 
 export function createApp() {
   const app = new Hono<AppBindings>();
+  // The global error boundary. Hono installs its own default regardless, so this REPLACES a handler that
+  // returned a text/plain body from a JSON API and logged a raw Error the forwarder cannot classify --
+  // see error-handler.ts for what it preserves (HTTPException status) and what it refuses to leak.
+  app.onError(handleAppError);
+  // Registered OUTERMOST: Hono routes only `instanceof Error` to onError and RE-THROWS anything else, so a
+  // thrown non-Error would otherwise escape the boundary entirely -- no response, no log, no c.error.
+  app.use("*", nonErrorBoundary());
   // Registered FIRST/outermost so it wraps every other middleware and route below, including a thrown
   // exception from the CORS/rate-limit middleware right after this. REPLACES the old Sentry middleware
   // entirely (2026-07-25 epic #8286 correction: full replacement, not a parallel-run). No-ops completely

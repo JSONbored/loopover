@@ -26362,7 +26362,127 @@
           {
             "OrbBearer": []
           }
-        ]
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "signed": {
+                    "type": "object",
+                    "properties": {
+                      "payload": {
+                        "type": "object",
+                        "properties": {
+                          "v": {
+                            "type": "number",
+                            "enum": [
+                              1
+                            ]
+                          },
+                          "ledger": {
+                            "type": "string",
+                            "enum": [
+                              "loopover.decision_ledger"
+                            ]
+                          },
+                          "seq": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true
+                          },
+                          "rowHash": {
+                            "type": "string",
+                            "pattern": "^[0-9a-fA-F]{64}$"
+                          },
+                          "totalCount": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true
+                          },
+                          "at": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 40
+                          }
+                        },
+                        "required": [
+                          "v",
+                          "ledger",
+                          "seq",
+                          "rowHash",
+                          "totalCount",
+                          "at"
+                        ]
+                      },
+                      "keyId": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      "signature": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 512
+                      }
+                    },
+                    "required": [
+                      "payload",
+                      "keyId",
+                      "signature"
+                    ]
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "ok",
+                      "failed"
+                    ]
+                  },
+                  "backendRef": {
+                    "type": "object",
+                    "properties": {
+                      "netuid": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 65535
+                      },
+                      "blockNumber": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "exclusiveMinimum": true
+                      },
+                      "blockHash": {
+                        "type": "string",
+                        "pattern": "^0x[0-9a-fA-F]{64}$"
+                      },
+                      "hotkey": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      }
+                    },
+                    "required": [
+                      "netuid",
+                      "blockNumber",
+                      "blockHash",
+                      "hotkey"
+                    ]
+                  },
+                  "error": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "signed",
+                  "status"
+                ]
+              }
+            }
+          }
+        }
       }
     },
     "/v1/public/repos/{owner}/{repo}/proof": {

@@ -1,5 +1,6 @@
 import { createPrivateKey } from "node:crypto";
 import { CRON_INTERVAL_MIN_MS } from "./cron-alignment";
+import { currentAnchorKey, parseAnchorPublicKeys } from "../review/ledger-anchor";
 
 export type SelfHostPreflightProblem = {
   var: string;
@@ -67,6 +68,83 @@ function isGitHubAppPrivateKey(value: string): boolean {
     return createPrivateKey(value.replace(/\\n/g, "\n")).asymmetricKeyType === "rsa";
   } catch {
     return false;
+  }
+}
+
+/**
+ * Ledger anchoring (#9769) is OPT-IN, so "nothing configured" is deliberately not a problem. What IS a
+ * problem is PARTIAL configuration, because it fails completely silently: runScheduledLedgerAnchor logs
+ * `ledger_anchor_skipped_unconfigured` and returns (ledger-anchor-scheduler.ts), while the job keeps firing
+ * every couple of minutes. An operator who set half the vars has no signal at all that anchoring never runs
+ * -- and a self-host container DOES run the scheduler and DOES have a populated decision_ledger, so it is
+ * genuinely one keypair away from working.
+ *
+ * The published-key checks call the real `parseAnchorPublicKeys`/`currentAnchorKey` rather than
+ * re-validating the shape here, so preflight can never disagree with what the scheduler will actually do.
+ */
+function checkLedgerAnchorConfig(problems: SelfHostPreflightProblem[], env: SelfHostPreflightEnv): void {
+  const rawKeys = nonBlank(env["LOOPOVER_LEDGER_ANCHOR_KEYS"]);
+  const privateKey = nonBlank(env["LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY"]);
+
+  if (rawKeys && !privateKey) {
+    addProblem(
+      problems,
+      "LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY",
+      "LOOPOVER_LEDGER_ANCHOR_KEYS is set but the private half is not, so anchoring silently never runs. Set the P-256 PKCS8 private key, or unset LOOPOVER_LEDGER_ANCHOR_KEYS to disable anchoring.",
+    );
+  }
+  if (privateKey && !rawKeys) {
+    addProblem(
+      problems,
+      "LOOPOVER_LEDGER_ANCHOR_KEYS",
+      "LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY is set but no public key list is published, so anchors would be unverifiable and anchoring silently never runs. Publish the matching key, or unset the private key to disable anchoring.",
+    );
+  }
+  if (rawKeys) {
+    const keys = parseAnchorPublicKeys(rawKeys);
+    if (keys.length === 0) {
+      addProblem(
+        problems,
+        "LOOPOVER_LEDGER_ANCHOR_KEYS",
+        "No usable entries parsed. Expected a JSON array of { keyId, publicKeySpki, notBefore, notAfter }; malformed JSON and entries missing any required field are dropped silently at runtime.",
+      );
+    } else if (currentAnchorKey(keys) === null) {
+      const current = keys.filter((key) => key.notAfter === null).length;
+      addProblem(
+        problems,
+        "LOOPOVER_LEDGER_ANCHOR_KEYS",
+        current === 0
+          ? "No entry has notAfter: null, so there is no current signing key and anchoring silently never runs. Exactly one entry must be open-ended."
+          : `${current} entries have notAfter: null. An ambiguous rotation fails closed rather than guessing which key signs, so anchoring silently never runs. Exactly one entry must be open-ended.`,
+      );
+    }
+  }
+
+  // The git backend is independently optional, but owner+repo without an installation id means job-dispatch
+  // resolves `submitGit` to null and the backend is skipped without comment.
+  const gitOwner = nonBlank(env["LOOPOVER_LEDGER_ANCHOR_GIT_OWNER"]);
+  const gitRepo = nonBlank(env["LOOPOVER_LEDGER_ANCHOR_GIT_REPO"]);
+  const installationId = nonBlank(env["LOOPOVER_LEDGER_ANCHOR_GIT_INSTALLATION_ID"]);
+  if (gitOwner && gitRepo && !installationId) {
+    addProblem(
+      problems,
+      "LOOPOVER_LEDGER_ANCHOR_GIT_INSTALLATION_ID",
+      "A git anchor target is configured but no installation id is set, so no write token can be minted and the git backend is skipped silently. Set the installation id, or unset the git owner/repo.",
+    );
+  }
+  if (installationId && !/^[1-9][0-9]*$/.test(installationId)) {
+    addProblem(
+      problems,
+      "LOOPOVER_LEDGER_ANCHOR_GIT_INSTALLATION_ID",
+      "Must be a positive integer; any other value resolves to no git submitter and the backend is skipped silently.",
+    );
+  }
+  if ((gitOwner && !gitRepo) || (gitRepo && !gitOwner)) {
+    addProblem(
+      problems,
+      gitOwner ? "LOOPOVER_LEDGER_ANCHOR_GIT_REPO" : "LOOPOVER_LEDGER_ANCHOR_GIT_OWNER",
+      "A git anchor target needs BOTH owner and repo; with only one set the backend is skipped silently.",
+    );
   }
 }
 
@@ -265,6 +343,8 @@ export function preflightEnv(env: SelfHostPreflightEnv): SelfHostPreflightResult
   positiveInteger(problems, env, "CRON_INTERVAL_MS", CRON_INTERVAL_MIN_MS, 24 * 60 * 60_000);
   positiveInteger(problems, env, "PORT", 1, 65_535);
   positiveInteger(problems, env, "GITHUB_CACHE_TTL_SECONDS", 0, 86_400);
+
+  checkLedgerAnchorConfig(problems, env);
 
   return problems.length === 0 ? { ok: true, problems: [] } : { ok: false, problems };
 }

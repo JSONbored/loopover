@@ -26,11 +26,14 @@ export function StateBoundary(props: ComponentProps<typeof UiKitStateBoundary>) 
 
 export function usePreviewDataState(label: string, delay = 220) {
   const [version, setVersion] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
+  // `isLoading` is DERIVED from which version has finished settling (#9588), rather than written to `true`
+  // synchronously at the top of the effect. Bumping `version` therefore re-enters the loading state on the
+  // very same render that requested the refresh, with no cascading second render to correct it.
+  const [settledVersion, setSettledVersion] = useState(-1);
+  const isLoading = settledVersion !== version;
 
   useEffect(() => {
-    setIsLoading(true);
-    const timer = window.setTimeout(() => setIsLoading(false), delay);
+    const timer = window.setTimeout(() => setSettledVersion(version), delay);
     return () => window.clearTimeout(timer);
   }, [delay, version]);
 

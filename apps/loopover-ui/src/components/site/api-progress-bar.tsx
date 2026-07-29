@@ -11,11 +11,20 @@ export function ApiProgressBar() {
   const active = inFlight > 0 || status === "loading";
   const [visible, setVisible] = useState(false);
 
+  // Becoming active shows the bar IMMEDIATELY, adjusted during render rather than from an effect (#9588):
+  // React's documented pattern for reacting to a changed input, and it renders the bar in the same commit
+  // that saw the change instead of a frame later.
+  const [wasActive, setWasActive] = useState(active);
+  if (wasActive !== active) {
+    setWasActive(active);
+    if (active) setVisible(true);
+  }
+
+  // Only the trailing fade-out is a timer, and its setState runs in the timer callback -- not synchronously
+  // in the effect body. The bar lingers 240ms after the last request settles so a burst of quick calls does
+  // not strobe it.
   useEffect(() => {
-    if (active) {
-      setVisible(true);
-      return;
-    }
+    if (active) return;
     const t = window.setTimeout(() => setVisible(false), 240);
     return () => clearTimeout(t);
   }, [active]);

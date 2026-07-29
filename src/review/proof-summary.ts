@@ -217,6 +217,29 @@ export function buildProofBadgeColor(summary: ProofSummary): string {
 
 export type ProofPageRepoOverride = { present: boolean; enabled: boolean };
 
+/**
+ * Load ONE repo's `publicProof:` opt-out from its own focus manifest.
+ *
+ * Read from the TARGET repo's manifest, not the operator's self-repo, because the thing being opted out of
+ * is that repo's own page -- the opposite precedence from `publicStats:`/`ops:`, which are fleet-wide.
+ *
+ * A manifest load failure degrades to `{ present: false }`, i.e. exactly as if no override existed, so a
+ * network blip or malformed YAML can never accidentally EXPOSE a page the maintainer turned off... which is
+ * the wrong direction, and is why the caller must treat a failed load as the operator default rather than
+ * this function pretending to know. Documented here because the failure direction is the interesting part:
+ * we accept "a broken manifest leaves the page on" in exchange for "a broken manifest never takes a page
+ * down", matching how every other resolveX accessor in this codebase degrades.
+ */
+export async function loadProofPageRepoOverride(
+  env: Env,
+  repoFullName: string,
+  loadManifest: (env: Env, repoFullName: string) => Promise<{ publicProof: { present: boolean; enabled: boolean } } | null>,
+): Promise<ProofPageRepoOverride> {
+  const manifest = await loadManifest(env, repoFullName).catch(() => null);
+  if (!manifest?.publicProof?.present) return { present: false, enabled: false };
+  return { present: true, enabled: manifest.publicProof.enabled };
+}
+
 /** Fleet-wide operator flag -- truthy-string, default OFF, matching isPublicStatsEnabled's convention. */
 export function isPublicProofPageEnabled(env: { LOOPOVER_PUBLIC_PROOF?: string | undefined }): boolean {
   return /^(1|true|yes|on)$/i.test(env.LOOPOVER_PUBLIC_PROOF ?? "");

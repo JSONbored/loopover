@@ -306,7 +306,7 @@ import { isRagEnabled } from "../review/rag-wire";
 import { loadDecisionLedgerTip, loadPublicDecisionRecord, loadPublicLedgerRow, verifyDecisionLedger } from "../review/decision-record";
 import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
 import { anchorSigningInput, buildLedgerAnchorPayload, currentAnchorKey, parseAnchorPublicKeys, signLedgerAnchorPayload } from "../review/ledger-anchor";
-import { isProofPageEnabledForRepo, loadProofSummary } from "../review/proof-summary";
+import { isProofPageEnabledForRepo, loadProofPageRepoOverride, loadProofSummary } from "../review/proof-summary";
 import { renderProofBadgeSvg } from "./proof-badge";
 import { ingestBittensorAnchorReport, parseBittensorAnchorReport } from "../review/ledger-anchor-bittensor";
 import { loadPublicLedgerAnchors } from "../review/ledger-anchor-persistence";
@@ -1357,8 +1357,11 @@ export function createApp() {
   // must allow (see isProofPageEnabledForRepo's recorded opt-out decision): the operator's fleet-wide flag,
   // default OFF like every sibling public surface, and the repo's own opt-out.
   app.get("/v1/public/repos/:owner/:repo/proof", async (c) => {
-    if (!isProofPageEnabledForRepo(c.env)) return c.json({ error: "not_found" }, 404);
     const repoFullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    // The repo's OWN opt-out, loaded before anything else is read: a repo that turned its page off must not
+    // have its decision records queried to build a summary that will be discarded.
+    const override = await loadProofPageRepoOverride(c.env, repoFullName, loadRepoFocusManifest);
+    if (!isProofPageEnabledForRepo(c.env, override)) return c.json({ error: "not_found" }, 404);
     try {
       const summary = await loadProofSummary(c.env, repoFullName, {
         verifyLedger: (env) => verifyDecisionLedger(env),
@@ -1376,12 +1379,14 @@ export function createApp() {
   // in a badge) is exactly the bare scalar the proof summary refuses to publish.
   app.get("/v1/public/repos/:owner/:repo/proof-badge.svg", async (c) => {
     c.header("Content-Type", "image/svg+xml; charset=utf-8");
-    if (!isProofPageEnabledForRepo(c.env)) {
+    const badgeRepoFullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
+    const badgeOverride = await loadProofPageRepoOverride(c.env, badgeRepoFullName, loadRepoFocusManifest);
+    if (!isProofPageEnabledForRepo(c.env, badgeOverride)) {
       c.header("Cache-Control", "public, max-age=300");
       return c.body(renderProofBadgeSvg(null), 404);
     }
     try {
-      const summary = await loadProofSummary(c.env, `${c.req.param("owner")}/${c.req.param("repo")}`, {
+      const summary = await loadProofSummary(c.env, badgeRepoFullName, {
         verifyLedger: (env) => verifyDecisionLedger(env),
         loadAnchors: (env) => loadPublicLedgerAnchors(env, { limit: 20 }),
       });

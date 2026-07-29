@@ -971,6 +971,7 @@ describe("compileFocusManifestPolicy", () => {
       maintainerRecap: { present: false, enabled: false, cadence: "weekly", channel: "discord" },
       ops: { present: false, enabled: false },
       publicStats: { present: false, enabled: false },
+    publicProof: { present: false, enabled: false },
       fairnessAnalytics: { present: false, enabled: false },
       draftFlow: { present: false, enabled: false },
       upstreamDriftIssues: { present: false, enabled: false },

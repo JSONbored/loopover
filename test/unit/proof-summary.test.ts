@@ -18,6 +18,8 @@ import { createApp } from "../../src/api/routes";
 import { appendDecisionLedger, persistDecisionRecord } from "../../src/review/decision-record";
 import { loadPublicLedgerAnchors, recordLedgerAnchorAttempt } from "../../src/review/ledger-anchor-persistence";
 import { createTestEnv } from "../helpers/d1";
+import { loadProofPageRepoOverride } from "../../src/review/proof-summary";
+import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import type { PublicLedgerAnchor } from "../../src/review/ledger-anchor-persistence";
 
 // #9569: the public, shareable twin of the in-app trust panel. The properties that matter here are the ones
@@ -325,5 +327,42 @@ describe("loadProofSummary + routes (#9569)", () => {
       now: () => CHECKED_AT,
     });
     expect(summary.anchor).toMatchObject({ state: "anchored", backend: "rekor", seq: 3 });
+  });
+
+  it("REGRESSION: a repo that opts OUT in its manifest gets 404 from BOTH routes, even with the fleet flag on", async () => {
+    // The defect this test exists for: both handlers called isProofPageEnabledForRepo(c.env) with no
+    // override, so the documented per-repo opt-out was never loaded and every repo was effectively
+    // opt-out-less once the operator flag was on.
+    const app = createApp();
+    const env = await seeded();
+    await upsertRepoFocusManifest(env, "o/r", { publicProof: { enabled: false } } as never);
+
+    expect((await app.request("/v1/public/repos/o/r/proof", {}, env)).status).toBe(404);
+    const badge = await app.request("/v1/public/repos/o/r/proof-badge.svg", {}, env);
+    expect(badge.status).toBe(404);
+    expect(await badge.text()).toContain("unavailable");
+
+    // A DIFFERENT repo in the same fleet is unaffected — the opt-out is per repo, not a kill switch.
+    expect((await app.request("/v1/public/repos/other/repo/proof", {}, env)).status).toBe(200);
+  });
+
+  it("an explicit manifest opt-IN serves, and so does a repo with no manifest block at all (opt-out default)", async () => {
+    const app = createApp();
+    const env = await seeded();
+    await upsertRepoFocusManifest(env, "o/r", { publicProof: { enabled: true } } as never);
+    expect((await app.request("/v1/public/repos/o/r/proof", {}, env)).status).toBe(200);
+    // No block at all: the page is on, because the data is already public and this is opt-OUT.
+    const bare = await seeded();
+    expect((await app.request("/v1/public/repos/o/r/proof", {}, bare)).status).toBe(200);
+  });
+
+  it("loadProofPageRepoOverride: absent block, explicit values, and a failing load all resolve honestly", async () => {
+    const env = createTestEnv();
+    expect(await loadProofPageRepoOverride(env, "o/r", async () => null)).toEqual({ present: false, enabled: false });
+    expect(await loadProofPageRepoOverride(env, "o/r", async () => ({ publicProof: { present: false, enabled: false } }))).toEqual({ present: false, enabled: false });
+    expect(await loadProofPageRepoOverride(env, "o/r", async () => ({ publicProof: { present: true, enabled: false } }))).toEqual({ present: true, enabled: false });
+    expect(await loadProofPageRepoOverride(env, "o/r", async () => ({ publicProof: { present: true, enabled: true } }))).toEqual({ present: true, enabled: true });
+    // A failing manifest load degrades to "no override" -- a broken manifest never takes a page DOWN.
+    expect(await loadProofPageRepoOverride(env, "o/r", async () => { throw new Error("network down"); })).toEqual({ present: false, enabled: false });
   });
 });

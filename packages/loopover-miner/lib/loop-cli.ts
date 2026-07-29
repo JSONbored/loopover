@@ -49,6 +49,7 @@ import { buildLoopClosureSummary } from "./loop-closure.js";
 import { attemptLoopReentry } from "./loop-reentry.js";
 import { parsePrNumberFromExecResult } from "./pr-number-parse.js";
 import { resolveGitHubToken } from "./github-token-resolution.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 import { DEFAULT_AMS_POLICY_SPEC } from "@loopover/engine";
 import type { GovernorCapUsage } from "@loopover/engine";
 
@@ -118,6 +119,7 @@ function parseRepoTarget(value: string): string | null {
   const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) return null;
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) return null;
   return `${owner}/${repo}`;
 }
 

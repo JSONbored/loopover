@@ -79,6 +79,11 @@ describe("parsePurgeArgs (#5564)", () => {
     expect(parsePurgeArgs(["--repo", "no-slash"])).toEqual({ error: "Repository must be in owner/repo form." });
   });
 
+  it("REGRESSION (#9684): rejects a path-traversal --repo segment", () => {
+    expect(parsePurgeArgs(["--repo", "../acme"])).toEqual({ error: "Repository must be in owner/repo form." });
+    expect(parsePurgeArgs(["--repo", "acme/.."])).toEqual({ error: "Repository must be in owner/repo form." });
+  });
+
   it("rejects a --repo flag missing its value", () => {
     expect(parsePurgeArgs(["--repo"])).toEqual({ error: expect.stringContaining("Usage: loopover-miner purge") });
     expect(parsePurgeArgs(["--repo", "--json"])).toEqual({ error: expect.stringContaining("Usage: loopover-miner purge") });

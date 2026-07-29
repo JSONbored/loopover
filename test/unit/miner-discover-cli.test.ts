@@ -171,6 +171,15 @@ describe("parseDiscoverArgs (#4247)", () => {
     });
   });
 
+  it("REGRESSION (#9684): rejects a path-traversal repo target segment", () => {
+    expect(parseDiscoverArgs(["../acme"])).toEqual({
+      error: "Repository must be in owner/repo form: ../acme",
+    });
+    expect(parseDiscoverArgs(["acme/.."])).toEqual({
+      error: "Repository must be in owner/repo form: acme/..",
+    });
+  });
+
   it("rejects mixing repo targets with --search", () => {
     expect(parseDiscoverArgs(["acme/widgets", "--search", "x"])).toEqual({
       error: "Pass either repository targets or --search, not both.",

@@ -23,6 +23,7 @@ import { initPolicyDocCacheStore } from "./policy-doc-cache.js";
 import type { PolicyDocCacheStore } from "./policy-doc-cache.js";
 import { initPolicyVerdictCacheStore } from "./policy-verdict-cache.js";
 import type { PolicyVerdictCacheStore } from "./policy-verdict-cache.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 import { enqueueRankedDiscovery } from "./portfolio-discovery.js";
 import { AMS_MIN_RANK_SHIPPED, readMinRankAutotuneEnabled, readMinRankOverride } from "./ams-calibration.js";
 import { initEventLedger, resolveEventLedgerDbPath } from "./event-ledger.js";
@@ -212,6 +213,7 @@ function parseRepoTarget(value: string): FanoutTarget | null {
   const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) return null;
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) return null;
   return { owner, repo };
 }
 

@@ -2,6 +2,7 @@ import type { SQLOutputValue } from "node:sqlite";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
 import { RANKED_CANDIDATES_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 
 // Last-discover-run ranked-candidates snapshot (#4859 prerequisite): `discover-cli.js`'s runDiscover already
 // computes the FULL per-issue ranking breakdown (rankScore/laneFit/freshness/potential/feasibility/dupRisk, via
@@ -110,6 +111,7 @@ function normalizeRepoFullName(value: unknown, error: string): string {
   const repoFullName = typeof value === "string" ? value.trim() : "";
   const [owner, repo, extra] = repoFullName.split("/");
   if (!owner || !repo || extra !== undefined) throw new Error(error);
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) throw new Error(error);
   return `${owner}/${repo}`;
 }
 

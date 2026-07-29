@@ -20,6 +20,37 @@ describe("addedLinesFromPatch (#2140)", () => {
     expect(addedLinesFromPatch("").size).toBe(0);
     expect(addedLinesFromPatch("preamble only").size).toBe(0);
   });
+
+  describe("blank context lines and trailing-newline artifacts (#9663)", () => {
+    // A blank context line (its single leading space stripped by the split -> marker `undefined`) must still
+    // advance `right`, exactly as rightSideLinesFromPatch does. Without that, the added line after it desyncs.
+    const blankContextPatch = "@@ -1,3 +1,3 @@\n one\n\n+three";
+
+    it("advances right across a zero-length context line so the added line keeps its true number", () => {
+      // Before #9663 this returned Set{2}: the blank line was skipped without advancing right, so "+three"
+      // landed on 2 (a context line) instead of 3 (the line the contributor actually added).
+      expect([...addedLinesFromPatch(blankContextPatch)]).toEqual([3]);
+    });
+
+    it("produces the same set with or without a trailing newline", () => {
+      expect([...addedLinesFromPatch(blankContextPatch + "\n")].sort((a, b) => a - b)).toEqual(
+        [...addedLinesFromPatch(blankContextPatch)].sort((a, b) => a - b),
+      );
+      // And concretely: the trailing "\n" split artifact must not be counted as an extra line.
+      expect([...addedLinesFromPatch("@@ -1,0 +1,1 @@\n+only\n")]).toEqual([1]);
+    });
+
+    it("keeps '-' and '\\' markers skipped without advancing right", () => {
+      // "\ No newline at end of file" and removed lines never touch the RIGHT side.
+      expect([...addedLinesFromPatch("@@ -1,2 +1,2 @@\n-gone\n+new\n\\ No newline at end of file")]).toEqual([1]);
+    });
+
+    it("isSuggestionAnchorable follows the corrected numbering across a blank context line", () => {
+      const addedLines = addedLinesByPath([{ path: "src/a.ts", payload: { patch: blankContextPatch } }]);
+      expect(isSuggestionAnchorable({ path: "src/a.ts", line: 3 }, addedLines)).toBe(true);
+      expect(isSuggestionAnchorable({ path: "src/a.ts", line: 2 }, addedLines)).toBe(false);
+    });
+  });
 });
 
 describe("addedLinesByPath + isSuggestionAnchorable (#2140)", () => {

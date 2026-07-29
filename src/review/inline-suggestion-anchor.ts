@@ -10,7 +10,13 @@ import type { PullRequestFileRecord } from "../types";
 export function addedLinesFromPatch(patch: string): Set<number> {
   const lines = new Set<number>();
   let right = 0;
-  for (const raw of patch.split("\n")) {
+  // Mirror rightSideLinesFromPatch (inline-comments-select.ts) line-for-line so both walkers agree on every
+  // RIGHT-side line number (#9663). A patch ending in "\n" splits to a trailing empty element that is a split
+  // artifact, not a diff line; drop it here so that a remaining empty element genuinely means "a context line
+  // whose leading space was stripped" and advances `right` like the context line it is.
+  const rawLines = patch.split("\n");
+  if (rawLines.length > 0 && rawLines[rawLines.length - 1] === "") rawLines.pop();
+  for (const raw of rawLines) {
     const header = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(raw);
     if (header?.[1]) {
       right = Number.parseInt(header[1], 10);
@@ -18,7 +24,11 @@ export function addedLinesFromPatch(patch: string): Set<number> {
     }
     if (right === 0) continue;
     const marker = raw[0];
-    if (marker === undefined || marker === "-" || marker === "\\") continue;
+    if (marker === "-" || marker === "\\") continue;
+    // A zero-length patch line (marker `undefined`) is a context line whose single space was stripped, not a
+    // line that does not exist (#9076/#9663). It is NOT added, but it must still advance `right` — skipping it
+    // desynced every subsequent added-line number, so a blocker anchored after a blank context line was dropped
+    // and one anchored on the blank context line itself was wrongly accepted.
     if (marker === "+") lines.add(right);
     right += 1;
   }

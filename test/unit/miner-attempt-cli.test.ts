@@ -166,6 +166,102 @@ describe("AttemptCliResult union (#9331)", () => {
   });
 });
 
+describe("AttemptCliResult / RunAttemptOptions .d.ts drifts (#9685)", () => {
+  it("includes the blocked_max_concurrent_claims outcome with the runtime blockedResult shape", () => {
+    // Compile-time guard: this is the exact object runAttempt builds when the cap is met (#6758). Before the
+    // union member was added it only type-checked behind an `as AttemptCliResult` cast; removing the member
+    // makes this assignment a type error, so the .d.ts drift can't silently return.
+    const result: AttemptCliResult = {
+      outcome: "blocked_max_concurrent_claims",
+      reason: "max_concurrent_claims_exceeded",
+      maxConcurrentClaims: 2,
+      activeClaimCount: 3,
+      repoFullName: "acme/widgets",
+      issueNumber: 7,
+      minerLogin: "miner",
+      base: "main",
+      mode: "live",
+      attemptId: "attempt-1",
+    };
+    expect(result.outcome).toBe("blocked_max_concurrent_claims");
+    if (result.outcome === "blocked_max_concurrent_claims") {
+      expect(result.maxConcurrentClaims).toBe(2);
+      expect(result.activeClaimCount).toBe(3);
+    }
+  });
+
+  it("reports blocked_max_concurrent_claims (exit 11) through onResult when the claim ledger denies the claim", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    // Injected claim ledger response: the atomic count-and-claim loses the cap race (#6758).
+    vi.spyOn(claimLedger, "claimIssueWithinCap").mockReturnValue({
+      claimed: false,
+      claim: null,
+      activeClaimCount: 3,
+      maxConcurrentClaims: 2,
+    });
+    const onResult = vi.fn();
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "capped-attempt",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        resolveMinerGoalSpec: () => ({ present: true, spec: { ...DEFAULT_MINER_GOAL_SPEC, maxConcurrentClaims: 2 }, warnings: [] }),
+      }),
+      onResult,
+    });
+
+    expect(exitCode).toBe(11);
+    expect(onResult).toHaveBeenCalledTimes(1);
+    const [reported] = onResult.mock.calls[0]!;
+    expect(reported).toMatchObject({
+      outcome: "blocked_max_concurrent_claims",
+      reason: "max_concurrent_claims_exceeded",
+      maxConcurrentClaims: 2,
+      activeClaimCount: 3,
+      repoFullName: "acme/widgets",
+      issueNumber: 7,
+    });
+  });
+
+  it("uses an injected loadReputationHistory passed through the plain (uncast) RunAttemptOptions", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    vi.spyOn(claimLedger, "claimIssueWithinCap").mockReturnValue({
+      claimed: false,
+      claim: null,
+      activeClaimCount: 1,
+      maxConcurrentClaims: 1,
+    });
+    const loadReputationHistory = vi.fn().mockReturnValue({ decided: 0, unfavorable: 0 });
+    // Typed as the plain RunAttemptOptions with NO cast: before loadReputationHistory was declared on the type
+    // this direct property would be an excess-property error. No onResult here, so the `?.` short-circuits.
+    const options: RunAttemptOptions = {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "reputation-seam-attempt",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      loadReputationHistory,
+      ...readyPipelineOptions({
+        resolveMinerGoalSpec: () => ({ present: true, spec: { ...DEFAULT_MINER_GOAL_SPEC, maxConcurrentClaims: 1 }, warnings: [] }),
+      }),
+    };
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], options);
+
+    expect(exitCode).toBe(11);
+    expect(loadReputationHistory).toHaveBeenCalledWith("acme/widgets");
+  });
+});
+
 describe("parseAttemptArgs (#5132)", () => {
   it("parses a full, valid argv", () => {
     expect(

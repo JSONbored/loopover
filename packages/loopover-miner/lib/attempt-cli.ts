@@ -99,6 +99,12 @@ export type AttemptCliResult =
   | (CommonAttemptResultFields & { outcome: "dry_run" })
   | (CommonAttemptResultFields & { outcome: "blocked_rejection_signaled"; reason: string })
   | (CommonAttemptResultFields & { outcome: "blocked_own_open_pr"; reason: string; existingPullRequestNumber: number })
+  | (CommonAttemptResultFields & {
+      outcome: "blocked_max_concurrent_claims";
+      reason: string;
+      maxConcurrentClaims: number;
+      activeClaimCount: number;
+    })
   | (CommonAttemptResultFields & { outcome: "blocked_worktree_preparation_failed"; reason: string })
   | (CommonAttemptResultFields & {
       outcome: "blocked_infeasible";
@@ -172,6 +178,9 @@ export type RunAttemptOptions = {
   resolveClaimConflict?: typeof ResolveClaimConflictFn;
   recordOwnSubmission?: typeof RecordOwnSubmissionFn;
   getAttemptHistory?: typeof GetAttemptHistoryFn;
+  /** Per-repo reputation-history loader for the self-reputation throttle (#5675). Defaults to governor-state.js's
+   *  own loadReputationHistory. */
+  loadReputationHistory?: typeof loadReputationHistory;
   /** Hosted soft-claim coordination at work-start/work-end, when the plane is enabled (#7168). Defaults to
    *  discovery-index-client.js's own submitSoftClaim. */
   submitSoftClaim?: typeof SubmitSoftClaimFn;
@@ -771,10 +780,7 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
     const convergenceInput = readAttemptHistory(parsed.repoFullName, `issue:${parsed.issueNumber}`);
     // Real per-repo reputation history (#5675): the miner's own decided/unfavorable outcome streak for this repo,
     // read from governor-state.js so the chokepoint's self-reputation throttle sees real data instead of nothing.
-    // loadReputationHistory is used at runtime but omitted from RunAttemptOptions (.d.ts drift).
-    const readReputationHistory =
-      (options as RunAttemptOptions & { loadReputationHistory?: typeof loadReputationHistory }).loadReputationHistory ??
-      loadReputationHistory;
+    const readReputationHistory = options.loadReputationHistory ?? loadReputationHistory;
     const reputationHistory = readReputationHistory(parsed.repoFullName);
     const governor = buildAttemptGovernorContext(env, amsPolicy.spec, repoPaused, convergenceInput, reputationHistory);
 
@@ -815,7 +821,7 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
         payload: { issueNumber: parsed.issueNumber, reason },
       });
       const blockedResult = {
-        outcome: "blocked_max_concurrent_claims",
+        outcome: "blocked_max_concurrent_claims" as const,
         reason,
         maxConcurrentClaims: minerGoalSpec.spec.maxConcurrentClaims,
         activeClaimCount: claimResult.activeClaimCount,
@@ -837,8 +843,7 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
           ].join("\n"),
         );
       }
-      // blocked_max_concurrent_claims is a real runtime outcome omitted from AttemptCliResult (.d.ts drift).
-      options.onResult?.(blockedResult as AttemptCliResult);
+      options.onResult?.(blockedResult);
       return 11;
     }
 

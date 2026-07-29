@@ -2,6 +2,7 @@ import { OpenApiGeneratorV3, OpenAPIRegistry } from "@asteasolutions/zod-to-open
 import { requiresApiToken } from "../auth/route-auth";
 import { registerDiscoveryRouteSpecs } from "./discovery-route-specs";
 import { registerOrbAndControlRouteSpecs } from "./orb-and-control-route-specs";
+import { registerSelfhostInfraRouteSpecs } from "./selfhost-infra-route-specs";
 import { registerInternalAndPublicRouteSpecs } from "./internal-and-public-route-specs";
 import { z } from "zod";
 import {
@@ -180,6 +181,9 @@ export const SPEC_REGISTRARS: ReadonlyArray<(registry: OpenAPIRegistry) => void>
   // #9526: served by this app and computed at request time from the contract registry.
   registerDiscoveryRouteSpecs,
   registerInternalAndPublicRouteSpecs,
+  // #9750: served by src/server.ts ahead of this app, so the ratchet cannot see them; specced here so a
+  // self-host operator can read their own instance's endpoints out of the published document.
+  registerSelfhostInfraRouteSpecs,
 ];
 
 export function buildOpenApiSpec() {

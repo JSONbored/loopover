@@ -941,8 +941,10 @@ async function main(): Promise<void> {
   // #9487/#9464: browserless readiness. A visual-capture outage used to be invisible in /ready and in
   // Prometheus while it silently affected gate outcomes; this makes it observable at the same place every
   // other optional backend is. No-op unless BROWSER_WS_ENDPOINT is configured.
-  const browserProbe = browserEndpointReadinessProbe(process.env, async (url) => {
-    const response = await fetch(url, { signal: AbortSignal.timeout(1500) });
+  const browserProbe = browserEndpointReadinessProbe(process.env, async (url, init) => {
+    // `init` carries the Authorization header when BROWSER_WS_ENDPOINT has a `?token=`. Forwarding it is
+    // what makes the probe work at all against a tokened browserless, which 401s /json/version otherwise.
+    const response = await fetch(url, { ...init, signal: AbortSignal.timeout(1500) });
     return { ok: response.ok };
   });
   if (browserProbe) {

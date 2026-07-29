@@ -84,8 +84,20 @@ export function parseTenantListArgs(args: string[]): ParsedTenantListArgs {
   return { json };
 }
 
+/**
+ * One tenant as a line of text.
+ *
+ * #9750: the name comes from `record.tenant.name`, not `record.name`. The control plane has never returned a
+ * top-level `name` -- its safe projection is `{ tenant: { name }, product, state, ... }` -- so this printed
+ * `(unknown)` for EVERY tenant against a real control plane. The bug survived because the test fixtures were
+ * hand-written in the flat shape, so they agreed with the renderer and neither agreed with the server.
+ * Typing TenantRecord from the published schema is what surfaced it: the fixtures stopped compiling.
+ *
+ * The defensive fallbacks stay. The schema is a loose object and a record can legitimately arrive from an
+ * older control plane, so a missing field must still print rather than throw mid-listing.
+ */
 function renderTenantRecord(record: TenantRecord): string {
-  const name = typeof record.name === "string" ? record.name : "(unknown)";
+  const name = typeof record.tenant?.name === "string" ? record.tenant.name : "(unknown)";
   const product = typeof record.product === "string" ? record.product : "(unknown)";
   const state = typeof record.state === "string" ? record.state : "(unknown)";
   return `${name}  product=${product}  state=${state}`;

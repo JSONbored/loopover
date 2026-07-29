@@ -246,3 +246,43 @@ describe("agentHoldAuditDetail — durable why-no-action audit reason", () => {
     expect(agentHoldAuditDetail({ ...base, gateConclusion: "neutral" })).toBe("no auto-action planned");
   });
 });
+
+describe("agentHoldAuditDetail surfaces a GitHub merge refusal (#9862)", () => {
+  // JSONbored/loopover#9856: gate success, CI passed, mergeable clean, autonomy auto, approvals satisfied —
+  // and still held, because GitHub had refused the merge with a 403 (stacked PRs are unmergeable via the REST
+  // API). The resolver fell through to its residual "no merge action was planned", which is true and useless.
+  const STACKED_403 = "merge forbidden (403): Merging stacked PRs via this API is not supported. Use the web interface instead.";
+  const green = {
+    planned: [] as never[], breakerOnPlan: [] as never[], precisionBreakerEngaged: false, closeAuditHoldoutEngaged: false,
+    gateConclusion: "success", gateBlockerCodes: [] as string[], ciState: "passed", ciHasPending: false,
+    mergeableState: "clean", approvalsSatisfied: true, authorIsOwner: false, authorIsAdmin: false,
+    authorIsAutomationBot: false, closeOwnerAuthors: false, mergeAutonomy: "auto", closeAutonomy: "auto",
+  };
+
+  it("REGRESSION: names GitHub's refusal instead of the residual", () => {
+    const detail = agentHoldAuditDetail({ ...green, headSha: "abc123", mergeBlockedSha: "abc123", mergeBlockedReason: STACKED_403 });
+    expect(detail).toContain("GitHub refused the merge");
+    expect(detail).toContain("stacked PRs via this API is not supported");
+    expect(detail).not.toContain("no merge action was planned");
+  });
+
+  it("INVARIANT: a block recorded against a DIFFERENT head is stale and must not be reported", () => {
+    // The contributor pushed since the refusal; that new head has never been attempted, so claiming GitHub
+    // refused it would be a lie — and would hide whatever is actually holding the new commit.
+    const detail = agentHoldAuditDetail({ ...green, headSha: "newsha", mergeBlockedSha: "oldsha", mergeBlockedReason: STACKED_403 });
+    expect(detail).toBe("merge withheld because no merge action was planned");
+  });
+
+  it("INVARIANT: more specific gate/CI/mergeable reasons still win over the block", () => {
+    // The block is checked last among the specifics: everything above it is a state LoopOver can still
+    // change on its own, so reporting the refusal there would misdirect the reader.
+    const blocked = { headSha: "abc", mergeBlockedSha: "abc", mergeBlockedReason: STACKED_403 };
+    expect(agentHoldAuditDetail({ ...green, ...blocked, ciHasPending: true })).toBe("auto-action held because CI is still pending");
+    expect(agentHoldAuditDetail({ ...green, ...blocked, mergeableState: "dirty" })).toContain("conflicts with the base branch");
+    expect(agentHoldAuditDetail({ ...green, ...blocked, approvalsSatisfied: false })).toContain("required approvals are not satisfied");
+  });
+
+  it("INVARIANT: no block ⇒ the residual is unchanged", () => {
+    expect(agentHoldAuditDetail({ ...green, headSha: "abc" })).toBe("merge withheld because no merge action was planned");
+  });
+});

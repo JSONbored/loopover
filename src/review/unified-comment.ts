@@ -310,6 +310,14 @@ export interface UnifiedCommentContext {
   /** The PR's author is the repo owner or a protected automation bot — the disposition NEVER auto-closes them,
    *  so a gate "close" verdict renders as "held", not "Closed" (#8/#9). */
   neverClosed?: boolean;
+  /** GitHub itself REFUSED the merge for this head, and the refusal is durable (#9862). Not a gate state and
+   *  not visible in `mergeable_state` — a stacked PR is unmergeable via the REST API at all (403 "Merging
+   *  stacked PRs via this API is not supported"), and a repo merge policy can refuse with a 405 — so the PR
+   *  reads perfectly clean and green while the merge can never happen without a human. Rendering "safe to
+   *  merge" there is the #4220 class in its purest form: the comment promises an action the bot has already
+   *  been told it cannot take. The reason string is GitHub's own, surfaced verbatim so the maintainer knows
+   *  what to do (merge in the web UI) instead of watching a green PR sit. */
+  mergeBlockedReason?: string | undefined;
   /** Preflight is HOLDING this PR (e.g. the review lane is unavailable so the review is incomplete) — an
    *  otherwise-ready status must then render as "held" (manual review), never "safe to merge". (#2002) */
   preflightHeld?: boolean;
@@ -401,6 +409,10 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
   // unfinished review. Downgrade it to a manual-review hold. Applied only to an otherwise-`ready` status, so it can
   // only ever DOWNGRADE, never approve. (#2002) — NOTE: a gate `merge` verdict WITH advisory blockers stays
   // authoritative-ready by design (the gate already weighed those); tightening THAT is the gate's confidence/bar.
+  // A durable GitHub merge refusal (#9862): same downgrade-only discipline as the guardrail hold above. The
+  // gate genuinely passed, so everything else about the review stands -- but the merge will not happen, and
+  // the status must not claim otherwise.
+  if (status === "ready" && ctx.mergeBlockedReason) return "held";
   if (status === "ready" && ctx.preflightHeld) return "held";
   // Held-vs-closed disposition parity (#8/#9): owner/automation-bot authors may be exempt from auto-close, so a
   // close verdict on those authors is rendered as held. Guardrail holds are handled above only for otherwise-ready
@@ -480,6 +492,17 @@ function verdictLine(status: UnifiedCommentStatus, input: UnifiedReviewInput, ct
     case "advisory":
       return nestedBox(`**${icon} Suggested Action - Advisory Only**${reasons("no action taken")}`);
     case "held":
+      // #9862: when GitHub itself refused the merge, say so IN the verdict box. It is the one hold a
+      // maintainer must personally clear, and the previous behaviour ("Manual Review" with no reason, since
+      // a merge block sets no verdictReason) is what made a stacked PR look like the bot silently gave up.
+      // GitHub's own message is quoted verbatim -- it names the actual restriction and the remedy.
+      if (ctx.mergeBlockedReason) {
+        return nestedBox(
+          `**${icon} Suggested Action - Manual Review**\n` +
+            actionReasonBullets(`GitHub refused an automated merge for this commit: ${ctx.mergeBlockedReason}`) +
+            `\n${actionReasonBullets("The review passed — merge this pull request yourself to complete it.")}`,
+        );
+      }
       return nestedBox(`**${icon} Suggested Action - Manual Review**${reasons()}`);
     case "blocked":
       if (ctx.neverClosed) {

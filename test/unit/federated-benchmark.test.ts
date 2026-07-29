@@ -187,6 +187,24 @@ describe("buildFederatedBenchmark() — reads whatever refreshFederatedBenchmark
     expect(result?.peerCount).toBe(1);
   });
 
+  it("uses analytics.ts's median (mean of the two middle values), so 0.4 + 0.8 → 0.6, not the nearest-rank 0.4 (#9645)", async () => {
+    const db = makeDb();
+    for (let pr = 1; pr <= 5; pr++) await resolved(db, pr);
+    // Two DISTINCT peer instances (importPeerBundles dedupes by instanceId) with precisions 0.4 and 0.8.
+    const fetchFn = fetchReturning([
+      signedWith(PEER_KEY_A, { instanceId: "peer-a-inst", mergePrecision: 0.4 }),
+      signedWith(PEER_KEY_B, { instanceId: "peer-b-inst", mergePrecision: 0.8 }),
+    ]);
+
+    await refreshFederatedBenchmarkCache(manifest({ peerKeys: [PEER_KEY_A, PEER_KEY_B] }), db, { now: NOW, fetchFn });
+    const result = await buildFederatedBenchmark(manifest({ peerKeys: [PEER_KEY_A, PEER_KEY_B] }), db, { now: NOW });
+
+    // A true median: (0.4 + 0.8) / 2 = 0.6 (float-close). The old nearest-rank percentile(…, 50) returned a
+    // single middle element (0.4 for this even-sized set), not the mean of the two — that was the bug.
+    expect(result?.peerMedianMergePrecision).toBeCloseTo(0.6, 10);
+    expect(result?.peerCount).toBe(2);
+  });
+
   it("reports a null local precision (below MIN_DECIDED) while still surfacing a cached peer median", async () => {
     const db = makeDb();
     await resolved(db, 1); // only 1 decided PR, below MIN_DECIDED (5)
@@ -245,12 +263,12 @@ describe("refreshFederatedBenchmarkCache() — the background-tick write path (#
     ]);
 
     await refreshFederatedBenchmarkCache(manifest({ peerKeys: [PEER_KEY_A, PEER_KEY_B] }), db, { now: NOW, fetchFn });
-    // Median of [0.5, 0.9] (the untrusted 0.01 is rejected, not merely a low outlier) is 0.5 under this
-    // module's nearest-rank percentile(50) (analytics.ts: idx = ceil(0.5*2)-1 = 0) — pinning the real
-    // cross-module contract, not a re-derivation.
+    // Median of [0.5, 0.9] (the untrusted 0.01 is rejected, not merely a low outlier) is (0.5 + 0.9) / 2 = 0.7
+    // via analytics.ts's shared `median` — the SAME estimator computeFleetAnalytics uses (#9645). This used to
+    // read 0.5 under the module's own nearest-rank percentile(50); the two halves now agree.
     const result = await buildFederatedBenchmark(manifest({ peerKeys: [PEER_KEY_A, PEER_KEY_B] }), db, { now: NOW });
     expect(result?.peerCount).toBe(2);
-    expect(result?.peerMedianMergePrecision).toBe(0.5);
+    expect(result?.peerMedianMergePrecision).toBe(0.7);
   });
 
   it("a second tick's median REPLACES the first's, rather than merging the two", async () => {

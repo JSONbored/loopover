@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
+import { renderWithQueryClient as render } from "@/lib/test-query-client";
 import { describe, expect, it, vi } from "vitest";
 
 // Control the session role + stub the data hook so the dashboard branch never hits the network.

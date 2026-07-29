@@ -3,7 +3,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { runMigrate, runMigrateChecks } from "../../packages/loopover-miner/lib/migrate-cli";
+import { runMigrate, runMigrateChecks, STORES } from "../../packages/loopover-miner/lib/migrate-cli";
+import { STORE_INTEGRITY_NAMES } from "../../packages/loopover-miner/lib/status";
 import { initPortfolioQueueStore, resolvePortfolioQueueDbPath } from "../../packages/loopover-miner/lib/portfolio-queue";
 import { resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger";
 import { applySchemaMigrations, BASELINE_SCHEMA_VERSION } from "../../packages/loopover-miner/lib/schema-version";
@@ -324,5 +325,47 @@ describe("loopover-miner migrate (#4871)", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     runMigrateChecks(tempEnv());
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("STORES / STORE_INTEGRITY_NAMES drift guard (#9689)", () => {
+  // The two hand-maintained twin lists -- migrate OPENS each store, doctor integrity-checks each -- must hold
+  // the same store names. That contract was stated in both files' comments but enforced in neither, and was
+  // broken twice (#8318 orb-export, #8641 laptop-state). These assertions fail CI if a store is added to one
+  // list and not the other, or silently dropped from BOTH at once.
+  const EXPECTED_STORE_NAMES = [
+    "attempt-log",
+    "claim-ledger",
+    "contribution-profile",
+    "deny-hook-synthesis",
+    "event-ledger",
+    "governor-ledger",
+    "governor-state",
+    "laptop-state",
+    "orb-export",
+    "plan-store",
+    "policy-doc-cache",
+    "policy-verdict-cache",
+    "portfolio-queue",
+    "prediction-ledger",
+    "ranked-candidates",
+    "replay-snapshot",
+    "run-state",
+    "worktree-allocator",
+  ];
+
+  it("the migrate STORES and doctor STORE_INTEGRITY_NAMES lists are equal as sets and in length", () => {
+    const migrateNames = STORES.map((store) => store.name);
+    const integrityNames = [...STORE_INTEGRITY_NAMES];
+    expect(new Set(migrateNames)).toEqual(new Set(integrityNames));
+    expect(migrateNames.length).toBe(integrityNames.length);
+    // No duplicate within either list (a set-equality alone would hide a dup masking a missing entry).
+    expect(new Set(migrateNames).size).toBe(migrateNames.length);
+    expect(new Set(integrityNames).size).toBe(integrityNames.length);
+  });
+
+  it("both lists match the pinned store-name set exactly, so a store dropped from BOTH at once still fails", () => {
+    expect([...STORES.map((store) => store.name)].sort()).toEqual(EXPECTED_STORE_NAMES);
+    expect([...STORE_INTEGRITY_NAMES].sort()).toEqual(EXPECTED_STORE_NAMES);
   });
 });

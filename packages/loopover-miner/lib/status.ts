@@ -385,35 +385,47 @@ function checkStateDirWritable(stateDir: string): DoctorCheck {
   }
 }
 
+/** Every durable local SQLite store `doctor` integrity-checks, paired with its resolveLocalStoreDbPath
+ *  resolver. This is the single source `STORE_INTEGRITY_NAMES` below is derived from, and the twin of
+ *  migrate-cli.js's `STORES` list (#6768) — the two must hold the same store names (drift-guarded in
+ *  test/unit/miner-migrate-cli.test.ts, #9689). */
+const STORE_INTEGRITY_RESOLVERS: ReadonlyArray<readonly [string, (env: Record<string, string | undefined>) => string]> = [
+  ["event-ledger", resolveEventLedgerDbPath],
+  ["governor-ledger", resolveGovernorLedgerDbPath],
+  ["prediction-ledger", resolvePredictionLedgerDbPath],
+  ["portfolio-queue", resolvePortfolioQueueDbPath],
+  ["claim-ledger", resolveClaimLedgerDbPath],
+  ["run-state", resolveRunStateDbPath],
+  ["plan-store", resolvePlanStoreDbPath],
+  ["governor-state", resolveGovernorStateDbPath],
+  ["attempt-log", resolveAttemptLogDbPath],
+  ["replay-snapshot", resolveReplaySnapshotDbPath],
+  ["worktree-allocator", resolveWorktreeAllocatorDbPath],
+  ["contribution-profile", resolveContributionProfileCacheDbPath],
+  ["policy-verdict-cache", resolvePolicyVerdictCacheDbPath],
+  ["policy-doc-cache", resolvePolicyDocCacheDbPath],
+  ["ranked-candidates", resolveRankedCandidatesDbPath],
+  ["deny-hook-synthesis", resolveDenyHookSynthesisDbPath],
+  // #8318: orb-export.sqlite3 (the opt-in Orb telemetry export's HMAC secret + cursor, #4277/#5681) is a
+  // durable local store like every entry above, but was never added when it shipped.
+  ["orb-export", resolveOrbExportDbPath],
+  // #8641: laptop-state.sqlite3 (laptop-mode bootstrap meta) uses the same resolveLocalStoreDbPath +
+  // applySchemaMigrations pattern, but was never added to either twin list when it shipped.
+  ["laptop-state", resolveLaptopStateDbPath],
+];
+
+/** The durable local SQLite store NAMES `doctor` integrity-checks (#9689). Derived from
+ *  {@link STORE_INTEGRITY_RESOLVERS} (never a duplicated literal) and exported so migrate-cli's `STORES`
+ *  twin list can be drift-guarded against it in a test. */
+export const STORE_INTEGRITY_NAMES: readonly string[] = STORE_INTEGRITY_RESOLVERS.map(([name]) => name);
+
 /** Per-store `PRAGMA integrity_check` sweep for `doctor` (#4834) — flags a corrupted store instead of probing
  *  only one with `SELECT 1`. A store file that does not exist yet is healthy by absence. Keep in sync with
  *  migrate-cli.js's `STORES` list (#6768): every durable local SQLite store using resolveLocalStoreDbPath. */
 function storeIntegrityChecks(env: Record<string, string | undefined>): DoctorCheck[] {
-  const stores: Array<[string, string]> = [
-    ["event-ledger", resolveEventLedgerDbPath(env)],
-    ["governor-ledger", resolveGovernorLedgerDbPath(env)],
-    ["prediction-ledger", resolvePredictionLedgerDbPath(env)],
-    ["portfolio-queue", resolvePortfolioQueueDbPath(env)],
-    ["claim-ledger", resolveClaimLedgerDbPath(env)],
-    ["run-state", resolveRunStateDbPath(env)],
-    ["plan-store", resolvePlanStoreDbPath(env)],
-    ["governor-state", resolveGovernorStateDbPath(env)],
-    ["attempt-log", resolveAttemptLogDbPath(env)],
-    ["replay-snapshot", resolveReplaySnapshotDbPath(env)],
-    ["worktree-allocator", resolveWorktreeAllocatorDbPath(env)],
-    ["contribution-profile", resolveContributionProfileCacheDbPath(env)],
-    ["policy-verdict-cache", resolvePolicyVerdictCacheDbPath(env)],
-    ["policy-doc-cache", resolvePolicyDocCacheDbPath(env)],
-    ["ranked-candidates", resolveRankedCandidatesDbPath(env)],
-    ["deny-hook-synthesis", resolveDenyHookSynthesisDbPath(env)],
-    // #8318: orb-export.sqlite3 (the opt-in Orb telemetry export's HMAC secret + cursor, #4277/#5681) is a
-    // durable local store like every entry above, but was never added when it shipped.
-    ["orb-export", resolveOrbExportDbPath(env)],
-    // #8641: laptop-state.sqlite3 (laptop-mode bootstrap meta) uses the same resolveLocalStoreDbPath +
-    // applySchemaMigrations pattern, but was never added to either twin list when it shipped.
-    ["laptop-state", resolveLaptopStateDbPath(env)],
-  ];
-  return stores.map(([name, dbPath]) => checkStoreIntegrity(`store-integrity:${name}`, dbPath));
+  return STORE_INTEGRITY_RESOLVERS.map(([name, resolveDbPath]) =>
+    checkStoreIntegrity(`store-integrity:${name}`, resolveDbPath(env)),
+  );
 }
 
 /** Validate the discovered `.loopover-miner` config's CONTENT (#4873), not just its path: parse it with the

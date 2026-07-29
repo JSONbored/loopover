@@ -13,7 +13,13 @@ import { z } from "zod";
 
 /** Categories a tool can belong to, mirroring the ids the servers already advertise as
  *  `_meta.category` and the stdio CLI groups its `tools` output by. */
-export const TOOL_CATEGORIES = ["maintainer", "review", "branch", "discovery", "agent", "utility", "admin"] as const;
+/**
+ * Canonical category order for grouped rendering: contributor-facing surfaces first, operator ones last.
+ * `ops`, `fleet`, and `tenant` are #9522's management families -- one instance's queue/safety controls, the
+ * cross-instance fleet, and the hosted control plane's tenants respectively. Kept ordered so every display
+ * consumer inherits one ordering instead of inventing its own.
+ */
+export const TOOL_CATEGORIES = ["maintainer", "review", "branch", "discovery", "agent", "utility", "admin", "ops", "fleet", "tenant"] as const;
 export type ToolCategory = (typeof TOOL_CATEGORIES)[number];
 
 /** Who a caller must be for a tool to run. Mirrors the identity kinds `src/auth/security.ts`

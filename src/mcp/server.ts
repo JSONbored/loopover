@@ -199,7 +199,85 @@ import {
   AgentExplainNextActionOutput,
   AgentStartRunInput,
   AgentGetRunInput,
+  TOOL_CONTRACTS,
 } from "@loopover/contract/tools";
+import {
+  OpsListDeadLetterJobsInput,
+  OpsListDeadLetterJobsOutput,
+  OpsReplayDeadLetterJobInput,
+  OpsReplayDeadLetterJobOutput,
+  OpsDeleteDeadLetterJobInput,
+  OpsDeleteDeadLetterJobOutput,
+  OpsPurgeDeadLetterJobsInput,
+  OpsPurgeDeadLetterJobsOutput,
+  OpsGetKillSwitchInput,
+  OpsGetKillSwitchOutput,
+  OpsSetKillSwitchInput,
+  OpsSetKillSwitchOutput,
+  OpsGetOperatorDashboardInput,
+  OpsGetOperatorDashboardOutput,
+  opsListDeadLetterJobsTool,
+  opsReplayDeadLetterJobTool,
+  opsDeleteDeadLetterJobTool,
+  opsPurgeDeadLetterJobsTool,
+  opsGetKillSwitchTool,
+  opsSetKillSwitchTool,
+  opsGetOperatorDashboardTool,
+  FleetListInstancesInput,
+  FleetListInstancesOutput,
+  FleetRegisterInstanceInput,
+  FleetRegisterInstanceOutput,
+  FleetListInstallationsInput,
+  FleetListInstallationsOutput,
+  FleetRegisterInstallationInput,
+  FleetRegisterInstallationOutput,
+  FleetBackfillInstallationsInput,
+  FleetBackfillInstallationsOutput,
+  FleetIssueEnrollmentInput,
+  FleetRotateEnrollmentInput,
+  FleetEnrollmentOutput,
+  FleetRevokeEnrollmentInput,
+  FleetRevokeEnrollmentOutput,
+  fleetListInstancesTool,
+  fleetRegisterInstanceTool,
+  fleetListInstallationsTool,
+  fleetRegisterInstallationTool,
+  fleetBackfillInstallationsTool,
+  fleetIssueEnrollmentTool,
+  fleetRotateEnrollmentTool,
+  fleetRevokeEnrollmentTool,
+  AdminGetStatusInput,
+  AdminGetStatusOutput,
+  AdminDoctorInput,
+  AdminDoctorOutput,
+  AdminTailLogsInput,
+  AdminTailLogsOutput,
+  AdminGetBackupStatusInput,
+  AdminGetBackupStatusOutput,
+  adminGetStatusTool,
+  adminDoctorTool,
+  adminTailLogsTool,
+  adminGetBackupStatusTool,
+  FleetConfigPushInput,
+  FleetConfigPushOutput,
+  FleetRunJobInput,
+  FleetRunJobOutput,
+  fleetConfigPushTool,
+  fleetRunJobTool,
+  TenantCreateInput,
+  TenantCreateOutput,
+  TenantListInput,
+  TenantListOutput,
+  TenantSetOrbInstallationInput,
+  TenantSetOrbInstallationOutput,
+  TenantDestroyInput,
+  TenantDestroyOutput,
+  tenantCreateTool,
+  tenantListTool,
+  tenantSetOrbInstallationTool,
+  tenantDestroyTool,
+} from "@loopover/contract/tools";
+import { TOOL_CATEGORIES, type ToolCategory } from "@loopover/contract";
 import {
   MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH,
   MAX_FIND_OPPORTUNITIES_LANGUAGES,
@@ -278,7 +356,7 @@ import {
 } from "../db/repositories";
 import { decidePendingAgentAction } from "../services/agent-approval-queue";
 import { automationStateSummary, buildAutomationState } from "../services/automation-state";
-import { nowIso } from "../utils/json";
+import { errorMessage, nowIso } from "../utils/json";
 import { buildNotificationFeed } from "../notifications/service";
 import { fetchGittensorContributorSnapshot } from "../gittensor/api";
 import { getRepositoryCollaboratorPermission } from "../github/app";
@@ -309,14 +387,38 @@ import { loadOrComputeRepoOutcomePatternsResponse } from "../services/repo-outco
 import { buildRepoOutcomeCalibration, outcomeCalibrationSummary } from "../services/outcome-calibration";
 import { buildRecommendationQualityReport } from "../services/recommendation-quality-report";
 import { computeFleetAnalytics } from "../orb/analytics";
+import { listFleetInstallations, listFleetInstances, registerFleetInstallation, registerFleetInstance } from "../orb/fleet-admin";
+import { backfillOrbInstallations } from "../orb/installations";
+import { pushFleetConfig } from "../orb/fleet-config-push";
+import { createTenant, destroyTenant, isControlPlaneConfigured, listTenants, setTenantOrbInstallation } from "../orb/control-plane-client";
+import { processJob } from "../queue/job-dispatch";
+import { backfillContributorGateHistory } from "../review/contributor-gate-history-backfill";
+import { refreshInstallationHealth } from "../github/backfill";
+import { INTERNAL_JOB_SPEC, type InternalJobName, type InternalJobRunMode } from "@loopover/contract/enums";
+import type { JobMessage } from "../types";
+import { ORB_SECRET_TYPE_GITHUB_TOKEN, isOrbBrokerEnabled, issueOrbEnrollment, revokeOrbEnrollment } from "../orb/broker";
 import { loadMaintainerNoiseReport, maintainerNoiseSummary } from "../services/maintainer-noise";
 import { buildAmsMinerCohortComparison } from "../review/ams-miner-cohort";
 import { getConfigAdminFunctions } from "./private-config-admin-registry";
 import { getRedeployTrigger, getSecretRotator } from "./redeploy-companion-registry";
+import {
+  getInstanceBackupStatusReader,
+  getInstanceDoctorRunner,
+  getInstanceLogTailer,
+  getInstanceStatusReader,
+} from "./instance-diagnostics-registry";
 import { getLocalManifestReader } from "../signals/focus-manifest-loader";
 import type { ConfigAdminScope } from "../selfhost/private-config";
 import { buildMaintainerActivationPreview } from "../services/maintainer-activation";
 import { loadLabelAudit, labelAuditSummary } from "../services/label-audit";
+import { buildOperatorDashboardPayload, clampOperatorDashboardWindowDays } from "../services/operator-dashboard";
+import {
+  queueDeadLetterPageFromBinding,
+  queueDeleteDeadLetterJobViaBinding,
+  queuePurgeDeadLetterJobsViaBinding,
+  queueReplayDeadLetterJobViaBinding,
+} from "../selfhost/queue-common";
+import { getGlobalAgentFrozenState, setGlobalAgentFrozen } from "../db/repositories";
 import { loadMaintainerLaneReport, maintainerLaneSummary } from "../services/maintainer-lane";
 import { buildRepoOnboardingPackPreviewForRepo } from "../services/repo-onboarding-pack";
 import { buildRegistrationReadinessResponse, buildGittensorConfigRecommendationResponse } from "../api/routes";
@@ -1047,138 +1149,57 @@ async function describeMcpUsageRequest(request: Request, telemetryMetadata: Reco
   };
 }
 
-// #6301 — coarse tool categories so tools/list clients and the `loopover-mcp tools` CLI can group
-// this server's tool surface by the repo's own conceptual groupings instead of reading one flat
-// list. The ids mirror the issue's suggested surfaces: contributor discovery/planning, local-branch
-// & PR prep, review/gate prediction, agent automation, maintainer/repo-owner, and registry/config
-// utility. Attached to each tool as MCP `_meta.category` at registration (see createServer).
-// "admin" (#7721) is the newest category: self-hosted-operator-only tools that read/write the
-// instance's OWN private .loopover.yml config. Unlike every other category, its tools are only
-// REGISTERED at all when LOOPOVER_MCP_ADMIN_ENABLED is truthy (see isMcpAdminEnabled below) -- every
-// other category's tools always exist and are gated purely by identity/allowlist at call time.
-export type McpToolCategory = "discovery" | "branch" | "review" | "agent" | "maintainer" | "utility" | "admin";
+// #6301 — coarse tool categories so tools/list clients and the `loopover-mcp tools` CLI can group this
+// server's tool surface by the repo's own conceptual groupings instead of reading one flat list. Attached
+// to each tool as MCP `_meta.category` at registration (see createServer).
+//
+// #9522: DERIVED from the contract registry, which already carries `category` on every entry. This was a
+// hand-maintained 112-line name→category map next to a registry that said the same thing; the two happened
+// to agree on every entry, but nothing made them, and the map had already fallen one tool behind
+// (loopover_admin_rotate_secret, which #9518's migration missed and this issue brought into the registry).
+//
+// "admin" remains the one category whose tools are conditionally REGISTERED at all -- only when
+// LOOPOVER_MCP_ADMIN_ENABLED is truthy (see isMcpAdminEnabled) -- where every other category's tools always
+// exist and are gated purely by identity at call time.
+export type McpToolCategory = ToolCategory;
 
-// Canonical category order for grouped rendering (contributor-facing surfaces first, operator ones
-// last). Kept as a single source of truth so a display/grouping consumer never invents its own order.
-export const MCP_TOOL_CATEGORY_IDS: readonly McpToolCategory[] = ["discovery", "branch", "review", "agent", "maintainer", "utility", "admin"];
+// Canonical category order for grouped rendering (contributor-facing surfaces first, operator ones last),
+// owned by the contract so no display consumer invents its own order.
+export const MCP_TOOL_CATEGORY_IDS: readonly McpToolCategory[] = TOOL_CATEGORIES;
 
-// Every registered tool maps to exactly one category. Listed in registration order (matching
-// createServer) so a new tool without a category entry is easy to spot in review; the
-// every-tool-has-a-category test fails loudly if one is ever missed.
-export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = {
-  loopover_get_repo_context: "maintainer",
-  loopover_get_maintainer_noise: "maintainer",
-  loopover_get_ams_miner_cohort: "maintainer",
-  loopover_get_repo_focus_manifest: "maintainer",
-  loopover_refresh_repo_focus_manifest: "maintainer",
-  loopover_get_activation_preview: "maintainer",
-  loopover_get_label_audit: "maintainer",
-  loopover_get_maintainer_lane: "maintainer",
-  loopover_get_repo_onboarding_pack: "maintainer",
-  loopover_get_registration_readiness: "maintainer",
-  loopover_get_config_recommendation: "maintainer",
-  loopover_get_burden_forecast: "maintainer",
-  loopover_get_repo_outcome_patterns: "maintainer",
-  loopover_get_outcome_calibration: "maintainer",
-  loopover_get_gate_precision: "maintainer",
-  loopover_get_selftune_override_audit: "maintainer",
-  loopover_clear_selftune_override: "maintainer",
-  loopover_file_incident_report: "maintainer",
-  loopover_get_skipped_pr_audit: "maintainer",
-  loopover_get_fleet_analytics: "maintainer",
-  loopover_get_recommendation_quality: "maintainer",
-  loopover_simulate_open_pr_pressure: "discovery",
-  loopover_get_contributor_profile: "discovery",
-  loopover_get_decision_pack: "discovery",
-  loopover_monitor_open_prs: "discovery",
-  loopover_predict_gate: "review",
-  loopover_explain_gate_disposition: "review",
-  loopover_intake_idea: "agent",
-  loopover_plan_idea_claims: "agent",
-  loopover_build_results_payload: "agent",
-  loopover_build_progress_snapshot: "agent",
-  loopover_evaluate_escalation: "agent",
-  loopover_check_slop_risk: "review",
-  loopover_check_improvement_potential: "review",
-  loopover_check_test_evidence: "review",
-  loopover_check_issue_slop: "review",
-  loopover_suggest_boundary_tests: "review",
-  loopover_pr_outcome: "review",
-  loopover_get_pr_ai_review_findings: "review",
-  loopover_list_notifications: "utility",
-  loopover_mark_notifications_read: "utility",
-  loopover_watch_issues: "utility",
-  loopover_explain_repo_decision: "discovery",
-  loopover_preflight_pr: "discovery",
-  loopover_get_bounty_advisory: "discovery",
-  loopover_list_bounties: "discovery",
-  loopover_get_bounty_lifecycle: "discovery",
-  loopover_get_registry_changes: "utility",
-  loopover_get_registry_snapshot: "utility",
-  loopover_get_upstream_drift: "utility",
-  loopover_get_upstream_ruleset: "utility",
-  loopover_get_issue_quality: "maintainer",
-  loopover_get_pr_reviewability: "review",
-  loopover_get_pr_maintainer_packet: "review",
-  loopover_get_live_gate_thresholds: "maintainer",
-  loopover_get_gate_config_effective: "maintainer",
-  loopover_get_repo_settings: "maintainer",
-  loopover_validate_linked_issue: "discovery",
-  loopover_check_before_start: "discovery",
-  loopover_find_opportunities: "discovery",
-  loopover_retrieve_issue_context: "discovery",
-  loopover_lint_pr_text: "review",
-  loopover_validate_config: "utility",
-  loopover_preflight_local_diff: "branch",
-  loopover_preview_local_pr_score: "branch",
-  loopover_get_eligibility_plan: "discovery",
-  loopover_run_local_scorer: "branch",
-  loopover_open_pr: "agent",
-  loopover_file_issue: "agent",
-  loopover_apply_labels: "agent",
-  loopover_post_eligibility_comment: "agent",
-  loopover_post_soft_claim: "agent",
-  loopover_create_branch: "agent",
-  loopover_delete_branch: "agent",
-  loopover_generate_tests: "agent",
-  loopover_file_follow_up_issue: "agent",
-  loopover_close_pr: "agent",
-  loopover_build_plan: "agent",
-  loopover_plan_status: "agent",
-  loopover_record_step_result: "agent",
-  loopover_get_automation_state: "agent",
-  loopover_set_agent_paused: "agent",
-  loopover_set_action_autonomy: "agent",
-  loopover_propose_action: "agent",
-  loopover_list_pending_actions: "agent",
-  loopover_decide_pending_action: "agent",
-  loopover_refresh_repo_docs: "maintainer",
-  loopover_generate_contributor_issue_drafts: "maintainer",
-  loopover_plan_repo_issues: "maintainer",
-  loopover_get_agent_audit_feed: "agent",
-  loopover_explain_score_breakdown: "review",
-  loopover_explain_review_risk: "review",
-  loopover_compare_pr_variants: "branch",
-  loopover_local_status: "utility",
-  loopover_preflight_current_branch: "branch",
-  loopover_preview_current_branch_score: "branch",
-  loopover_rank_local_next_actions: "branch",
-  loopover_explain_local_blockers: "branch",
-  loopover_remediation_plan: "branch",
-  loopover_prepare_pr_packet: "branch",
-  loopover_draft_pr_body: "branch",
-  loopover_compare_local_variants: "branch",
-  loopover_agent_plan_next_work: "agent",
-  loopover_agent_start_run: "agent",
-  loopover_agent_get_run: "agent",
-  loopover_agent_explain_next_action: "agent",
-  loopover_agent_prepare_pr_packet: "branch",
-  loopover_admin_get_config: "admin",
-  loopover_admin_write_config: "admin",
-  loopover_admin_list_config_backups: "admin",
-  loopover_admin_trigger_redeploy: "admin",
-  loopover_admin_rotate_secret: "admin",
-};
+// An INDEX over the whole registry, not a list of what this server registers. It covers all three servers'
+// tools because `locality` describes where a tool's work happens, not which server exposes it -- a dozen
+// "local-git" tools are registered here as well as in the stdio CLI, so filtering on locality would drop
+// their categories. Looking up a name this server never registers simply yields that tool's category.
+export const MCP_TOOL_CATEGORIES: Record<string, McpToolCategory> = Object.fromEntries(
+  TOOL_CONTRACTS.map((contract) => [contract.name, contract.category]),
+);
+
+/**
+ * Every queue message `loopover_fleet_run_job` can send IS a real JobMessage type (#9522).
+ *
+ * The contract package cannot import src/, so INTERNAL_JOB_SPEC's messageType values are a transcription --
+ * and a transcription of a message-type union is only safe if something on this side checks it. This
+ * assignment is that check: a messageType that is not a JobMessage["type"] fails the build rather than
+ * enqueuing a message the dispatcher silently drops. `null` is allowed and means the job is run-only.
+ */
+const _INTERNAL_JOB_MESSAGE_TYPES_ARE_REAL: readonly (JobMessage["type"] | null)[] = Object.values(INTERNAL_JOB_SPEC).map(
+  (spec) => spec.messageType,
+);
+void _INTERNAL_JOB_MESSAGE_TYPES_ARE_REAL;
+
+/**
+ * A contract's MCP annotations with the registry's own defaults applied (#9522). `ToolContract.annotations`
+ * is `Partial<...> | undefined` because an entry only states what differs from "safe, read-only", but
+ * `registerTool` under exactOptionalPropertyTypes will not take an `undefined` -- so the default is
+ * materialized here rather than at every call site.
+ */
+function contractAnnotations(contract: { annotations?: Partial<{ readOnlyHint: boolean; destructiveHint: boolean }> | undefined }): {
+  readOnlyHint: boolean;
+  destructiveHint: boolean;
+} {
+  return { readOnlyHint: true, destructiveHint: false, ...contract.annotations };
+}
 
 /** Master opt-in for the "admin" tool category (#7721), default OFF. Same truthy-string convention as every
  *  other LOOPOVER_* flag in this repo. Gates tool REGISTRATION in createServer() below; each admin tool
@@ -2395,6 +2416,26 @@ export class LoopoverMcp {
         async (input) => this.toolResult(await this.adminTriggerRedeploy(input)),
       );
       register(
+        "loopover_admin_get_status",
+        { description: adminGetStatusTool.description, inputSchema: AdminGetStatusInput.shape, outputSchema: AdminGetStatusOutput, annotations: contractAnnotations(adminGetStatusTool) },
+        async () => this.toolResult(await this.adminGetStatus()),
+      );
+      register(
+        "loopover_admin_doctor",
+        { description: adminDoctorTool.description, inputSchema: AdminDoctorInput.shape, outputSchema: AdminDoctorOutput, annotations: contractAnnotations(adminDoctorTool) },
+        async () => this.toolResult(await this.adminDoctor()),
+      );
+      register(
+        "loopover_admin_tail_logs",
+        { description: adminTailLogsTool.description, inputSchema: AdminTailLogsInput.shape, outputSchema: AdminTailLogsOutput, annotations: contractAnnotations(adminTailLogsTool) },
+        async (input) => this.toolResult(await this.adminTailLogs(input)),
+      );
+      register(
+        "loopover_admin_get_backup_status",
+        { description: adminGetBackupStatusTool.description, inputSchema: AdminGetBackupStatusInput.shape, outputSchema: AdminGetBackupStatusOutput, annotations: contractAnnotations(adminGetBackupStatusTool) },
+        async () => this.toolResult(await this.adminGetBackupStatus()),
+      );
+      register(
         "loopover_admin_rotate_secret",
         {
           description:
@@ -2485,6 +2526,164 @@ export class LoopoverMcp {
           },
         ],
       }),
+    );
+
+    // ── #9522 operator queue + safety tools ────────────────────────────
+    //
+    // Registered on BOTH deployments (availability "both"): the dead-letter tools answer
+    // `unavailable: true` where the queue backend has no dead-letter admin, which is a real answer rather
+    // than a reason to hide the tool. Every handler enforces `auth: "operator"` itself at call time --
+    // registration is not the gate, identity is.
+    register(
+      "loopover_ops_list_dead_letter_jobs",
+      {
+        description: opsListDeadLetterJobsTool.description,
+        inputSchema: OpsListDeadLetterJobsInput.shape,
+        outputSchema: OpsListDeadLetterJobsOutput,
+        annotations: contractAnnotations(opsListDeadLetterJobsTool),
+      },
+      async (input) => this.toolResult(await this.opsListDeadLetterJobs(input)),
+    );
+    register(
+      "loopover_ops_replay_dead_letter_job",
+      {
+        description: opsReplayDeadLetterJobTool.description,
+        inputSchema: OpsReplayDeadLetterJobInput.shape,
+        outputSchema: OpsReplayDeadLetterJobOutput,
+        annotations: contractAnnotations(opsReplayDeadLetterJobTool),
+      },
+      async (input) => this.toolResult(await this.opsReplayDeadLetterJob(input)),
+    );
+    register(
+      "loopover_ops_delete_dead_letter_job",
+      {
+        description: opsDeleteDeadLetterJobTool.description,
+        inputSchema: OpsDeleteDeadLetterJobInput.shape,
+        outputSchema: OpsDeleteDeadLetterJobOutput,
+        annotations: contractAnnotations(opsDeleteDeadLetterJobTool),
+      },
+      async (input, extra) => this.toolResult(await this.opsDeleteDeadLetterJob(input, extra, server)),
+    );
+    register(
+      "loopover_ops_purge_dead_letter_jobs",
+      {
+        description: opsPurgeDeadLetterJobsTool.description,
+        inputSchema: OpsPurgeDeadLetterJobsInput.shape,
+        outputSchema: OpsPurgeDeadLetterJobsOutput,
+        annotations: contractAnnotations(opsPurgeDeadLetterJobsTool),
+      },
+      async (input, extra) => this.toolResult(await this.opsPurgeDeadLetterJobs(input, extra, server)),
+    );
+    register(
+      "loopover_ops_get_kill_switch",
+      {
+        description: opsGetKillSwitchTool.description,
+        inputSchema: OpsGetKillSwitchInput.shape,
+        outputSchema: OpsGetKillSwitchOutput,
+        annotations: contractAnnotations(opsGetKillSwitchTool),
+      },
+      async () => this.toolResult(await this.opsGetKillSwitch()),
+    );
+    register(
+      "loopover_ops_set_kill_switch",
+      {
+        description: opsSetKillSwitchTool.description,
+        inputSchema: OpsSetKillSwitchInput.shape,
+        outputSchema: OpsSetKillSwitchOutput,
+        annotations: contractAnnotations(opsSetKillSwitchTool),
+      },
+      async (input, extra) => this.toolResult(await this.opsSetKillSwitch(input, extra, server)),
+    );
+    register(
+      "loopover_ops_get_operator_dashboard",
+      {
+        description: opsGetOperatorDashboardTool.description,
+        inputSchema: OpsGetOperatorDashboardInput.shape,
+        outputSchema: OpsGetOperatorDashboardOutput,
+        annotations: contractAnnotations(opsGetOperatorDashboardTool),
+      },
+      async (input) => this.toolResult(await this.opsGetOperatorDashboard(input)),
+    );
+
+    // ── #9522 fleet tools ──────────────────────────────────────────────
+    //
+    // availability "cloud": these administer FLEET state a single self-hosted instance does not have. Every
+    // handler enforces auth "internal" itself -- the same INTERNAL_JOB_TOKEN bearer the routes' middleware
+    // checks -- so registration is never the gate.
+    register(
+      "loopover_fleet_list_instances",
+      { description: fleetListInstancesTool.description, inputSchema: FleetListInstancesInput.shape, outputSchema: FleetListInstancesOutput, annotations: contractAnnotations(fleetListInstancesTool) },
+      async () => this.toolResult(await this.fleetListInstances()),
+    );
+    register(
+      "loopover_fleet_register_instance",
+      { description: fleetRegisterInstanceTool.description, inputSchema: FleetRegisterInstanceInput.shape, outputSchema: FleetRegisterInstanceOutput, annotations: contractAnnotations(fleetRegisterInstanceTool) },
+      async (input) => this.toolResult(await this.fleetRegisterInstance(input)),
+    );
+    register(
+      "loopover_fleet_list_installations",
+      { description: fleetListInstallationsTool.description, inputSchema: FleetListInstallationsInput.shape, outputSchema: FleetListInstallationsOutput, annotations: contractAnnotations(fleetListInstallationsTool) },
+      async () => this.toolResult(await this.fleetListInstallations()),
+    );
+    register(
+      "loopover_fleet_register_installation",
+      { description: fleetRegisterInstallationTool.description, inputSchema: FleetRegisterInstallationInput.shape, outputSchema: FleetRegisterInstallationOutput, annotations: contractAnnotations(fleetRegisterInstallationTool) },
+      async (input) => this.toolResult(await this.fleetRegisterInstallation(input)),
+    );
+    register(
+      "loopover_fleet_backfill_installations",
+      { description: fleetBackfillInstallationsTool.description, inputSchema: FleetBackfillInstallationsInput.shape, outputSchema: FleetBackfillInstallationsOutput, annotations: contractAnnotations(fleetBackfillInstallationsTool) },
+      async () => this.toolResult(await this.fleetBackfillInstallations()),
+    );
+    register(
+      "loopover_fleet_issue_enrollment",
+      { description: fleetIssueEnrollmentTool.description, inputSchema: FleetIssueEnrollmentInput.shape, outputSchema: FleetEnrollmentOutput, annotations: contractAnnotations(fleetIssueEnrollmentTool) },
+      async (input) => this.toolResult(await this.fleetIssueEnrollment(input)),
+    );
+    register(
+      "loopover_fleet_rotate_enrollment",
+      { description: fleetRotateEnrollmentTool.description, inputSchema: FleetRotateEnrollmentInput.shape, outputSchema: FleetEnrollmentOutput, annotations: contractAnnotations(fleetRotateEnrollmentTool) },
+      // Rotation IS issuance with rotate forced on -- one implementation, so the two can never diverge on
+      // what "replace the live enrollment" means.
+      async (input) => this.toolResult(await this.fleetIssueEnrollment({ ...input, rotate: true })),
+    );
+    register(
+      "loopover_fleet_revoke_enrollment",
+      { description: fleetRevokeEnrollmentTool.description, inputSchema: FleetRevokeEnrollmentInput.shape, outputSchema: FleetRevokeEnrollmentOutput, annotations: contractAnnotations(fleetRevokeEnrollmentTool) },
+      async (input, extra) => this.toolResult(await this.fleetRevokeEnrollment(input, extra, server)),
+    );
+
+    register(
+      "loopover_fleet_config_push",
+      { description: fleetConfigPushTool.description, inputSchema: FleetConfigPushInput.shape, outputSchema: FleetConfigPushOutput, annotations: contractAnnotations(fleetConfigPushTool) },
+      async (input, extra) => this.toolResult(await this.fleetConfigPush(input, extra, server)),
+    );
+    register(
+      "loopover_fleet_run_job",
+      { description: fleetRunJobTool.description, inputSchema: FleetRunJobInput.shape, outputSchema: FleetRunJobOutput, annotations: contractAnnotations(fleetRunJobTool) },
+      async (input) => this.toolResult(await this.fleetRunJob(input)),
+    );
+
+    // ── #9522 hosted-tenant tools ──────────────────────────────────────
+    register(
+      "loopover_tenant_create",
+      { description: tenantCreateTool.description, inputSchema: TenantCreateInput.shape, outputSchema: TenantCreateOutput, annotations: contractAnnotations(tenantCreateTool) },
+      async (input) => this.toolResult(await this.tenantCreate(input)),
+    );
+    register(
+      "loopover_tenant_list",
+      { description: tenantListTool.description, inputSchema: TenantListInput.shape, outputSchema: TenantListOutput, annotations: contractAnnotations(tenantListTool) },
+      async () => this.toolResult(await this.tenantList()),
+    );
+    register(
+      "loopover_tenant_set_orb_installation",
+      { description: tenantSetOrbInstallationTool.description, inputSchema: TenantSetOrbInstallationInput.shape, outputSchema: TenantSetOrbInstallationOutput, annotations: contractAnnotations(tenantSetOrbInstallationTool) },
+      async (input) => this.toolResult(await this.tenantSetOrbInstallation(input)),
+    );
+    register(
+      "loopover_tenant_destroy",
+      { description: tenantDestroyTool.description, inputSchema: TenantDestroyInput.shape, outputSchema: TenantDestroyOutput, annotations: contractAnnotations(tenantDestroyTool) },
+      async (input, extra) => this.toolResult(await this.tenantDestroy(input, extra, server)),
     );
 
     // #2225 — read-only taxonomy discovery for AI review finding categories + severity ladder.
@@ -3194,9 +3393,508 @@ export class LoopoverMcp {
    *  though LOOPOVER_MCP_ADMIN_ENABLED already gates whether they're registered at all. Session identities
    *  (browser login) are never admin either -- this is a self-hosted-operator CLI/automation credential, not
    *  something a dashboard session inherits. */
+  // ── #9522 operator queue + safety handlers ─────────────────────────────
+  //
+  // Each calls the SAME service function its HTTP route calls (src/api/routes.ts's /v1/app/* handlers), so
+  // the two transports cannot drift into two behaviors, and each keeps the route's own audit event. The
+  // `null` return from every queue-common helper means "this deployment's queue backend exposes no
+  // dead-letter admin" -- the routes answer 501 there; these answer `unavailable: true`, because over MCP
+  // that is an answer to the question rather than a transport failure.
+  private static readonly DEAD_LETTER_UNAVAILABLE = {
+    unavailable: true,
+    message: "This deployment's queue backend does not expose dead-letter admin.",
+  };
+
+  private async opsListDeadLetterJobs(input: { limit?: number | undefined; offset?: number | undefined }): Promise<ToolPayload> {
+    await this.requireOperator();
+    const limit = input.limit ?? 25;
+    const offset = input.offset ?? 0;
+    const page = await queueDeadLetterPageFromBinding(this.env.JOBS, limit, offset);
+    if (!page) return { summary: "LoopOver dead-letter admin is unavailable on this deployment.", data: { ...LoopoverMcp.DEAD_LETTER_UNAVAILABLE } };
+    return {
+      summary: `LoopOver dead-letter queue: ${page.total} job(s) parked, showing ${page.items.length}.`,
+      data: { generatedAt: new Date().toISOString(), limit, offset, total: page.total, items: page.items as unknown as Record<string, unknown>[] },
+    };
+  }
+
+  private async opsReplayDeadLetterJob(input: { id: number }): Promise<ToolPayload> {
+    await this.requireOperator();
+    const result = await queueReplayDeadLetterJobViaBinding(this.env.JOBS, input.id);
+    if (result === null) return { summary: "LoopOver dead-letter admin is unavailable on this deployment.", data: { ...LoopoverMcp.DEAD_LETTER_UNAVAILABLE } };
+    if (result === false) return { summary: `LoopOver dead-letter job ${input.id} was not found.`, data: { notFound: true, id: input.id } };
+    await recordAuditEvent(this.env, {
+      eventType: "operator.dlq_job_replayed",
+      actor: this.identity.actor,
+      targetKey: `selfhost_jobs#${input.id}`,
+      outcome: "completed",
+      metadata: { id: input.id, surface: "mcp" },
+    });
+    return { summary: `LoopOver replayed dead-letter job ${input.id}.`, data: { ok: true, id: input.id } };
+  }
+
+  private async opsDeleteDeadLetterJob(input: { id: number }, extra?: McpToolExtra, mcpServer?: McpServer): Promise<ToolPayload> {
+    await this.requireOperator();
+    const confirmation = await this.confirmDestructive(
+      `Delete dead-letter job ${input.id}?`,
+      "The job is discarded, not re-enqueued. Its payload cannot be recovered.",
+      extra,
+      mcpServer,
+    );
+    if (confirmation.declined) return { summary: `LoopOver left dead-letter job ${input.id} in place (declined).`, data: { declined: true, id: input.id } };
+    const result = await queueDeleteDeadLetterJobViaBinding(this.env.JOBS, input.id);
+    if (result === null) return { summary: "LoopOver dead-letter admin is unavailable on this deployment.", data: { ...LoopoverMcp.DEAD_LETTER_UNAVAILABLE } };
+    if (result === false) return { summary: `LoopOver dead-letter job ${input.id} was not found.`, data: { notFound: true, id: input.id } };
+    await recordAuditEvent(this.env, {
+      eventType: "operator.dlq_job_deleted",
+      actor: this.identity.actor,
+      targetKey: `selfhost_jobs#${input.id}`,
+      outcome: "completed",
+      metadata: { id: input.id, surface: "mcp" },
+    });
+    return { summary: `LoopOver deleted dead-letter job ${input.id}.`, data: { ok: true, id: input.id } };
+  }
+
+  private async opsPurgeDeadLetterJobs(_input: unknown, extra?: McpToolExtra, mcpServer?: McpServer): Promise<ToolPayload> {
+    await this.requireOperator();
+    const confirmation = await this.confirmDestructive(
+      "Purge EVERY dead-letter job?",
+      "All parked jobs are discarded at once. This is unbounded and cannot be recovered.",
+      extra,
+      mcpServer,
+    );
+    if (confirmation.declined) return { summary: "LoopOver left the dead-letter queue intact (declined).", data: { declined: true } };
+    const purged = await queuePurgeDeadLetterJobsViaBinding(this.env.JOBS);
+    if (purged === null) return { summary: "LoopOver dead-letter admin is unavailable on this deployment.", data: { ...LoopoverMcp.DEAD_LETTER_UNAVAILABLE } };
+    await recordAuditEvent(this.env, {
+      eventType: "operator.dlq_purged",
+      actor: this.identity.actor,
+      targetKey: "selfhost_jobs#all",
+      outcome: "completed",
+      metadata: { purged, surface: "mcp" },
+    });
+    return { summary: `LoopOver purged ${purged} dead-letter job(s).`, data: { ok: true, purged } };
+  }
+
+  private async opsGetKillSwitch(): Promise<ToolPayload> {
+    await this.requireOperator();
+    const state = await getGlobalAgentFrozenState(this.env);
+    return {
+      summary: state.frozen ? "LoopOver global agent kill switch is ENGAGED — every agent action is halted." : "LoopOver global agent kill switch is released.",
+      data: { ...state, generatedAt: new Date().toISOString() },
+    };
+  }
+
+  private async opsSetKillSwitch(input: { frozen: boolean; confirm?: true | undefined }, extra?: McpToolExtra, mcpServer?: McpServer): Promise<ToolPayload> {
+    await this.requireOperator();
+    // Only RELEASING needs the ceremony: freezing is the fail-safe direction, and an operator reaching for
+    // the kill switch in an incident must not be slowed down by a confirmation prompt.
+    if (!input.frozen) {
+      if (input.confirm !== true) {
+        throw new Error("Releasing the kill switch re-arms automation fleet-wide; pass confirm: true to proceed.");
+      }
+      const confirmation = await this.confirmDestructive(
+        "Release the global agent kill switch?",
+        "Every agent action across the deployment resumes immediately.",
+        extra,
+        mcpServer,
+      );
+      if (confirmation.declined) {
+        const current = await getGlobalAgentFrozenState(this.env);
+        return { summary: "LoopOver left the kill switch engaged (declined).", data: { ...current, declined: true, generatedAt: new Date().toISOString() } };
+      }
+    }
+    await setGlobalAgentFrozen(this.env, input.frozen, this.identity.actor);
+    await recordAuditEvent(this.env, {
+      eventType: input.frozen ? "operator.kill_switch_engaged" : "operator.kill_switch_released",
+      actor: this.identity.actor,
+      targetKey: "global_agent_kill_switch",
+      outcome: "completed",
+      metadata: { frozen: input.frozen, surface: "mcp" },
+    });
+    const state = await getGlobalAgentFrozenState(this.env);
+    return {
+      summary: input.frozen ? "LoopOver ENGAGED the global agent kill switch — every agent action is halted." : "LoopOver released the global agent kill switch.",
+      data: { ...state, generatedAt: new Date().toISOString() },
+    };
+  }
+
+  private async opsGetOperatorDashboard(input: { days?: number | undefined }): Promise<ToolPayload> {
+    await this.requireOperator();
+    const windowDays = clampOperatorDashboardWindowDays(Number(input.days));
+    const payload = await buildOperatorDashboardPayload(this.env, { windowDays });
+    return { summary: `LoopOver operator dashboard over the trailing ${windowDays} day(s).`, data: payload as unknown as Record<string, unknown> };
+  }
+
+  // ── #9522 fleet handlers ──────────────────────────────────────────────
+  //
+  // Each calls the same extracted service function its `/v1/internal/*` route calls (src/orb/fleet-admin.ts,
+  // src/orb/broker.ts, src/orb/installations.ts). auth "internal" is enforced by requireInternal, mirroring
+  // the middleware's own INTERNAL_JOB_TOKEN bearer check.
+  private async fleetListInstances(): Promise<ToolPayload> {
+    this.requireInternal();
+    const result = await listFleetInstances(this.env);
+    return { summary: `LoopOver fleet: ${result.instances.length} instance(s).`, data: result as unknown as Record<string, unknown> };
+  }
+
+  private async fleetRegisterInstance(input: { instanceId: string; registered?: boolean | undefined }): Promise<ToolPayload> {
+    this.requireInternal();
+    const result = await registerFleetInstance(this.env, { instanceId: input.instanceId, ...(input.registered === false ? { registered: false } : {}) });
+    await recordAuditEvent(this.env, {
+      eventType: "operator.fleet_instance_registered",
+      actor: this.identity.actor,
+      targetKey: `orb_instances#${input.instanceId}`,
+      outcome: "completed",
+      metadata: { instanceId: input.instanceId, registered: result.registered, surface: "mcp" },
+    });
+    return {
+      summary: result.instanceSecret
+        ? `LoopOver registered fleet instance ${input.instanceId}. Copy its ingest secret now — it is shown only once.`
+        : `LoopOver set fleet instance ${input.instanceId} registered=${result.registered}.`,
+      data: result as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async fleetListInstallations(): Promise<ToolPayload> {
+    this.requireInternal();
+    const result = await listFleetInstallations(this.env);
+    return { summary: `LoopOver fleet: ${result.installations.length} installation(s).`, data: result as unknown as Record<string, unknown> };
+  }
+
+  private async fleetRegisterInstallation(input: { installationId: number; registered?: boolean | undefined }): Promise<ToolPayload> {
+    this.requireInternal();
+    const result = await registerFleetInstallation(this.env, { installationId: input.installationId, ...(input.registered === false ? { registered: false } : {}) });
+    if ("error" in result) return { summary: `LoopOver has no record of installation ${input.installationId} — it must arrive via the webhook first.`, data: { ...result } };
+    await recordAuditEvent(this.env, {
+      eventType: "operator.fleet_installation_registered",
+      actor: this.identity.actor,
+      targetKey: `orb_github_installations#${input.installationId}`,
+      outcome: "completed",
+      metadata: { installationId: input.installationId, registered: result.registered, surface: "mcp" },
+    });
+    return { summary: `LoopOver set installation ${input.installationId} registered=${result.registered}.`, data: { ...result } };
+  }
+
+  private async fleetBackfillInstallations(): Promise<ToolPayload> {
+    this.requireInternal();
+    const result = await backfillOrbInstallations(this.env);
+    return { summary: `LoopOver backfilled ${result.backfilled} installation(s) from GitHub.`, data: { ...result } };
+  }
+
+  private async fleetIssueEnrollment(input: { installationId: number; rotate?: boolean | undefined }): Promise<ToolPayload> {
+    this.requireInternal();
+    if (!isOrbBrokerEnabled(this.env)) return { summary: "LoopOver token broker is not enabled on this deployment.", data: { error: "not_found" } };
+    const result = await issueOrbEnrollment(this.env, input.installationId, undefined, ORB_SECRET_TYPE_GITHUB_TOKEN, { rotate: input.rotate === true });
+    if ("error" in result) return { summary: `LoopOver could not issue an enrollment: ${result.error}.`, data: { ...result } };
+    await recordAuditEvent(this.env, {
+      eventType: "operator.fleet_enrollment_issued",
+      actor: this.identity.actor,
+      targetKey: `orb_enrollments#${result.enrollId}`,
+      outcome: "completed",
+      metadata: { installationId: input.installationId, rotate: input.rotate === true, surface: "mcp" },
+    });
+    return { summary: `LoopOver issued enrollment ${result.enrollId}. The secret is shown only once — copy it now.`, data: result as unknown as Record<string, unknown> };
+  }
+
+  private async fleetRevokeEnrollment(input: { enrollId: string }, extra?: McpToolExtra, mcpServer?: McpServer): Promise<ToolPayload> {
+    this.requireInternal();
+    if (!isOrbBrokerEnabled(this.env)) return { summary: "LoopOver token broker is not enabled on this deployment.", data: { error: "not_found" } };
+    const confirmation = await this.confirmDestructive(
+      `Revoke enrollment ${input.enrollId}?`,
+      "That container immediately loses its ability to broker GitHub tokens and must be re-enrolled.",
+      extra,
+      mcpServer,
+    );
+    if (confirmation.declined) return { summary: `LoopOver left enrollment ${input.enrollId} active (declined).`, data: { declined: true, enrollId: input.enrollId } };
+    const result = await revokeOrbEnrollment(this.env, input.enrollId);
+    if ("error" in result) return { summary: `LoopOver has no enrollment ${input.enrollId}.`, data: { ...result } };
+    await recordAuditEvent(this.env, {
+      eventType: "operator.fleet_enrollment_revoked",
+      actor: this.identity.actor,
+      targetKey: `orb_enrollments#${input.enrollId}`,
+      outcome: "completed",
+      metadata: { enrollId: input.enrollId, surface: "mcp" },
+    });
+    return { summary: `LoopOver revoked enrollment ${input.enrollId}.`, data: result as unknown as Record<string, unknown> };
+  }
+
+  // ── #9522 self-host instance diagnostics ──────────────────────────────
+  //
+  // Each reaches its capability through the nullable registry only src/server.ts fills, so the Workers
+  // bundle never pulls a node builtin in and an unwired deployment answers `configured: false` instead of
+  // throwing -- the same shape the config-admin and redeploy tools already use.
+  private async adminGetStatus(): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    const reader = getInstanceStatusReader();
+    if (!reader) return { summary: "LoopOver instance status: not configured on this instance.", data: { configured: false } };
+    try {
+      const status = await reader();
+      const version = typeof status.appVersion === "string" ? status.appVersion : "unknown";
+      const behind = status.upToDate === false ? " (a redeploy is due)" : "";
+      return { summary: `LoopOver instance is running ${version}${behind}.`, data: { configured: true, ...status } };
+    } catch (error) {
+      return { summary: "LoopOver instance status could not be read.", data: { configured: true, error: errorMessage(error) } };
+    }
+  }
+
+  private async adminDoctor(): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    const runner = getInstanceDoctorRunner();
+    if (!runner) return { summary: "LoopOver instance doctor: not configured on this instance.", data: { configured: false } };
+    try {
+      const report = await runner();
+      const failed = report.checks.filter((check) => check.status === "fail").length;
+      const warned = report.checks.filter((check) => check.status === "warn").length;
+      return {
+        // Every check runs, so the summary reports the whole picture rather than the first failure.
+        summary: `LoopOver instance doctor: ${report.checks.length} check(s), ${failed} failing, ${warned} warning.`,
+        data: { configured: true, ok: report.ok, checks: report.checks as unknown as Record<string, unknown>[] },
+      };
+    } catch (error) {
+      return { summary: "LoopOver instance doctor could not run.", data: { configured: true, error: errorMessage(error) } };
+    }
+  }
+
+  private async adminTailLogs(input: { lines?: number | undefined; since?: string | undefined }): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    const tailer = getInstanceLogTailer();
+    if (!tailer) return { summary: "LoopOver log tail: not configured on this instance.", data: { configured: false } };
+    try {
+      // The cap is enforced HERE as well as in the implementation: a caller cannot widen it past the
+      // schema's own max, and the default stays modest so an unqualified call cannot dump the buffer.
+      const result = await tailer({ lines: Math.min(input.lines ?? 200, 1000), ...(input.since !== undefined ? { since: input.since } : {}) });
+      return {
+        summary: `LoopOver returned ${result.lines.length} log line(s)${result.truncated ? " (truncated by the byte cap)" : ""}.`,
+        data: { configured: true, lines: result.lines, truncated: result.truncated },
+      };
+    } catch (error) {
+      return { summary: "LoopOver log tail could not be read.", data: { configured: true, error: errorMessage(error) } };
+    }
+  }
+
+  private async adminGetBackupStatus(): Promise<ToolPayload> {
+    this.requireMcpAdmin();
+    const reader = getInstanceBackupStatusReader();
+    if (!reader) return { summary: "LoopOver backup status: not configured on this instance.", data: { configured: false } };
+    try {
+      const status = await reader();
+      const last = typeof status.lastBackupAt === "string" ? status.lastBackupAt : "never";
+      return { summary: `LoopOver last backup: ${last}.`, data: { configured: true, ...status } };
+    } catch (error) {
+      return { summary: "LoopOver backup status could not be read.", data: { configured: true, error: errorMessage(error) } };
+    }
+  }
+
+  // ── #9522 fleet config push + maintenance jobs ────────────────────────
+  private async fleetConfigPush(
+    input: { installationIds: number[]; pushId: string; message: string; capability?: string | undefined; deprecatesAt?: string | undefined },
+    extra?: McpToolExtra,
+    mcpServer?: McpServer,
+  ): Promise<ToolPayload> {
+    await this.requireOperator();
+    const confirmation = await this.confirmDestructive(
+      `Push config "${input.pushId}" to ${input.installationIds.length} installation(s)?`,
+      "Every listed installation receives it.",
+      extra,
+      mcpServer,
+    );
+    if (confirmation.declined) return { summary: `LoopOver did not push config "${input.pushId}" (declined).`, data: { declined: true, pushId: input.pushId } };
+    const result = await pushFleetConfig(this.env, this.identity.actor, input);
+    return {
+      summary: `LoopOver pushed config "${result.pushId}" to ${result.succeededCount}/${result.installationCount} installation(s).`,
+      data: result as unknown as Record<string, unknown>,
+    };
+  }
+
+  /**
+   * The run-only jobs: no queue message exists for them, so `run` dispatches to the SAME function each
+   * one's own `/run` route calls. Keyed by job name and exhaustive over the spec's `messageType: null`
+   * entries -- a new run-only job that is not wired here fails the fleet-job parity test.
+   */
+  private static readonly RUN_ONLY_JOBS: Record<string, (env: Env, payload: Record<string, unknown>) => Promise<unknown>> = {
+    "backfill-contributor-gate-history": (env, payload) =>
+      backfillContributorGateHistory(env, typeof payload.limit === "number" ? { limit: payload.limit } : {}),
+    "refresh-installation-health": (env) => refreshInstallationHealth(env),
+  };
+
+  private async fleetRunJob(input: { job: InternalJobName; mode: InternalJobRunMode; payload?: Record<string, unknown> | undefined }): Promise<ToolPayload> {
+    this.requireInternal();
+    const spec = INTERNAL_JOB_SPEC[input.job];
+    const supportedModes: readonly InternalJobRunMode[] = spec.modes;
+    if (!supportedModes.includes(input.mode)) {
+      // Answered, not thrown: "this job has no inline runner" is information the caller can act on, and
+      // the supported list is what it needs to retry correctly.
+      return {
+        summary: `LoopOver job ${input.job} does not support mode "${input.mode}" (supports: ${supportedModes.join(", ")}).`,
+        data: { job: input.job, mode: input.mode, unsupportedMode: true, supportedModes: [...supportedModes] },
+      };
+    }
+    const payload = input.payload ?? {};
+    if (spec.messageType === null) {
+      const runner = LoopoverMcp.RUN_ONLY_JOBS[input.job]!;
+      const result = await runner(this.env, payload);
+      await this.auditFleetJob(input.job, "operator.fleet_job_ran", { mode: "run" });
+      return { summary: `LoopOver ran job ${input.job} inline.`, data: { job: input.job, mode: input.mode, result: result as unknown } };
+    }
+    // The route path is not always the queue message type (rag-index -> rag-index-repo,
+    // regate-pr -> agent-regate-pr), so the message is built from the spec, never from the job name.
+    const message = { ...payload, type: spec.messageType, requestedBy: "mcp" } as unknown as JobMessage;
+    if (input.mode === "enqueue") {
+      await this.env.JOBS.send(message);
+      await this.auditFleetJob(input.job, "operator.fleet_job_enqueued", { mode: "enqueue", messageType: spec.messageType });
+      return { summary: `LoopOver queued job ${input.job}.`, data: { job: input.job, mode: input.mode, result: { status: "queued" } } };
+    }
+    // Inline: the SAME dispatcher the queue consumer runs, so an inline run and a queued run cannot diverge.
+    await processJob(this.env, message);
+    await this.auditFleetJob(input.job, "operator.fleet_job_ran", { mode: "run", messageType: spec.messageType });
+    return { summary: `LoopOver ran job ${input.job} inline.`, data: { job: input.job, mode: input.mode, result: { status: "completed" } } };
+  }
+
+  private async auditFleetJob(job: string, eventType: string, metadata: Record<string, unknown>): Promise<void> {
+    await recordAuditEvent(this.env, {
+      eventType,
+      actor: this.identity.actor,
+      targetKey: `job#${job}`,
+      outcome: "completed",
+      metadata: { job, surface: "mcp", ...metadata },
+    });
+  }
+
+  // ── #9522 hosted-tenant handlers ──────────────────────────────────────
+  //
+  // These reach the control plane, a separate Worker with its own admin credential. A deployment without
+  // one answers `configured: false` -- the same structured "this capability is not wired here" shape the
+  // self-host tools use -- rather than erroring, because not administering hosted tenants is a normal
+  // state for every deployment except one.
+  private controlPlaneUnavailable(action: string): ToolPayload {
+    return { summary: `LoopOver cannot ${action}: the hosted control plane is not configured on this deployment.`, data: { configured: false } };
+  }
+
+  private async tenantCreate(input: { name: string; product: "ams" | "orb"; schedule?: string | undefined; orbInstallationId?: number | undefined }): Promise<ToolPayload> {
+    this.requireInternal();
+    if (!isControlPlaneConfigured(this.env)) return this.controlPlaneUnavailable("create a tenant");
+    const record = await createTenant(this.env, input);
+    await recordAuditEvent(this.env, {
+      eventType: "operator.tenant_created",
+      actor: this.identity.actor,
+      targetKey: `tenant#${input.product}:${input.name}`,
+      outcome: "completed",
+      metadata: { name: input.name, product: input.product, surface: "mcp" },
+    });
+    return { summary: `LoopOver created ${input.product} tenant ${input.name}.`, data: { configured: true, ...record } };
+  }
+
+  private async tenantList(): Promise<ToolPayload> {
+    this.requireInternal();
+    if (!isControlPlaneConfigured(this.env)) return this.controlPlaneUnavailable("list tenants");
+    const payload = await listTenants(this.env);
+    const tenants = Array.isArray(payload.tenants) ? payload.tenants : [];
+    return { summary: `LoopOver hosted tenants: ${tenants.length}.`, data: { configured: true, ...payload } };
+  }
+
+  private async tenantSetOrbInstallation(input: { name: string; orbInstallationId: number }): Promise<ToolPayload> {
+    this.requireInternal();
+    if (!isControlPlaneConfigured(this.env)) return this.controlPlaneUnavailable("set a tenant's installation");
+    const record = await setTenantOrbInstallation(this.env, input);
+    await recordAuditEvent(this.env, {
+      eventType: "operator.tenant_orb_installation_set",
+      actor: this.identity.actor,
+      targetKey: `tenant#orb:${input.name}`,
+      outcome: "completed",
+      metadata: { name: input.name, orbInstallationId: input.orbInstallationId, surface: "mcp" },
+    });
+    return { summary: `LoopOver pointed tenant ${input.name} at installation ${input.orbInstallationId}.`, data: { configured: true, ...record } };
+  }
+
+  private async tenantDestroy(input: { name: string; product: "ams" | "orb" }, extra?: McpToolExtra, mcpServer?: McpServer): Promise<ToolPayload> {
+    this.requireInternal();
+    if (!isControlPlaneConfigured(this.env)) return this.controlPlaneUnavailable("destroy a tenant");
+    const confirmation = await this.confirmDestructive(
+      `Destroy ${input.product} tenant ${input.name}?`,
+      "Its container, database, and secrets are torn down. The tenant's data does not survive.",
+      extra,
+      mcpServer,
+    );
+    if (confirmation.declined) return { summary: `LoopOver left tenant ${input.name} standing (declined).`, data: { declined: true, name: input.name } };
+    const record = await destroyTenant(this.env, input);
+    await recordAuditEvent(this.env, {
+      eventType: "operator.tenant_destroyed",
+      actor: this.identity.actor,
+      targetKey: `tenant#${input.product}:${input.name}`,
+      outcome: "completed",
+      metadata: { name: input.name, product: input.product, surface: "mcp" },
+    });
+    return { summary: `LoopOver destroyed ${input.product} tenant ${input.name}.`, data: { configured: true, ...record } };
+  }
+
   private requireMcpAdmin(): void {
     if (this.identity.kind === "static" && this.identity.actor === "mcp-admin") return;
     throw new Error("Forbidden: this tool requires the LOOPOVER_MCP_ADMIN_TOKEN credential.");
+  }
+
+  /**
+   * The `auth: "operator"` gate (#9522), mirroring the HTTP routes' own `requireAppRole(["operator"])`.
+   *
+   * The shared static `mcp` token is explicitly NOT enough: LOOPOVER_MCP_TOKEN is an end-user-obtainable CLI
+   * credential, so treating it as operator would hand the kill switch and the dead-letter queue to anyone
+   * who can run the CLI. `api`/`internal` static identities ARE trusted -- they are operator-only Worker
+   * secrets that are never handed out -- and a session must actually hold the operator role.
+   */
+  private async requireOperator(): Promise<void> {
+    if (this.identity.kind === "static") {
+      if (this.identity.actor === "mcp" || this.identity.actor === "mcp-admin") {
+        throw new Error("Forbidden: this tool requires an operator session (insufficient_role).");
+      }
+      return;
+    }
+    const summary = await loadControlPanelRoleSummary(this.env, this.identity.actor, this.identity.session?.githubUserId);
+    if (!summary.roles.some((role) => role === "operator")) {
+      throw new Error("Forbidden: this tool requires the operator role (insufficient_role).");
+    }
+  }
+
+  /**
+   * The `auth: "internal"` gate (#9522): fleet and tenant administration, mirroring the `/v1/internal/*`
+   * middleware's INTERNAL_JOB_TOKEN bearer check. Only the owner-held static credentials satisfy it -- no
+   * session role grants it, because there is no per-repo scoping that could bound fleet-wide authority.
+   */
+  private requireInternal(): void {
+    if (this.identity.kind === "static" && (this.identity.actor === "internal" || this.identity.actor === "api")) return;
+    throw new Error("Forbidden: this tool requires the INTERNAL_JOB_TOKEN credential.");
+  }
+
+  /**
+   * The confirmation gate every destructive tool shares (#9522 requirement 2).
+   *
+   * The schema already demands `confirm: true`, so this is the second half: where the client supports
+   * elicitation, ASK before doing the irreversible thing, and treat a decline as a structured non-error
+   * result rather than a failure -- declining is a valid answer, not a broken call. A client without
+   * elicitation support falls through on the schema-level confirm alone, which is the same posture the
+   * planning elicitation already takes.
+   */
+  private async confirmDestructive(
+    action: string,
+    detail: string,
+    extra?: McpToolExtra,
+    mcpServer?: McpServer,
+  ): Promise<{ declined: boolean }> {
+    const elicitationCapabilities = mcpServer?.server.getClientCapabilities()?.elicitation;
+    const supported = Boolean(extra && elicitationCapabilities);
+    if (!extra || !supported) return { declined: false };
+    try {
+      const result = await extra.sendRequest(
+        {
+          method: "elicitation/create",
+          params: { message: `${action}\n\n${detail}\n\nThis cannot be undone. Proceed?`, requestedSchema: { type: "object", properties: {} } },
+        },
+        ElicitResultSchema,
+        { timeout: 60_000 },
+      );
+      return { declined: result.action !== "accept" };
+    } catch {
+      // A client that advertises elicitation but fails to answer must not silently become an implicit yes
+      // for an irreversible action -- treat the failure as a decline.
+      return { declined: true };
+    }
   }
 
   private adminScopeRepoFullName(scope: string, repoFullName: string | undefined): string {

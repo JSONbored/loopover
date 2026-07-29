@@ -11,6 +11,20 @@ export type McpToolReferenceEntry = {
 
 export const MCP_TOOL_REFERENCE: readonly McpToolReferenceEntry[] = [
   {
+    "name": "loopover_admin_doctor",
+    "category": "admin",
+    "locality": "remote",
+    "availability": "selfhost",
+    "description": "Self-hosted-operator only. The ORB counterpart of the miner's doctor: read-only checks over secret presence and shape, GitHub App auth, database/Redis/Qdrant reachability, the config-dir mount and LOOPOVER_REPO_CONFIG_DIR writability, broker enrollment validity, clock skew, and disk pressure. Every check runs and reports its own pass/warn/fail — nothing is mutated and nothing stops at the first failure. Requires LOOPOVER_MCP_ADMIN_TOKEN."
+  },
+  {
+    "name": "loopover_admin_get_backup_status",
+    "category": "admin",
+    "locality": "remote",
+    "availability": "selfhost",
+    "description": "Self-hosted-operator only. When this instance last backed up and what artifacts the backup container has on disk, with sizes. Read-only — it never triggers a backup. Requires LOOPOVER_MCP_ADMIN_TOKEN; returns configured=false where no backup volume is mounted."
+  },
+  {
     "name": "loopover_admin_get_config",
     "category": "admin",
     "locality": "remote",
@@ -18,11 +32,32 @@ export const MCP_TOOL_REFERENCE: readonly McpToolReferenceEntry[] = [
     "description": "Self-hosted-operator only. Read this instance's own private .loopover.yml config: the merged effective config for a repo (shared base + global default + per-repo override), or just the raw global-default layer, or just the raw per-repo layer. Requires LOOPOVER_MCP_ADMIN_TOKEN. Returns configured=false if LOOPOVER_REPO_CONFIG_DIR is unset."
   },
   {
+    "name": "loopover_admin_get_status",
+    "category": "admin",
+    "locality": "remote",
+    "availability": "selfhost",
+    "description": "Self-hosted-operator only. One answer for 'what is this instance running and is it healthy': app version against the orb-manifest target (and whether a redeploy is due), uptime, the /ready probe's detail, per-component health, queue depth, and the last redeploy. Read-only and redaction-scrubbed. Requires LOOPOVER_MCP_ADMIN_TOKEN; returns configured=false where the capability is not wired."
+  },
+  {
     "name": "loopover_admin_list_config_backups",
     "category": "admin",
     "locality": "remote",
     "availability": "selfhost",
     "description": "Self-hosted-operator only. List timestamped backups (newest first) created by loopover_admin_write_config for the global-default or a specific repo's config. Requires LOOPOVER_MCP_ADMIN_TOKEN."
+  },
+  {
+    "name": "loopover_admin_rotate_secret",
+    "category": "admin",
+    "locality": "remote",
+    "availability": "selfhost",
+    "description": "Self-hosted-operator only. Rotate one of this instance's own secret files (e.g. claude_code_oauth_token) in place on the host, via the redeploy companion (#7723) -- the app container cannot write these itself, the Compose secrets mount is read-only. The value must be the bare credential: a single line, no comment or label line, no surrounding whitespace (the loader only trims, so anything else silently becomes part of the credential). Backs the previous value up first, and writes in place so the running container's inode-pinned bind mount sees it immediately. For claude_code_oauth_token no restart is needed -- the token is re-read per AI call. Requires LOOPOVER_MCP_ADMIN_TOKEN. Returns configured=false if REDEPLOY_COMPANION_TOKEN is unset or the companion isn't reachable."
+  },
+  {
+    "name": "loopover_admin_tail_logs",
+    "category": "admin",
+    "locality": "remote",
+    "availability": "selfhost",
+    "description": "Self-hosted-operator only. Return a BOUNDED tail of this instance's own logs — capped by both line count and total bytes, and passed through the same redaction scrubbing every other operator surface uses before it leaves the host. There is no follow mode: this returns a snapshot and completes. Requires LOOPOVER_MCP_ADMIN_TOKEN."
   },
   {
     "name": "loopover_admin_trigger_redeploy",
@@ -270,6 +305,76 @@ export const MCP_TOOL_REFERENCE: readonly McpToolReferenceEntry[] = [
     "description": "Cross-repo discovery: find high-fit contribution opportunities across registered Gittensor repos. Returns a ranked, public-safe list filtered by your MinerGoalSpec (lane, min rank score, languages). Metadata-only, no GitHub writes."
   },
   {
+    "name": "loopover_fleet_backfill_installations",
+    "category": "fleet",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Owner only. Reconcile the installation registry against GitHub, adding installations the fleet has not recorded yet. Idempotent — re-running adds nothing new once reconciled."
+  },
+  {
+    "name": "loopover_fleet_config_push",
+    "category": "fleet",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Operator only. Push the current configuration out to the fleet. Takes effect on every instance that picks it up, so it is not scoped to one repo or instance. Requires confirm=true."
+  },
+  {
+    "name": "loopover_fleet_issue_enrollment",
+    "category": "fleet",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Owner only. Mint a token-broker enrollment secret for a REGISTERED installation, to hand to that maintainer's self-hosted container so it brokers GitHub tokens instead of holding an App key. The secret is returned exactly once and only its hash is stored. An installation that already has a live enrollment is a conflict unless rotate=true, which replaces it and invalidates the previous secret. Requires the broker to be enabled."
+  },
+  {
+    "name": "loopover_fleet_list_installations",
+    "category": "fleet",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Owner only. Every GitHub App installation the fleet knows about, with its recorded health. Read-only."
+  },
+  {
+    "name": "loopover_fleet_list_instances",
+    "category": "fleet",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Owner only. Every self-hosted ORB instance that has ingested signals, newest activity first: whether it is registered for calibration, when it was first and last seen, and how many signals it has contributed. Read-only."
+  },
+  {
+    "name": "loopover_fleet_register_installation",
+    "category": "fleet",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Owner only. Opt a GitHub App installation into (or, with registered=false, out of) the fleet registry. Only REGISTERED installations count toward the public counter and are eligible for token brokering; opting out also blocks OAuth self-enrollment until an operator opts back in. Refuses an installation the webhook has never recorded — an install must arrive that way first."
+  },
+  {
+    "name": "loopover_fleet_register_instance",
+    "category": "fleet",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Owner only. Opt a self-hosted ORB instance into (or, with registered=false, out of) fleet calibration. Registering MINTS A FRESH per-instance ingest credential and returns it once in plaintext — only its hash is stored, and calling this again rotates the credential, invalidating the previous one and breaking that instance's ingest until it is updated."
+  },
+  {
+    "name": "loopover_fleet_revoke_enrollment",
+    "category": "fleet",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Owner only. Revoke one token-broker enrollment by its id. Works for any secret type, and is idempotent — revoking an already-revoked enrollment still reports success. Irreversible: that container immediately loses its ability to broker GitHub tokens and must be re-enrolled. Requires confirm=true."
+  },
+  {
+    "name": "loopover_fleet_rotate_enrollment",
+    "category": "fleet",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Owner only. Replace an installation's token-broker enrollment with a fresh secret, returned once in plaintext. The previous secret stops working immediately, so that container cannot broker tokens until it is updated. Equivalent to issuing with rotate=true."
+  },
+  {
+    "name": "loopover_fleet_run_job",
+    "category": "fleet",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Owner only. Enqueue or inline-run one of the fleet's maintenance jobs — the interactive counterpart to the scheduled self-host-maintenance workflow, which remains the cron path. mode=enqueue queues it; mode=run executes it inline and returns its result. Not every job offers both modes; an unsupported pairing returns unsupportedMode with the list of modes that job does support."
+  },
+  {
     "name": "loopover_generate_contributor_issue_drafts",
     "category": "maintainer",
     "locality": "remote",
@@ -362,7 +467,7 @@ export const MCP_TOOL_REFERENCE: readonly McpToolReferenceEntry[] = [
   },
   {
     "name": "loopover_get_fleet_analytics",
-    "category": "maintainer",
+    "category": "fleet",
     "locality": "remote",
     "availability": "both",
     "description": "Operator-only: aggregated gate-calibration analytics across the self-host fleet -- median merge/close precision, false-positive + reversal rates, cycle-time percentiles, and per-instance outliers. Measurement only."
@@ -683,6 +788,55 @@ export const MCP_TOOL_REFERENCE: readonly McpToolReferenceEntry[] = [
     "description": "Build a LOCAL-execution spec to open a pull request from your branch (run it with your own gh creds; loopover never performs the write)."
   },
   {
+    "name": "loopover_ops_delete_dead_letter_job",
+    "category": "ops",
+    "locality": "remote",
+    "availability": "both",
+    "description": "Operator only. Permanently drop one parked dead-letter job. Irreversible — the job is not re-enqueued and its payload is gone. Requires confirm=true. Records an operator.dlq_job_deleted audit event."
+  },
+  {
+    "name": "loopover_ops_get_kill_switch",
+    "category": "ops",
+    "locality": "remote",
+    "availability": "both",
+    "description": "Operator only. Report whether the global agent kill switch is engaged, and who set it when. Reads strictly — unlike the enforcement hot path, a read failure here surfaces as an error rather than a falsely reassuring 'unfrozen'."
+  },
+  {
+    "name": "loopover_ops_get_operator_dashboard",
+    "category": "ops",
+    "locality": "remote",
+    "availability": "both",
+    "description": "Operator only. The operator dashboard rollup over a trailing window: the same payload the HTTP dashboard route serves. Read-only."
+  },
+  {
+    "name": "loopover_ops_list_dead_letter_jobs",
+    "category": "ops",
+    "locality": "remote",
+    "availability": "both",
+    "description": "Operator only. Page the self-hosted queue's dead-letter table: jobs that exhausted their retries and are parked for inspection. Read-only. Returns unavailable=true on a deployment whose queue backend exposes no dead-letter admin (Cloudflare Queues)."
+  },
+  {
+    "name": "loopover_ops_purge_dead_letter_jobs",
+    "category": "ops",
+    "locality": "remote",
+    "availability": "both",
+    "description": "Operator only. Permanently drop ALL parked dead-letter jobs. Irreversible and unbounded — prefer deleting individual ids unless the whole table is known-garbage. Requires confirm=true. Records an operator.dlq_purged audit event."
+  },
+  {
+    "name": "loopover_ops_replay_dead_letter_job",
+    "category": "ops",
+    "locality": "remote",
+    "availability": "both",
+    "description": "Operator only. Re-enqueue one parked dead-letter job for another attempt. Records an operator.dlq_job_replayed audit event. Returns notFound=true if the id is already gone, unavailable=true where the queue backend has no dead-letter admin."
+  },
+  {
+    "name": "loopover_ops_set_kill_switch",
+    "category": "ops",
+    "locality": "remote",
+    "availability": "both",
+    "description": "Operator only. Engage or release the global agent kill switch. Engaging (frozen=true) halts every agent action fleet-wide immediately. RELEASING (frozen=false) re-arms automation everywhere and requires confirm=true. Records an audit event either way."
+  },
+  {
     "name": "loopover_plan_idea_claims",
     "category": "agent",
     "locality": "remote",
@@ -863,6 +1017,34 @@ export const MCP_TOOL_REFERENCE: readonly McpToolReferenceEntry[] = [
     "locality": "remote",
     "availability": "both",
     "description": "Suggest boundary-case test criteria for a change, from changed-file paths plus precomputed boundary-touch metadata the caller's own local diff scan produced. The remote boundary never accepts patch or source text. Advisory only -- returns criteria for the caller's own agent to scaffold from; never blocks or writes."
+  },
+  {
+    "name": "loopover_tenant_create",
+    "category": "tenant",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Control-plane admin only. Provision a hosted tenant: its container, database, and secrets. `schedule` is accepted only for product \"ams\" and `orbInstallationId` only for product \"orb\" — the route rejects the mismatched pairing rather than ignoring it."
+  },
+  {
+    "name": "loopover_tenant_destroy",
+    "category": "tenant",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Control-plane admin only. Tear down a hosted tenant: its container, database, and secrets. Irreversible — the tenant's data does not survive. Requires confirm=true. A tenant still provisioning is refused rather than torn down mid-flight, since there is nothing settled yet to remove."
+  },
+  {
+    "name": "loopover_tenant_list",
+    "category": "tenant",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Control-plane admin only. Every hosted tenant with its status and timestamps. Read-only, and the payload is the registry's own redacted record — it carries no tenant secrets."
+  },
+  {
+    "name": "loopover_tenant_set_orb_installation",
+    "category": "tenant",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Control-plane admin only. Point an existing ORB tenant at a GitHub App installation id. Valid only for product \"orb\"."
   },
   {
     "name": "loopover_validate_config",

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildScorePreview } from "../../src/scoring/preview";
-import { explainScoreBreakdown } from "../../src/services/score-breakdown";
+import { __scoreBreakdownInternals, explainScoreBreakdown } from "../../src/services/score-breakdown";
 import type { RepositoryRecord, ScoringModelSnapshotRecord } from "../../src/types";
 
 const FORBIDDEN = /\b(wallet|hotkey|coldkey|mnemonic|farming|payout|raw[-_\s]?trust)\b/i;
@@ -737,6 +737,29 @@ describe("explainScoreBreakdown", () => {
   // "score"/"credibility" into "private context" -- fine for a genuinely public GitHub comment, but this
   // endpoint is authenticated and per-contributor, and "score"/"credibility" are its entire point. Asserts
   // the feature's own core vocabulary survives byte-for-byte, not just "no forbidden wallet/hotkey word leaked".
+  it.each([
+    ["ghp_", `ghp_${"A".repeat(24)}`],
+    ["gho_", `gho_${"A".repeat(24)}`],
+    ["ghu_", `ghu_${"A".repeat(24)}`],
+    ["ghs_", `ghs_${"A".repeat(24)}`],
+    ["ghr_", `ghr_${"A".repeat(24)}`],
+    ["github_pat_", `github_pat_${"A".repeat(24)}`],
+    ["gts_", `gts_${"A".repeat(24)}`],
+    ["orbenr_", `orbenr_${"A".repeat(24)}`],
+    ["orbsec_", `orbsec_${"A".repeat(24)}`],
+    ["glpat-", `glpat-${"A".repeat(24)}`],
+    ["sk-", `sk-${"A".repeat(24)}`],
+    ["xoxb-", `xoxb-${"A".repeat(24)}`],
+  ])("REGRESSION (#9697): sanitizeScoreBreakdownText redacts a %s token (unified PUBLIC_TOKEN_INLINE)", (_prefix, token) => {
+    const out = __scoreBreakdownInternals.sanitizeScoreBreakdownText(`saturated near ${token} cap`);
+    expect(out).toContain("<redacted>");
+    expect(out).not.toContain(token);
+  });
+
+  it("leaves this feature's own computed score text unmodified by the token scrubber (#9697)", () => {
+    expect(__scoreBreakdownInternals.sanitizeScoreBreakdownText("credibility leverage saturated near the cap")).toBe("credibility leverage saturated near the cap");
+  });
+
   it("REGRESSION: never mangles this feature's own core vocabulary (score/credibility/leverage) into private context", () => {
     const preview = buildScorePreview({
       repo,

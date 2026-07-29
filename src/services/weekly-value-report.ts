@@ -28,7 +28,7 @@ import type {
   WeeklyValueReportVariant,
 } from "../types";
 import { nowIso } from "../utils/json";
-import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN } from "../signals/redaction";
+import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN, publicTokenPattern } from "../signals/redaction";
 
 type WeeklyValueReportInputs = {
   generatedAt: string;
@@ -411,7 +411,7 @@ function normalizeReportDays(value: number | null | undefined): number {
 function sanitizeReportText(value: string): string {
   const redacted = value
     .replace(PUBLIC_LOCAL_PATH_SCRUB_PATTERN, "<redacted-path>")
-    .replace(/\b(?:ghp_|github_pat_|gts_|orbenr_|orbsec_|glpat-|sk-|xox[baprs]-)[A-Za-z0-9_=-]{8,}/g, "<redacted-token>")
+    .replace(publicTokenPattern(), "<redacted-token>")
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, "Bearer <redacted-token>");
   if (
     /\b(seed phrase|mnemonic|private key|raw[-\s]?trust|trust[-\s]?score|wallet|hotkey|coldkey|payout|reward(?:[-\s]?(?:estimate|prediction|claim|score|payout|risk))?|farming|private[-\s]?reviewability|private[-\s]?scoreability|scoreability|public[-\s]?score[-\s]?(?:estimate|prediction|claim)|score[-\s]?(?:estimate|prediction|preview))\b/i.test(
@@ -421,3 +421,6 @@ function sanitizeReportText(value: string): string {
     return "<redacted>";
   return redacted.slice(0, 240);
 }
+
+/** Test-only handle on the report text sanitizer (mirrors control-panel-roles' internals export). */
+export const __weeklyValueReportInternals = { sanitizeReportText };

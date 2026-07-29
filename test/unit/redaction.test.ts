@@ -4,8 +4,56 @@ import {
   PUBLIC_LOCAL_PATH_INLINE,
   PUBLIC_LOCAL_PATH_PREFIX_PATTERN,
   PUBLIC_LOCAL_PATH_SCRUB_PATTERN,
+  PUBLIC_TOKEN_INLINE,
   PUBLIC_UNSAFE_PATTERN,
+  publicTokenPattern,
 } from "../../src/signals/redaction";
+
+// Every prefix in PUBLIC_TOKEN_INLINE, as a concrete leaked-token sample (body is pure alphanumerics so it is
+// fully consumed by both the `[A-Za-z0-9_=-]{8,}` and `[A-Za-z0-9_]+` body classes the call sites use).
+const PUBLIC_TOKEN_SAMPLES: [string, string][] = [
+  ["ghp_", `ghp_${"A".repeat(24)}`],
+  ["gho_", `gho_${"A".repeat(24)}`],
+  ["ghu_", `ghu_${"A".repeat(24)}`],
+  ["ghs_", `ghs_${"A".repeat(24)}`],
+  ["ghr_", `ghr_${"A".repeat(24)}`],
+  ["github_pat_", `github_pat_${"A".repeat(24)}`],
+  ["gts_", `gts_${"A".repeat(24)}`],
+  ["orbenr_", `orbenr_${"A".repeat(24)}`],
+  ["orbsec_", `orbsec_${"A".repeat(24)}`],
+  ["glpat-", `glpat-${"A".repeat(24)}`],
+  ["sk-", `sk-${"A".repeat(24)}`],
+  ["xoxb-", `xoxb-${"A".repeat(24)}`],
+];
+
+describe("publicTokenPattern / PUBLIC_TOKEN_INLINE (#9697)", () => {
+  it("returns a FRESH /g RegExp on each call, never a shared stateful object", () => {
+    const a = publicTokenPattern();
+    const b = publicTokenPattern();
+    expect(a).not.toBe(b);
+    expect(a.global).toBe(true);
+  });
+
+  it("stays idempotent across repeated .replace() on the same input (no shared lastIndex carry-over)", () => {
+    const input = `leak ghs_${"A".repeat(24)} and gho_${"B".repeat(24)} here`;
+    const first = input.replace(publicTokenPattern(), "<redacted-token>");
+    const second = input.replace(publicTokenPattern(), "<redacted-token>");
+    expect(first).toBe(second);
+    expect(first).toContain("<redacted-token>");
+    expect(first).not.toMatch(/gh[so]_/);
+  });
+
+  it.each(PUBLIC_TOKEN_SAMPLES)("redacts a %s token via publicTokenPattern()", (_prefix, token) => {
+    const out = `x ${token} y`.replace(publicTokenPattern(), "<redacted-token>");
+    expect(out).toBe("x <redacted-token> y");
+    expect(out).not.toContain(token);
+  });
+
+  it("leaves a non-token string untouched", () => {
+    expect("plain reviewable summary text".replace(publicTokenPattern(), "<redacted-token>")).toBe("plain reviewable summary text");
+    expect(PUBLIC_TOKEN_INLINE).toContain("gh[pousr]_"); // ghs_/gho_/ghu_/ghr_ covered by the GitHub class
+  });
+});
 
 describe("isPublicSafeText (#542 shared public/private boundary)", () => {
   it("accepts text with no private signals", () => {

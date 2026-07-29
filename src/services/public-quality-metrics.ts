@@ -10,6 +10,7 @@ import type { GateOutcomeRecord, PullRequestRecord } from "../types";
 import { nowIso } from "../utils/json";
 import { buildGatePrecisionReport, loadGatePrecisionReport, type GatePrecisionReport } from "./gate-precision";
 import { buildSlopOutcomeCalibration, buildRepoOutcomeCalibration, type SlopOutcomeCalibration } from "./outcome-calibration";
+import { closedAtMs } from "./review-recap";
 
 export const PUBLIC_QUALITY_TREND_WEEKS = 8;
 /** Below this per-week gate-block sample the weekly false-positive rate is too noisy to publish. */
@@ -92,6 +93,13 @@ function parseStamp(value: string | null | undefined): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+/** Adapt closedAtMs' NaN-means-skip contract to the null-means-skip shape parseStamp already uses at the
+ *  bucketing call site, so a closed PR whose closedAt and updatedAt are both unusable is skipped, not
+ *  bucketed at NaN (#9700). */
+function finiteOrNull(ms: number): number | null {
+  return Number.isFinite(ms) ? ms : null;
+}
+
 /** UTC Monday (YYYY-MM-DD) containing `ms`. */
 export function isoWeekStart(ms: number): string {
   const d = new Date(ms);
@@ -147,7 +155,11 @@ export function buildPublicQualityTrend(
   for (const pr of pullRequests) {
     const terminal = terminalOutcome(pr);
     if (!terminal) continue;
-    const stamp = parseStamp(terminal === "merged" ? pr.mergedAt : pr.updatedAt ?? pr.createdAt);
+    // Closed PRs bucket by their actual close time (closedAtMs), not updatedAt: GitHub bumps updatedAt on
+    // every later comment/label/edit, which would drift a long-closed PR into a recent week and skew the
+    // public merge-ratio trend. closedAtMs already carries the updatedAt fallback for rows written before
+    // closed_at was persisted, so no createdAt fallback is needed (#9700).
+    const stamp = terminal === "merged" ? parseStamp(pr.mergedAt) : finiteOrNull(closedAtMs(pr));
     if (stamp == null) continue;
     const idx = weekBucketIndex(currentStartMs, stamp, weeks);
     if (idx == null) continue;

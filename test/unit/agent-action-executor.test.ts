@@ -2294,6 +2294,35 @@ describe("executeAgentMaintenanceActions merge-train gate (#selfhost-merge-train
     expect(mergePullRequest).not.toHaveBeenCalled();
   });
 
+  it("INVARIANT (#merge-train-honest-comment): a failed AUDIT write does not break the denial — the comment already went out", async () => {
+    // The dedup row's own write is best-effort. If it fails, the worst case is one duplicate comment on a
+    // later pass; the denial bookkeeping and the merge suppression must be unaffected. Fail-OPEN, deliberately:
+    // a D1 hiccup must never turn "queued behind a sibling" into an unhandled throw that skips the deny.
+    const env = createTestEnv({});
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 3, title: "Older overlapping sibling", state: "open", user: { login: "c" }, head: { sha: "sha3" }, labels: [], body: "Fixes #1", created_at: "2026-07-05T08:00:00.000Z" });
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "Fixes #1", created_at: "2026-07-05T10:00:00.000Z" });
+
+    // Fail ONLY the wait-comment bookkeeping row, leaving every other audit write (including the denial's own)
+    // working -- mocking them all would prove nothing about this branch.
+    // Capture the real implementation BEFORE spying: referencing the module property inside the mock would
+    // resolve to the spy itself and recurse forever.
+    const realRecordAuditEvent = repositoriesModule.recordAuditEvent;
+    const auditSpy = vi
+      .spyOn(repositoriesModule, "recordAuditEvent")
+      .mockImplementation(async (envArg, event) =>
+        event.eventType === "agent.action.merge_train_wait_comment"
+          ? Promise.reject(new Error("D1 write error"))
+          : realRecordAuditEvent(envArg, event),
+      );
+
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ mergeTrainMode: "enforce", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z", pullRequestLinkedIssues: [1] }), [merge]);
+    auditSpy.mockRestore();
+
+    expect(outcomes[0]).toMatchObject({ actionClass: "merge", outcome: "denied" });
+    expect(createIssueComment).toHaveBeenCalledTimes(1); // the contributor WAS told
+    expect(mergePullRequest).not.toHaveBeenCalled();
+  });
+
   it("INVARIANT (#merge-train-honest-comment): a FAILED comment post records nothing, so the next pass retries", async () => {
     // The dedup row is written only after a successful post. If a transient GitHub failure ate the comment
     // and we recorded it anyway, the contributor would be permanently un-told while the audit trail claimed

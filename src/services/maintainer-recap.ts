@@ -14,7 +14,7 @@ import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN, PUBLIC_UNSAFE_PATTERN } from "../signa
 import { deliverRecapToDiscord, deliverRecapToSlack } from "./notify-discord";
 import type { GatePrecisionReport } from "./gate-precision";
 import { MIN_GATE_PRECISION_SAMPLE } from "./gate-precision";
-import type { DriftRecapSection } from "./maintainer-recap-drift";
+import { buildDriftRecapSection, type DriftRecapKnob, type DriftRecapSection } from "./maintainer-recap-drift";
 // #8372: these three section builders shipped fully implemented + unit-tested but were never composed into
 // the delivered digest -- the same "built, tested, never called from production" shape as #6636.
 import { buildCalibrationRecapSection } from "./maintainer-recap-calibration";
@@ -22,6 +22,7 @@ import { buildGateOutcomesRecapSection } from "./maintainer-recap-gate-outcomes"
 import { buildPerRepoRecapSection } from "./maintainer-recap-per-repo";
 import { buildTopContributorsRecapSection } from "./maintainer-recap-top-contributors";
 import { buildRoutingRecapSection } from "./maintainer-recap-routing";
+import { DRIFT_FINGERPRINT_FLAG_PREFIX, isConfigDriftSentinelEnabled, loadLiveKnobStatuses } from "./knob-loosening-run";
 import { REVIEWER_ROUTING_SHADOW_EVENT_TYPE, type RoutingShadowDecision } from "./reviewer-routing";
 import type { OutcomeCalibration } from "./outcome-calibration";
 import type { MaintainerRecapCohortCounts, MaintainerRecapContributor, MaintainerRecapRepo, RecentMergedPullRequestRecord, RecapReport } from "../types";
@@ -301,6 +302,48 @@ async function loadRoutingRecapSection(env: Env, windowDays: number, generatedAt
   }
 }
 
+/** Source {@link DriftRecapSection} off the sentinel's live projection (#9698) and build it — the loader
+ *  half of #8214's section, mirroring {@link loadRoutingRecapSection}: one `try`, `null` on any read error.
+ *  `generatedAt` is always the caller's, never a fresh clock read in here. When the sentinel is off, skips
+ *  the (expensive, per-knob) live drift evaluation entirely -- "no drift evaluation ran this window" is
+ *  then literally true, not just the rendered copy. */
+async function loadDriftRecapSection(env: Env, generatedAt: string): Promise<DriftRecapSection | null> {
+  try {
+    const sentinelEnabled = isConfigDriftSentinelEnabled(env);
+    if (!sentinelEnabled) {
+      return buildDriftRecapSection({ generatedAt, sentinelEnabled, drifting: [], cleanKnobs: 0 });
+    }
+    const statuses = await loadLiveKnobStatuses(env);
+    // Single bounded query over every fingerprint row (mirrors the per-repo-override LIKE read at
+    // knob-loosening-run.ts:534-537) -- not one query per knob.
+    const rows = await env.DB.prepare("SELECT key, updated_at FROM system_flags WHERE key LIKE ?")
+      .bind(`${DRIFT_FINGERPRINT_FLAG_PREFIX}%`)
+      .all<{ key: string; updated_at: string }>();
+    const episodeSinceByKnobId = new Map<string, string>();
+    /* v8 ignore next -- defined-results guard, the loadKnobStatus convention */
+    for (const row of rows.results ?? []) {
+      episodeSinceByKnobId.set(row.key.slice(DRIFT_FINGERPRINT_FLAG_PREFIX.length), row.updated_at);
+    }
+    let cleanKnobs = 0;
+    const drifting: DriftRecapKnob[] = [];
+    for (const status of statuses) {
+      if (!status.drift) {
+        cleanKnobs += 1;
+        continue;
+      }
+      if (status.drift.direction === "looser") continue;
+      const episodeSince = episodeSinceByKnobId.get(status.knobId);
+      // A live drift report with no persisted fingerprint row is excluded -- the section's "standing since"
+      // anchor doesn't exist yet for it.
+      if (episodeSince === undefined) continue;
+      drifting.push({ report: status.drift, episodeSince });
+    }
+    return buildDriftRecapSection({ generatedAt, sentinelEnabled, drifting, cleanKnobs });
+  } catch {
+    return null;
+  }
+}
+
 export async function runMaintainerRecap(
   env: Env,
   options: {
@@ -313,10 +356,8 @@ export async function runMaintainerRecap(
     contributors?: MaintainerRecapContributor[] | undefined;
     /** When explicitly false, short-circuits before build/format/delivery. Default: run. */
     enabled?: boolean;
-    /** #8372: forwarded to {@link formatMaintainerRecap} so a caller holding a drift projection can have it
-     *  rendered. Deliberately NOT sourced here -- reading the knob-loosening sentinel state is its own
-     *  data-sourcing concern; this is only the plumbing, so the section stays absent until a caller passes it
-     *  and every existing digest is unaffected. */
+    /** #9698: an explicitly-passed projection (e.g. test injection) still wins over the one this function
+     *  now loads itself via {@link loadDriftRecapSection} -- forwarded to {@link formatMaintainerRecap}. */
     configDrift?: DriftRecapSection;
   } = {},
 ): Promise<RunMaintainerRecapResult> {
@@ -333,12 +374,15 @@ export async function runMaintainerRecap(
   // #8229 stage 1: the routing-shadow section reads the window's recorded decisions straight from the
   // audit trail — fail-safe to an absent section (the recap must never break on a read blip).
   const routingShadow = await loadRoutingRecapSection(env, report.windowDays, options.generatedAt ?? nowIso());
+  // #9698: an explicitly-passed configDrift wins over the loaded one (test injection, same convention as
+  // `report` above); loadDriftRecapSection short-circuits on `??` so a caller-supplied one skips the read.
+  const configDrift = options.configDrift ?? (await loadDriftRecapSection(env, report.generatedAt));
   // Built up key-by-key rather than passed as a conditional-spread literal: exactOptionalPropertyTypes
   // forbids handing either key an explicit `undefined`, and #8229's routingShadow and #8372's configDrift
   // are independent — each is present or absent on its own, so a single ternary can't express all four cases.
   const recapOptions: { routingShadow?: { title: string; lines: string[] }; configDrift?: DriftRecapSection } = {};
   if (routingShadow) recapOptions.routingShadow = routingShadow;
-  if (options.configDrift) recapOptions.configDrift = options.configDrift;
+  if (configDrift) recapOptions.configDrift = configDrift;
   const formatted = formatMaintainerRecap(report, recapOptions);
   const [discord, slack] = await Promise.all([
     deliverRecapToDiscord(env, report, formatted),

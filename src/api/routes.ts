@@ -2698,7 +2698,7 @@ export function createApp() {
 
   app.get("/v1/installations/:id/health", async (c) => {
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     const health = await getInstallationHealth(c.env, installationId);
     if (!health) return c.json({ error: "installation_health_not_found" }, 404);
     return c.json(enrichInstallationHealth(health));
@@ -2706,7 +2706,7 @@ export function createApp() {
 
   app.get("/v1/installations/:id/repair", async (c) => {
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     const health = await getInstallationHealth(c.env, installationId);
     if (!health) return c.json({ error: "installation_health_not_found" }, 404);
     return c.json(await buildInstallationRepairDiagnostics(c.env, health));
@@ -2714,7 +2714,7 @@ export function createApp() {
 
   app.post("/v1/installations/:id/repair/refresh", async (c) => {
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     const refreshed = await refreshInstallationHealthForInstallation(c.env, installationId);
     if (!refreshed) return c.json({ error: "installation_not_found" }, 404);
     const health = await getInstallationHealth(c.env, installationId);
@@ -2744,7 +2744,7 @@ export function createApp() {
     const resolved = await resolveAppInstallationScope(c);
     if (resolved instanceof Response) return resolved;
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     const health = await getInstallationHealth(c.env, installationId);
     if (!health) return c.json({ error: "installation_health_not_found" }, 404);
     if (!installationRecordInScope(resolved.scope, health)) return c.json({ error: "forbidden_installation" }, 403);
@@ -2755,7 +2755,7 @@ export function createApp() {
     const resolved = await resolveAppInstallationScope(c);
     if (resolved instanceof Response) return resolved;
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     const health = await getInstallationHealth(c.env, installationId);
     if (!health) return c.json({ error: "installation_health_not_found" }, 404);
     if (!installationRecordInScope(resolved.scope, health)) return c.json({ error: "forbidden_installation" }, 403);
@@ -2766,7 +2766,7 @@ export function createApp() {
     const resolved = await resolveAppInstallationScope(c);
     if (resolved instanceof Response) return resolved;
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     // Ownership is enforced BEFORE the refresh side effect so a tenant can never trigger repair on an
     // installation they don't own; the existing health record supplies the account the scope is checked against.
     const existing = await getInstallationHealth(c.env, installationId);
@@ -2788,7 +2788,7 @@ export function createApp() {
     const resolved = await resolveAppInstallationScope(c);
     if (resolved instanceof Response) return resolved;
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     const installation = await getInstallation(c.env, installationId);
     if (!installation) return c.json({ error: "installation_not_found" }, 404);
     if (!installationRecordInScope(resolved.scope, { installationId: installation.id, accountLogin: installation.accountLogin })) {

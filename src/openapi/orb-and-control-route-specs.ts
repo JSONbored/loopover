@@ -174,7 +174,7 @@ const APP_ROUTES: SpecEntry[] = [
     tags: ["Control panel"],
     summary: "Return one installation's health summary",
     auth: "session",
-    responses: { 200: { description: "Installation health" }, 404: { description: "No such installation" }, ...SESSION_AUTH_RESPONSES },
+    responses: { 200: { description: "Installation health" }, 400: { description: "Malformed installation id" }, 404: { description: "No such installation" }, ...SESSION_AUTH_RESPONSES },
   },
   {
     method: "get",
@@ -183,7 +183,7 @@ const APP_ROUTES: SpecEntry[] = [
     tags: ["Control panel"],
     summary: "Return the repair plan for an unhealthy installation",
     auth: "session",
-    responses: { 200: { description: "Repair plan" }, 404: { description: "No such installation" }, ...SESSION_AUTH_RESPONSES },
+    responses: { 200: { description: "Repair plan" }, 400: { description: "Malformed installation id" }, 404: { description: "No such installation" }, ...SESSION_AUTH_RESPONSES },
   },
   {
     method: "post",
@@ -192,7 +192,7 @@ const APP_ROUTES: SpecEntry[] = [
     tags: ["Control panel"],
     summary: "Recompute an installation's repair plan",
     auth: "session",
-    responses: { 200: { description: "Repair plan recomputed" }, 404: { description: "No such installation" }, ...SESSION_AUTH_RESPONSES },
+    responses: { 200: { description: "Repair plan recomputed" }, 400: { description: "Malformed installation id" }, 404: { description: "No such installation" }, ...SESSION_AUTH_RESPONSES },
   },
   {
     method: "put",
@@ -201,7 +201,7 @@ const APP_ROUTES: SpecEntry[] = [
     tags: ["Control panel", "Agent automation"],
     summary: "Apply agent settings across every repo in an installation",
     auth: "session",
-    responses: { 200: { description: "Settings applied" }, 400: { description: "Malformed settings" }, 404: { description: "No such installation" }, ...SESSION_AUTH_RESPONSES },
+    responses: { 200: { description: "Settings applied" }, 400: { description: "Malformed installation id or settings" }, 404: { description: "No such installation" }, ...SESSION_AUTH_RESPONSES },
   },
   {
     method: "get",

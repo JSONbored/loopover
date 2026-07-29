@@ -13,6 +13,7 @@
 import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN, PUBLIC_UNSAFE_PATTERN } from "../signals/redaction";
 import { deliverRecapToDiscord, deliverRecapToSlack } from "./notify-discord";
 import type { GatePrecisionReport } from "./gate-precision";
+import { MIN_GATE_PRECISION_SAMPLE } from "./gate-precision";
 import type { DriftRecapSection } from "./maintainer-recap-drift";
 // #8372: these three section builders shipped fully implemented + unit-tested but were never composed into
 // the delivered digest -- the same "built, tested, never called from production" shape as #6636.
@@ -142,20 +143,23 @@ export function buildMaintainerRecap(args: MaintainerRecapInputs): RecapReport {
       cohortTotals.human.gateFalsePositives += gatePrecision.cohorts.human.overall.blockedThenMerged;
     }
   }
+  // Null below the shared noise floor (#9691), matching gate-precision.ts and the gate-outcomes section — a
+  // digest must not print a false-positive percentage in its summary/Totals while its own Gate-outcomes section
+  // says the sample is too small to judge. Subsumes the old `blocked === 0` divide-by-zero guard.
   totals.gateFalsePositiveRate =
-    totals.blocked > 0 ? Math.round((totals.gateFalsePositives / totals.blocked) * 100) / 100 : null;
+    totals.blocked >= MIN_GATE_PRECISION_SAMPLE ? Math.round((totals.gateFalsePositives / totals.blocked) * 100) / 100 : null;
   const cohorts =
     cohortBlockedRepos > 0
       ? {
           miner: {
             blocked: cohortTotals.miner.blocked,
             gateFalsePositives: cohortTotals.miner.gateFalsePositives,
-            gateFalsePositiveRate: cohortTotals.miner.blocked > 0 ? Math.round((cohortTotals.miner.gateFalsePositives / cohortTotals.miner.blocked) * 100) / 100 : null,
+            gateFalsePositiveRate: cohortTotals.miner.blocked >= MIN_GATE_PRECISION_SAMPLE ? Math.round((cohortTotals.miner.gateFalsePositives / cohortTotals.miner.blocked) * 100) / 100 : null,
           },
           human: {
             blocked: cohortTotals.human.blocked,
             gateFalsePositives: cohortTotals.human.gateFalsePositives,
-            gateFalsePositiveRate: cohortTotals.human.blocked > 0 ? Math.round((cohortTotals.human.gateFalsePositives / cohortTotals.human.blocked) * 100) / 100 : null,
+            gateFalsePositiveRate: cohortTotals.human.blocked >= MIN_GATE_PRECISION_SAMPLE ? Math.round((cohortTotals.human.gateFalsePositives / cohortTotals.human.blocked) * 100) / 100 : null,
           },
         }
       : undefined;

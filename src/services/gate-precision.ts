@@ -19,8 +19,9 @@ import { fetchOfficialGittensorMinerLogins } from "../gittensor/api";
 import type { GateOutcomeRecord, PullRequestRecord } from "../types";
 import { nowIso } from "../utils/json";
 
-// Below this per-gate-type blocked sample the false-positive rate is too noisy to judge.
-const MIN_SAMPLE = 5;
+// Below this per-gate-type blocked sample the false-positive rate is too noisy to judge. Exported (#9691) so the
+// recap's aggregate rates share the one floor instead of each consumer re-deriving it and drifting.
+export const MIN_GATE_PRECISION_SAMPLE = 5;
 
 export type GatePrecisionPerType = {
   gateType: string;
@@ -69,7 +70,7 @@ function sameRepo(a: string | null | undefined, b: string): boolean {
 
 /** #4520: the fold core, extracted so buildGatePrecisionReport can run it up to three times (blended, miner,
  *  human) over disjoint outcome subsets without duplicating the accumulation logic. Pure -- the same
- *  MIN_SAMPLE floor is applied independently per call, so a small cohort correctly reads null rather than a
+ *  MIN_GATE_PRECISION_SAMPLE floor is applied independently per call, so a small cohort correctly reads null rather than a
  *  noisy rate. */
 function foldGateOutcomes(outcomes: GateOutcomeRecord[], prByNumber: Map<number, PullRequestRecord>): GatePrecisionCohortReport {
   const perType = new Map<string, { blocked: number; blockedThenMerged: number; overridden: number }>();
@@ -97,7 +98,7 @@ function foldGateOutcomes(outcomes: GateOutcomeRecord[], prByNumber: Map<number,
       blockedThenMerged: entry.blockedThenMerged,
       overridden: entry.overridden,
       // Null below the min sample — a 1-of-1 "false positive" is noise, not a precision signal.
-      falsePositiveRate: entry.blocked >= MIN_SAMPLE ? round(entry.blockedThenMerged / entry.blocked) : null,
+      falsePositiveRate: entry.blocked >= MIN_GATE_PRECISION_SAMPLE ? round(entry.blockedThenMerged / entry.blocked) : null,
     }))
     .sort((a, b) => b.blocked - a.blocked || a.gateType.localeCompare(b.gateType));
 
@@ -106,7 +107,7 @@ function foldGateOutcomes(outcomes: GateOutcomeRecord[], prByNumber: Map<number,
     overall: {
       blocked: overallBlocked,
       blockedThenMerged: overallMerged,
-      falsePositiveRate: overallBlocked >= MIN_SAMPLE ? round(overallMerged / overallBlocked) : null,
+      falsePositiveRate: overallBlocked >= MIN_GATE_PRECISION_SAMPLE ? round(overallMerged / overallBlocked) : null,
     },
   };
 }
@@ -124,7 +125,7 @@ function isMinerAuthoredOutcome(outcome: GateOutcomeRecord, prByNumber: Map<numb
  * PR's terminal outcome; a blocked PR that later MERGED is a false positive. Each blocker `code` on the row
  * contributes to that code's bucket (a block citing two codes counts toward both). Overridden-then-merged is
  * the strongest signal — `overridden` is counted separately per type. When `options.repoFullName` is given,
- * only blocks for that repo are counted. The rate is null below MIN_SAMPLE. When `options.minerLogins` is
+ * only blocks for that repo are counted. The rate is null below MIN_GATE_PRECISION_SAMPLE. When `options.minerLogins` is
  * given (#4520), an additive miner-vs-human `cohorts` split is computed on top of the SAME blended fold;
  * omitting it keeps every existing caller byte-identical.
  */
@@ -165,7 +166,7 @@ export function buildGatePrecisionReport(
 
 export function buildGatePrecisionSignals(perGateType: GatePrecisionPerType[], overallBlocked: number, overallMerged: number): string[] {
   const signals: string[] = [];
-  if (overallBlocked < MIN_SAMPLE) {
+  if (overallBlocked < MIN_GATE_PRECISION_SAMPLE) {
     signals.push(`Not enough recorded gate blocks to judge precision yet (${overallBlocked} blocked).`);
     return signals;
   }

@@ -100,6 +100,24 @@ describe("checkSubmittedSourceEvidence", () => {
     expect(report.status).toBe("passed");
   });
 
+  it("REGRESSION (#9668): fetch-verifies BOTH URLs of a two-item scalar sequence instead of hard-failing the joined string", async () => {
+    // Before the fix the two items were joined into "https://a.example/1, https://b.example/2", which new URL()
+    // rejects → outcome invalid_url → the whole report "failed" on a submission whose sources are both live.
+    const a = "https://a.example/1";
+    const b = "https://b.example/2";
+    const src = ["---", "documentationUrl:", `  - ${a}`, `  - ${b}`, "---", "", "body"].join("\n");
+    const report = await checkSubmittedSourceEvidence(src, fakeFetch({ [a]: 200, [b]: 200 }));
+    expect(report.urls.map((u) => u.url).sort()).toEqual([a, b]);
+    expect(report.status).toBe("passed");
+  });
+
+  it("still hard-fails a genuinely malformed scalar source value — the false-positive removal must not weaken the real check", async () => {
+    const report = await checkSubmittedSourceEvidence(mdx({ documentationUrl: "notaurl" }), fakeFetch({}));
+    const item = report.urls.find((u) => u.field === "documentationUrl") ?? report.warnings.find((u) => u.field === "documentationUrl");
+    expect(item?.outcome).toBe("invalid_url");
+    expect(item?.status).toBe("hard_failure");
+  });
+
   it("is retryable (not hard) on a 403/429/5xx canonical source", async () => {
     const src = mdx({ githubUrl: "https://github.com/acme/x" });
     const report = await checkSubmittedSourceEvidence(src, fakeFetch({ "https://github.com/acme/x": 403 }));
@@ -357,6 +375,21 @@ describe("extractSubmittedSourceUrls — frontmatter parsing edge cases", () => 
     const src = ["---", "documentationUrl:", "- https://docs.acme.example/guide", "---", "", "body"].join("\n");
     const urls = extractSubmittedSourceUrls(src);
     expect(urls.map((u) => `${u.field}:${u.url}`)).toContain("documentationUrl:https://docs.acme.example/guide");
+  });
+
+  it("regression (#9668): a scalar source field authored as a MULTI-item block sequence yields one URL per item", () => {
+    const a = "https://a.example/1";
+    const b = "https://b.example/2";
+    const src = ["---", "documentationUrl:", `  - ${a}`, `  - ${b}`, "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src).filter((u) => u.field === "documentationUrl");
+    expect(urls.map((u) => u.url)).toEqual([a, b]); // two distinct URLs, not one comma-joined string
+  });
+
+  it("regression (#9668): a single-item scalar sequence is byte-identical — exactly one URL, its raw value", () => {
+    const url = "https://docs.acme.example/only";
+    const src = ["---", "documentationUrl:", `  - ${url}`, "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src).filter((u) => u.field === "documentationUrl");
+    expect(urls.map((u) => u.url)).toEqual([url]);
   });
 
   it("does not surface any block-scalar header on a list field as a bogus URL (both indicator orders)", () => {

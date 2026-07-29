@@ -3,7 +3,9 @@ import {
   loadPublicRulePrecision,
   PUBLIC_PRECISION_MIN_DECIDED,
   PUBLIC_PRECISION_WINDOW_DAYS,
+  EMPTY_CORPUS_CHECKSUM,
 } from "../../src/review/public-rule-precision";
+import { sha256Hex } from "../../src/review/decision-record";
 import { recordAuditEvent } from "../../src/db/repositories";
 import { createSignalStore } from "../../src/review/signal-tracking-wire";
 import { createTestEnv } from "../helpers/d1";
@@ -93,6 +95,33 @@ describe("loadPublicRulePrecision (#8230)", () => {
     const block = await loadPublicRulePrecision(env, NOW);
     expect(block.reversals).toEqual({ reopened: 2, reverted: 1, superseded: 3 });
     expect(block.latestBacktestRun).toEqual({ corpusChecksum: "newest111", at: new Date(NOW - 30_000).toISOString() });
+  });
+
+  it("reports no freeze point when the latest run's corpus was empty", async () => {
+    // Regression: production's latest run carried sha256("[]") -- the checksum of ZERO cases -- and the
+    // fairness page rendered it as a "reproducibility freeze point" while /v1/public/eval-scores published
+    // records committed to it. A hash over no cases is identical everywhere, so it verifies nothing.
+    const env = createTestEnv();
+    await seedVerdicts(env, "ai_consensus_defect", 15, 5);
+    await recordAuditEvent(env, {
+      eventType: "calibration.logic_backtest_run",
+      targetKey: "rule",
+      outcome: "completed",
+      metadata: { corpusChecksum: EMPTY_CORPUS_CHECKSUM, comparison: {} },
+      createdAt: new Date(NOW - 1000).toISOString(),
+    });
+
+    const block = await loadPublicRulePrecision(env, NOW);
+    expect(block.latestBacktestRun).toBeNull();
+    // The scores come from a different dataset (human-override events) and are unaffected -- an empty corpus
+    // means the numbers are uncommitted, never that they are zero.
+    expect(block.rules).toEqual([{ ruleId: "ai_consensus_defect", decided: 20, confirmed: 15, precision: 0.75 }]);
+  });
+
+  it("EMPTY_CORPUS_CHECKSUM is the exporter's own checksum over zero cases", async () => {
+    // scripts/backtest-corpus-export-core.ts hashes `JSON.stringify(cases.map(canonicalizeCase))`, which for
+    // an empty list is the two-byte string "[]" -- re-derived here so the constant cannot drift from it.
+    expect(EMPTY_CORPUS_CHECKSUM).toBe(await sha256Hex("[]"));
   });
 
   it("degrades fail-safe on a broken store and reports null freeze point on a fresh ledger", async () => {

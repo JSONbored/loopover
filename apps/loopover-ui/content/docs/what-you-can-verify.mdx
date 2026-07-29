@@ -176,7 +176,10 @@ replayable history — not hand-entered numbers.
 
 This is the walkthrough in [Verify this review](/docs/verify-this-review): export the checksummed
 corpus, verify its checksum, re-run the same public scoring functions from `@loopover/engine`, and
-compare. **Anyone** can do this for public repositories.
+compare. The checksum verification and the scorer replay are pure functions **anyone** can run over
+a snapshot they hold, and the published numbers themselves are fetchable unauthenticated — but the
+export step that produces the snapshot reads the deployment's own database and needs that
+deployment's credentials, so it is an operator / self-host step today rather than an anonymous one.
 
 <Callout variant="warn">
   **Private repositories are the exception.** A hosted tenant's review history cannot be published

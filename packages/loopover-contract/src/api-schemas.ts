@@ -8,6 +8,7 @@
 // boundary has no other way to share a composed schema's parts.
 import { z } from "zod";
 
+import { checkBeforeStartSchema, slopRiskSchema, validateFocusManifestSchema, validateLinkedIssueSchema } from "./api-requests.js";
 import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP, MAX_REVIEW_NAG_COOLDOWN_DAYS } from "./limits.js";
 
 export const FindingSchema = z
@@ -728,6 +729,17 @@ export const ListPendingActionsResponseSchema = z
 
 // Mirrors `ProposeActionInput` in @loopover/contract minus owner/repo (both are path params on the REST route), matching the request
 // body proposePendingActionSchema already validates in src/api/routes.ts.
+export const ProposeActionRequestSchema = z
+  .object({
+    pullNumber: z.number().int().positive(),
+    actionClass: z.enum(["review", "request_changes", "approve", "merge", "close", "label", "review_state_label"]),
+    reason: z.string().max(500).optional(),
+    label: z.string().min(1).max(100).optional(),
+    reviewBody: z.string().max(60000).optional(),
+    mergeMethod: z.enum(["merge", "squash", "rebase"]).optional(),
+    closeComment: z.string().max(60000).optional(),
+  });
+
 export const ProposeActionResponseSchema = z
   .object({
     created: z.boolean().optional(),
@@ -1095,6 +1107,12 @@ export const IssueRagRetrieveResponseSchema = z
  * Request body for POST /v1/loop/evaluate-escalation. Field-level parity with `EvaluateEscalationInput` in @loopover/contract
  * (the `loopover_evaluate_escalation` MCP tool `inputSchema`) in src/mcp/server.ts — #9309.
  */
+export const ValidateLinkedIssueRequestSchema = z.object(validateLinkedIssueSchema.shape);
+
+/**
+ * Response body for POST /v1/repos/{owner}/{repo}/validate-linked-issue. Field-level parity with
+ * `ValidateLinkedIssueOutput` in @loopover/contract (the `loopover_validate_linked_issue` MCP tool `outputSchema`) — #9304.
+ */
 export const ValidateLinkedIssueResponseSchema = z
   .object({
     status: z.string().optional(),
@@ -1111,6 +1129,20 @@ export const ValidateLinkedIssueResponseSchema = z
 /**
  * Request body for POST /v1/repos/{owner}/{repo}/check-before-start. Field-level parity with
  * `CheckBeforeStartInput` in @loopover/contract (the `loopover_check_before_start` MCP tool `inputSchema`) — #9304.
+ */
+/** Request body for the route -- the schema its HANDLER parses with, not a parallel declaration.
+ *  #9773: the hand-written copy had drifted from it -- requiring path params in the body, requiring a field
+ *  the handler has optional, or typing an enum as a free string.
+ *
+ *  Rebuilt with `z.object(shape)` rather than used directly: `.openapi()` exists only on schemas
+ *  constructed after `extendZodWithOpenApi` ran, and @loopover/contract must never run it (it is the
+ *  zod-only leaf every runtime depends on). Re-wrapping the SHAPE keeps one definition of the fields while
+ *  giving the document a decorated object it can name. */
+export const CheckBeforeStartRequestSchema = z.object(checkBeforeStartSchema.shape);
+
+/**
+ * Response body for POST /v1/repos/{owner}/{repo}/check-before-start. Field-level parity with
+ * `CheckBeforeStartOutput` in @loopover/contract (the `loopover_check_before_start` MCP tool `outputSchema`) — #9304.
  */
 export const CheckBeforeStartResponseSchema = z
   .object({
@@ -2037,6 +2069,21 @@ export const AgentRunBundleSchema = z
     summary: z.string(),
   });
 
+export const ChangedFileSchema = z.object({
+  path: z.string(),
+  additions: z.number().int().optional(),
+  deletions: z.number().int().optional(),
+});
+
+/** Request body for POST /v1/lint/pr-text — parity with `lintPrTextShape` (loopover_lint_pr_text). */
+export const LintPrTextRequestSchema = z
+  .object({
+    commitMessages: z.array(z.string()).optional(),
+    prBody: z.string().optional(),
+    linkedIssue: z.number().int().positive().optional(),
+  });
+
+/** Response body for POST /v1/lint/pr-text — parity with `lintPrTextOutputSchema`. */
 export const LintPrTextResponseSchema = z
   .object({
     verdict: z.string().optional(),
@@ -2048,6 +2095,17 @@ export const LintPrTextResponseSchema = z
   });
 
 /** Request body for POST /v1/lint/slop-risk — parity with `checkSlopRiskShape` (loopover_check_slop_risk). */
+/** Request body for the route -- the schema its HANDLER parses with, not a parallel declaration.
+ *  #9773: the hand-written copy had drifted from it -- requiring path params in the body, requiring a field
+ *  the handler has optional, or typing an enum as a free string.
+ *
+ *  Rebuilt with `z.object(shape)` rather than used directly: `.openapi()` exists only on schemas
+ *  constructed after `extendZodWithOpenApi` ran, and @loopover/contract must never run it (it is the
+ *  zod-only leaf every runtime depends on). Re-wrapping the SHAPE keeps one definition of the fields while
+ *  giving the document a decorated object it can name. */
+export const CheckSlopRiskRequestSchema = z.object(slopRiskSchema.shape);
+
+/** Response body for POST /v1/lint/slop-risk — parity with `checkSlopRiskOutputSchema`. */
 export const CheckSlopRiskResponseSchema = z
   .object({
     slopRisk: z.number().optional(),
@@ -2057,6 +2115,17 @@ export const CheckSlopRiskResponseSchema = z
   });
 
 /** Request body for POST /v1/lint/improvement-potential — parity with `checkImprovementPotentialShape`. */
+export const CheckImprovementPotentialRequestSchema = z
+  .object({
+    changedFiles: z.array(ChangedFileSchema).optional(),
+    tests: z.array(z.string()).optional(),
+    testFiles: z.array(z.string()).optional(),
+    patchCoverageDeltaPercent: z.number().optional(),
+    complexityDeltas: z.array(z.unknown()).optional(),
+    duplicationDeltas: z.array(z.unknown()).optional(),
+  });
+
+/** Response body for POST /v1/lint/improvement-potential — parity with `checkImprovementPotentialOutputSchema`. */
 export const CheckImprovementPotentialResponseSchema = z
   .object({
     improvementScore: z.number().optional(),
@@ -2065,6 +2134,16 @@ export const CheckImprovementPotentialResponseSchema = z
   });
 
 /** Request body for POST /v1/lint/open-pr-pressure — parity with `simulateOpenPrPressureShape`. */
+export const SimulateOpenPrPressureRequestSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    queueHealth: z.unknown(),
+    roleContext: z.object({ maintainerLane: z.boolean() }),
+    contributorOpenPrCount: z.number().int().optional(),
+  });
+
+/** Response body for POST /v1/lint/open-pr-pressure — parity with `SimulateOpenPrPressureOutput` in @loopover/contract. */
 export const SimulateOpenPrPressureResponseSchema = z
   .object({
     repoFullName: z.string().optional(),
@@ -2077,6 +2156,15 @@ export const SimulateOpenPrPressureResponseSchema = z
   });
 
 /** Request body for POST /v1/lint/boundary-tests — parity with `suggestBoundaryTestsShape`. */
+export const SuggestBoundaryTestsRequestSchema = z
+  .object({
+    changedFiles: z.array(z.object({ path: z.string() })),
+    boundaryTouches: z.array(z.unknown()).optional(),
+    tests: z.array(z.string()).optional(),
+    testFiles: z.array(z.string()).optional(),
+  });
+
+/** Response body for POST /v1/lint/boundary-tests — parity with `suggestBoundaryTestsOutputSchema`. */
 export const SuggestBoundaryTestsResponseSchema = z
   .object({
     finding: z.unknown().optional(),
@@ -2084,6 +2172,16 @@ export const SuggestBoundaryTestsResponseSchema = z
   });
 
 /** Request body for POST /v1/lint/test-evidence — parity with `checkTestEvidenceShape`. */
+export const CheckIssueSlopRequestSchema = z
+  .object({
+    title: z.string().optional(),
+    body: z.string().optional(),
+  });
+
+/**
+ * Response body for POST /v1/lint/issue-slop — parity with `checkIssueSlopOutputSchema`, which is an alias of
+ * `checkSlopRiskOutputSchema` in src/mcp/server.ts, so the keys match CheckSlopRiskResponse.
+ */
 export const CheckIssueSlopResponseSchema = z
   .object({
     slopRisk: z.number().optional(),
@@ -2093,6 +2191,17 @@ export const CheckIssueSlopResponseSchema = z
   });
 
 /** Request body for POST /v1/validate/focus-manifest — parity with `ValidateConfigInput` in @loopover/contract (loopover_validate_config). */
+/** Request body for the route -- the schema its HANDLER parses with, not a parallel declaration.
+ *  #9773: the hand-written copy had drifted from it -- requiring path params in the body, requiring a field
+ *  the handler has optional, or typing an enum as a free string.
+ *
+ *  Rebuilt with `z.object(shape)` rather than used directly: `.openapi()` exists only on schemas
+ *  constructed after `extendZodWithOpenApi` ran, and @loopover/contract must never run it (it is the
+ *  zod-only leaf every runtime depends on). Re-wrapping the SHAPE keeps one definition of the fields while
+ *  giving the document a decorated object it can name. */
+export const ValidateFocusManifestRequestSchema = z.object(validateFocusManifestSchema.shape);
+
+/** Response body for POST /v1/validate/focus-manifest — parity with `ValidateConfigOutput` in @loopover/contract. */
 export const ValidateFocusManifestResponseSchema = z
   .object({
     present: z.boolean().optional(),
@@ -2173,6 +2282,26 @@ export const CLI_PARAMETERISED_RESPONSE_SCHEMAS = {
   "POST /v1/repos/{owner}/{repo}/validate-linked-issue": ValidateLinkedIssueResponseSchema,
 } as const;
 
+/**
+ * What the CLI must SEND, per call (#9773) -- keyed `METHOD path`, patterns and literals alike.
+ *
+ * A call absent here has no named request schema in the document and keeps an unchecked body, exactly as
+ * before. Adding one is a matter of declaring `request.body` on that route's spec; the schemas already
+ * live in @loopover/contract/api-requests.
+ */
+export const CLI_REQUEST_SCHEMAS = {
+  "POST /v1/lint/boundary-tests": SuggestBoundaryTestsRequestSchema,
+  "POST /v1/lint/improvement-potential": CheckImprovementPotentialRequestSchema,
+  "POST /v1/lint/issue-slop": CheckIssueSlopRequestSchema,
+  "POST /v1/lint/open-pr-pressure": SimulateOpenPrPressureRequestSchema,
+  "POST /v1/lint/pr-text": LintPrTextRequestSchema,
+  "POST /v1/lint/slop-risk": CheckSlopRiskRequestSchema,
+  "POST /v1/repos/{owner}/{repo}/agent/pending-actions": ProposeActionRequestSchema,
+  "POST /v1/repos/{owner}/{repo}/check-before-start": CheckBeforeStartRequestSchema,
+  "POST /v1/repos/{owner}/{repo}/validate-linked-issue": ValidateLinkedIssueRequestSchema,
+  "POST /v1/validate/focus-manifest": ValidateFocusManifestRequestSchema,
+} as const;
+
 /** A path the client validates. */
 export type ValidatedApiPath = keyof typeof CLI_RESPONSE_SCHEMAS;
 
@@ -2203,6 +2332,24 @@ export type TemplatedApiPath<Pattern extends string> = Pattern extends `${infer 
 export type MatchApiCall<Method extends string, Path extends string> = {
   [Call in ParameterisedApiCall]: Call extends `${Method} ${infer Pattern}` ? (Path extends TemplatedApiPath<Pattern> ? Call : never) : never;
 }[ParameterisedApiCall];
+
+/** A call whose request body the client type-checks. */
+export type RequestCheckedApiCall = keyof typeof CLI_REQUEST_SCHEMAS;
+
+/** The call a concrete METHOD + path matches in the request table, or `never`. */
+export type MatchRequestCall<Method extends string, Path extends string> = {
+  [Call in RequestCheckedApiCall]: Call extends `${Method} ${infer Pattern}` ? (Path extends TemplatedApiPath<Pattern> ? Call : never) : never;
+}[RequestCheckedApiCall];
+
+/**
+ * The body a concrete call must send, or `unknown` when the document does not describe one.
+ *
+ * `unknown` rather than `never` for the undescribed case: an unchecked body must still be ACCEPTED --
+ * this narrows what it can be where the contract knows, and gets out of the way where it does not.
+ */
+export type ApiRequestBody<Method extends string, Path extends string> = MatchRequestCall<Method, Path> extends never
+  ? unknown
+  : z.input<(typeof CLI_REQUEST_SCHEMAS)[MatchRequestCall<Method, Path>]>;
 
 /** The parsed response for a concrete parameterised call. */
 export type ParameterisedApiResponse<Method extends string, Path extends string> = z.infer<

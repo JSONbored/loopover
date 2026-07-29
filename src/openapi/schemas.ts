@@ -1,6 +1,8 @@
 import { z } from "zod";
 // #9762: the enums these schemas validate against, from the one place that defines them.
 import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS, FEASIBILITY_VERDICTS, PUBLIC_SURFACE_SKIP_REASONS } from "@loopover/contract";
+// #9773: the request bodies these routes really accept, from the one place they are defined.
+import { checkBeforeStartSchema, slopRiskSchema, validateFocusManifestSchema, validateLinkedIssueSchema } from "@loopover/contract/api-requests";
 import { MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
 import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP } from "../types";
 import {
@@ -2138,20 +2140,15 @@ export const EvaluateEscalationResponseSchema = z
  * `ValidateLinkedIssueInput` in @loopover/contract (the `loopover_validate_linked_issue` MCP tool `inputSchema`) in
  * src/mcp/server.ts — #9304. owner/repo are also path params; the body carries the planned-change context.
  */
-export const ValidateLinkedIssueRequestSchema = z
-  .object({
-    owner: z.string(),
-    repo: z.string(),
-    issueNumber: z.number().int().positive(),
-    plannedChange: z
-      .object({
-        title: z.string().optional(),
-        changedFiles: z.array(z.string()).optional(),
-        contributorLogin: z.string().optional(),
-      })
-      .optional(),
-  })
-  .openapi("ValidateLinkedIssueRequest");
+/** Request body for the route -- the schema its HANDLER parses with, not a parallel declaration.
+ *  #9773: the hand-written copy had drifted from it -- requiring path params in the body, requiring a field
+ *  the handler has optional, or typing an enum as a free string.
+ *
+ *  Rebuilt with `z.object(shape)` rather than used directly: `.openapi()` exists only on schemas
+ *  constructed after `extendZodWithOpenApi` ran, and @loopover/contract must never run it (it is the
+ *  zod-only leaf every runtime depends on). Re-wrapping the SHAPE keeps one definition of the fields while
+ *  giving the document a decorated object it can name. */
+export const ValidateLinkedIssueRequestSchema = z.object(validateLinkedIssueSchema.shape).openapi("ValidateLinkedIssueRequest");
 
 /**
  * Response body for POST /v1/repos/{owner}/{repo}/validate-linked-issue. Field-level parity with
@@ -2175,15 +2172,15 @@ export const ValidateLinkedIssueResponseSchema = z
  * Request body for POST /v1/repos/{owner}/{repo}/check-before-start. Field-level parity with
  * `CheckBeforeStartInput` in @loopover/contract (the `loopover_check_before_start` MCP tool `inputSchema`) — #9304.
  */
-export const CheckBeforeStartRequestSchema = z
-  .object({
-    owner: z.string(),
-    repo: z.string(),
-    issueNumber: z.number().int().positive().optional(),
-    title: z.string().optional(),
-    plannedPaths: z.array(z.string()).optional(),
-  })
-  .openapi("CheckBeforeStartRequest");
+/** Request body for the route -- the schema its HANDLER parses with, not a parallel declaration.
+ *  #9773: the hand-written copy had drifted from it -- requiring path params in the body, requiring a field
+ *  the handler has optional, or typing an enum as a free string.
+ *
+ *  Rebuilt with `z.object(shape)` rather than used directly: `.openapi()` exists only on schemas
+ *  constructed after `extendZodWithOpenApi` ran, and @loopover/contract must never run it (it is the
+ *  zod-only leaf every runtime depends on). Re-wrapping the SHAPE keeps one definition of the fields while
+ *  giving the document a decorated object it can name. */
+export const CheckBeforeStartRequestSchema = z.object(checkBeforeStartSchema.shape).openapi("CheckBeforeStartRequest");
 
 /**
  * Response body for POST /v1/repos/{owner}/{repo}/check-before-start. Field-level parity with
@@ -3531,17 +3528,15 @@ export const LintPrTextResponseSchema = z
   .openapi("LintPrTextResponse");
 
 /** Request body for POST /v1/lint/slop-risk — parity with `checkSlopRiskShape` (loopover_check_slop_risk). */
-export const CheckSlopRiskRequestSchema = z
-  .object({
-    changedFiles: z.array(ChangedFileSchema),
-    description: z.string().optional(),
-    tests: z.array(z.string()).optional(),
-    testFiles: z.array(z.string()).optional(),
-    commitMessages: z.array(z.string()).optional(),
-    hasLinkedIssue: z.boolean().optional(),
-    issueDiscoveryLane: z.boolean().optional(),
-  })
-  .openapi("CheckSlopRiskRequest");
+/** Request body for the route -- the schema its HANDLER parses with, not a parallel declaration.
+ *  #9773: the hand-written copy had drifted from it -- requiring path params in the body, requiring a field
+ *  the handler has optional, or typing an enum as a free string.
+ *
+ *  Rebuilt with `z.object(shape)` rather than used directly: `.openapi()` exists only on schemas
+ *  constructed after `extendZodWithOpenApi` ran, and @loopover/contract must never run it (it is the
+ *  zod-only leaf every runtime depends on). Re-wrapping the SHAPE keeps one definition of the fields while
+ *  giving the document a decorated object it can name. */
+export const CheckSlopRiskRequestSchema = z.object(slopRiskSchema.shape).openapi("CheckSlopRiskRequest");
 
 /** Response body for POST /v1/lint/slop-risk — parity with `checkSlopRiskOutputSchema`. */
 export const CheckSlopRiskResponseSchema = z
@@ -3658,12 +3653,15 @@ export const CheckIssueSlopResponseSchema = z
   .openapi("CheckIssueSlopResponse");
 
 /** Request body for POST /v1/validate/focus-manifest — parity with `ValidateConfigInput` in @loopover/contract (loopover_validate_config). */
-export const ValidateFocusManifestRequestSchema = z
-  .object({
-    content: z.string(),
-    source: z.enum(["repo_file", "api_record", "none"]).optional(),
-  })
-  .openapi("ValidateFocusManifestRequest");
+/** Request body for the route -- the schema its HANDLER parses with, not a parallel declaration.
+ *  #9773: the hand-written copy had drifted from it -- requiring path params in the body, requiring a field
+ *  the handler has optional, or typing an enum as a free string.
+ *
+ *  Rebuilt with `z.object(shape)` rather than used directly: `.openapi()` exists only on schemas
+ *  constructed after `extendZodWithOpenApi` ran, and @loopover/contract must never run it (it is the
+ *  zod-only leaf every runtime depends on). Re-wrapping the SHAPE keeps one definition of the fields while
+ *  giving the document a decorated object it can name. */
+export const ValidateFocusManifestRequestSchema = z.object(validateFocusManifestSchema.shape).openapi("ValidateFocusManifestRequest");
 
 /** Response body for POST /v1/validate/focus-manifest — parity with `ValidateConfigOutput` in @loopover/contract. */
 export const ValidateFocusManifestResponseSchema = z

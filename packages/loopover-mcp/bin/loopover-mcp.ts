@@ -9,11 +9,13 @@ import { fileURLToPath } from "node:url";
 import {
   CLI_RESPONSE_SCHEMAS,
   type ApiResponse,
+  type ApiRequestBody,
   type MatchApiCall,
   type ParameterisedApiResponse,
   type ValidatedApiPath,
 } from "@loopover/contract/api-schemas";
 import type { LoopoverConfig } from "@loopover/contract/cli-config";
+import { validateFocusManifestSchema } from "@loopover/contract/api-requests";
 import {
   CLIENT_HOSTS,
   CLIENT_HOST_SPEC,
@@ -3155,7 +3157,7 @@ async function reviewPrCli(options: CliOptions) {
   if (options.help === true) return printReviewPrHelp();
   const contributorLogin = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!contributorLogin) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
-  let prBody = options.body;
+  let prBody = optionText(options.body);
   if (options.bodyFile) prBody = readCliTextFile(optionText(options.bodyFile) ?? "", "Body");
   const commitMessages = Array.isArray(options.commit) ? options.commit : options.commit ? [options.commit] : undefined;
   const linkedIssue = parsePositiveIntegerOption(options.linkedIssue, "--linked-issue");
@@ -3236,7 +3238,7 @@ async function lintPrTextCli(args: readonly string[]) {
   if (!args.length || args[0] === "--help" || args[0] === "help") return printLintPrTextHelp();
   const options = parseOptions(args);
   const commitMessages = Array.isArray(options.commit) ? options.commit : options.commit ? [options.commit] : undefined;
-  let prBody = options.body;
+  let prBody = optionText(options.body);
   if (options.bodyFile) {
     prBody = readCliTextFile(optionText(options.bodyFile) ?? "", "Body");
   }
@@ -3291,10 +3293,15 @@ async function validateConfigCli(args: readonly string[]) {
   const options = parseOptions(args);
   if (!options.file) throw new Error("Pass --file <path> to the manifest to validate.");
   const content = readCliTextFile(optionText(options.file) ?? "", "Manifest");
-  const source = options.source;
-  if (source !== undefined && !["repo_file", "api_record", "none"].includes(String(source))) {
-    throw new Error("--source must be one of: repo_file, api_record, none");
+  // #9773: parsed against the CONTRACT's own enum rather than a restated list, so the accepted values and
+  // the error naming them both come from the schema the route validates with -- and the parsed result
+  // narrows, which a `.includes()` guard never did. That is why the request body could carry a free string
+  // where the API accepts three literals.
+  const parsedSource = validateFocusManifestSchema.shape.source.safeParse(optionText(options.source));
+  if (!parsedSource.success) {
+    throw new Error(`--source must be one of: ${validateFocusManifestSchema.shape.source.unwrap().options.join(", ")}`);
   }
+  const source = parsedSource.data;
   const payload = await apiPost("/v1/validate/focus-manifest", {
     content,
     ...(source !== undefined ? { source } : {}),
@@ -3346,7 +3353,7 @@ function parseChangedFileSpec(raw: any) {
 async function slopRiskCli(args: readonly string[]) {
   if (!args.length || args[0] === "--help" || args[0] === "help") return printSlopRiskHelp();
   const options = parseOptions(args);
-  let description = options.description ?? options.body;
+  let description = optionText(options.description) ?? optionText(options.body);
   const descriptionFile = optionText(options.descriptionFile) ?? optionText(options.bodyFile);
   if (descriptionFile) {
     description = readCliTextFile(descriptionFile, "Description");
@@ -3611,8 +3618,12 @@ async function explainReviewRiskCli(options: CliOptions) {
   if (options.help === true) return printExplainReviewRiskHelp();
   const repoFullName = optionText(options.repoFullName) ?? optionText(options.repo);
   if (!repoFullName || !String(repoFullName).includes("/")) throw new Error("Pass --repo owner/repo or --repoFullName owner/repo.");
-  if (!options.title) throw new Error("Pass --title <text>.");
-  const contributorLogin = options.login ?? options.contributorLogin;
+  const title = optionText(options.title);
+  if (!title) throw new Error("Pass --title <text>.");
+  // #9773: `options.login` unwrapped here sent boolean `true` to the API as the contributor login, and a
+  // bare `--title` sent `true` as the title -- the same class this sweep fixes everywhere else, missed on
+  // the first pass because these flow into an untyped request body rather than into a `string` parameter.
+  const contributorLogin = optionText(options.login) ?? optionText(options.contributorLogin);
   const labels = Array.isArray(options.label) ? options.label : options.label ? [options.label] : undefined;
   const changedFiles = Array.isArray(options.changedFile) ? options.changedFile : options.changedFile ? [options.changedFile] : undefined;
   const linkedIssues = Array.isArray(options.issue)
@@ -3625,14 +3636,14 @@ async function explainReviewRiskCli(options: CliOptions) {
     "/v1/preflight/review-risk",
     stripUndefined({
       repoFullName,
-      title: options.title,
+      title,
       contributorLogin,
-      body: options.body,
+      body: optionText(options.body),
       labels,
       changedFiles,
       linkedIssues: linkedIssues && linkedIssues.length > 0 ? linkedIssues : undefined,
       tests,
-      authorAssociation: options.authorAssociation,
+      authorAssociation: optionText(options.authorAssociation),
     }),
   );
   if (options.json) {
@@ -5849,14 +5860,24 @@ async function apiGet<Path extends ValidatedApiPath>(path: Path): Promise<ApiRes
 // `/v1/contributors/{login}/profile` schema without the call site naming it. A path matching no known
 // pattern has `MatchApiPath` = never and falls through to the untyped overload below, exactly as before.
 async function apiGet<Path extends string>(path: MatchApiCall<"GET", Path> extends never ? never : Path): Promise<ParameterisedApiResponse<"GET", Path>>;
-async function apiGet(path: string): Promise<any>;
+// The fallback REFUSES a path the typed overloads already cover (#9773). Without that exclusion a call
+// whose body or path fails the typed overload does not error -- it silently falls through to here and is
+// accepted as `unknown`, which is precisely the hole a typed body was added to close.
+async function apiGet<Path extends string>(path: Path extends ValidatedApiPath ? never : MatchApiCall<"GET", Path> extends never ? Path : never): Promise<any>;
 async function apiGet(path: string) {
   return apiFetch(path, { method: "GET" });
 }
 
-async function apiPost<Path extends ValidatedApiPath>(path: Path, body: unknown): Promise<ApiResponse<Path>>;
-async function apiPost<Path extends string>(path: MatchApiCall<"POST", Path> extends never ? never : Path, body: unknown): Promise<ParameterisedApiResponse<"POST", Path>>;
-async function apiPost(path: string, body: unknown): Promise<any>;
+// #9773: the body is typed too, where the document names a request schema. The CLI assembles bodies from
+// parsed options, whose values are `string | boolean | string[]` -- a bare `--login` is boolean `true` --
+// and an `unknown` body accepted every one of them silently, which is how a contributor login came to be
+// sent as `true`. Undescribed calls keep an unchecked body rather than being rejected.
+async function apiPost<Path extends ValidatedApiPath>(path: Path, body: ApiRequestBody<"POST", Path>): Promise<ApiResponse<Path>>;
+async function apiPost<Path extends string>(path: MatchApiCall<"POST", Path> extends never ? never : Path, body: ApiRequestBody<"POST", Path>): Promise<ParameterisedApiResponse<"POST", Path>>;
+async function apiPost<Path extends string>(
+  path: Path extends ValidatedApiPath ? never : MatchApiCall<"POST", Path> extends never ? Path : never,
+  body: unknown,
+): Promise<any>;
 async function apiPost(path: string, body: unknown) {
   return apiFetch(path, { method: "POST", body: JSON.stringify(body) });
 }
@@ -6316,8 +6337,8 @@ function branchEligibilityFromOptions(options: CliOptions) {
   return stripUndefined({
     status,
     source,
-    reason: options.branchEligibilityReason,
-    checkedAt: options.branchEligibilityCheckedAt,
+    reason: optionText(options.branchEligibilityReason),
+    checkedAt: optionText(options.branchEligibilityCheckedAt),
     stale: optionalBoolean(options.branchEligibilityStale),
   });
 }

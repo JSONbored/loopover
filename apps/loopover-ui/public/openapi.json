@@ -15850,40 +15850,52 @@
               "type": "object",
               "properties": {
                 "path": {
-                  "type": "string"
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 400
                 },
                 "additions": {
-                  "type": "integer"
+                  "type": "integer",
+                  "minimum": 0
                 },
                 "deletions": {
-                  "type": "integer"
+                  "type": "integer",
+                  "minimum": 0
                 }
               },
               "required": [
                 "path"
               ]
-            }
+            },
+            "maxItems": 2000
           },
           "description": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 20000
           },
           "tests": {
             "type": "array",
             "items": {
-              "type": "string"
-            }
+              "type": "string",
+              "maxLength": 400
+            },
+            "maxItems": 2000
           },
           "testFiles": {
             "type": "array",
             "items": {
-              "type": "string"
-            }
+              "type": "string",
+              "maxLength": 400
+            },
+            "maxItems": 2000
           },
           "commitMessages": {
             "type": "array",
             "items": {
-              "type": "string"
-            }
+              "type": "string",
+              "maxLength": 2000
+            },
+            "maxItems": 200
           },
           "hasLinkedIssue": {
             "type": "boolean"
@@ -15891,10 +15903,7 @@
           "issueDiscoveryLane": {
             "type": "boolean"
           }
-        },
-        "required": [
-          "changedFiles"
-        ]
+        }
       },
       "CheckSlopRiskResponse": {
         "type": "object",
@@ -16198,7 +16207,8 @@
         "type": "object",
         "properties": {
           "content": {
-            "type": "string"
+            "type": "string",
+            "maxLength": 262144
           },
           "source": {
             "type": "string",
@@ -16269,12 +16279,6 @@
       "ValidateLinkedIssueRequest": {
         "type": "object",
         "properties": {
-          "owner": {
-            "type": "string"
-          },
-          "repo": {
-            "type": "string"
-          },
           "issueNumber": {
             "type": "integer",
             "minimum": 0,
@@ -16284,23 +16288,27 @@
             "type": "object",
             "properties": {
               "title": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 300
               },
               "changedFiles": {
                 "type": "array",
                 "items": {
-                  "type": "string"
-                }
+                  "type": "string",
+                  "maxLength": 300
+                },
+                "maxItems": 200
               },
               "contributorLogin": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 100
               }
             }
           }
         },
         "required": [
-          "owner",
-          "repo",
           "issueNumber"
         ]
       },
@@ -16339,31 +16347,25 @@
       "CheckBeforeStartRequest": {
         "type": "object",
         "properties": {
-          "owner": {
-            "type": "string"
-          },
-          "repo": {
-            "type": "string"
-          },
           "issueNumber": {
             "type": "integer",
             "minimum": 0,
             "exclusiveMinimum": true
           },
           "title": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
           },
           "plannedPaths": {
             "type": "array",
             "items": {
-              "type": "string"
-            }
+              "type": "string",
+              "maxLength": 300
+            },
+            "maxItems": 200
           }
-        },
-        "required": [
-          "owner",
-          "repo"
-        ]
+        }
       },
       "CheckBeforeStartResponse": {
         "type": "object",

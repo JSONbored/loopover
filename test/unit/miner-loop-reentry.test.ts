@@ -234,4 +234,56 @@ describe("attemptLoopReentry (#2338)", () => {
     expect(result.decision.reenter).toBe(true);
     expect(result.dequeued?.identifier).toBe("issue-1");
   });
+
+  it("re-entry transitions the DEQUEUED repo's run-state, not the just-finished one (#9683): dequeues b/b while a/a finished, so setRunState hits b/b and never a/a", () => {
+    const eventLedger = tempEventLedger();
+    const portfolioQueue = tempPortfolioQueue();
+    // The portfolio queue is deliberately global: the next candidate is frequently for a different repo than the
+    // one that just finished. Only b/b is queued, so dequeueNext returns b/b even though a/a is the finished repo.
+    portfolioQueue.enqueue({ repoFullName: "b/b", identifier: "issue-b" });
+    const setRunState = vi.fn();
+
+    const result = attemptLoopReentry(
+      { killSwitchScope: "none", repoFullName: "a/a", outcome: "merged" },
+      { eventLedger, portfolioQueue, runState: { setRunState } },
+    );
+
+    expect(result.decision.reenter).toBe(true);
+    expect(result.dequeued?.repoFullName).toBe("b/b");
+    expect(setRunState).toHaveBeenCalledTimes(1);
+    expect(setRunState).toHaveBeenCalledWith("b/b", "discovering");
+    expect(setRunState).not.toHaveBeenCalledWith("a/a", expect.anything());
+  });
+
+  it("re-entry with an empty queue (#9683): dequeueNext returns null, so setRunState is never called and the finished repo is not parked at discovering", () => {
+    const eventLedger = tempEventLedger();
+    const portfolioQueue = tempPortfolioQueue();
+    // Nothing enqueued: dequeueNext() returns null even though decision.reenter is true.
+    const setRunState = vi.fn();
+
+    const result = attemptLoopReentry(
+      { killSwitchScope: "none", repoFullName: "a/a", outcome: "merged" },
+      { eventLedger, portfolioQueue, runState: { setRunState } },
+    );
+
+    expect(result.decision.reenter).toBe(true);
+    expect(result.dequeued).toBeNull();
+    expect(setRunState).not.toHaveBeenCalled();
+  });
+
+  it("suppressed re-entry (#9683): when decision.reenter is false, setRunState is never called (unchanged behaviour)", () => {
+    const eventLedger = tempEventLedger();
+    const portfolioQueue = tempPortfolioQueue();
+    portfolioQueue.enqueue({ repoFullName: "b/b", identifier: "issue-b" });
+    const setRunState = vi.fn();
+
+    const result = attemptLoopReentry(
+      { killSwitchScope: "global", repoFullName: "a/a", outcome: "merged" },
+      { eventLedger, portfolioQueue, runState: { setRunState } },
+    );
+
+    expect(result.decision.reenter).toBe(false);
+    expect(result.dequeued).toBeNull();
+    expect(setRunState).not.toHaveBeenCalled();
+  });
 });

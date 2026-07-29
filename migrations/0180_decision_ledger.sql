@@ -6,16 +6,10 @@
 -- Every persistDecisionRecord write appends (including latest-finalize-wins rewrites of the same record id
 -- -- supersessions are deliberately VISIBLE history, not silent replacement).
 --
--- HONEST LIMIT (module header repeats this; see migrations/0195_decision_ledger_anchors.sql, #9267): a
--- self-operated chain is tamper-EVIDENT against every actor except the operator, on its own. As of #9267, a
--- scheduled job (src/review/ledger-anchor-scheduler.ts) additionally publishes a SIGNED, self-describing
--- checkpoint of this chain's tip -- hourly, or every 256 new rows, whichever comes first -- to two places the
--- operator does not control: a Sigstore Rekor transparency log and a git commit (cross-mirrored by GH Archive
--- / Software Heritage the moment it's pushed). Rewriting history before the oldest still-referenced anchor
--- now requires forging that signature or fabricating matching evidence at an external mirror too, not just
--- editing this table. What remains open: the UNANCHORED TAIL since the last checkpoint is exactly as
--- tamper-evident-only as before anchoring existed -- anchoring bounds how far back an undetected rewrite
--- could reach, it does not make every row individually external-checkable in real time.
+-- HONEST LIMIT (module header repeats this): a self-operated chain is tamper-EVIDENT, not tamper-PROOF --
+-- the operator can still rewrite wholesale. External anchoring (signed checkpoints / witness cosigning) is
+-- the tracked follow-up once tenants exist, per the epic's sequencing. That gap does not reduce the value
+-- against every OTHER actor, or against accidental corruption.
 CREATE TABLE IF NOT EXISTS decision_ledger (
   seq           INTEGER PRIMARY KEY,  -- explicit, contiguous (verified); NOT autoincrement -- gaps are breaks
   record_id     TEXT NOT NULL,        -- decision_records.id at append time

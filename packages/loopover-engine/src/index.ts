@@ -957,3 +957,12 @@ export { isDone as isPlanStepDone, nextReadySteps } from "./plan-step-readiness.
 // #9743: the priority label's single resolution, exported so the engine's OWN behaviour suite can test
 // it -- the `engine` Codecov flag credits engine source from that suite, not from the root vitest run.
 export { DEFAULT_PRIORITY_LABEL, resolvePriorityTypeLabel } from "./settings/pr-type-label.js";
+// #9743: the author-association vocabulary, exported so the engine's OWN behaviour suite can reach it --
+// the "engine" Codecov flag credits engine source from that suite, and gate-advisory (an engine twin)
+// is one of its callers.
+export {
+  MAINTAINER_AUTHOR_ASSOCIATIONS,
+  classifyAuthorAssociation,
+  isMaintainerAuthorAssociation,
+  type AuthorClass,
+} from "./settings/author-association.js";

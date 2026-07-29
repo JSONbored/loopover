@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { hostname, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { acquireRepoCloneLock, ensureRepoCloned, isRepoCloneLockStale } from "../../packages/loopover-miner/lib/repo-clone";
+import { acquireRepoCloneLock, DEFAULT_LOCK_INCOMPLETE_GRACE_MS, ensureRepoCloned, isRepoCloneLockStale } from "../../packages/loopover-miner/lib/repo-clone";
 import {
   cleanupResourceCount,
   closeAllCleanupResources,
@@ -31,19 +31,39 @@ function writeLockFile(lockPath: string, meta: unknown) {
 const at1000 = new Date(1000).toISOString();
 
 describe("isRepoCloneLockStale (#7084)", () => {
-  it("treats a missing or unreadable lockfile as stale", () => {
+  // A statLock stub that reports a fixed mtime, so incomplete-lock staleness is driven purely by nowMs vs mtime.
+  const statAt = (mtimeMs: number) => () => ({ mtimeMs });
+
+  it("treats a missing lockfile as stale (nothing to hold)", () => {
     const { lockPath } = tempRepoPath();
-    expect(isRepoCloneLockStale(lockPath, 1000, 5000)).toBe(true); // never created
-    writeLockFile(lockPath, "{ not valid json");
+    // Never created: readFileSync throws, then the default statSync also throws -> reclaimable.
     expect(isRepoCloneLockStale(lockPath, 1000, 5000)).toBe(true);
   });
 
-  it("treats a non-object payload as stale", () => {
+  it("REGRESSION (#9681): an unparseable/partial lockfile is NOT stale within the incomplete-grace window, but IS past it", () => {
     const { lockPath } = tempRepoPath();
+    writeLockFile(lockPath, "{ not valid json"); // the 0-byte / mid-write state open('wx') leaves before writeLock
+    const now = 10_000;
+    // mtime == now: a concurrent holder is probably still mid-acquire -> must NOT be reclaimed (was: always stale).
+    expect(isRepoCloneLockStale(lockPath, now, 5000, () => true, statAt(now))).toBe(false);
+    // At the grace bound exactly (5s old) -> still held; just past it (6s old) -> genuinely abandoned -> reclaim.
+    expect(isRepoCloneLockStale(lockPath, now, 5000, () => true, statAt(now - DEFAULT_LOCK_INCOMPLETE_GRACE_MS))).toBe(false);
+    expect(isRepoCloneLockStale(lockPath, now, 5000, () => true, statAt(now - 6_000))).toBe(true);
+  });
+
+  it("REGRESSION (#9681): a non-object payload is grace-windowed the same way, and a stat that throws is stale", () => {
+    const { lockPath } = tempRepoPath();
+    const now = 10_000;
     writeLockFile(lockPath, "null");
-    expect(isRepoCloneLockStale(lockPath, 1000, 5000)).toBe(true);
+    expect(isRepoCloneLockStale(lockPath, now, 5000, () => true, statAt(now))).toBe(false); // within grace
+    expect(isRepoCloneLockStale(lockPath, now, 5000, () => true, statAt(1_000))).toBe(true); // 9s old > 5s grace
     writeLockFile(lockPath, "123");
-    expect(isRepoCloneLockStale(lockPath, 1000, 5000)).toBe(true);
+    expect(isRepoCloneLockStale(lockPath, now, 5000, () => true, statAt(now))).toBe(false);
+    // The file vanished between the failed read and the stat -> nothing to hold -> reclaimable.
+    const statThrows = () => {
+      throw new Error("ENOENT");
+    };
+    expect(isRepoCloneLockStale(lockPath, now, 5000, () => true, statThrows)).toBe(true);
   });
 
   it("reclaims a same-host lock whose owner PID is dead", () => {
@@ -199,6 +219,50 @@ describe("acquireRepoCloneLock (#7084)", () => {
     const release = await acquireRepoCloneLock(repoPath, { isProcessAlive: () => false, lockStaleMs: 5000, nowMs: () => 1500 });
     const meta = JSON.parse(readFileSync(lockPath, "utf8"));
     expect(meta.pid).toBe(process.pid); // reclaimed and re-owned
+    release();
+  });
+
+  it("REGRESSION (#9681): POLLS a fresh empty peer lock (within grace) instead of reclaiming and re-acquiring it", async () => {
+    const { repoPath, lockPath } = tempRepoPath();
+    writeLockFile(lockPath, ""); // a peer's freshly-created, not-yet-owner-written 0-byte lock
+    const now = 5_000_000;
+    const sleeps: number[] = [];
+    let opens = 0;
+    const release = await acquireRepoCloneLock(repoPath, {
+      nowMs: () => now,
+      lockPollMs: 7,
+      lockSleep: async (ms) => {
+        sleeps.push(ms);
+        // The peer finishes its acquisition and releases after our first poll, so our retry can take the lock.
+        rmSync(lockPath, { force: true });
+      },
+      openLock: (path) => {
+        opens += 1;
+        if (opens === 1) {
+          const error = new Error("EEXIST") as NodeJS.ErrnoException;
+          error.code = "EEXIST";
+          throw error; // the peer holds the freshly-created empty lock
+        }
+        return openSync(path, "wx", 0o600);
+      },
+      // mtime == now -> the empty peer lock is inside the incomplete-grace window -> NOT stale.
+      statLock: () => ({ mtimeMs: now }),
+      isProcessAlive: () => true,
+    });
+    // Before the fix the empty lock read as stale, so acquire UNLINKED it and `continue`d WITHOUT sleeping.
+    expect(sleeps).toEqual([7]); // it polled instead of reclaiming
+    expect(opens).toBe(2); // retried after the poll
+    release();
+  });
+
+  it("REGRESSION (#9681): reclaims an over-grace empty lock through the real default statLock (statSync) path", async () => {
+    const { repoPath, lockPath } = tempRepoPath();
+    writeLockFile(lockPath, ""); // an abandoned 0-byte lock a crashed peer left mid-acquire
+    // No injected statLock/openLock: exercises the real default statSync-backed incomplete-lock check. The real
+    // file mtime is ~now, so an injected clock well past the grace window makes the default check reclaim it.
+    const future = Date.now() + DEFAULT_LOCK_INCOMPLETE_GRACE_MS + 60_000;
+    const release = await acquireRepoCloneLock(repoPath, { nowMs: () => future, isProcessAlive: () => true });
+    expect(JSON.parse(readFileSync(lockPath, "utf8")).pid).toBe(process.pid); // reclaimed and re-owned
     release();
   });
 

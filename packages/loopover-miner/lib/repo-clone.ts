@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir, hostname } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
@@ -33,6 +33,7 @@ export type RepoCloneLockOptions = {
   isProcessAlive?: (pid: number) => boolean;
   openLock?: (lockPath: string) => number;
   writeLock?: (fd: number, data: string) => void;
+  statLock?: (lockPath: string) => { mtimeMs: number };
 };
 
 type EnsureRepoClonedOptions = {
@@ -146,6 +147,12 @@ async function withRepoCloneLock<T>(repoPath: string, fn: () => Promise<T>): Pro
 const DEFAULT_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // comfortably past a slow clone/fetch sequence
 const DEFAULT_LOCK_STALE_MS = 15 * 60 * 1000; // a lock older than this is presumed crashed
 const DEFAULT_LOCK_POLL_MS = 100;
+// #9681: an empty/unparseable lockfile is the NORMAL mid-acquire state -- open(.., 'wx') creates it 0-byte and
+// the owner record is written a few statements later, so a concurrent process that hits EEXIST in that window
+// must NOT reclaim it as a crash. Only reclaim once it has sat unwritten longer than this grace window (well past
+// the microseconds between create and owner-write, but far below DEFAULT_LOCK_STALE_MS so a genuinely crashed
+// mid-write lock is still cleared promptly).
+export const DEFAULT_LOCK_INCOMPLETE_GRACE_MS = 5_000;
 const defaultLockSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 function repoCloneLockPath(repoPath: string): string {
@@ -153,26 +160,50 @@ function repoCloneLockPath(repoPath: string): string {
 }
 
 /**
- * Decide whether an existing clone lockfile is stale (reclaimable): true when the file is missing or its JSON is
- * unreadable/partial (a crash mid-write), when its owner pid is confirmed dead within the SAME host's namespace,
- * or -- ONLY for an owner this host cannot probe (a different host/container, or a malformed record with no
- * usable pid) -- when it is older than `staleMs`. A same-host owner whose pid IS probeable is judged purely by
- * liveness: a live one is never stale no matter how long its clone legitimately runs (age reclaim there would
- * yank the lock out from under an in-progress clone -- a double-holder bug), and a dead one is stale at once.
+ * An empty/unparseable lockfile is BOTH the mid-write crash case AND the normal mid-acquire state of every
+ * successful acquisition (open 'wx' creates it 0-byte, the owner record lands a few statements later, #9681), so
+ * it must not be reclaimed on sight -- that lets a concurrent process delete a live holder's lock in the window
+ * before its owner-write and double-hold. Reclaim only once it has sat unwritten past DEFAULT_LOCK_INCOMPLETE_GRACE_MS.
+ * A stat that throws means the file vanished between the read and here -- nothing left to hold, so reclaimable.
+ */
+function isIncompleteLockReclaimable(
+  lockPath: string,
+  nowMs: number,
+  statLock: (lockPath: string) => { mtimeMs: number },
+): boolean {
+  let mtimeMs: number;
+  try {
+    mtimeMs = statLock(lockPath).mtimeMs;
+  } catch {
+    return true;
+  }
+  return nowMs - mtimeMs > DEFAULT_LOCK_INCOMPLETE_GRACE_MS;
+}
+
+/**
+ * Decide whether an existing clone lockfile is stale (reclaimable): true when the file is missing, when its owner
+ * pid is confirmed dead within the SAME host's namespace, or -- ONLY for an owner this host cannot probe (a
+ * different host/container, or a malformed record with no usable pid) -- when it is older than `staleMs`. A same-host
+ * owner whose pid IS probeable is judged purely by liveness: a live one is never stale no matter how long its clone
+ * legitimately runs (age reclaim there would yank the lock out from under an in-progress clone -- a double-holder
+ * bug), and a dead one is stale at once. An unreadable/partial JSON payload is NOT unconditionally stale (#9681):
+ * it is the normal mid-acquire state, so it is reclaimed only once its own mtime is older than the incomplete-lock
+ * grace window (see {@link isIncompleteLockReclaimable}).
  */
 export function isRepoCloneLockStale(
   lockPath: string,
   nowMs: number,
   staleMs: number,
   isAlive: (pid: number) => boolean = isProcessAlive,
+  statLock: (lockPath: string) => { mtimeMs: number } = (path) => statSync(path),
 ): boolean {
   let meta: unknown;
   try {
     meta = JSON.parse(readFileSync(lockPath, "utf8"));
   } catch {
-    return true;
+    return isIncompleteLockReclaimable(lockPath, nowMs, statLock);
   }
-  if (!meta || typeof meta !== "object") return true;
+  if (!meta || typeof meta !== "object") return isIncompleteLockReclaimable(lockPath, nowMs, statLock);
   const record = meta as RepoCloneLockMeta;
   // Owner we can directly probe (same host, usable pid): trust liveness exclusively -- alive => held (never
   // age-reclaim a still-running local clone), dead => reclaim now. The age backstop below is reserved for an
@@ -202,6 +233,7 @@ export async function acquireRepoCloneLock(repoPath: string, options: RepoCloneL
   const isAlive = typeof options.isProcessAlive === "function" ? options.isProcessAlive : isProcessAlive;
   const openLock = typeof options.openLock === "function" ? options.openLock : (path: string) => openSync(path, "wx", 0o600);
   const writeLock = typeof options.writeLock === "function" ? options.writeLock : (fd: number, data: string) => writeSync(fd, data);
+  const statLock = typeof options.statLock === "function" ? options.statLock : (path: string) => statSync(path);
 
   mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 });
   const deadline = now() + timeoutMs;
@@ -212,7 +244,7 @@ export async function acquireRepoCloneLock(repoPath: string, options: RepoCloneL
     } catch (error: unknown) {
       const err = error as NodeJS.ErrnoException | null | undefined;
       if (!err || err.code !== "EEXIST") throw error;
-      if (isRepoCloneLockStale(lockPath, now(), staleMs, isAlive)) {
+      if (isRepoCloneLockStale(lockPath, now(), staleMs, isAlive, statLock)) {
         try {
           unlinkSync(lockPath);
         } catch {

@@ -24421,9 +24421,6 @@
           },
           "403": {
             "description": "Insufficient control-panel role"
-          },
-          "404": {
-            "description": "Repo not registered"
           }
         },
         "parameters": [
@@ -24472,6 +24469,9 @@
           },
           "403": {
             "description": "Insufficient control-panel role"
+          },
+          "503": {
+            "description": "encryption_unavailable — TOKEN_ENCRYPTION_SECRET is not configured"
           }
         },
         "parameters": [
@@ -24600,6 +24600,9 @@
           },
           "401": {
             "description": "Invalid internal token"
+          },
+          "503": {
+            "description": "encryption_unavailable — TOKEN_ENCRYPTION_SECRET is not configured"
           }
         },
         "parameters": [
@@ -24686,9 +24689,6 @@
           },
           "403": {
             "description": "Insufficient control-panel role"
-          },
-          "404": {
-            "description": "Repo not registered"
           }
         },
         "parameters": [
@@ -24737,6 +24737,9 @@
           },
           "403": {
             "description": "Insufficient control-panel role"
+          },
+          "503": {
+            "description": "encryption_unavailable — TOKEN_ENCRYPTION_SECRET is not configured"
           }
         },
         "parameters": [
@@ -24865,6 +24868,9 @@
           },
           "401": {
             "description": "Invalid internal token"
+          },
+          "503": {
+            "description": "encryption_unavailable — TOKEN_ENCRYPTION_SECRET is not configured"
           }
         },
         "parameters": [

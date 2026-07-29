@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
+import { buildOpenApiSpec } from "../../src/openapi/spec";
 import { createSessionForGitHubUser } from "../../src/auth/security";
 import { getRepositorySettings, upsertInstallation, upsertPullRequestFromGitHub, upsertRepositorySettings, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { getRepositoryCollaboratorPermission } from "../../src/github/app";
@@ -224,6 +225,40 @@ describe("maintainer BYOK key route", () => {
     const res = await app.request(`/v1/repos/${REPO}/ai-key`, { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ provider: "openai", key: "sk-openai-valid-key-123456" }) }, env);
     expect(res.status).toBe(503);
     expect(await res.json()).toMatchObject({ error: "encryption_unavailable" });
+  });
+
+  describe("the spec declares the statuses the key routes actually return (#9709)", () => {
+    it("POST /v1/repos/:owner/:repo/ai-key answers 503 without a secret AND declares 503 in the spec", async () => {
+      const app = createApp();
+      const env = createTestEnv({});
+      const res = await app.request(`/v1/repos/${REPO}/ai-key`, { method: "POST", headers: apiHeaders(env), body: JSON.stringify({ provider: "openai", key: "sk-openai-valid-key-123456" }) }, env);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "encryption_unavailable" });
+      const spec = buildOpenApiSpec();
+      expect(Object.keys(spec.paths["/v1/repos/{owner}/{repo}/ai-key"]?.post?.responses ?? {})).toContain("503");
+    });
+
+    it("POST /v1/internal/repos/:owner/:repo/linear-key answers 503 without a secret AND declares 503 in the spec", async () => {
+      const app = createApp();
+      const env = createTestEnv({});
+      const internalHeaders = { authorization: `Bearer ${env.INTERNAL_JOB_TOKEN}`, "content-type": "application/json" };
+      const res = await app.request(`/v1/internal/repos/${REPO}/linear-key`, { method: "POST", headers: internalHeaders, body: JSON.stringify({ key: "lin_api_valid_linear_key_1234567890" }) }, env);
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "encryption_unavailable" });
+      const spec = buildOpenApiSpec();
+      expect(Object.keys(spec.paths["/v1/internal/repos/{owner}/{repo}/linear-key"]?.post?.responses ?? {})).toContain("503");
+    });
+
+    it("GET /v1/repos/:owner/:repo/ai-key answers 200 { configured: false } for a repo with no key — proving the removed 404 was unreachable", async () => {
+      const app = createApp();
+      const env = createTestEnv({ TOKEN_ENCRYPTION_SECRET: SECRET });
+      const res = await app.request(`/v1/repos/${REPO}/ai-key`, { headers: apiHeaders(env) }, env);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ configured: false });
+      // And the spec no longer claims a 404 for that GET.
+      const spec = buildOpenApiSpec();
+      expect(Object.keys(spec.paths["/v1/repos/{owner}/{repo}/ai-key"]?.get?.responses ?? {})).not.toContain("404");
+    });
   });
 });
 

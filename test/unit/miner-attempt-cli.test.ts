@@ -2567,6 +2567,92 @@ describe("runAttempt: hosted soft-claim submission (#7168)", () => {
     expect(releaseCall![0]).toMatchObject({ repoFullName: "acme/widgets", issueNumber: 7, status: "released" });
   });
 
+  it("REGRESSION (#9677): a rejecting cleanupAttemptWorktree still runs the claim release, allocator release + close, and returns the same exit code as a clean cleanup", async () => {
+    const submittedOutcome = () => ({
+      outcome: "submitted" as const,
+      spec: { command: "gh pr create", cwd: "/tmp/wt", timeoutMs: 1000 },
+      execResult: { code: 0 },
+      loopResult: fakeLoopResult({ outcome: "handoff" }),
+    });
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    // Control run with a clean cleanup, to pin the exit code the failing run must match.
+    const ok = tempLedgers();
+    const controlExit = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "attempt-ctl",
+      openWorktreeAllocator: () => ok.allocator,
+      openClaimLedger: () => ok.claimLedger,
+      initEventLedger: () => ok.eventLedger,
+      initAttemptLog: () => ok.attemptLog,
+      initGovernorLedger: () => ok.governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: async () => submittedOutcome() }),
+    });
+
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    const releaseClaimSpy = vi.spyOn(claimLedger, "releaseClaim");
+    const allocatorReleaseSpy = vi.spyOn(allocator, "release");
+    const allocatorCloseSpy = vi.spyOn(allocator, "close");
+    const cleanupAttemptWorktree = vi.fn().mockRejectedValue(new Error("git worktree remove failed"));
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      attemptId: "attempt-cleanupfail",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({ runMinerAttempt: async () => submittedOutcome(), cleanupAttemptWorktree }),
+    });
+
+    // Before the fix the rejecting cleanup escaped the finally and skipped every step below it.
+    expect(cleanupAttemptWorktree).toHaveBeenCalled();
+    expect(releaseClaimSpy).toHaveBeenCalledWith("acme/widgets", 7);
+    expect(allocatorReleaseSpy).toHaveBeenCalledWith("attempt-cleanupfail");
+    expect(allocatorCloseSpy).toHaveBeenCalled();
+    expect(exitCode).toBe(controlExit);
+  });
+
+  it("REGRESSION (#9677): a rejecting hosted claim-release still runs the allocator release and closes every store", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const allocatorReleaseSpy = vi.spyOn(allocator, "release");
+    const allocatorCloseSpy = vi.spyOn(allocator, "close");
+    const claimLedgerCloseSpy = vi.spyOn(claimLedger, "close");
+    const eventLedgerCloseSpy = vi.spyOn(eventLedger, "close");
+    const attemptLogCloseSpy = vi.spyOn(attemptLog, "close");
+    const governorLedgerCloseSpy = vi.spyOn(governorLedger, "close");
+    // The initial "active" claim POST succeeds; only the "released" POST rejects (the discovery plane went down
+    // between claiming and releasing).
+    const submitSoftClaim = vi.fn(async (claim: { status?: string }) => {
+      if (claim.status === "released") throw new Error("discovery plane unreachable");
+      return { sent: true };
+    });
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop", LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      attemptId: "attempt-releasefail",
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      submitSoftClaim,
+      ...readyPipelineOptions({ runMinerAttempt: async () => ({ outcome: "abandon", loopResult: fakeLoopResult() }) }),
+    });
+
+    expect(exitCode).toBe(7); // abandon -- unchanged by the release failure
+    // Both the active claim and the (rejecting) release POST fired, and teardown continued past the rejection.
+    expect(submitSoftClaim).toHaveBeenCalledTimes(2);
+    expect(allocatorReleaseSpy).toHaveBeenCalledWith("attempt-releasefail");
+    expect(allocatorCloseSpy).toHaveBeenCalled();
+    expect(claimLedgerCloseSpy).toHaveBeenCalled();
+    expect(eventLedgerCloseSpy).toHaveBeenCalled();
+    expect(attemptLogCloseSpy).toHaveBeenCalled();
+    expect(governorLedgerCloseSpy).toHaveBeenCalled();
+  });
+
   it("does not submit a release soft-claim when the claim point was never reached (blocked_max_concurrent_claims)", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "log").mockImplementation(() => undefined);

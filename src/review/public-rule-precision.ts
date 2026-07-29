@@ -70,7 +70,7 @@ export type PublicRulePrecision = {
  * NOT excluded: `review_targets_decision_level` (#8083's own backfill), whose labels come from what actually
  * happened to the PRs THAT rule fired on -- synthesized rows, but genuinely about that rule.
  */
-const NON_ATTRIBUTABLE_OVERRIDE_PROVENANCES = ["slop_replay_backfill_v1"] as const;
+export const NON_ATTRIBUTABLE_OVERRIDE_PROVENANCES = ["slop_replay_backfill_v1"] as const;
 
 /**
  * Load the public per-rule precision block. Fail-safe per section (the same degradation contract as

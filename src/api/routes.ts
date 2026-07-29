@@ -314,6 +314,7 @@ import { loadPublicLedgerAnchors } from "../review/ledger-anchor-persistence";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
 import { loadPublicRulePrecision } from "../review/public-rule-precision";
+import { loadPublicEvalCorpus } from "../review/public-eval-corpus";
 import { loadCalibrationTrend } from "../services/rule-calibration-trend";
 import { isSatisfactionFloorAutotuneEnabled, loadSatisfactionFloorStatus, runSatisfactionFloorLoosening } from "../services/satisfaction-floor-loosening-run";
 import { loadAllKnobStatuses } from "../services/knob-loosening-run";
@@ -1478,6 +1479,23 @@ export function createApp() {
   // per-record, digest-committed form; it is not a new scoring surface). Wired for the
   // outcome_confirmed_precision source only today -- a future benchmark_run source (#9265) feeds the same
   // endpoint, never a second response format.
+  // #9636: the corpus behind the published per-rule precision, redacted and downloadable WITHOUT
+  // credentials -- the read path that makes the verifiability walkthrough's step 1 true for a stranger
+  // instead of only for an operator holding this deployment's Cloudflare keys. See
+  // public-eval-corpus.ts's header for why `targetKey` is dropped rather than hashed, and why
+  // `metadata.confidence` stays nested exactly where the shipped classifier reads it.
+  app.get("/v1/public/eval-corpus", async (c) => {
+    const publicStatsManifestOverride = await resolvePublicStatsManifestOverride(c.env);
+    if (!isPublicStatsEnabled(c.env, publicStatsManifestOverride)) return c.json({ error: "not_found" }, 404);
+    const ruleId = c.req.query("ruleId");
+    // Required, not defaulted: a corpus is only meaningful for one rule, and silently picking one would
+    // publish a checksum for a rule the caller never asked about.
+    if (!ruleId) return c.json({ error: "rule_id_required" }, 400);
+    const corpus = await loadPublicEvalCorpus(c.env, ruleId);
+    c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return c.json(corpus);
+  });
+
   app.get("/v1/public/eval-scores", async (c) => {
     const publicStatsManifestOverride = await resolvePublicStatsManifestOverride(c.env);
     if (!isPublicStatsEnabled(c.env, publicStatsManifestOverride)) return c.json({ error: "not_found" }, 404);

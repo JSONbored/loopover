@@ -104,9 +104,10 @@ export function publishedPackageNames(workflowFiles: ReadonlyArray<{ name: strin
   const names = new Set<string>();
   for (const file of workflowFiles) {
     if (!/^publish-.+\.ya?ml$/.test(file.name)) continue;
-    for (const match of file.text.matchAll(/npm pack --workspace\s+(@[a-z0-9-]+\/[a-z0-9-]+)/g)) {
-      if (match[1]) names.add(match[1]);
-    }
+    // Lookbehind rather than a capture group, so the package name IS the whole match. A captured group
+    // would be typed `string | undefined` under noUncheckedIndexedAccess, forcing a guard whose false arm
+    // can never run -- an unreachable branch is exactly the kind of thing that rots into noise.
+    for (const match of file.text.matchAll(/(?<=npm pack --workspace\s+)@[a-z0-9-]+\/[a-z0-9-]+/g)) names.add(match[0]);
   }
   return names;
 }

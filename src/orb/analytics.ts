@@ -260,11 +260,25 @@ export async function computeFleetAnalytics(env: Env, opts: { windowDays?: numbe
   let cycleRows: CycleTime[] = [];
   let registered = new Set<string>();
   try {
+    // #9783: UNION the live rows with the folded rollups. orb_signals is pruned at 90 days into
+    // orb_signal_rollups (per instance, per day, whole confusion matrix), so reading only the raw table
+    // would make every window that reaches past the prune silently under-count -- which is exactly the
+    // failure mode that made adding retention here non-trivial in the first place. Both halves emit the same
+    // Cell shape, and foldInstance sums cells, so duplicate (instance, verdict, outcome, ...) tuples across
+    // the two sources add up correctly rather than needing a merge.
+    //
+    // Both halves take the same bound because `cutoff` above is already date-only, which is exactly what
+    // `day` is -- so the boundary date is included on both sides. (The public weekly trend cannot do this:
+    // it bounds on a full ISO instant, where a bare `day >= ?1` would drop the boundary day because a string
+    // prefix sorts before the string it prefixes. See public-fleet-accuracy-trend.ts.)
     const matrix = await env.DB
       .prepare(
         `SELECT instance_id, gate_verdict AS verdict, outcome, reversal_flag, gate_reasoncode_bucket, COUNT(*) AS n
-         FROM orb_signals WHERE received_at >= ?
-         GROUP BY instance_id, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket`,
+           FROM orb_signals WHERE received_at >= ?1
+          GROUP BY instance_id, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket
+         UNION ALL
+         SELECT instance_id, gate_verdict AS verdict, outcome, reversal_flag, gate_reasoncode_bucket, n
+           FROM orb_signal_rollups WHERE day >= ?1`,
       )
       .bind(cutoff)
       .all<Cell>();

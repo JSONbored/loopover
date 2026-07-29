@@ -45,15 +45,18 @@ export const opportunityFreshnessInternals = {
 /* v8 ignore stop */
 
 /**
- * Compute a [0.05, 1] freshness factor from open issue timestamps, mirroring
- * `opportunityFreshnessFactor` in `src/signals/reward-risk.ts` with an injected clock so the miner engine
- * stays pure and testable.
+ * Compute an open-issue freshness factor from issue timestamps, with an injected clock so the miner engine
+ * stays pure and testable. Returns `0` as a sentinel for "no measurable freshness signal" — either there are
+ * no open issues, or `nowMs` is non-finite — and otherwise a value in `[0.05, 1]`. `0` is meaningfully distinct
+ * from `0.05` (measured but maximally stale): in the multiplicative ranker score they differ 20x, so a caller
+ * must not treat a `0` as merely "very stale". `opportunityFreshnessFactor` in
+ * `packages/loopover-engine/src/reward-risk.ts` delegates to this function (#8011) — this module is the
+ * canonical implementation, not a mirror of it.
  */
 export function computeOpportunityFreshness(
   issues: readonly FreshnessIssue[],
   nowMs: number,
 ): number {
-  /* v8 ignore next -- Caller supplies a finite epoch; non-finite clocks degrade to zero freshness. */
   if (!Number.isFinite(nowMs)) return 0;
   const openIssues = issues.filter(isOpenIssue);
   if (openIssues.length === 0) return 0;

@@ -466,9 +466,9 @@ describe("renderRepoMap (#4280)", () => {
       }),
     );
     const output = renderRepoMap(manyEntries, 200);
-    expect(output.length).toBeLessThanOrEqual(
-      200 + "\n… (repo map truncated to fit the output budget)".length,
-    );
+    // #9617: the marker is reserved from the budget, so the WHOLE result stays within maxOutputChars —
+    // the marker no longer overshoots (previously up to its own length + a newline over budget).
+    expect(output.length).toBeLessThanOrEqual(200);
     expect(
       output.endsWith("… (repo map truncated to fit the output budget)"),
     ).toBe(true);
@@ -479,39 +479,58 @@ describe("renderRepoMap (#4280)", () => {
     expect(output).not.toContain("truncated");
   });
 
+  it("#9617: result never exceeds maxOutputChars, and a budget too small for the marker yields the empty string", () => {
+    const marker = "… (repo map truncated to fit the output budget)";
+    const manyEntries: RepoMapFileEntry[] = Array.from({ length: 40 }, (_, i) => ({
+      path: `src/file${i}.ts`,
+      language: "typescript",
+      symbols: [{ kind: "function", name: `fn${i}`, signature: `export function fn${i}() {`, line: 1 }],
+    }));
+
+    // Bound holds for a spread of budgets, including ones near and below the marker's own length.
+    for (const budget of [0, 5, marker.length - 1, marker.length, marker.length + 10, 100, 500]) {
+      const out = renderRepoMap(manyEntries, budget);
+      expect(out.length).toBeLessThanOrEqual(budget);
+    }
+    // A budget below the marker's length can't honestly signal truncation → empty string, never an over-budget marker.
+    expect(renderRepoMap(manyEntries, marker.length - 1)).toBe("");
+    // A budget that holds the marker but no content still marks the truncation (marker only).
+    expect(renderRepoMap(manyEntries, marker.length)).toBe(marker);
+  });
+
+  // #9617: at a budget below the marker's own length, the target line still truncates at its own site
+  // (skipped / no-symbols / header), but there is no honest room for the marker — so the result is the
+  // empty string, never an over-budget marker. The three cases exercise the three non-symbol break sites.
   it("truncates on a skipped-entry line when the budget is exceeded there", () => {
-    const output = renderRepoMap([skippedEntry, normalEntry], 5);
-    expect(output).toBe("… (repo map truncated to fit the output budget)");
+    expect(renderRepoMap([skippedEntry, normalEntry], 5)).toBe("");
   });
 
   it("truncates on a no-symbols-entry line when the budget is exceeded there", () => {
-    const output = renderRepoMap([emptyEntry, normalEntry], 5);
-    expect(output).toBe("… (repo map truncated to fit the output budget)");
+    expect(renderRepoMap([emptyEntry, normalEntry], 5)).toBe("");
   });
 
   it("truncates on a file's header line (before any of its symbols) when the budget is exceeded there", () => {
-    const output = renderRepoMap([normalEntry], 5);
-    expect(output).toBe("… (repo map truncated to fit the output budget)");
+    expect(renderRepoMap([normalEntry], 5)).toBe("");
   });
 
   it("truncates partway through a multi-symbol file's symbol list, keeping the symbols that already fit", () => {
+    const marker = "… (repo map truncated to fit the output budget)";
     const multiSymbolEntry: RepoMapFileEntry = {
       path: "src/multi.ts",
       language: "typescript",
       symbols: [
         { kind: "function", name: "a", signature: "function a() {", line: 1 },
-        { kind: "function", name: "b", signature: "function b() {", line: 3 },
+        // A large second symbol (longer than the marker) so the budget can hold the first symbol AND the
+        // reserved marker while still truncating this one — the content-retention path #9617 must preserve.
+        { kind: "function", name: "b", signature: "function bWithAVeryLongSignatureThatExceedsTheMarkerLength() {", line: 3 },
       ],
     };
-    const headerAndFirstSymbol =
-      "src/multi.ts:\n  function a (line 1): function a() {";
-    const output = renderRepoMap(
-      [multiSymbolEntry],
-      headerAndFirstSymbol.length,
-    );
-    expect(output).toBe(
-      `${headerAndFirstSymbol}\n… (repo map truncated to fit the output budget)`,
-    );
+    const headerAndFirstSymbol = "src/multi.ts:\n  function a (line 1): function a() {";
+    // Reserve exactly the header+first-symbol content plus the marker (and its joining newline).
+    const budget = headerAndFirstSymbol.length + 1 + marker.length;
+    const output = renderRepoMap([multiSymbolEntry], budget);
+    expect(output).toBe(`${headerAndFirstSymbol}\n${marker}`);
+    expect(output.length).toBeLessThanOrEqual(budget);
   });
 });
 

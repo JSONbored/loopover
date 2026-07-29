@@ -10,6 +10,15 @@
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
+    // #9848: both cost ZERO errors today (measured) and lock in what this repo's RUNTIME already assumes.
+    // `isolatedModules` makes tsc enforce that every file is independently transpilable -- exactly the
+    // contract `node --experimental-strip-types` and esbuild's per-file transform already rely on, and which
+    // nothing was checking. `verbatimModuleSyntax` requires type-only imports to say `import type`, so a
+    // value import can never be silently elided out of the emitted bundle (or, worse, kept and pulled into
+    // the self-host bundle that must have zero `cloudflare:*` imports). Enabling them turns two runtime
+    // assumptions into compile-time guarantees rather than conventions.
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
     // #9553. Dead code is the substrate every drift bug in the 2026-07-27 audit grew on: a stale import or an
     // orphaned constant reads exactly like a live wire, so the next person greps, finds it, and reasons about
     // a code path that no longer runs. Enabling these made the compiler enumerate all 515 instances, and

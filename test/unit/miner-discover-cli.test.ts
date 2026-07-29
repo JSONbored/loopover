@@ -2035,6 +2035,89 @@ describe("discovery-index supplementation (#7168)", () => {
     ]);
   });
 
+  it("REGRESSION (#9680): drops an index candidate whose repo bans AI contributions, keeps the allowed one, and reports the dropped count", async () => {
+    const clientModule = await import("../../packages/loopover-miner/lib/discovery-index-client");
+    const telemetrySpy = vi.spyOn(clientModule, "recordDiscoveryTelemetry");
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1, title: "Local candidate" })],
+      warnings: [],
+      rateLimitRemaining: 100,
+      rateLimitResetAt: null,
+    }));
+    const queryDiscoveryIndex = vi.fn(async () => ({
+      contractVersion: 1,
+      candidates: [
+        indexCandidate({ issueNumber: 2, title: "AI-banned repo issue", aiPolicyAllowed: false }),
+        indexCandidate({ issueNumber: 3, title: "Allowed index issue", aiPolicyAllowed: true }),
+      ],
+      nextCursor: null,
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      env: { LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      queryDiscoveryIndex: queryDiscoveryIndex as never,
+    });
+
+    expect(exitCode).toBe(0);
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    const issueNumbers = payload.ranked
+      .map((entry: { issueNumber: number }) => entry.issueNumber)
+      .sort((a: number, b: number) => a - b);
+    // #2 (aiPolicyAllowed:false) is dropped before ranking; the local #1 and the allowed index #3 remain.
+    // Before the fix #2 would also be ranked and enqueued into the miner's backlog.
+    expect(issueNumbers).toEqual([1, 3]);
+    expect(telemetrySpy).toHaveBeenCalledWith(
+      "discover_query",
+      "supplemented",
+      expect.objectContaining({ droppedAiBanned: 1 }),
+    );
+  });
+
+  it("REGRESSION (#9680): keeps an index candidate that OMITS aiPolicyAllowed (field-absent is not a ban)", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1, title: "Local candidate" })],
+      warnings: [],
+      rateLimitRemaining: 100,
+      rateLimitResetAt: null,
+    }));
+    const candidateNoField = indexCandidate({ issueNumber: 4, title: "Older-build candidate" });
+    delete (candidateNoField as { aiPolicyAllowed?: unknown }).aiPolicyAllowed;
+    const queryDiscoveryIndex = vi.fn(async () => ({
+      contractVersion: 1,
+      candidates: [candidateNoField],
+      nextCursor: null,
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      env: { LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      queryDiscoveryIndex: queryDiscoveryIndex as never,
+    });
+
+    expect(exitCode).toBe(0);
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    const issueNumbers = payload.ranked
+      .map((entry: { issueNumber: number }) => entry.issueNumber)
+      .sort((a: number, b: number) => a - b);
+    // A candidate that never carried aiPolicyAllowed must NOT become a fail-closed drop.
+    expect(issueNumbers).toEqual([1, 4]);
+  });
+
   it("uses the --search term as the discovery-index scope in search mode", async () => {
     const portfolioQueue = tempQueueStore();
     const searchCandidateIssuesWithSummary = vi.fn(async () => ({

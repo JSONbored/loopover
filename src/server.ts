@@ -890,9 +890,63 @@ async function main(): Promise<void> {
   // #deploy-orphaned-reviews: heal rows this very restart orphaned, BEFORE any webhook can bounce off them.
   // Fail-safe: a failure here must never block boot -- the 10-minute reconciliation sweep remains the backstop.
   try {
-    const { terminalizeActiveReviewsFromBeforeBoot } = await import("./db/repositories");
+    const { terminalizeActiveReviewsFromBeforeBoot, loadOrphanRequeueContext } = await import("./db/repositories");
     const healed = await terminalizeActiveReviewsFromBeforeBoot(env, new Date().toISOString());
     for (const row of healed) {
+      // #9870: healing the ROW is only half of it. The interrupted pass had already published the
+      // "LoopOver is reviewing..." placeholder comment, and terminalizing its tracking row does not replace
+      // that comment -- it only stops the next pass bouncing off a stale lock. Nothing else re-drives the PR
+      // either: the head has not changed, so no webhook fires, and the published review cache is empty
+      // because the pass never finished. The PR therefore sits claiming a review is in progress FOREVER.
+      //
+      // Observed on JSONbored/metagraphed#8693: three container recreates in one afternoon (two of them
+      // routine config reloads) each killed a mid-flight review, and the PR showed "reviewing..." with zero
+      // published reviews and zero queued work until a human noticed.
+      //
+      // So re-drive it. `force` bypasses the AI-review cache and the reuse cooldown, which is correct here:
+      // the interrupted pass produced no usable result to reuse, and the one-shot cadence would otherwise
+      // reuse a stale published review (or nothing at all) rather than actually re-reviewing.
+      try {
+        const context = await loadOrphanRequeueContext(env, row.repoFullName, row.pullNumber);
+        if (context !== null) {
+          await backend.queue.binding.send({
+            type: "agent-regate-pr",
+            deliveryId: `boot-orphan-requeue:${row.repoFullName}#${row.pullNumber}`,
+            repoFullName: row.repoFullName,
+            prNumber: row.pullNumber,
+            installationId: context.installationId,
+            // #9499: carries the PR's real creation time so this takes its NATURAL place in the oldest-first
+            // drain. Omitting it would sort this job ahead of every real PR -- a restart-orphaned review
+            // deserves to be re-driven, not to jump the contributor backlog.
+            prCreatedAt: context.prCreatedAt,
+            force: true,
+          } as never);
+        } else {
+          // A tracking row whose repo is no longer registered cannot be re-driven; say so rather than
+          // silently skipping, since the placeholder on that PR will stay until someone acts.
+          console.warn(
+            JSON.stringify({
+              level: "warn",
+              event: "active_review_boot_orphan_requeue_skipped",
+              repo: row.repoFullName,
+              pr: row.pullNumber,
+              reason: "no installation id for repo",
+            }),
+          );
+        }
+      } catch (error) {
+        // Never let a re-queue failure abort the sweep: the remaining rows still need healing, and a healed
+        // row with no re-queue is strictly better than a wedged one.
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "active_review_boot_orphan_requeue_failed",
+            repo: row.repoFullName,
+            pr: row.pullNumber,
+            message: String(error).slice(0, 200),
+          }),
+        );
+      }
       console.warn(
         JSON.stringify({
           level: "warn",

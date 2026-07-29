@@ -16,6 +16,9 @@ import {
   persistRepoGithubTotalsSnapshot,
   persistSignalSnapshot,
   startActiveReviewTracking,
+  loadOrphanRequeueContext,
+  upsertPullRequestFromGitHub,
+  upsertRepositoryFromGitHub,
   terminalizeActiveReviewsFromBeforeBoot,
   terminalizeActiveReviewTracking,
   updateUpstreamDriftReportIssue,
@@ -599,6 +602,45 @@ describe("active-review tracking (#review-evasion-protection)", () => {
       const rows = await listSignalSnapshots(env, "debug-signal", "repo-d");
       expect(rows[0]?.id).toBe("new-row");
     });
+  });
+});
+
+describe("loadOrphanRequeueContext (#9870)", () => {
+  it("returns the installation id AND the PR's real creation time", async () => {
+    // The boot sweep heals the tracking row, but re-queueing the pass needs both — and the tracking row
+    // carries neither. Without this the placeholder comment stays published forever.
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { full_name: "owner/repo", name: "repo", id: 1, private: false } as never, 4242);
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 7, title: "t", state: "open", user: { login: "c" }, head: { sha: "s7" }, labels: [], created_at: "2026-07-05T10:00:00.000Z",
+    } as never);
+    expect(await loadOrphanRequeueContext(env, "owner/repo", 7)).toEqual({ installationId: 4242, prCreatedAt: "2026-07-05T10:00:00.000Z" });
+  });
+
+  it("INVARIANT (#9499): prCreatedAt is carried so the re-queue does NOT jump the backlog", async () => {
+    // Omitting it inverts the order: jobClaimSortKey falls back to a ~9.5e11 base that sorts ahead of every
+    // real 2026 PR (~1.78e12). A restart-orphaned review should be re-driven, not prioritised over work
+    // that has waited longer. The repo-wide regate-sort-key check enforces the same rule at the call site.
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { full_name: "owner/repo", name: "repo", id: 1, private: false } as never, 4242);
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 8, title: "t", state: "open", user: { login: "c" }, head: { sha: "s8" }, labels: [], created_at: "2026-07-06T09:00:00.000Z",
+    } as never);
+    const context = await loadOrphanRequeueContext(env, "owner/repo", 8);
+    expect(context?.prCreatedAt).toBe("2026-07-06T09:00:00.000Z");
+  });
+
+  it("INVARIANT: an unregistered repo yields null rather than a bogus id", async () => {
+    // A wrong id would enqueue a job that cannot act; null lets the caller log a skip an operator can see.
+    const env = createTestEnv();
+    expect(await loadOrphanRequeueContext(env, "owner/never-registered", 1)).toBeNull();
+  });
+
+  it("a registered repo with no stored PR row still resolves, with a null creation time", async () => {
+    // Better to re-drive with an unknown position than not at all; the sort key falls back and the pass runs.
+    const env = createTestEnv();
+    await upsertRepositoryFromGitHub(env, { full_name: "owner/repo", name: "repo", id: 1, private: false } as never, 4242);
+    expect(await loadOrphanRequeueContext(env, "owner/repo", 999)).toEqual({ installationId: 4242, prCreatedAt: null });
   });
 });
 

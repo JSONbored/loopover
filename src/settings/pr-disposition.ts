@@ -61,6 +61,13 @@ export type PrDispositionInput = {
   migrationCollisionHold: boolean;
   unlinkedIssueMatchHold: boolean;
   advisoryCheckHold: boolean;
+  /** #9810 follow-up: GitHub says `unstable`, but the ONLY non-passing check explaining it is one the
+   *  maintainer listed in `gate.ignoredCheckRuns`. LoopOver's own CI aggregate already excludes such a run --
+   *  yet `mergeable_state` is GitHub's computation, not ours, and it stays "unstable" while the check exists
+   *  at all. Without this the ignore was half-effective: the check no longer failed the gate, and the PR was
+   *  held anyway (observed on JSONbored/loopover#9816, reason "mergeable_state is unstable — non-required
+   *  check(s) not passing: Contributor trust"). Set ONLY when nothing else adverse was seen. */
+  unstableExplainedByIgnoredChecks?: boolean | undefined;
   /** A confirmed repeat unlinked-issue-match while `close` autonomy is NOT acting (the planner's own
    *  fold-into-hold escape hatch — see agent-actions.ts's heldForManualReview doc). */
   unlinkedIssueMatchCloseWithoutCloseActing: boolean;
@@ -89,14 +96,17 @@ export type PrDisposition = {
 
 export function derivePrDisposition(input: PrDispositionInput): PrDisposition {
   const mergeable = assessMergeableState(input.mergeableState);
+  // An "unstable" state that ONLY an ignored check explains carries no signal a maintainer asked to act on:
+  // they explicitly declared that check meaningless for this repo. Every other unstable cause still holds.
+  const unstableHolds = mergeable === "unstable" && input.unstableExplainedByIgnoredChecks !== true;
   const heldForManualReview =
     input.guardrailHit ||
     input.migrationCollisionHold ||
     input.unlinkedIssueMatchHold ||
     input.advisoryCheckHold ||
-    mergeable === "unstable" ||
+    unstableHolds ||
     input.unlinkedIssueMatchCloseWithoutCloseActing;
-  const heldForUnstableMergeState = mergeable === "unstable";
+  const heldForUnstableMergeState = unstableHolds;
   const wouldApprove = input.reviewGood && !heldForManualReview && mergeable !== "conflict";
   const wouldMerge = input.reviewGood && !heldForManualReview && mergeable === "clean";
   // The comment's historical downgrade set, byte-identical to deriveUnifiedStatus's own
@@ -104,7 +114,7 @@ export function derivePrDisposition(input: PrDispositionInput): PrDisposition {
   // downgrades the COMMENT's "safe to merge" claim (the rebase hasn't happened yet) even though it never
   // holds the PLANNER (the rebase rail acts) — a deliberate, documented asymmetry, not drift: the two
   // surfaces answer different questions ("is it safe to claim mergeable NOW" vs "should a human step in").
-  const commentMergeStateHeld = mergeable === "conflict" || mergeable === "behind" || mergeable === "unstable";
+  const commentMergeStateHeld = mergeable === "conflict" || mergeable === "behind" || unstableHolds;
   return { mergeable, heldForManualReview, heldForUnstableMergeState, wouldApprove, wouldMerge, commentMergeStateHeld };
 }
 

@@ -1254,7 +1254,13 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // separate from review_state_label so a one-shot repo can opt into `manual-review` without also enabling the
   // older ready/changes disposition labels. It is authorized by merge autonomy because it only fires when a
   // would-merge PR is held for a human by a guardrail.
-  if (reviewGood && guardrailHit && labels.manualReview !== null && acting("merge") && !hasLabelOrPlanned(input.pr.labels, actions, labels.manualReview)) {
+  //
+  // `!guardrailEscalationCleared` is load-bearing (#9808/#9869): the label announces a HOLD, and a cleared
+  // escalation means there is no hold — the escalated review vouched for the guarded path and the merge below
+  // proceeds. Without this term the planner emitted both in the same pass, merging the PR while also tagging it
+  // for a human to look at, which is self-contradictory and leaves a manual-review label sitting on merged PRs
+  // in exactly the full-autonomy mode this feature exists to enable.
+  if (reviewGood && guardrailHit && !guardrailEscalationCleared && labels.manualReview !== null && acting("merge") && !hasLabelOrPlanned(input.pr.labels, actions, labels.manualReview)) {
     actions.push({
       actionClass: "label",
       autonomyClass: "merge",

@@ -222,7 +222,8 @@ describe("unstable explained only by an IGNORED check (#9810 follow-up)", () => 
 describe("guardrail hold released by a clean escalated review (#9808 second half)", () => {
   const base = {
     reviewGood: true, guardrailHit: true, migrationCollisionHold: false, unlinkedIssueMatchHold: false,
-    advisoryCheckHold: false, unlinkedIssueMatchCloseWithoutCloseActing: false, mergeableState: "clean",
+    advisoryCheckHold: false, priorityEligibilityHold: false, unlinkedIssueMatchCloseWithoutCloseActing: false,
+    mergeableState: "clean",
   };
 
   it("REGRESSION: cleared ⇒ the PR proceeds instead of summoning a human", () => {

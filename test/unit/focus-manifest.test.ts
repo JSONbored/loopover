@@ -1674,6 +1674,22 @@ describe("parseFocusManifest gate config", () => {
       expect(parseFocusManifest({ gate }).gate.present).toBe(true);
     }
 
+    // #9808/#9869: onCleanReview is the field that decides whether a CLEAN escalated review RELEASES the
+    // guardrail hold or merely records it, so it must survive the whole path -- parse, presence, round-trip,
+    // and (the gap this closes) the RESOLVE step that folds it into effective settings. Parsing it correctly
+    // and then dropping it during resolution would silently restore the old always-hold behaviour, with the
+    // manifest still reading as if full autonomy were configured.
+    const clean = parseFocusManifest({ gate: { guardrailEscalation: { effort: "high", onCleanReview: "proceed" } } });
+    expect(clean.gate.guardrailEscalationOnCleanReview).toBe("proceed");
+    expect(clean.gate.present).toBe(true);
+    expect(resolveEffectiveSettings({} as RepositorySettings, clean).guardrailEscalationOnCleanReview).toBe("proceed");
+    expect(parseFocusManifest({ gate: gateConfigToJson(clean.gate) }).gate).toEqual(clean.gate);
+    // onCleanReview ALONE flips presence, like each of its six siblings above.
+    expect(parseFocusManifest({ gate: { guardrailEscalation: { onCleanReview: "hold" } } }).gate.present).toBe(true);
+    // Left unset it stays null, so the resolver leaves effective settings untouched and the default (hold)
+    // stands -- the nullish arm of the same line, which is what a repo that never configured this gets.
+    expect(resolveEffectiveSettings({} as RepositorySettings, parseFocusManifest({ gate: { guardrailEscalation: { effort: "high" } } })).guardrailEscalationOnCleanReview).toBeUndefined();
+
     // Partial escalation: unset fields stay null (each falls through to repo/global downstream).
     const partial = parseFocusManifest({ gate: { guardrailEscalation: { effort: "high" } } });
     expect(partial.gate.guardrailEscalationEffort).toBe("high");

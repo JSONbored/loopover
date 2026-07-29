@@ -11,16 +11,27 @@ website only build trust if a skeptic can check them without asking anyone's per
 page is the end-to-end walkthrough: export the same corpus snapshot the numbers come from, verify
 its checksum, replay the same scorer over it, and compare what you get against what is published.
 
-Everything below runs read-only against a database export and pure functions from
-`@loopover/engine`. Nothing posts anywhere, nothing needs an API key.
+Everything below runs read-only against a corpus export and pure functions from `@loopover/engine`.
+Nothing posts anywhere, and nothing needs a LoopOver API key.
+
+<Callout variant="warn">
+  **Step 1 is not yet runnable by a stranger.** Exporting the corpus reads the deployment's own
+  database — with `--remote` that means the operator's Cloudflare D1, which needs *their* Cloudflare
+  credentials, not a LoopOver key. So today steps 1–3 are reproducible by an operator or by anyone
+  running a self-host deployment against their own data, and step 4 is the part a third party can
+  check unauthenticated. No anonymous corpus download exists yet; until one does, this page marks
+  each step with who can actually run it rather than implying everyone can run all of them.
+</Callout>
 
 For the wider contract — every claim, its artifact, and its trust assumption, including the ones you
 cannot check — see [what you can verify](/docs/what-you-can-verify).
 
-## 1. Export the corpus snapshot
+## 1. Export the corpus snapshot *(operator / self-host)*
 
 Every rule's fired/override history exports as a versioned, checksummed JSON snapshot
-([backtest &amp; calibration](/docs/backtest-calibration) explains how that history is recorded):
+([backtest &amp; calibration](/docs/backtest-calibration) explains how that history is recorded).
+`--remote` shells out to `wrangler d1 execute … --remote`, so it reads the deployed database and
+requires that deployment's own Cloudflare credentials:
 
 ```bash
 npx tsx scripts/backtest-corpus-export.ts --rule-id linked_issue_scope_mismatch --output corpus.json --remote
@@ -34,10 +45,12 @@ npx tsx scripts/backtest-corpus-export.ts --rule-id linked_issue_scope_mismatch 
 
 The snapshot's `checksum` field is a SHA-256 over the canonicalized cases (keys sorted, so
 property order can never change the hash). The fairness report's *reproducibility freeze point*
-shows the checksum of the corpus behind the latest persisted backtest run — an export of the same
-window reproduces the same checksum, byte for byte.
+shows that checksum for the **most recent persisted backtest run**, whichever single rule that run
+covered — re-exporting that rule over the same window reproduces the same checksum, byte for byte.
+It is one run's freeze point, not a per-rule commitment for every rule on the report, so compare it
+against an export of the rule the run actually covered.
 
-## 2. Verify the checksum
+## 2. Verify the checksum *(anyone, given a snapshot)*
 
 The manifest is self-verifying: recompute the hash over its own `cases` array and compare it to
 the recorded `checksum`. The canonicalization lives in `scripts/backtest-corpus-export-core.ts`
@@ -53,7 +66,7 @@ console.log(recomputed.checksum === saved.checksum ? "checksum OK" : "CHECKSUM M
 '
 ```
 
-## 3. Replay the scorer
+## 3. Replay the scorer *(anyone, given a snapshot)*
 
 The published precision comes from the same pure functions any Node script can import:
 `scoreBacktest` replays a classifier over the labeled cases, and `compareBacktestScores` applies
@@ -75,19 +88,42 @@ console.log(report);
 - **`null` is never `0`.** Precision and recall stay `null` below the decided-sample floor;
   the fairness report renders that as *insufficient data*, never as a zero.
 
-## 4. Compare against the published numbers
+## 4. Compare against the published numbers *(anyone)*
 
-The [fairness report](/fairness) renders each rule's decided-case count and measured precision
-from the public stats endpoint (`/v1/public/stats`, the `rulePrecision` block). The aggregated
-run history is also readable directly:
+The [fairness report](/fairness) renders each rule's decided-case count and measured precision from
+the public stats endpoint's `rulePrecision` block. That endpoint is served by the API host, not by
+this site, so fetch it absolutely — a bare `/v1/public/stats` resolves against `loopover.ai` and
+404s:
+
+```bash
+curl -s "https://api.loopover.ai/v1/public/stats" | jq '.rulePrecision'
+```
+
+The same per-rule numbers are also published as digest-committed
+[EvalScoreRecords](/docs/what-you-can-verify), each independently re-derivable without trusting the
+transport — recompute `recordDigest` over the record's own remaining fields and compare:
+
+```bash
+curl -s "https://api.loopover.ai/v1/public/eval-scores" | jq '.records'
+```
+
+That array is empty whenever the latest backtest run's corpus is empty. A checksum over zero cases
+is byte-identical for every rule and every window, so it commits to nothing a reader could re-derive
+the scores from — publishing a record against it would assert a reproducibility that does not exist.
+An empty `records` array therefore means *the numbers are not currently committed to a corpus*, never
+that the numbers are zero.
+
+The aggregated run history is readable directly too, again against the deployment's own database
+(operator / self-host):
 
 ```bash
 npx tsx scripts/backtest-track-record.ts --db loopover --remote
 ```
 
 Your replayed `confirmed / decided` for a rule should match the published precision for the same
-window; the freeze-point checksum ties the published numbers to the exact corpus you just
-verified.
+window. The freeze-point checksum ties the published numbers to the corpus you just verified only
+for the rule the latest run actually backtested — for any other rule it is a timestamped pointer to
+a different run, not a commitment to that rule's own cases.
 
 ## 5. Verify an attested run (when a run carries one)
 

@@ -7,8 +7,12 @@ import { isoWeekStart } from "./public-quality-metrics";
 // Public-safe: band labels and observable rates only — never raw slop-risk or credibility numbers.
 
 export const SLOP_DUPLICATE_TREND_WEEKS = 8;
-/** Max queue-health snapshots read per repo when shaping the maintainer trend card — two per week of history. */
-export const SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT = SLOP_DUPLICATE_TREND_WEEKS * 2;
+/** Row-count backstop for the maintainer trend card's per-repo snapshot read. queue-health snapshots are
+ *  written up to ~once per repo per generate-signal-snapshots run (several per day), so an 8-week window can
+ *  hold far more than two rows/week — a `* 2` cap silently truncated the history to its most recent few days.
+ *  The `sinceIso` time bound is the primary constraint now; this cap is a safety limit, budgeted generously
+ *  (up to daily-plus rows across the window) and clamped to the query's own 100 ceiling (#9699). */
+export const SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT = SLOP_DUPLICATE_TREND_WEEKS * 28;
 const MS_PER_WEEK = 7 * 86_400_000;
 const MIN_OPEN_PRS_FOR_RATE = 1;
 const SLOP_BAND_LOW_MAX_PCT = 25;

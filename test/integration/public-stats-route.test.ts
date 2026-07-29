@@ -24,6 +24,16 @@ async function seed(env: Env) {
     )
       .bind(`ae-${repo}-${number}`, `${repo}#${number}`)
       .run();
+    // #9792: the accuracy denominator reads engine AUTO-ACTIONS, not published surfaces, so a decided PR
+    // needs the action that decided it. The still-open one (loopover#3) gets its own agent.action.close
+    // below, since it was auto-closed and then reopened -- that is what makes it a reversal.
+    if (state === "closed") {
+      await env.DB.prepare(
+        `INSERT INTO audit_events (id, event_type, target_key, outcome) VALUES (?, ?, ?, 'completed')`,
+      )
+        .bind(`act-${repo}-${number}`, mergedAt ? "agent.action.merge" : "agent.action.close", `${repo}#${number}`)
+        .run();
+    }
     await env.DB.prepare(
       `INSERT INTO pull_requests (id, repo_full_name, number, title, state, merged_at) VALUES (?, ?, ?, ?, ?, ?)`,
     )

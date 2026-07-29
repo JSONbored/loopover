@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "LoopOver hosted discovery-index service (#4250) — a shared, cached GitHub issue/search fan-out and soft-claim coordinator opted-in miner instances can query instead of each independently hammering GitHub. Deploys standalone; see #7164.",
+  "description": "LoopOver hosted discovery-index service (#4250) \u2014 a shared, cached GitHub issue/search fan-out and soft-claim coordinator opted-in miner instances can query instead of each independently hammering GitHub. Deploys standalone; see #7164.",
   "engines": {
     "node": ">=22.0.0 <23.0.0"
   },
@@ -20,7 +20,7 @@
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",
     "@hono/node-server": "^2.0.11",
-    "@loopover/engine": "^3.4.0",
+    "@loopover/engine": "*",
     "@posthog/cli": "0.9.1",
     "hono": "^4.12.31",
     "posthog-node": "^5.46.1"

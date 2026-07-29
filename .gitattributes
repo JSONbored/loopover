@@ -1,0 +1,28 @@
+# Line endings are LF, in the repository and in every working tree.
+#
+# Without this file, a contributor on a CRLF platform (or an editor that preserved a file's existing
+# CRLF convention) could commit CRLF, and the `changes` CI job's `git diff --check` would then report
+# every added line as "trailing whitespace" -- git's default core.whitespace is `blank-at-eol` with
+# `cr-at-eol` OFF, so a carriage return at end-of-line IS trailing whitespace to it. The failure names
+# lines whose visible content is spotless, which is undiagnosable from the CI log alone (#9798).
+#
+# `text=auto` (not a bare `text`) is deliberate: it leaves git's binary detection in charge, so files
+# that embed NUL bytes on purpose -- the untrusted-text and sanitizer fixtures under src/, test/,
+# scripts/ and review-enrichment/ -- are classified binary and pass through byte-for-byte. Forcing
+# `* text eol=lf` would strip them of that protection and corrupt those fixtures.
+* text=auto eol=lf
+
+# Belt-and-braces for formats where a line-ending rewrite would corrupt the file outright. `text=auto`
+# above already spares them via NUL detection; these entries mean a format that happens to start with
+# printable bytes never depends on that heuristic.
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+*.zip binary
+*.gz binary

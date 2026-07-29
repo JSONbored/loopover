@@ -8,7 +8,7 @@
 // #2568 pattern for the sibling per-repo quality trend) can recompute any historical week correctly on every
 // request -- no cron-miss gap risk, no second copy of the number to keep in sync, and the SAME formula as the
 // live figure by construction, so the two can never silently diverge or read as inconsistent to a public viewer.
-import { loadReversalObservability, PUBLISHED_PR_KEYS, publicStatsProjects, safeAll } from "../review/public-stats";
+import { PUBLISHED_PR_KEYS, publicStatsProjects, safeAll } from "../review/public-stats";
 import { isoWeekStart } from "./public-quality-metrics";
 
 export const PUBLIC_ACCURACY_TREND_WEEKS = 8;
@@ -24,13 +24,16 @@ export type PublicAccuracyTrendWeek = {
   accuracyPct: number | null;
 };
 
-/** `merged`/`closed` are the DISPLAYED volume (own ledger + registered Orb fleet). `ownMerged`/`ownClosed` are
- *  the own-ledger-only pairing for `reversed`, which is own-ledger-only by construction (the Orb aggregate has
- *  no reversal concept). Accuracy divides the own-ledger numbers ONLY -- #7449 fixed exactly this asymmetry for
- *  the lifetime figure in public-stats.ts and it was never carried across to this trend, so the denominator grew
- *  with every newly registered install while the numerator stayed own-ledger-scoped, trending every week toward
- *  100% independent of real reversal behavior. */
-type DayRow = { day: string; merged: number; closed: number; ownMerged: number; ownClosed: number; reversed: number };
+/** `merged`/`closed` are the DISPLAYED volume (own ledger + registered Orb fleet). `autoActioned` is the
+ *  ACCURACY denominator: the PRs this deployment actually merged or closed itself that day.
+ *
+ *  Two separate reasons it cannot be the displayed volume. #7449: the Orb aggregate has no reversal concept, so
+ *  folding it in grows the denominator with every newly registered install while `reversed` stays own-ledger
+ *  scoped. And #9792: `reversed` is only ever recorded against an engine AUTO-ACTION (loadReversalDayRows
+ *  anchors on `agent.action.*`), so even the own-ledger published-PR count is wider than the population the
+ *  numerator can draw from -- it includes every PR the engine merely commented on. Both make the ratio drift
+ *  toward 100% for reasons that have nothing to do with reversal behavior. */
+type DayRow = { day: string; merged: number; closed: number; autoActioned: number; reversed: number };
 
 const MS_PER_WEEK = 7 * 86_400_000;
 
@@ -39,21 +42,17 @@ function roundPct(value: number): number {
 }
 
 /** Same formula as public-stats.ts's accuracyPct, reused so the trend and the live number can never drift
- *  apart into two competing definitions of "accuracy". `reversalObservable` false means this deployment records
- *  no terminal auto-actions for a reversal to be attributed to, so the week's accuracy is unknown, not perfect --
- *  the volume columns still publish, since those ARE measured. */
-function publicBucketOf(
-  bucket: { merged: number; closed: number; ownMerged: number; ownClosed: number; reversed: number },
-  reversalObservable: boolean,
-): Omit<PublicAccuracyTrendWeek, "weekStart"> {
+ *  apart into two competing definitions of "accuracy". The volume columns still publish when accuracy cannot:
+ *  those ARE measured. */
+function publicBucketOf(bucket: { merged: number; closed: number; autoActioned: number; reversed: number }): Omit<PublicAccuracyTrendWeek, "weekStart"> {
   const decided = bucket.merged + bucket.closed;
   if (decided < MIN_ACCURACY_TREND_SAMPLE) return { merged: null, closed: null, reversed: null, accuracyPct: null };
   const observed = { merged: bucket.merged, closed: bucket.closed, reversed: bucket.reversed };
-  if (!reversalObservable) return { ...observed, accuracyPct: null };
-  // Own-ledger-only denominator: `reversed` can only ever be attributed to own-ledger PRs (see DayRow).
-  const ownDecided = bucket.ownMerged + bucket.ownClosed;
-  if (ownDecided <= 0) return { ...observed, accuracyPct: null };
-  const reversalRate = Math.min(1, bucket.reversed / ownDecided);
+  // No auto-actions that week means no PR a reversal could have been recorded against, so accuracy is
+  // unknown rather than perfect. This replaces the separate observability probe (#9718): the denominator IS
+  // the signal now, and one structural guarantee beats a heuristic that could disagree with it.
+  if (bucket.autoActioned <= 0) return { ...observed, accuracyPct: null };
+  const reversalRate = Math.min(1, bucket.reversed / bucket.autoActioned);
   return { ...observed, accuracyPct: roundPct(1 - reversalRate) };
 }
 
@@ -63,11 +62,10 @@ export function buildPublicAccuracyTrend(
   dayRows: DayRow[],
   nowMs: number,
   weeks: number = PUBLIC_ACCURACY_TREND_WEEKS,
-  reversalObservable = true,
 ): PublicAccuracyTrendWeek[] {
   const currentStartMs = Date.parse(isoWeekStart(nowMs));
   const oldestStartMs = currentStartMs - (weeks - 1) * MS_PER_WEEK;
-  const buckets = Array.from({ length: weeks }, () => ({ merged: 0, closed: 0, ownMerged: 0, ownClosed: 0, reversed: 0 }));
+  const buckets = Array.from({ length: weeks }, () => ({ merged: 0, closed: 0, autoActioned: 0, reversed: 0 }));
 
   for (const row of dayRows) {
     const dayMs = Date.parse(`${row.day}T00:00:00.000Z`);
@@ -77,14 +75,13 @@ export function buildPublicAccuracyTrend(
     const bucket = buckets[weekOffset]!;
     bucket.merged += row.merged;
     bucket.closed += row.closed;
-    bucket.ownMerged += row.ownMerged;
-    bucket.ownClosed += row.ownClosed;
+    bucket.autoActioned += row.autoActioned;
     bucket.reversed += row.reversed;
   }
 
   return buckets.map((bucket, offset) => ({
     weekStart: isoWeekStart(oldestStartMs + offset * MS_PER_WEEK),
-    ...publicBucketOf(bucket, reversalObservable),
+    ...publicBucketOf(bucket),
   }));
 }
 
@@ -119,6 +116,34 @@ async function loadOwnLedgerDayRows(env: Env, projects: string[], sinceIso: stri
   ]);
   for (const row of mergedRows) map.set(row.day, { merged: row.n, closed: (map.get(row.day)?.closed ?? 0) });
   for (const row of closedRows) map.set(row.day, { merged: (map.get(row.day)?.merged ?? 0), closed: row.n });
+  return map;
+}
+
+/** Distinct PRs this deployment AUTO-ACTIONED per day -- the accuracy denominator. Deliberately the same
+ *  population, filters and dry-run exclusion as loadReversalDayRows' inner `orig` query below, because the
+ *  numerator is drawn from exactly these rows; any divergence between the two would silently reintroduce a
+ *  ratio over mismatched populations. */
+async function loadAutoActionDayRows(env: Env, projects: string[], sinceIso: string): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  if (projects.length === 0) return map;
+  const inList = projects.map(() => "?").join(", ");
+  const rows = await safeAll<{ day: string; n: number }>(
+    env,
+    `SELECT date(act.created_at) AS day, COUNT(DISTINCT act.target_key) AS n FROM (
+        SELECT substr(target_key, 1, instr(target_key, '#') - 1) AS project, target_key, created_at
+          FROM audit_events
+         WHERE event_type IN ('agent.action.close', 'agent.action.merge')
+           AND outcome = 'completed' AND instr(target_key, '#') > 0
+           AND length(target_key) - length(replace(target_key, '#', '')) = 1
+           AND COALESCE(json_extract(metadata_json, '$.mode'), 'live') <> 'dry_run'
+           AND created_at >= ?
+      ) act
+      WHERE LOWER(act.project) IN (${inList})
+      GROUP BY day`,
+    sinceIso,
+    ...projects,
+  );
+  for (const row of rows) map.set(row.day, row.n);
   return map;
 }
 
@@ -192,22 +217,21 @@ export async function loadPublicAccuracyTrend(env: Env, nowMs: number = Date.now
   const projects = publicStatsProjects(env);
   const sinceIso = new Date(Date.parse(isoWeekStart(nowMs)) - (PUBLIC_ACCURACY_TREND_WEEKS - 1) * MS_PER_WEEK).toISOString();
 
-  const [ownLedger, reversals, orb, reversalObservable] = await Promise.all([
+  const [ownLedger, reversals, orb, autoActions] = await Promise.all([
     loadOwnLedgerDayRows(env, projects, sinceIso),
     loadReversalDayRows(env, projects, sinceIso),
     loadOrbDayRows(env, sinceIso),
-    loadReversalObservability(env),
+    loadAutoActionDayRows(env, projects, sinceIso),
   ]);
 
-  const days = new Set([...ownLedger.keys(), ...reversals.keys(), ...orb.keys()]);
+  const days = new Set([...ownLedger.keys(), ...reversals.keys(), ...orb.keys(), ...autoActions.keys()]);
   const dayRows: DayRow[] = [...days].map((day) => ({
     day,
     merged: (ownLedger.get(day)?.merged ?? 0) + (orb.get(day)?.merged ?? 0),
     closed: (ownLedger.get(day)?.closed ?? 0) + (orb.get(day)?.closed ?? 0),
-    ownMerged: ownLedger.get(day)?.merged ?? 0,
-    ownClosed: ownLedger.get(day)?.closed ?? 0,
+    autoActioned: autoActions.get(day) ?? 0,
     reversed: reversals.get(day) ?? 0,
   }));
 
-  return buildPublicAccuracyTrend(dayRows, nowMs, PUBLIC_ACCURACY_TREND_WEEKS, reversalObservable);
+  return buildPublicAccuracyTrend(dayRows, nowMs);
 }

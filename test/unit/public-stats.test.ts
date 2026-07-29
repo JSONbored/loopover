@@ -6,7 +6,6 @@ import {
   getPublicStats,
   isPublicStatsEnabled,
   MINUTES_SAVED_PER_PR,
-  loadReversalObservability,
   resolvePublicStatsManifestOverride,
 } from "../../src/review/public-stats";
 import { recordAuditEvent, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
@@ -58,6 +57,14 @@ function isDispositions(sql: string): boolean {
 // The reversal read is the only one that reads the recorded reversal_reopened/reversal_reverted events.
 function isReversal(sql: string): boolean {
   return sql.includes("reversal_reopened");
+}
+// #9792: the ACCURACY denominator reads engine auto-actions (agent.action.close/merge), a strictly narrower
+// population than the published surfaces isDispositions serves -- a reversal can only exist for a PR the
+// engine actually merged or closed. Every fixture below returns the same merged/closed here as it does for
+// dispositions, i.e. it models a world where every decided PR was auto-actioned; the tests that need those
+// two populations to DIFFER say so explicitly.
+function isAutoAction(sql: string): boolean {
+  return sql.includes("agent.action.close") && !isReversal(sql);
 }
 
 describe("isPublicStatsEnabled", () => {
@@ -172,6 +179,13 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
           closed: 24,
           inReview: 267,
         },
+      ];
+    }
+    if (isAutoAction(sql)) {
+      return [
+        { project: "JSONbored/awesome-claude", merged: 1231, closed: 524 },
+        { project: "JSONbored/metagraphed", merged: 137, closed: 176 },
+        { project: "JSONbored/loopover", merged: 24, closed: 24 },
       ];
     }
     if (isReversal(sql)) {
@@ -337,6 +351,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     // (6000 merged + 4000 closed, with no reversal data at all) must NOT dilute the denominator toward 100.
     const handler = (sql: string): Row[] => {
       if (isDispositions(sql)) return [{ project: "JSONbored/loopover", reviewed: 100, merged: 100, closed: 0, inReview: 0 }];
+      if (isAutoAction(sql)) return [{ project: "JSONbored/loopover", merged: 100, closed: 0 }];
       if (isReversal(sql)) return [{ project: "JSONbored/loopover", reversed: 10 }];
       if (sql.includes("orb_pr_outcomes")) return [{ merged: 6000, closed: 4000, total: 10000 }];
       return [];
@@ -382,6 +397,9 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     // of merged+closed but still counted as reversals). decided=1, reversed=2 → an unclamped 1 - 2/1 = -100%.
     const handler = (sql: string): Row[] => {
       if (isDispositions(sql)) return [{ project: "JSONbored/loopover", reviewed: 3, merged: 1, closed: 0, inReview: 2 }];
+      // All three were auto-actioned; the two reopened ones are now `open`, so they fall out of merged+closed
+      // while still counting as reversals -- which is exactly what makes the ratio exceed 1 and need clamping.
+      if (isAutoAction(sql)) return [{ project: "JSONbored/loopover", merged: 1, closed: 0 }];
       if (isReversal(sql)) return [{ project: "JSONbored/loopover", reversed: 2 }];
       return [];
     };
@@ -467,7 +485,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     await db
       .prepare(
         `INSERT INTO audit_events (id, event_type, target_key, outcome, metadata_json)
-         VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?), (?, ?, ?, ?, ?), (?, ?, ?, ?, ?)`,
       )
       .bind(
         "published",
@@ -475,6 +493,14 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
         "JSONbored/loopover#1",
         "completed",
         "{}",
+        // The engine's own merge. A PR cannot be REVERTED unless the engine merged it, so a fixture with a
+        // reversal and no auto-action does not describe a reachable state -- and #9792 made the accuracy
+        // denominator read exactly these rows.
+        "auto-merged",
+        "agent.action.merge",
+        "JSONbored/loopover#1",
+        "completed",
+        JSON.stringify({ repoFullName: "JSONbored/loopover", actionClass: "merge" }),
         "reverted",
         "reversal_reverted",
         "JSONbored/loopover#1",
@@ -737,6 +763,39 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.byProject.map((row) => row.accuracyPct)).toEqual([null]);
   });
 
+  it("REGRESSION: a repo with reviewed PRs but no AUTO-ACTIONS publishes null accuracy, not 100% (real D1)", async () => {
+    // The live defect #9792 fixes. After #9718's observability gate and #9768's retention window both
+    // shipped, production still published 100% for all three repos on 2377/602/508 reviewed PRs with zero
+    // reversals -- because the denominator counted every PR that got a review surface, including the many
+    // the engine only commented on. A reversal can only exist for a PR the engine merged or closed, so a
+    // repo the engine never auto-actioned has no measurable accuracy at all.
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/loopover" });
+    await upsertRepositoryFromGitHub(env, { name: "loopover", full_name: "JSONbored/loopover", private: false, owner: { login: "JSONbored" } }, 1);
+    for (const number of [1, 2, 3]) {
+      await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number, title: `pr ${number}`, state: "closed", merged_at: new Date(NOW - 86_400_000).toISOString(), user: { login: "a" }, head: { sha: `s${number}` }, labels: [] });
+      await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: `JSONbored/loopover#${number}`, outcome: "completed" });
+    }
+
+    const out = await getPublicStats(env, NOW);
+    // The volume is real and still published -- only the ratio is withheld.
+    expect(out.totals.reviewed).toBe(3);
+    expect(out.totals.merged).toBe(3);
+    expect(out.byProject[0]?.accuracyPct).toBeNull();
+    expect(out.totals.accuracyPct).toBeNull();
+  });
+
+  it("REGRESSION: a dry-run auto-action never counts toward the denominator (real D1)", async () => {
+    // loadReversalDayRows already excludes dry-runs from the numerator's anchor; the denominator has to
+    // agree or a dry-run would inflate it and drag accuracy toward 100%.
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/loopover" });
+    await upsertRepositoryFromGitHub(env, { name: "loopover", full_name: "JSONbored/loopover", private: false, owner: { login: "JSONbored" } }, 1);
+    await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number: 1, title: "dry", state: "closed", merged_at: new Date(NOW - 86_400_000).toISOString(), user: { login: "a" }, head: { sha: "s1" }, labels: [] });
+    await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: "JSONbored/loopover#1", outcome: "completed" });
+    await recordAuditEvent(env, { eventType: "agent.action.merge", targetKey: "JSONbored/loopover#1", outcome: "completed", metadata: { mode: "dry_run" } });
+
+    expect((await getPublicStats(env, NOW)).byProject[0]?.accuracyPct).toBeNull();
+  });
+
   it("REGRESSION: the accuracy denominator is bounded to audit_events' retention window, not lifetime (real D1)", async () => {
     // `github_app.pr_public_surface_published` is the ONE retention-exempt event type, so reviewed/merged/
     // closed are immortal, while `reversal_*` rows prune at 90 days. Pairing them made 1 - reversed/decided
@@ -751,6 +810,9 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     for (const number of [1, 2, 3, 4]) {
       await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number, title: `old ${number}`, state: "closed", merged_at: old, user: { login: "a" }, head: { sha: `s${number}` }, labels: [] });
       await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: `JSONbored/loopover#${number}`, outcome: "completed", createdAt: old });
+      // Auto-actioned back then too -- so this test proves the WINDOW excludes them, not merely that they
+      // were never auto-actioned.
+      await recordAuditEvent(env, { eventType: "agent.action.merge", targetKey: `JSONbored/loopover#${number}`, outcome: "completed", createdAt: old });
     }
     // One recent auto-closed PR, reversed by a human.
     await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number: 5, title: "recent", state: "open", user: { login: "b" }, head: { sha: "s5" }, labels: [] });
@@ -761,19 +823,21 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     // PR#5 which is currently `open` and so counts as inReview, not decided.
     await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number: 6, title: "recent ok", state: "closed", merged_at: recent, user: { login: "c" }, head: { sha: "s6" }, labels: [] });
     await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: "JSONbored/loopover#6", outcome: "completed", createdAt: recent });
+    await recordAuditEvent(env, { eventType: "agent.action.merge", targetKey: "JSONbored/loopover#6", outcome: "completed", createdAt: recent });
 
     const out = await getPublicStats(env, NOW);
     // Lifetime volume still reports every PR ever published -- that part is measured and unaffected.
     expect(out.totals.reviewed).toBe(6);
     expect(out.totals.merged).toBe(5);
     expect(out.totals.reversed).toBe(1);
-    // Accuracy divides by the WINDOWED denominator (PR#6 merged inside the window), not the lifetime 5.
-    // 1 - 1/1 = 0%, not the 1 - 1/5 = 80% the old lifetime pairing would have published.
+    // Accuracy divides by the windowed AUTO-ACTION denominator: PR#6 is the only auto-action inside the
+    // window that still reads as merged/closed (PR#5 was reopened, so it is `open` and falls out), against
+    // PR#5's reversal. 1 - 1/1 = 0%, not the 1 - 1/5 = 80% a lifetime published-PR pairing would publish.
     expect(out.byProject[0]?.accuracyPct).toBe(0);
     expect(out.totals.accuracyPct).toBe(0);
   });
 
-  it("publishes a real accuracy once the deployment records the auto-actions a reversal attaches to (real D1)", async () => {
+  it("publishes a real accuracy once the deployment records the auto-action a reversal attaches to (real D1)", async () => {
     const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/loopover" });
     await upsertRepositoryFromGitHub(env, { name: "loopover", full_name: "JSONbored/loopover", private: false, owner: { login: "JSONbored" } }, 1);
     await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number: 1, title: "PR 1", state: "closed", merged_at: "2026-06-20T09:00:00.000Z", user: { login: "a" }, head: { sha: "s1" }, labels: [] });
@@ -978,29 +1042,6 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.totals.handled).toBe(0);
     expect(out.byProject).toEqual([]);
     expect(out.weekly).toEqual({ reviewed: 0, merged: 0 });
-  });
-});
-
-describe("loadReversalObservability", () => {
-  it("short-circuits to true on a known reversal without querying at all", async () => {
-    const env = { DB: { prepare: () => { throw new Error("must not query"); } } } as unknown as Env;
-    expect(await loadReversalObservability(env, 1)).toBe(true);
-  });
-
-  it("is false on a deployment that has recorded no terminal auto-action", async () => {
-    expect(await loadReversalObservability(createTestEnv(), 0)).toBe(false);
-  });
-
-  it("is true once a terminal auto-action exists in the retained window", async () => {
-    const env = createTestEnv();
-    await recordAuditEvent(env, { eventType: "agent.action.close", targetKey: "JSONbored/loopover#3", outcome: "completed" });
-    expect(await loadReversalObservability(env, 0)).toBe(true);
-  });
-
-  it("degrades to false (never throws) when the probe query itself fails", async () => {
-    const broken = createTestEnv();
-    broken.DB = { prepare: () => { throw new Error("boom"); } } as never;
-    expect(await loadReversalObservability(broken, 0)).toBe(false);
   });
 });
 

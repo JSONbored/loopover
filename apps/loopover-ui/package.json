@@ -23,8 +23,8 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@loopover/contract": "^0.1.0",
-    "@loopover/ui-kit": ">=0.1.0 <2.0.0",
+    "@loopover/contract": "*",
+    "@loopover/ui-kit": "*",
     "@radix-ui/react-accordion": "^1.2.18",
     "@radix-ui/react-alert-dialog": "^1.1.21",
     "@radix-ui/react-aspect-ratio": "^1.1.13",

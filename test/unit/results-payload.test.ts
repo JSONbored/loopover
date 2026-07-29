@@ -74,3 +74,75 @@ describe("buildResultsPayload — packages a completed loop iteration (#4801)", 
     expect(p.summary).toBe(`Opened PR #12 in acme/widgets: ${title}. no file changes. Status: open.`);
   });
 });
+
+describe("buildResultsPayload — validates link inputs and normalizes counts (#9611)", () => {
+  it("regression: a traversal-shaped repoFullName never becomes a customer-facing prLink", () => {
+    const p = buildResultsPayload({ repoFullName: "acme/widgets/../../evil", prNumber: 1, title: "t" });
+    expect(p.prLink).toBeNull();
+    expect(p.summary).toContain("unknown repository");
+    expect(p.summary).not.toContain("../");
+  });
+
+  it("renders 'unknown repository' for a malformed repoFullName while still returning the payload", () => {
+    for (const repoFullName of ["no-slash", "acme/", "/widgets", "acme/wid gets", "./widgets", "acme/..", "../widgets"]) {
+      const p = buildResultsPayload({ repoFullName, prNumber: 5, title: "t" });
+      expect(p.prLink).toBeNull();
+      expect(p.summary).toBe("Opened PR #5 in unknown repository: t. no file changes. Status: open.");
+    }
+  });
+
+  it("regression: prNumber 0 takes the no-PR branch", () => {
+    const p = buildResultsPayload({ repoFullName: "acme/widgets", prNumber: 0, title: "t" });
+    expect(p.prLink).toBeNull();
+    expect(p.summary).toBe("No pull request was opened for acme/widgets: t. no file changes. Status: open.");
+  });
+
+  it("treats a negative or non-integer prNumber as no PR", () => {
+    for (const prNumber of [-3, 2.5, Number.NaN]) {
+      const p = buildResultsPayload({ repoFullName: "acme/widgets", prNumber, title: "t" });
+      expect(p.prLink).toBeNull();
+      expect(p.summary).toBe("No pull request was opened for acme/widgets: t. no file changes. Status: open.");
+    }
+  });
+
+  it("an invalid repoFullName with a valid prNumber still yields prLink === null", () => {
+    const p = buildResultsPayload({ repoFullName: "acme/widgets/../../evil", prNumber: 42, title: "t" });
+    expect(p.prLink).toBeNull();
+    expect(p.summary).toContain("Opened PR #42 in unknown repository");
+  });
+
+  it("a valid repoFullName with an invalid prNumber still renders the repo name in the summary", () => {
+    const p = buildResultsPayload({ repoFullName: "acme/widgets", prNumber: -1, title: "t" });
+    expect(p.prLink).toBeNull();
+    expect(p.summary).toContain("No pull request was opened for acme/widgets");
+  });
+
+  it("a valid repoFullName and positive-integer prNumber still produce the canonical link", () => {
+    const p = buildResultsPayload({ repoFullName: "acme/widgets", prNumber: 42, title: "t" });
+    expect(p.prLink).toBe("https://github.com/acme/widgets/pull/42");
+    expect(p.summary).toContain("Opened PR #42 in acme/widgets");
+  });
+
+  it("normalizes negative and fractional per-file counts to non-negative integers", () => {
+    const p = buildResultsPayload({ repoFullName: "acme/widgets", prNumber: 1, title: "t", changedFiles: [{ path: "a", additions: -5, deletions: 2.7 }] });
+    expect(p.diffPreview[0]).toEqual({ path: "a", additions: 0, deletions: 2 });
+    expect(p.totals).toEqual({ files: 1, additions: 0, deletions: 2 });
+  });
+
+  it("normalizes non-finite per-file counts to zero and passes finite non-negative integers through", () => {
+    const p = buildResultsPayload({
+      repoFullName: "acme/widgets",
+      prNumber: 1,
+      title: "t",
+      changedFiles: [
+        { path: "a", additions: Number.NaN, deletions: Number.POSITIVE_INFINITY },
+        { path: "b", additions: 3, deletions: 0 },
+      ],
+    });
+    expect(p.diffPreview).toEqual([
+      { path: "a", additions: 0, deletions: 0 },
+      { path: "b", additions: 3, deletions: 0 },
+    ]);
+    expect(p.totals).toEqual({ files: 2, additions: 3, deletions: 0 });
+  });
+});

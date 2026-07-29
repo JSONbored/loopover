@@ -30,28 +30,60 @@ type SpecEntry = {
 const INTERNAL_AUTH = { 401: { description: "Invalid internal token" } };
 const QUEUED = { 202: { description: "Job queued" }, ...INTERNAL_AUTH };
 const RAN = { 200: { description: "Job ran inline and returned its result" }, ...INTERNAL_AUTH };
+/** Attached PER ENTRY, never folded into QUEUED/RAN: only some job routes validate a body, and widening
+ *  the shared constants would attach a 400 to every route that happily accepts any body (#9706). */
+const MALFORMED = { 400: { description: "Malformed job request" } };
 
-/** `[path segment, operationId stem, human summary]` for the jobs that have BOTH forms. */
-const JOB_PAIRS: ReadonlyArray<readonly [string, string, string]> = [
-  ["refresh-registry", "RefreshRegistry", "refresh the Gittensor registry snapshot"],
-  ["refresh-scoring-model", "RefreshScoringModel", "refresh the active scoring model"],
-  ["refresh-upstream-drift", "RefreshUpstreamDrift", "recompute upstream ruleset drift"],
-  ["file-upstream-drift-issues", "FileUpstreamDriftIssues", "file issues for open upstream drift"],
-  ["build-contributor-decision-packs", "BuildContributorDecisionPacks", "rebuild contributor decision packs"],
-  ["refresh-contributor-activity", "RefreshContributorActivity", "refresh cached contributor activity"],
-  ["generate-signal-snapshots", "GenerateSignalSnapshots", "generate signal snapshots"],
-  ["generate-weekly-value-report", "GenerateWeeklyValueReport", "generate the weekly value report"],
-  ["generate-review-recap", "GenerateReviewRecap", "generate the maintainer review recap"],
-  ["backfill-registered-repos", "BackfillRegisteredRepos", "backfill registered repository records"],
-  ["backfill-repo-segment", "BackfillRepoSegment", "backfill repository segment assignments"],
-  ["backfill-pr-details", "BackfillPrDetails", "backfill pull-request detail rows"],
-  ["rollup-product-usage", "RollupProductUsage", "roll up product usage counters"],
+/**
+ * A job that exists in BOTH forms: a bare POST that ENQUEUES onto the durable queue, and a `/run` sibling
+ * that executes inline. `queueValidates`/`runValidates` say which form rejects a malformed body -- the two
+ * are genuinely independent (build-contributor-decision-packs validates `login` only on `/run`), so a
+ * single flag would have published a 400 the bare form never returns.
+ */
+type JobPair = { segment: string; stem: string; summary: string; queueValidates?: boolean; runValidates?: boolean };
+
+const JOB_PAIRS: readonly JobPair[] = [
+  { segment: "refresh-registry", stem: "RefreshRegistry", summary: "refresh the Gittensor registry snapshot" },
+  { segment: "refresh-scoring-model", stem: "RefreshScoringModel", summary: "refresh the active scoring model" },
+  { segment: "refresh-upstream-drift", stem: "RefreshUpstreamDrift", summary: "recompute upstream ruleset drift" },
+  { segment: "file-upstream-drift-issues", stem: "FileUpstreamDriftIssues", summary: "file issues for open upstream drift" },
+  { segment: "build-contributor-decision-packs", stem: "BuildContributorDecisionPacks", summary: "rebuild contributor decision packs", runValidates: true },
+  { segment: "refresh-contributor-activity", stem: "RefreshContributorActivity", summary: "refresh cached contributor activity", queueValidates: true, runValidates: true },
+  { segment: "generate-signal-snapshots", stem: "GenerateSignalSnapshots", summary: "generate signal snapshots" },
+  { segment: "generate-weekly-value-report", stem: "GenerateWeeklyValueReport", summary: "generate the weekly value report" },
+  { segment: "generate-review-recap", stem: "GenerateReviewRecap", summary: "generate the maintainer review recap", queueValidates: true, runValidates: true },
+  { segment: "backfill-registered-repos", stem: "BackfillRegisteredRepos", summary: "backfill registered repository records" },
+  { segment: "backfill-repo-segment", stem: "BackfillRepoSegment", summary: "backfill repository segment assignments", queueValidates: true, runValidates: true },
+  { segment: "backfill-pr-details", stem: "BackfillPrDetails", summary: "backfill pull-request detail rows", queueValidates: true, runValidates: true },
+  { segment: "rollup-product-usage", stem: "RollupProductUsage", summary: "roll up product usage counters" },
 ];
 
-/** Jobs that exist only in the bare (enqueue-or-run) form. */
-const SINGLE_JOBS: ReadonlyArray<readonly [string, string, string]> = [
-  ["rag-index", "RunRagIndex", "index repository content for retrieval"],
-  ["regate-pr", "RegatePullRequest", "re-run the gate for one pull request"],
+/**
+ * Jobs that exist only in the bare form.
+ *
+ * Every one of them ENQUEUES and answers 202 -- so the summary reads "Queue a job to", and the success
+ * status is 202 rather than the 200 this table used to publish, which was unreachable for all five.
+ * Responses vary per entry because the handlers do: rag-index 404s when retrieval is disabled and never
+ * validates a body at all (an unparseable one becomes `{}`), while regate-pr does both.
+ */
+type SingleJob = { segment: string; operationId: string; summary: string; responses: Record<number, { description: string }> };
+
+const SINGLE_JOBS: readonly SingleJob[] = [
+  {
+    segment: "rag-index",
+    operationId: "RunRagIndex",
+    summary: "index repository content for retrieval",
+    responses: { ...QUEUED, 404: { description: "Retrieval is not enabled on this deployment" } },
+  },
+  {
+    segment: "regate-pr",
+    operationId: "RegatePullRequest",
+    summary: "re-run the gate for one pull request",
+    responses: { ...QUEUED, ...MALFORMED, 404: { description: "The repository is not installed" } },
+  },
+  { segment: "build-contributor-evidence", operationId: "queueBuildContributorEvidenceJob", summary: "build contributor evidence", responses: QUEUED },
+  { segment: "build-burden-forecasts", operationId: "queueBuildBurdenForecastsJob", summary: "build burden forecasts", responses: QUEUED },
+  { segment: "repair-data-fidelity", operationId: "queueRepairDataFidelityJob", summary: "repair data fidelity", responses: QUEUED },
 ];
 
 /**
@@ -69,7 +101,7 @@ const RUN_ONLY_JOBS: ReadonlyArray<readonly [string, string, string]> = [
 
 function jobRoutes(): SpecEntry[] {
   const entries: SpecEntry[] = [];
-  for (const [segment, stem, summary] of JOB_PAIRS) {
+  for (const { segment, stem, summary, queueValidates, runValidates } of JOB_PAIRS) {
     entries.push({
       method: "post",
       path: `/v1/internal/jobs/${segment}`,
@@ -77,7 +109,7 @@ function jobRoutes(): SpecEntry[] {
       tags: ["Internal", "Jobs"],
       summary: `Queue a job to ${summary}`,
       auth: "internal",
-      responses: QUEUED,
+      responses: queueValidates ? { ...QUEUED, ...MALFORMED } : QUEUED,
     });
     entries.push({
       method: "post",
@@ -86,7 +118,7 @@ function jobRoutes(): SpecEntry[] {
       tags: ["Internal", "Jobs"],
       summary: `Run the job to ${summary} inline, bypassing the queue`,
       auth: "internal",
-      responses: RAN,
+      responses: runValidates ? { ...RAN, ...MALFORMED } : RAN,
     });
   }
   for (const [segment, stem, summary] of RUN_ONLY_JOBS) {
@@ -100,15 +132,15 @@ function jobRoutes(): SpecEntry[] {
       responses: RAN,
     });
   }
-  for (const [segment, operationId, summary] of SINGLE_JOBS) {
+  for (const { segment, operationId, summary, responses } of SINGLE_JOBS) {
     entries.push({
       method: "post",
       path: `/v1/internal/jobs/${segment}`,
       operationId,
       tags: ["Internal", "Jobs"],
-      summary: `Run the job to ${summary}`,
+      summary: `Queue a job to ${summary}`,
       auth: "internal",
-      responses: { ...RAN, 400: { description: "Malformed job request" } },
+      responses,
     });
   }
   return entries;
@@ -545,33 +577,6 @@ const SILENT_401: SpecEntry[] = [
     // `session` would advertise a credential no gate demands.
     auth: "public",
     responses: AUTH_FLOW_RESPONSES,
-  },
-  {
-    method: "post",
-    path: "/v1/internal/jobs/build-contributor-evidence",
-    operationId: "postInternalJobsBuildContributorEvidence",
-    tags: ["Internal"],
-    summary: "Queue a contributor evidence build job",
-    auth: "internal",
-    responses: QUEUED,
-  },
-  {
-    method: "post",
-    path: "/v1/internal/jobs/build-burden-forecasts",
-    operationId: "postInternalJobsBuildBurdenForecasts",
-    tags: ["Internal"],
-    summary: "Queue a burden forecast build job",
-    auth: "internal",
-    responses: QUEUED,
-  },
-  {
-    method: "post",
-    path: "/v1/internal/jobs/repair-data-fidelity",
-    operationId: "postInternalJobsRepairDataFidelity",
-    tags: ["Internal"],
-    summary: "Queue a data fidelity repair job",
-    auth: "internal",
-    responses: QUEUED,
   },
 ];
 

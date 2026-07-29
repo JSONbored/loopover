@@ -165,6 +165,17 @@ function loopOperationMeta(method: string, path: string, tag: string): { operati
   return { operationId: `${method}${stem}`, tags: [tag] };
 }
 
+/**
+ * Every module that contributes route specs, as ONE list (#9706).
+ *
+ * Exported so the duplicate-registration guard consumes the same list buildOpenApiSpec does. The guard
+ * exists because the ratchet compares SETS and is therefore blind to a path registered twice -- both
+ * directions of its diff still balance, while zod-to-openapi silently keeps the last registration. A guard
+ * that had to restate this list would go quiet the moment a new registrar was added, which is the rot the
+ * anti-rot guards in this repo keep finding.
+ */
+export const SPEC_REGISTRARS: ReadonlyArray<(registry: OpenAPIRegistry) => void> = [registerOrbAndControlRouteSpecs, registerInternalAndPublicRouteSpecs];
+
 export function buildOpenApiSpec() {
   const registry = new OpenAPIRegistry();
   registry.register("Health", HealthSchema);
@@ -2207,92 +2218,11 @@ export function buildOpenApiSpec() {
       },
     });
   }
-  // Instance subscription-CLI credentials (#9543). The response NEVER carries the credential itself --
-  // only configured/last4/timestamps -- so the whole surface is safe to describe publicly.
-  registry.registerPath({
-    method: "post",
-    path: "/v1/internal/jobs/refresh-registry",
-    operationId: "postInternalJobsRefreshRegistry",
-    tags: ["Internal"],
-    summary: "Queue a registry refresh job",
-    responses: {
-      202: { description: "Registry refresh queued" },
-      401: { description: "Invalid internal token" },
-    },
-  });
-  registry.registerPath({
-    method: "post",
-    path: "/v1/internal/jobs/backfill-registered-repos",
-    operationId: "postInternalJobsBackfillRegisteredRepos",
-    tags: ["Internal"],
-    summary: "Queue a registered-repository backfill job",
-    responses: {
-      202: { description: "Registered repo backfill queued" },
-      401: { description: "Invalid internal token" },
-    },
-  });
-  registry.registerPath({
-    method: "post",
-    path: "/v1/internal/jobs/backfill-repo-segment",
-    operationId: "postInternalJobsBackfillRepoSegment",
-    tags: ["Internal"],
-    summary: "Queue a repository segment backfill job",
-    responses: {
-      202: { description: "Repository segment backfill queued" },
-      400: { description: "Invalid segment request" },
-      401: { description: "Invalid internal token" },
-    },
-  });
-  registry.registerPath({
-    method: "post",
-    path: "/v1/internal/jobs/backfill-pr-details",
-    operationId: "postInternalJobsBackfillPrDetails",
-    tags: ["Internal"],
-    summary: "Queue an open pull request detail backfill job",
-    responses: {
-      202: { description: "Open PR detail backfill queued" },
-      400: { description: "Invalid PR detail backfill request" },
-      401: { description: "Invalid internal token" },
-    },
-  });
-  registry.registerPath({
-    method: "post",
-    path: "/v1/internal/jobs/generate-review-recap",
-    operationId: "postInternalJobsGenerateReviewRecap",
-    tags: ["Internal"],
-    summary: "Queue a maintainer review recap digest job",
-    responses: {
-      202: { description: "Maintainer review recap digest queued (#1963)" },
-      400: { description: "Missing repoFullName" },
-      401: { description: "Invalid internal token" },
-    },
-  });
-  for (const [path, summary] of [
-    ["/v1/internal/jobs/refresh-scoring-model", "Queue a scoring model refresh job"],
-    ["/v1/internal/jobs/refresh-upstream-drift", "Queue an upstream drift refresh job"],
-    ["/v1/internal/jobs/file-upstream-drift-issues", "Queue a job that files upstream drift issues"],
-    ["/v1/internal/jobs/build-contributor-decision-packs", "Queue a contributor decision pack build job"],
-    ["/v1/internal/jobs/generate-signal-snapshots", "Queue a signal snapshot generation job"],
-    ["/v1/internal/jobs/generate-weekly-value-report", "Queue a weekly value report job"],
-  ] as const) {
-    registry.registerPath({
-      method: "post",
-      path,
-      ...loopOperationMeta("post", path, "Internal"),
-      summary,
-      responses: {
-        202: { description: "Internal job queued" },
-        401: { description: "Invalid internal token" },
-      },
-    });
-  }
-
   // #9531: the ORB ingress, the control-panel app surface, and the per-repo key/settings routes.
   // Registered from their own module rather than inline here because each entry declares an auth
   // level that DERIVES its security stanza, instead of having one bolted on afterwards by
   // applySecurityMetadata's path-prefix guesswork.
-  registerOrbAndControlRouteSpecs(registry);
-  registerInternalAndPublicRouteSpecs(registry);
+  for (const register of SPEC_REGISTRARS) register(registry);
 
   const generator = new OpenApiGeneratorV3(registry.definitions);
   const document = generator.generateDocument({

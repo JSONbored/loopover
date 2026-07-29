@@ -90,8 +90,6 @@ import {
   CheckTestEvidenceInput,
   ClearSelftuneOverrideInput,
   ClosePrInput,
-  CompareLocalVariantsInput,
-  ComparePrVariantsInput,
   CreateBranchInput,
   CurrentBranchInput,
   DecidePendingActionInput,
@@ -166,6 +164,8 @@ import {
   ValidateLinkedIssueInput,
   WatchIssuesInput,
   StdioWatchIssuesInput,
+  StdioCompareLocalVariantsInput,
+  StdioComparePrVariantsInput,
   getToolContract,
   projectToolDefinition,
   ListPendingActionsStdioInput,
@@ -1620,13 +1620,14 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_compare_pr_variants",
-  async ({ variants }: z.infer<typeof ComparePrVariantsInput>) => {
+  async ({ variants }: z.infer<typeof StdioComparePrVariantsInput>) => {
     const roots = await clientWorkspaceRoots();
     const previews = [];
     for (const variant of variants) previews.push(await previewLocalScore(withWorkspaceRoots({ ...variant, targetKey: variant.targetKey ?? `variant:${previews.length + 1}` }, roots)));
     previews.sort((left, right) => Number(right?.remotePreview?.result?.effectiveEstimatedScore ?? right?.remotePreview?.result?.scoreEstimate?.estimatedMergedScore ?? 0) - Number(left?.remotePreview?.result?.effectiveEstimatedScore ?? left?.remotePreview?.result?.scoreEstimate?.estimatedMergedScore ?? 0));
     return toolResult("LoopOver PR variant comparison.", { variants: previews });
   },
+  { input: StdioComparePrVariantsInput },
 );
 
 registerStdioTool(
@@ -1757,7 +1758,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_compare_local_variants",
-  async ({ variants }: z.infer<typeof CompareLocalVariantsInput>) => {
+  async ({ variants }: z.infer<typeof StdioCompareLocalVariantsInput>) => {
     const roots = await clientWorkspaceRoots();
     const analyses = [];
     for (const variant of variants) analyses.push(await analyzeCurrentBranch(withWorkspaceRoots(variant, roots)));
@@ -1776,6 +1777,7 @@ registerStdioTool(
       })),
     });
   },
+  { input: StdioCompareLocalVariantsInput },
 );
 
 registerStdioTool(

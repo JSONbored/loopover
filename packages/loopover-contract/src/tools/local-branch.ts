@@ -253,6 +253,10 @@ export const draftPrBodyTool = defineTool({
 });
 
 export const CompareLocalVariantsInput = z.object({
+  variants: z.array(LocalBranchAnalysisInput).min(1).max(10),
+});
+/** What the STDIO server serves: each variant is analysed from the checkout, not from caller-supplied shas. */
+export const StdioCompareLocalVariantsInput = z.object({
   variants: z.array(CurrentBranchInput).min(1).max(10),
 });
 export const compareLocalVariantsTool = defineTool({
@@ -381,6 +385,12 @@ export const getEligibilityPlanTool = defineTool({
 });
 
 export const ComparePrVariantsInput = z.object({
+  // #9662: the same union each variant's SINGULAR tool takes, for the same reason -- the element type was
+  // the stdio server's narrower one, so the remote's own handler accepted variants the registry rejected.
+  variants: z.array(LocalScorePreviewInput).min(1).max(10),
+});
+/** What the STDIO server serves: each variant goes through its local preview, which supplies the rest. */
+export const StdioComparePrVariantsInput = z.object({
   variants: z.array(LocalScoreInput).min(1).max(10),
 });
 export const comparePrVariantsTool = defineTool({

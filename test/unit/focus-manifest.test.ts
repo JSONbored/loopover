@@ -1630,6 +1630,40 @@ describe("parseFocusManifest gate config", () => {
     expect(over.warnings.some((w) => /gate\.aiReview\.reviewers" is capped/.test(w))).toBe(true);
   });
 
+  it("parses gate.ignoredCheckRuns, makes the gate present, round-trips + resolves it, and drops spoofable entries (#9810)", () => {
+    const m = parseFocusManifest({ gate: { ignoredCheckRuns: [{ name: "Contributor trust", appSlug: "example-security-app" }] } });
+    expect(m.gate.present).toBe(true);
+    expect(m.gate.ignoredCheckRuns).toEqual([{ name: "Contributor trust", appSlug: "example-security-app" }]);
+    // Round-trip through gateConfigToJson: the serialize branch must emit the field, or a manifest that
+    // ignores a check silently loses that decision on the next reload.
+    expect(parseFocusManifest({ gate: gateConfigToJson(m.gate) }).gate).toEqual(m.gate);
+    const eff = resolveEffectiveSettings({ ignoredCheckRuns: undefined } as unknown as RepositorySettings, m);
+    expect(eff.ignoredCheckRuns).toEqual([{ name: "Contributor trust", appSlug: "example-security-app" }]);
+    // Absent ⇒ null ⇒ the DB/default value is left untouched (same contract as every other manifest field).
+    const noFlag = parseFocusManifest({ gate: { claMode: "advisory" } });
+    expect(noFlag.gate.ignoredCheckRuns).toBeNull();
+    expect(resolveEffectiveSettings({ ignoredCheckRuns: [{ name: "Existing", appSlug: "existing-app" }] } as unknown as RepositorySettings, noFlag).ignoredCheckRuns).toEqual([
+      { name: "Existing", appSlug: "existing-app" },
+    ]);
+    // Non-array ⇒ warns, stays null.
+    expect(parseFocusManifest({ gate: { ignoredCheckRuns: "Contributor trust" } }).warnings.some((w) => /gate\.ignoredCheckRuns/.test(w))).toBe(true);
+    expect(parseFocusManifest({ gate: { ignoredCheckRuns: "Contributor trust" } }).gate.ignoredCheckRuns).toBeNull();
+    // A name-only entry is spoofable and dropped — same anti-spoof contract as advisoryCheckRuns.
+    const mixed = parseFocusManifest({ gate: { ignoredCheckRuns: [{ name: "Good", appSlug: "good-app" }, { name: "NoSlug" }] } });
+    expect(mixed.gate.ignoredCheckRuns).toEqual([{ name: "Good", appSlug: "good-app" }]);
+    expect(mixed.warnings.some((w) => /gate\.ignoredCheckRuns\[1\]/.test(w))).toBe(true);
+    // Both lists coexist independently: ignoring one check must not disturb the advisory list.
+    const both = parseFocusManifest({
+      gate: {
+        advisoryCheckRuns: [{ name: "Security scan", appSlug: "example-security-app" }],
+        ignoredCheckRuns: [{ name: "Contributor trust", appSlug: "example-security-app" }],
+      },
+    });
+    expect(both.gate.advisoryCheckRuns).toEqual([{ name: "Security scan", appSlug: "example-security-app" }]);
+    expect(both.gate.ignoredCheckRuns).toEqual([{ name: "Contributor trust", appSlug: "example-security-app" }]);
+    expect(parseFocusManifest({ gate: gateConfigToJson(both.gate) }).gate).toEqual(both.gate);
+  });
+
   it("parses gate.advisoryCheckRuns, makes the gate present, round-trips + resolves it, caps entries, and drops entries missing name/appSlug (#4372)", () => {
     const m = parseFocusManifest({ gate: { advisoryCheckRuns: [{ name: "Third-Party Scan", appSlug: "example-scanner" }, { name: "Trust Check", appSlug: "example-trust" }] } });
     expect(m.gate.present).toBe(true);

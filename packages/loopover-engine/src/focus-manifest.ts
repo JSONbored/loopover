@@ -1970,6 +1970,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.claCheckRunAppSlug !== null ||
     gate.expectedCiContexts !== null ||
     gate.advisoryCheckRuns !== null ||
+    gate.ignoredCheckRuns !== null ||
     gate.aiJudgmentBlockersMode !== null ||
     gate.copycatMode !== null ||
     gate.copycatMinScore !== null;

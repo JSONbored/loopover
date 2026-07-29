@@ -71,6 +71,14 @@ comment:
 # matches the local report.
 ignore:
   - "src/env.d.ts"
+  # Type-ONLY declaration modules (#9810): zero runtime statements, so v8 instruments nothing and the whole
+  # file reports 0% — the same artifact src/env.d.ts is ignored for above. Adding a single field to one of
+  # these otherwise fails codecov/patch on lines that can never execute. Guarded, not trusted: the
+  # "codecov ignore list stays honest" test in test/unit/codecov-ignore-type-only.test.ts fails if any path
+  # listed here ever gains a runtime declaration, so an ignore can never quietly start hiding real code.
+  - "packages/loopover-engine/src/types/manifest-deps-types.ts"
+  - "packages/loopover-engine/src/types/predicted-gate-types.ts"
+  - "packages/loopover-engine/src/types/reward-risk-types.ts"
   - "apps/**"
   - "test/**"
   - "scripts/**"

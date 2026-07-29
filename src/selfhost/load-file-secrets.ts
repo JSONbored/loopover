@@ -15,6 +15,32 @@ import { readFileSync } from "node:fs";
 // named exactly one of these.
 const COMPOSE_RESERVED_FILE_VARS = new Set(["COMPOSE_FILE", "COMPOSE_ENV_FILE"]);
 
+/**
+ * The secrets `scripts/selfhost-init-secrets.sh` deliberately leaves EMPTY, for which empty therefore means
+ * "not configured yet" rather than "truncated".
+ *
+ * WHY THIS EXISTS: #9487 made an empty secret file fatal at boot, which is right for a secret the init
+ * script fills with a real random value -- an empty one there can only mean a truncated write, and the bug
+ * it fixed (a truncated GITHUB_WEBHOOK_SECRET booting an instance that silently rejected every webhook) is
+ * exactly that. But these four come from an EXTERNAL party, so the init script cannot generate them and
+ * creates a zero-byte placeholder instead (secrets/README.md says so explicitly). Compose also requires the
+ * file to exist before the stack will start. The result was that running the documented setup and starting
+ * the container crash-looped it -- observed on the ORB, where an unused GitHub App key did precisely that.
+ *
+ * So for these four ONLY, an empty file is skipped rather than fatal, and loudly logged. That is strictly
+ * better than the pre-#9487 behavior it superficially resembles: back then an empty file silently became an
+ * empty env var that every `nonBlank()` downstream read as unconfigured, with no signal at all. Here the
+ * target var is left genuinely unset and the operator gets a named warning at boot.
+ *
+ * Every other secret keeps #9487's fail-closed behavior unchanged.
+ */
+const OPTIONAL_WHEN_EMPTY_FILE_VARS = new Set([
+  "GITHUB_APP_PRIVATE_KEY_FILE",
+  "ORB_ENROLLMENT_SECRET_FILE",
+  "PAGERDUTY_ROUTING_KEY_FILE",
+  "CLAUDE_CODE_OAUTH_TOKEN_FILE",
+]);
+
 /** `env` and `readFile` are injectable purely for testability -- every real caller uses the defaults
  *  (`process.env`, `node:fs`'s `readFileSync`), so this is byte-identical to a hardcoded version at
  *  runtime while letting tests pass a plain object and a mock reader instead of mutating global state. */
@@ -59,6 +85,19 @@ export function loadFileSecrets(
     // re-reported as "unreadable", collapsing two genuinely different operator problems (a bad path/permission
     // vs a truncated write) into one misleading message and the wrong log event.
     if (value === "") {
+      // An externally-issued secret the init script could only stub out: empty is "not configured", so skip
+      // it and leave the target var genuinely unset -- but say so, loudly and by name.
+      if (OPTIONAL_WHEN_EMPTY_FILE_VARS.has(key)) {
+        console.warn(
+          JSON.stringify({
+            level: "warn",
+            event: "selfhost_secret_file_empty_optional",
+            var: key,
+            message: `${key} points at an empty file (${path}); treating it as not configured. Write the issued value if you need this capability.`,
+          }),
+        );
+        continue;
+      }
       console.error(
         JSON.stringify({
           level: "error",

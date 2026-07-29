@@ -459,6 +459,44 @@ describe("review.auto_review wiring (#1954)", () => {
     ).toBe(false);
   });
 
+  it("REGRESSION: no 'was skipped' hold on a FORCED re-run — the bypass means the review actually ran", () => {
+    // Observed live on JSONbored/loopover#9764: the published panel asserted "Required AI review was skipped
+    // by a submitter-reputation downgrade" DIRECTLY ABOVE the very AI summary that forced re-run produced,
+    // and held the gate for a review that succeeded. forceAiReview bypasses the reputation skip in
+    // shouldStartAiReviewForAdvisory, so the hold must describe what happened, not what the heuristic wanted.
+    const blockingEnv = { AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI: {} } as Env;
+    const settings = { gatePack: "oss-anti-slop", aiReviewMode: "block", aiReviewAllAuthors: false } as never;
+    const advisory = { headSha: "sha", findings: [] as unknown[] };
+    const added = maybeAddReputationSkipHold(blockingEnv, {
+      settings,
+      advisory: advisory as never,
+      repoFullName: "acme/widgets",
+      author: "the-maintainer",
+      confirmedContributor: false,
+      reputationSkipped: true,
+      forceAiReview: true,
+    });
+    expect(added).toBe(false);
+    expect(advisory.findings).toEqual([]);
+  });
+
+  it("REGRESSION: no hold under aiReviewAllAuthors either — that setting bypasses the skip the same way", () => {
+    const blockingEnv = { AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI: {} } as Env;
+    const settings = { gatePack: "oss-anti-slop", aiReviewMode: "block", aiReviewAllAuthors: true } as never;
+    const advisory = { headSha: "sha", findings: [] as unknown[] };
+    expect(
+      maybeAddReputationSkipHold(blockingEnv, {
+        settings,
+        advisory: advisory as never,
+        repoFullName: "acme/widgets",
+        author: "anyone",
+        confirmedContributor: false,
+        reputationSkipped: true,
+      }),
+    ).toBe(false);
+    expect(advisory.findings).toEqual([]);
+  });
+
   it("#9015: a reputation skip HOLDS where blocking AI review is required — suspicion must never buy less scrutiny", () => {
     const blockingEnv = { AI_SUMMARIES_ENABLED: "true", AI_PUBLIC_COMMENTS_ENABLED: "true", AI: {} } as Env;
     const settings = { gatePack: "oss-anti-slop", aiReviewMode: "block", aiReviewAllAuthors: false } as never;

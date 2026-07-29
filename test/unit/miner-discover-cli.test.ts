@@ -2175,3 +2175,104 @@ describe("min-rank override consumption at discover's enqueue (#8187)", () => {
     }
   });
 });
+
+describe("#9679: --dry-run makes zero event-ledger writes", () => {
+  const fanOut = vi.fn(async () => ({
+    issues: [fanOutIssue({ issueNumber: 1, title: "candidate" })],
+    warnings: [],
+    rateLimitRemaining: 5000,
+    rateLimitResetAt: "2026-07-09T13:00:00.000Z",
+  }));
+  const enqueueOnce = () => vi.fn(() => ({ enqueued: 1, skippedBelowMinRank: 0, skippedInvalid: 0, eventsAppended: 0 }));
+
+  it("REGRESSION: --dry-run does NOT create the event-ledger file when it is absent", async () => {
+    const { mkdtempSync, rmSync, existsSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const dir = mkdtempSync(join(tmpdir(), "miner-discover-dryrun-noledger-"));
+    try {
+      const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+      const ledgerPath = resolveEventLedgerDbPath(env);
+      expect(existsSync(ledgerPath)).toBe(false);
+
+      const exitCode = await runDiscover(["acme/widgets", "--dry-run", "--json"], {
+        nowMs: NOW,
+        env,
+        fetchCandidateIssuesWithSummary: fanOut,
+        enqueueRankedDiscovery: enqueueOnce() as never,
+      });
+      expect(exitCode).toBe(0);
+      // Before the fix the unconditional initEventLedger created (and migrated/pruned) this file on a dry run.
+      expect(existsSync(ledgerPath)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("REGRESSION: --dry-run STILL applies the earned min-rank override when the event ledger already exists", async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { initEventLedger, resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger");
+    const { resolveAmsPolicyConfigPath } = await import("../../packages/loopover-miner/lib/ams-policy");
+    const { MINER_AMS_MIN_RANK_APPLIED_EVENT } = await import("../../packages/loopover-miner/lib/ams-calibration");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const dir = mkdtempSync(join(tmpdir(), "miner-discover-dryrun-override-"));
+    try {
+      const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+      const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+      ledger.appendEvent({ type: MINER_AMS_MIN_RANK_APPLIED_EVENT, payload: { value: 0.2 } });
+      ledger.close();
+      writeFileSync(resolveAmsPolicyConfigPath(env), "minRankAutotuneEnabled: true\n");
+
+      // The ledger file now exists, so the guarded dry-run read still consumes the earned override (0.2), so the
+      // preview reports the exact below-min-rank skip set a real run would.
+      const enqueueSpy = enqueueOnce();
+      const exitCode = await runDiscover(["acme/widgets", "--dry-run", "--json"], {
+        nowMs: NOW,
+        env,
+        fetchCandidateIssuesWithSummary: fanOut,
+        enqueueRankedDiscovery: enqueueSpy as never,
+      });
+      expect(exitCode).toBe(0);
+      const minRankSeen = ((enqueueSpy.mock.calls[0] as unknown[] | undefined)?.[1] as { minRankScore?: number } | undefined)?.minRankScore;
+      expect(minRankSeen).toBe(0.2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the non-dry-run path is unchanged: it still opens (and creates) the event ledger", async () => {
+    const { mkdtempSync, rmSync, existsSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const dir = mkdtempSync(join(tmpdir(), "miner-discover-realrun-ledger-"));
+    try {
+      const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+      const ledgerPath = resolveEventLedgerDbPath(env);
+      expect(existsSync(ledgerPath)).toBe(false);
+
+      const exitCode = await runDiscover(["acme/widgets", "--json"], {
+        nowMs: NOW,
+        env,
+        fetchCandidateIssuesWithSummary: fanOut,
+        initPortfolioQueue: () => tempQueueStore(),
+        initPolicyDocCache: () => tempPolicyDocCacheStore(),
+        initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+        initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+        enqueueRankedDiscovery: enqueueOnce() as never,
+      });
+      expect(exitCode).toBe(0);
+      expect(existsSync(ledgerPath)).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

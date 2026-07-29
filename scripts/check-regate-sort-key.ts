@@ -30,7 +30,9 @@ const PRODUCER_SCAN_CEILING_LINES = 60;
  */
 const ALLOWED_OMISSIONS: ReadonlyMap<string, string> = new Map([
   [
-    "src/api/routes.ts:manual-regate:",
+    // #9742: the delivery-id prefixes moved into queue/delivery-id.ts, so the producer names its ORIGIN
+    // key rather than repeating the `manual-regate:` literal. The marker tracks that name.
+    "src/api/routes.ts:deliveryIdFor(\"manualRegate\"",
     "The maintainer-triggered manual re-gate route enqueues at priority 99 to jump the queue ON PURPOSE — an operator asking for one PR now is exactly the case oldest-first should not apply to. It also has no PR record in hand (the body carries only repoFullName + prNumber).",
   ],
 ]);
@@ -114,8 +116,8 @@ function producerObjectText(lines: readonly string[], startIndex: number): strin
   return collected.join("\n");
 }
 
-/** Split `path/to/file.ts:marker-text` on the LAST colon that precedes the marker — a marker may itself
- *  contain colons (`manual-regate:`), so a naive split on the first or last colon gets it wrong. */
+/** Split `path/to/file.ts:marker-text` at the `.ts:` boundary rather than on the first or last colon — a
+ *  marker may itself contain colons, so either naive split gets it wrong. */
 function splitAllowKey(key: string): [string, string] {
   const boundary = key.indexOf(".ts:");
   if (boundary === -1) return [key, ""];

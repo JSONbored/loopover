@@ -635,6 +635,11 @@ declare global {
      *  than guessing. Public key material only — the private half is LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY and
      *  must never appear here. Default unset → an empty published list, meaning "no anchors are claimed to be
      *  verifiable yet", which a verifier can distinguish from a key that exists. See review/ledger-anchor.ts. */
+    /** #9850: a declared, bounded exclusion from the ledger CONTENT re-check, "<fromSeq>-<toSeq>:<reason>".
+     *  For rows whose record preimage is genuinely unrecoverable (the pre-#9123 record-overwriting UPDATE),
+     *  where the alternative is a permanently-failing public endpoint. Chain checks are never waived, both
+     *  bounds and a reason are mandatory, and the range plus its count are published by /verify. */
+    LOOPOVER_LEDGER_CONTENT_WAIVER?: string;
     LOOPOVER_LEDGER_ANCHOR_KEYS?: string;
     /** External ledger anchoring (#9270, epic #9267): the PRIVATE half of the anchor-signing keypair — an
      *  ECDSA P-256 key in PKCS8 PEM (the `\n`-escaped single-line form is accepted, since that is how a key

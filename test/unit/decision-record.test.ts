@@ -4,6 +4,7 @@ import {
   canonicalJson,
   contentDigest,
   DECISION_RECORD_SCHEMA_VERSION,
+  parseLedgerContentWaiver,
   persistDecisionRecord,
   renderDecisionRecordSection,
   sha256Hex,
@@ -384,7 +385,7 @@ describe("decision ledger (#8837)", () => {
   it("verifying a completely empty ledger returns ok:true with a zero tip, and skips the tail-truncation check (nothing to anchor against yet)", async () => {
     const env = createTestEnv();
     const verified = await verifyDecisionLedger(env);
-    expect(verified).toEqual({ ok: true, checked: 0, nextAfterSeq: null, tipSeq: 0, tipHash: LEDGER_GENESIS_HASH, totalCount: 0, prunedRecords: 0, contentMismatches: 0 });
+    expect(verified).toEqual({ ok: true, checked: 0, nextAfterSeq: null, tipSeq: 0, tipHash: LEDGER_GENESIS_HASH, totalCount: 0, prunedRecords: 0, contentMismatches: 0, waivedContentMismatches: 0, contentWaiver: null });
   });
 
   it("TAIL TRUNCATION now breaks verify instead of passing clean (#9122): dropping the newest ledger rows leaves an orphaned decision_records tail", async () => {
@@ -711,5 +712,114 @@ describe("content mismatches do not mask later rows (#9850)", () => {
     await seedChained(env, 4);
     const verified = await verifyDecisionLedger(env);
     expect(verified).toMatchObject({ ok: true, contentMismatches: 0 });
+  });
+});
+
+// #9850: rows whose preimage is genuinely unrecoverable -- the pre-#9123 record-overwriting UPDATE -- can
+// never be reconciled. Rewriting them to match would be the tampering this ledger exists to detect, so the
+// only honest options are to fail forever or to DECLARE the damage. These pin that the declaration is a
+// disclosure and not a blanket exemption.
+describe("parseLedgerContentWaiver (#9850)", () => {
+  it("parses a bounded range with a reason", () => {
+    expect(parseLedgerContentWaiver("5-257:pre-9123 record overwrite")).toEqual({ fromSeq: 5, toSeq: 257, reason: "pre-9123 record overwrite" });
+  });
+
+  it("tolerates surrounding whitespace in the range", () => {
+    expect(parseLedgerContentWaiver(" 5 - 257 : why ")).toMatchObject({ fromSeq: 5, toSeq: 257, reason: "why" });
+  });
+
+  it("REQUIRES a reason -- you cannot waive silently", () => {
+    expect(parseLedgerContentWaiver("5-257:")).toBeNull();
+    expect(parseLedgerContentWaiver("5-257:   ")).toBeNull();
+    expect(parseLedgerContentWaiver("5-257")).toBeNull();
+  });
+
+  it("REQUIRES both bounds -- an open-ended waiver is a blanket exemption wearing a range's clothes", () => {
+    for (const bad of ["5-:r", "-257:r", "5:r", "-:r"]) expect(parseLedgerContentWaiver(bad)).toBeNull();
+  });
+
+  it("rejects a descending or zero-based range, which is a mistake rather than an intent", () => {
+    expect(parseLedgerContentWaiver("257-5:r")).toBeNull();
+    expect(parseLedgerContentWaiver("0-10:r")).toBeNull();
+  });
+
+  it("fails CLOSED on anything malformed, so a typo can never widen an exclusion", () => {
+    for (const bad of [undefined, "", "   ", "all:r", "5..257:r", "1e3-2e3:r", "-5--1:r"]) {
+      expect(parseLedgerContentWaiver(bad)).toBeNull();
+    }
+  });
+});
+
+describe("content waiver applied by verifyDecisionLedger (#9850)", () => {
+  const seedChained = async (env: Env, count: number) => {
+    for (let i = 1; i <= count; i += 1) {
+      const { record, recordDigest } = await buildDecisionRecord(recordInput({ pullNumber: i }));
+      await persistDecisionRecord(env, record, recordDigest);
+    }
+  };
+  const corruptRecordAt = async (env: Env, seq: number) => {
+    const row = await env.DB.prepare("SELECT record_id AS recordId FROM decision_ledger WHERE seq = ?").bind(seq).first<{ recordId: string }>();
+    await env.DB.prepare("UPDATE decision_records SET record_json = ? WHERE id = ?").bind('{"tampered":true}', row!.recordId).run();
+  };
+
+  it("reports ok:true with the mismatch counted SEPARATELY when it falls inside the declared range", async () => {
+    const env = createTestEnv({ LOOPOVER_LEDGER_CONTENT_WAIVER: "2-3:pre-9123 record overwrite" });
+    await seedChained(env, 5);
+    await corruptRecordAt(env, 2);
+
+    const verified = await verifyDecisionLedger(env);
+
+    expect(verified.ok).toBe(true);
+    expect(verified.waivedContentMismatches).toBe(1);
+    expect(verified.contentMismatches).toBe(0); // never folded together -- "excused" must not read as "fine"
+    expect(verified.contentWaiver).toEqual({ fromSeq: 2, toSeq: 3, reason: "pre-9123 record overwrite" });
+    expect(verified.break).toBeUndefined();
+  });
+
+  it("INVARIANT: a mismatch OUTSIDE the range still fails, so the waiver is bounded in practice not just on paper", async () => {
+    const env = createTestEnv({ LOOPOVER_LEDGER_CONTENT_WAIVER: "2-3:declared" });
+    await seedChained(env, 6);
+    await corruptRecordAt(env, 2); // inside
+    await corruptRecordAt(env, 5); // outside
+
+    const verified = await verifyDecisionLedger(env);
+
+    expect(verified.ok).toBe(false);
+    expect(verified.break).toMatchObject({ kind: "content_mismatch", atSeq: 5 });
+    expect(verified.waivedContentMismatches).toBe(1);
+    expect(verified.contentMismatches).toBe(1);
+  });
+
+  it("INVARIANT: a waiver NEVER excuses a structural break inside its own range", async () => {
+    // The whole safety argument: the content check runs only after sequence/predecessor/row_hash pass, so a
+    // waived row still has to be chained correctly. Tampering with a waived row's CHAIN position must fail.
+    const env = createTestEnv({ LOOPOVER_LEDGER_CONTENT_WAIVER: "1-99:declared" });
+    await seedChained(env, 5);
+    await env.DB.prepare("UPDATE decision_ledger SET row_hash = ? WHERE seq = 3").bind("f".repeat(64)).run();
+
+    const verified = await verifyDecisionLedger(env);
+
+    expect(verified.ok).toBe(false);
+    expect(verified.break).toMatchObject({ kind: "row_hash_mismatch", atSeq: 3 });
+  });
+
+  it("waives nothing when the value is malformed -- fail closed, and the failure is still reported", async () => {
+    const env = createTestEnv({ LOOPOVER_LEDGER_CONTENT_WAIVER: "not-a-range" });
+    await seedChained(env, 4);
+    await corruptRecordAt(env, 2);
+
+    const verified = await verifyDecisionLedger(env);
+
+    expect(verified.ok).toBe(false);
+    expect(verified.contentWaiver).toBeNull();
+    expect(verified.waivedContentMismatches).toBe(0);
+    expect(verified.contentMismatches).toBe(1);
+  });
+
+  it("publishes the waiver on a CLEAN chain too, so the declaration is visible without needing a failure to reveal it", async () => {
+    const env = createTestEnv({ LOOPOVER_LEDGER_CONTENT_WAIVER: "2-3:declared" });
+    await seedChained(env, 4);
+    const verified = await verifyDecisionLedger(env);
+    expect(verified).toMatchObject({ ok: true, waivedContentMismatches: 0, contentWaiver: { fromSeq: 2, toSeq: 3 } });
   });
 });

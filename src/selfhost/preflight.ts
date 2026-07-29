@@ -1,6 +1,7 @@
 import { createPrivateKey } from "node:crypto";
 import { CRON_INTERVAL_MIN_MS } from "./cron-alignment";
 import { currentAnchorKey, parseAnchorPublicKeys } from "../review/ledger-anchor";
+import { parseLedgerContentWaiver } from "../review/decision-record";
 
 export type SelfHostPreflightProblem = {
   var: string;
@@ -82,6 +83,25 @@ function isGitHubAppPrivateKey(value: string): boolean {
  * The published-key checks call the real `parseAnchorPublicKeys`/`currentAnchorKey` rather than
  * re-validating the shape here, so preflight can never disagree with what the scheduler will actually do.
  */
+/**
+ * #9850: a malformed LOOPOVER_LEDGER_CONTENT_WAIVER fails CLOSED -- it waives nothing, which is the safe
+ * direction but also a completely silent one. An operator who fat-fingers the range believes rows are
+ * declared when they are not, and only finds out when the public endpoint keeps reporting a failure they
+ * thought they had disclosed. Same reasoning as the anchor-config check below: the danger is not the unset
+ * value, it is the set-but-ineffective one.
+ */
+function checkLedgerContentWaiverConfig(problems: SelfHostPreflightProblem[], env: SelfHostPreflightEnv): void {
+  const raw = nonBlank(env["LOOPOVER_LEDGER_CONTENT_WAIVER"]);
+  if (!raw) return;
+  if (parseLedgerContentWaiver(raw) === null) {
+    addProblem(
+      problems,
+      "LOOPOVER_LEDGER_CONTENT_WAIVER",
+      'Set but unparseable, so NOTHING is waived and /v1/public/decision-ledger/verify will keep reporting the mismatches you meant to declare. Expected "<fromSeq>-<toSeq>:<reason>" with both bounds, fromSeq >= 1, toSeq >= fromSeq, and a non-empty reason.',
+    );
+  }
+}
+
 function checkLedgerAnchorConfig(problems: SelfHostPreflightProblem[], env: SelfHostPreflightEnv): void {
   const rawKeys = nonBlank(env["LOOPOVER_LEDGER_ANCHOR_KEYS"]);
   const privateKey = nonBlank(env["LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY"]);
@@ -345,6 +365,7 @@ export function preflightEnv(env: SelfHostPreflightEnv): SelfHostPreflightResult
   positiveInteger(problems, env, "GITHUB_CACHE_TTL_SECONDS", 0, 86_400);
 
   checkLedgerAnchorConfig(problems, env);
+  checkLedgerContentWaiverConfig(problems, env);
 
   return problems.length === 0 ? { ok: true, problems: [] } : { ok: false, problems };
 }

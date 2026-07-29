@@ -878,7 +878,12 @@ export async function runAiReviewForAdvisory(
       actor: args.author,
       mode: args.settings.aiReviewMode === "block" ? "block" : "advisory",
       jobId: args.deliveryId,
-      providerKey,
+      // #9821: a provider chosen by gate.aiReview.provider or a guardrail escalation must also govern the BYOK
+      // key, not just the model. The `providerKey` gate above ran before the knobs were resolved and only knew
+      // `settings.aiReviewProvider`, so an ESCALATED provider would otherwise have kept using a stored key
+      // belonging to a different one. Same rule the gate above applies, re-applied with the resolved value:
+      // a mismatch drops the key and the review falls back to the operator's own configured provider.
+      providerKey: reviewKnobs.provider && providerKey && reviewKnobs.provider !== providerKey.provider ? null : providerKey,
       grounding,
       ragContext: ragContextResult?.text,
       cultureProfileContext,
@@ -897,18 +902,28 @@ export async function runAiReviewForAdvisory(
       // Self-host per-repo model/effort/timeout override (#selfhost-ai-model-override, #8364): absent/null
       // fields fall through runLoopOverAiReview -> runWorkersOpinion -> the self-host provider's own
       // global-env/hardcoded default, exactly as if review.ai_model had never been set.
-      claudeModel: args.reviewSelfHostAiModel?.claudeModel ?? null,
-      claudeEffort: args.reviewSelfHostAiModel?.claudeEffort ?? null,
-      codexModel: args.reviewSelfHostAiModel?.codexModel ?? null,
-      codexEffort: args.reviewSelfHostAiModel?.codexEffort ?? null,
+      //
+      // #9808/#9821: `reviewKnobs` (gate.aiReview.effort/model, or the guardrailEscalation override when this
+      // PR touched a guarded path) takes priority over `review.ai_model` when set. Both are per-repo
+      // config-as-code; this one is strictly more specific -- it is the only one that can differ PER PR, and
+      // the whole point of an escalation is that it wins for the PR that triggered it. Unset ⇒ `??` falls
+      // straight through to review.ai_model, then to the global env, exactly as before.
+      //
+      // The provider CLIs read model and effort separately, so the resolved values are applied to BOTH the
+      // claude and codex pairs: whichever provider actually runs sees them, and the other's fields are inert.
+      claudeModel: reviewKnobs.model ?? args.reviewSelfHostAiModel?.claudeModel ?? null,
+      claudeEffort: reviewKnobs.effort ?? args.reviewSelfHostAiModel?.claudeEffort ?? null,
+      codexModel: reviewKnobs.model ?? args.reviewSelfHostAiModel?.codexModel ?? null,
+      codexEffort: reviewKnobs.effort ?? args.reviewSelfHostAiModel?.codexEffort ?? null,
       claudeTimeoutMs: args.reviewSelfHostAiModel?.claudeTimeoutMs ?? null,
       codexTimeoutMs: args.reviewSelfHostAiModel?.codexTimeoutMs ?? null,
       claudeFirstOutputTimeoutMs: args.reviewSelfHostAiModel?.claudeFirstOutputTimeoutMs ?? null,
       codexFirstOutputTimeoutMs: args.reviewSelfHostAiModel?.codexFirstOutputTimeoutMs ?? null,
-      ollamaModel: args.reviewSelfHostAiModel?.ollamaModel ?? null,
-      openaiModel: args.reviewSelfHostAiModel?.openaiModel ?? null,
-      openaiCompatibleModel: args.reviewSelfHostAiModel?.openaiCompatibleModel ?? null,
-      anthropicModel: args.reviewSelfHostAiModel?.anthropicModel ?? null,
+      // Same precedence for the HTTP-API providers, which take a model but have no effort concept.
+      ollamaModel: reviewKnobs.model ?? args.reviewSelfHostAiModel?.ollamaModel ?? null,
+      openaiModel: reviewKnobs.model ?? args.reviewSelfHostAiModel?.openaiModel ?? null,
+      openaiCompatibleModel: reviewKnobs.model ?? args.reviewSelfHostAiModel?.openaiCompatibleModel ?? null,
+      anthropicModel: reviewKnobs.model ?? args.reviewSelfHostAiModel?.anthropicModel ?? null,
       // Inline comments (#inline-comments): ask the model for line-anchored findings only when the operator flag,
       // the cutover allowlist, AND the per-repo manifest toggle all pass. Otherwise the prompt is byte-identical.
       inlineFindings: inlineFindingsRequested,

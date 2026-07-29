@@ -286,6 +286,24 @@ gate:
   # app(s) YOU run; loopover hardcodes no vendor. List of { name, appSlug }, or omit. Default: not
   # configured (byte-identical behavior for every repo that doesn't opt in). Config-as-code only — no DB
   # column or dashboard toggle.
+  # Review settings used INSTEAD of the repo defaults when a PR touches a `hardGuardrailGlobs` path
+  # (#9808/#9821) — so a guarded path buys MORE SCRUTINY rather than an automatic manual-review hold.
+  #
+  # Without this, a guardrail hit changes exactly one thing: it suppresses auto-merge and queues a human. The
+  # review itself is identical to any other file's — same model, same effort, single pass. That turns a
+  # protected path into maintainer toil without the analysis actually going up, and on a busy repo it is the
+  # single largest source of manual reviews.
+  #
+  # Any subset may be set; each unset field falls through to the repo value, then the global env. The common
+  # shape is "same model, think harder" — set only `effort` (and optionally `selfConsistencyRuns`) and the
+  # model/provider are inherited untouched. Manual review remains the fallback: if the escalated review is
+  # not clean, the PR still holds.
+  guardrailEscalation:
+    effort: high
+    selfConsistencyRuns: 3
+    # provider: anthropic
+    # model: claude-opus-5
+
   advisoryCheckRuns:
     - name: Contributor trust
       appSlug: example-security-app
@@ -440,6 +458,16 @@ gate:
     # String or null. Default: null (the key record's model, else a conservative
     # per-provider default).
     model: null
+    # Reasoning effort for the review pass: low | medium | high | xhigh | max (#9821). Per-repo parity with
+    # the global CLAUDE_AI_EFFORT / CODEX_AI_EFFORT env vars, which used to be the ONLY place this could be
+    # set even though provider and model were already per-repo. Unset ⇒ whatever the env configures
+    # (medium by default). Higher effort costs more tokens and runs longer — raise it for repos where a
+    # missed defect is expensive, not everywhere.
+    effort: medium
+    # TOTAL evaluations per review, primary included (#9821). Per-repo parity with
+    # AI_REVIEW_SELF_CONSISTENCY_RUNS. Clamped to {0, 2, 3}: one run cannot measure agreement, and the
+    # benefit saturates by three. 0 (default) = a single pass. Each extra run is a full paid review.
+    selfConsistencyRuns: 0
     # Minimum calibrated AI-reviewer confidence (0-1). Under `mode: block`,
     # consensus and split AI-review defects still BLOCK the gate regardless of
     # this floor — what varies below it is `lowConfidenceDisposition` below.

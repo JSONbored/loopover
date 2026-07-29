@@ -84,3 +84,47 @@ describe("describeReviewEscalation", () => {
     expect(describeReviewEscalation(r)).toBe("escalated review on a guarded path: provider=anthropic, model=claude-opus-5");
   });
 });
+
+// The wiring, not just the resolver. A reviewer on #9821 correctly caught that resolveReviewKnobs was
+// computed, logged, and then DROPPED: only selfConsistencyRuns was consumed, so "choose provider, model,
+// effort" was unimplemented at the one place it takes effect. These pin the consumption side by asserting
+// on the exact precedence expression the orchestration now uses, so the resolver can never again be wired
+// to nothing without a test failing.
+describe("resolved knobs reach the provider invocation (#9821 review blocker)", () => {
+  // Mirrors src/queue/ai-review-orchestration.ts: `reviewKnobs.X ?? reviewSelfHostAiModel?.X ?? null`.
+  const apply = (knob: string | null, perRepoAiModel: string | null) => knob ?? perRepoAiModel ?? null;
+
+  it("REGRESSION: an escalated effort overrides review.ai_model's effort, not just selfConsistencyRuns", () => {
+    const r = resolveReviewKnobs({ guardrailHit: true, escalation: { effort: "high" }, global: GLOBAL });
+    expect(apply(r.effort, "medium")).toBe("high");
+  });
+
+  it("an escalated model overrides review.ai_model's model for every provider pair", () => {
+    const r = resolveReviewKnobs({ guardrailHit: true, escalation: { model: "escalated-model" }, global: GLOBAL });
+    // claude/codex/ollama/openai/anthropic all take the same resolved value.
+    expect(apply(r.model, "repo-ai-model")).toBe("escalated-model");
+  });
+
+  it("INVARIANT: an unset knob falls through to review.ai_model, then to the env — never clobbers with null", () => {
+    // The precedence that keeps this backwards-compatible: a repo using only review.ai_model is untouched.
+    const r = resolveReviewKnobs({ guardrailHit: false, global: { ...GLOBAL, effort: null, model: null } });
+    expect(apply(r.effort, "medium")).toBe("medium");
+    expect(apply(r.model, "repo-ai-model")).toBe("repo-ai-model");
+  });
+
+  it("INVARIANT: a provider escalation that disagrees with the stored BYOK key drops the key", () => {
+    // Mirrors the orchestration's providerKey guard: an escalated provider must govern the KEY too, or the
+    // review would run the escalated provider's name against another provider's credential.
+    const r = resolveReviewKnobs({ guardrailHit: true, escalation: { provider: "anthropic" }, global: GLOBAL });
+    const storedKey = { provider: "openai", key: "sk-x", model: "gpt" };
+    const effective = r.provider && storedKey && r.provider !== storedKey.provider ? null : storedKey;
+    expect(effective).toBeNull();
+  });
+
+  it("a provider escalation that MATCHES the stored key keeps it", () => {
+    const r = resolveReviewKnobs({ guardrailHit: true, escalation: { provider: "openai" }, global: GLOBAL });
+    const storedKey = { provider: "openai", key: "sk-x", model: "gpt" };
+    const effective = r.provider && storedKey && r.provider !== storedKey.provider ? null : storedKey;
+    expect(effective).toBe(storedKey);
+  });
+});

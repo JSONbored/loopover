@@ -17,8 +17,7 @@ import {
   runLoopOverAiReview,
   type AiContentBlock,
   type AiReviewDiagnostic,
-  type LoopOverAiReviewInput,
-} from "../../src/services/ai-review";
+  type LoopOverAiReviewInput, hasPublicReviewAssessment } from "../../src/services/ai-review";
 import { createTestEnv } from "../helpers/d1";
 import { FILE_CONTENT_BUDGET } from "../../src/review/review-grounding";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
@@ -3993,19 +3992,21 @@ describe("pure helpers", () => {
     expect(result.status).toBe("ok");
   });
 
-  it("composeAdvisoryNotes returns null when no assessment or finding is public-safe", () => {
-    expect(
-      composeAdvisoryNotes([
-        {
-          assessment: "reward payout farming",
-          suggestions: ["payout"],
-          nits: ["reward"],
-          blockers: [],
-          inlineFindings: [],
-          confidence: 1,
-        },
-      ]),
-    ).toBeNull();
+  it("composeAdvisoryNotes publishes the honest withheld-narrative note when nothing is public-safe (was: null)", () => {
+    // This test used to pin `null` here -- which is exactly the behavior the #9794 incident traced to: null
+    // was misreported upstream as a PROVIDER failure and held the PR forever. A review that parsed but had
+    // every field withheld now yields the fixed, public-safe explanation instead.
+    const notes = composeAdvisoryNotes([
+      {
+        assessment: "reward payout farming",
+        suggestions: ["payout"],
+        nits: ["reward"],
+        blockers: [],
+        inlineFindings: [],
+        confidence: 1,
+      },
+    ]);
+    expect(notes).toContain("withheld");
   });
 
   // REGRESSION: FORBIDDEN_PUBLIC_COMMENT_WORDS is matched with a plain case-insensitive `.includes()` over a
@@ -5601,5 +5602,53 @@ describe("reviewer vote attribution (#9478)", () => {
     const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
 
     expect(parsed.producedBy).toBe("primary");
+  });
+});
+
+describe("withheld-narrative honesty (#9794 regression)", () => {
+  it("REGRESSION: a clean review whose ENTIRE narrative is withheld publishes an honest note, not null", () => {
+    // JSONbored/loopover#9794: the model reviewed scoring/proof code, found no blockers or nits, and every
+    // narrative sentence used non-public vocabulary -- so composeAdvisoryNotes returned null and the caller
+    // misreported a PROVIDER failure ("AI review is unavailable"), holding the PR on every re-run.
+    const review = {
+      assessment: "The reward payout ranking cohort logic looks correct.", // every sentence trips the sanitizer
+      blockers: [], nits: [], suggestions: [], inlineFindings: [], confidence: 0.9,
+    } as never;
+    const notes = composeAdvisoryNotes([review]);
+    expect(notes).not.toBeNull();
+    expect(notes).toContain("found no blocking issues");
+    expect(notes).toContain("withheld");
+    // The fixed sentence must itself be public-safe -- no model text, no forbidden vocabulary.
+    expect(hasPublicReviewAssessment(notes)).toBe(true);
+  });
+
+  it("INVARIANT: a truly empty parse (no assessments at all) still returns null — a real provider failure keeps its accurate report", () => {
+    const review = { assessment: "", blockers: [], nits: [], suggestions: [], inlineFindings: [], confidence: 0 } as never;
+    expect(composeAdvisoryNotes([review])).toBeNull();
+  });
+
+  it("INVARIANT: withheld BLOCKERS are never reported as a clean result", () => {
+    // If the model raised blockers and every one was withheld by the sanitizer, the note must say findings
+    // exist -- "no blocking issues" here would green-light a PR the model actually flagged.
+    const review = {
+      assessment: "reward payout farming",
+      blockers: ["hotkey leak in the payout ranking path"], // withheld: trips the sanitizer
+      nits: [], suggestions: [], inlineFindings: [], confidence: 0.9,
+    } as never;
+    const notes = composeAdvisoryNotes([review]);
+    expect(notes).toContain("raised blocking findings");
+    expect(notes).not.toContain("no blocking issues");
+  });
+
+  it("INVARIANT: surviving blockers/nits still take precedence over the withheld-narrative note", () => {
+    const review = {
+      assessment: "The reward payout ranking cohort logic looks correct.",
+      blockers: ["Missing bounds check on the new pagination cursor."],
+      nits: [], suggestions: [], inlineFindings: [], confidence: 0.9,
+    } as never;
+    const notes = composeAdvisoryNotes([review]);
+    expect(notes).toContain("blocking findings");
+    expect(notes).toContain("Missing bounds check");
+    expect(notes).not.toContain("withheld");
   });
 });

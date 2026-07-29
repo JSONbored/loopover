@@ -152,6 +152,7 @@ import { isSelfAuthoredCiCompletionWebhook } from "../github/self-authored";
 import {
   AGENT_COMMAND_COMMENT_MARKER,
   createOrUpdateAgentCommandComment,
+  createOrUpdatePriorityLabelPolicyComment,
   createOrUpdatePrIntelligenceComment,
   createOrUpdateVisualFollowupComment,
   PR_PANEL_COMMENT_MARKER,
@@ -192,6 +193,12 @@ import {
   type PullRequestFreshness,
 } from "../github/pr-freshness";
 import { DEFAULT_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
+import {
+  PRIORITY_LABEL_AUTHOR_RULE_ID,
+  PRIORITY_LABEL_ENFORCEMENT_EVENT,
+  PRIORITY_LABEL_POLICY_URL,
+  resolvePriorityLabelEnforcement,
+} from "../review/priority-label-eligibility";
 import { fetchLinkedIssueLabelsForPropagation } from "../review/linked-issue-label-propagation-fetch";
 import { shouldPublishReviewCheck } from "../review/check-names";
 import { fetchPublicContributorProfile } from "../github/public";
@@ -6801,6 +6808,80 @@ async function maybeHandleReactionWebhookEvent(
   return false;
 }
 
+
+/**
+ * `issues.labeled` -> author-based priority-label eligibility (#9737).
+ *
+ * `gittensor:priority` carries the highest scoring multiplier, so the one label whose application must be
+ * constrained by rule rather than judgment. Priority marks work the MAINTAINER originated and triaged, so
+ * on a contributor-authored issue it is stripped and the reason stated once, with a link to the policy.
+ *
+ * The DECISION is `resolvePriorityLabelEnforcement` (pure, unit-tested); this function is its I/O -- read
+ * the author's permission, strip, upsert the marked comment, record the enforcement event. Returns `true`
+ * when it claimed the event, matching every sibling handler here.
+ *
+ * FAIL-SAFE end to end: an unreadable permission yields no strip (the evaluator's own rule), and every
+ * GitHub call is caught so a label event can never fail the webhook. Re-labelling simply re-runs it, which
+ * is why the comment carries a marker and is updated rather than re-posted.
+ */
+async function maybeHandlePriorityLabelEligibility(
+  env: Env,
+  deliveryId: string,
+  eventName: string,
+  payload: GitHubWebhookPayload,
+): Promise<boolean> {
+  if (eventName !== "issues" || payload.action !== "labeled") return false;
+  const repoFullName = payload.repository?.full_name;
+  const issue = payload.issue;
+  const installationId = payload.installation?.id;
+  if (!repoFullName || !issue || !installationId) return false;
+  // A pull request arrives on the `issues` event too; the evaluator refuses it, but skipping here saves a
+  // permission read on every PR label.
+  if (issue.pull_request !== undefined && issue.pull_request !== null) return false;
+
+  const settings = await resolveRepositorySettings(env, repoFullName).catch(() => undefined);
+  const priorityLabel: string = settings?.typeLabels?.priority ?? DEFAULT_TYPE_LABELS.priority ?? "gittensor:priority";
+  const labels = (issue.labels ?? []).map((label) => label?.name ?? "").filter((name) => name.length > 0);
+  // Only the labelled event for THIS label matters; anything else is another label's business.
+  if (!labels.some((name) => name.toLowerCase() === priorityLabel.toLowerCase())) return false;
+
+  const authorLogin = issue.user?.login ?? null;
+  const authorPermission = authorLogin
+    ? await getRepositoryCollaboratorPermission(env, installationId, repoFullName, authorLogin).catch(() => null)
+    : null;
+
+  const { verdict, commentBody } = resolvePriorityLabelEnforcement({
+    priorityLabel,
+    labels,
+    authorLogin,
+    authorPermission,
+    isPullRequest: false,
+    policyUrl: PRIORITY_LABEL_POLICY_URL,
+  });
+  if (!verdict.strip || commentBody === null) return false;
+
+  await removePullRequestLabel(env, installationId, repoFullName, issue.number, priorityLabel).catch(() => undefined);
+  await createOrUpdatePriorityLabelPolicyComment(env, installationId, repoFullName, issue.number, commentBody).catch(() => undefined);
+  await recordAuditEvent(env, {
+    eventType: PRIORITY_LABEL_ENFORCEMENT_EVENT,
+    actor: payload.sender?.login ?? null,
+    targetKey: `${repoFullName}#${issue.number}`,
+    outcome: "success",
+    detail: verdict.reason,
+    metadata: { ruleId: PRIORITY_LABEL_AUTHOR_RULE_ID, issueAuthor: authorLogin, authorPermission, label: priorityLabel },
+  }).catch(() => undefined);
+  await recordWebhookEvent(env, {
+    deliveryId,
+    eventName,
+    action: payload.action,
+    installationId,
+    repositoryFullName: repoFullName,
+    payloadHash: "processed",
+    status: "processed",
+  }).catch(() => undefined);
+  return true;
+}
+
 /**
  * Handles the `issue_comment` webhook event's command/mention dispatch chain — panel retrigger, panel
  * generate-tests, gate-override, resolve/explain/generate-tests/review/pause/resume/configuration/plan
@@ -7842,6 +7923,11 @@ export async function processGitHubWebhook(
       );
 
     if (await maybeHandleReactionWebhookEvent(env, deliveryId, eventName, payload)) return;
+
+    // #9737: an `issues.labeled` event carrying the priority label is judged against the issue's AUTHOR
+    // before anything else looks at it -- the label is the scoring input, so the sooner an ineligible one
+    // is removed the less it can be acted on.
+    if (await maybeHandlePriorityLabelEligibility(env, deliveryId, eventName, payload)) return;
 
     if (
       await maybeHandleIssueCommentCommandWebhookEvent(env, deliveryId, eventName, payload)

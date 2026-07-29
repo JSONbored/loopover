@@ -431,7 +431,9 @@ function plural(n: number, one: string): string {
 function statusChips(input: UnifiedReviewInput, ctx: UnifiedCommentContext, status: UnifiedCommentStatus): string {
   const chips: string[] = [`\`${plural(input.changedFiles, "file")}\``];
   if (input.reviewerCount > 0) chips.push(`\`${plural(input.reviewerCount, "AI reviewer")}\``);
-  const blockerCount = (input.blockers ?? []).length;
+  // Count the DEDUPED blockers -- the same set the "Why this is blocked" section renders from -- so the chip can
+  // never claim a number the section does not account for (e.g. when input.blockers carries duplicates) (#9670).
+  const blockerCount = dedupeLines(input.blockers ?? []).length;
   chips.push(blockerCount ? `\`${plural(blockerCount, "blocker")}\`` : "`no blockers`");
   // The readiness score is advisory-only and NEVER feeds the gate (see deriveUnifiedStatus's own comments) —
   // showing it next to a non-"ready" verdict reads as contradictory (e.g. "readiness 93/100" beside "fixes
@@ -490,8 +492,11 @@ function verdictLine(status: UnifiedCommentStatus, input: UnifiedReviewInput, ct
   }
 }
 
-/** Dedupe + cap a list of lines (case-insensitive), so blockers/nits never balloon the comment. */
-function dedupeLines(items: string[], cap = 12): string[] {
+/** Dedupe a list of lines (case-insensitive). `cap` defaults to unlimited (#9670): the blockers/nits callers
+ *  pass the FULL deduped set to truncateFindingsForDisplay, which is the disclosed-truncation stage -- capping
+ *  here instead silently dropped items 13+ from the AI-context block and hid the "+N more" footer. Callers that
+ *  genuinely want a hard, undisclosed cap (e.g. buildAiContextBlock's reasons) still pass one explicitly. */
+function dedupeLines(items: string[], cap = Number.POSITIVE_INFINITY): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const raw of items) {
@@ -507,6 +512,11 @@ function dedupeLines(items: string[], cap = 12): string[] {
 }
 
 /** Truncate a findings list for display-only rendering. Null/undefined cap ⇒ unchanged. */
+// The human-scannable display cap applied when a repo's maxFindingsCaps supplies nothing. Moved here from
+// dedupeLines' old default so the cap is now disclosed truncation (with a "+N more" footer) rather than silent
+// data loss upstream of the AI-context block and the more-footer (#9670).
+export const DEFAULT_FINDINGS_DISPLAY_CAP = 12;
+
 export function truncateFindingsForDisplay(
   items: string[],
   cap: number | null | undefined,
@@ -638,7 +648,9 @@ function nonRequiredFailingChecksBlock(readiness: MergeReadiness | undefined): s
  *  found something, but produced no write-up -- not "AI review never ran; a separate check is what's
  *  blocking this." */
 function codeReviewRow(input: UnifiedReviewInput): UnifiedSignalRow {
-  const blockerCount = (input.blockers ?? []).length;
+  // Count the DEDUPED blockers so this row's evidence phrasing keys off the same population the blockers
+  // section renders (a duplicate blocker must not tip reviewerEvidence into the "blocker is from ..." arm) (#9670).
+  const blockerCount = dedupeLines(input.blockers ?? []).length;
   const reviewerEvidence =
     input.reviewerCount > 1
       ? `${input.reviewerCount} reviewers, synthesized`
@@ -764,7 +776,7 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
   if (input.summary.trim()) blocks.push(`**Review summary**\n${escapePublicHtmlAngles(input.summary.trim())}`);
 
   const nitsAll = dedupeLines(input.nits ?? []);
-  const nitsTrunc = truncateFindingsForDisplay(nitsAll, input.maxFindingsCaps?.nits);
+  const nitsTrunc = truncateFindingsForDisplay(nitsAll, input.maxFindingsCaps?.nits ?? DEFAULT_FINDINGS_DISPLAY_CAP);
   if (nitsAll.length && verbosity !== "quiet") {
     const nitsBody = nitsTrunc.shown.length
       ? appendMoreFooter(taskList(nitsTrunc.shown), nitsTrunc.hiddenCount)
@@ -772,8 +784,12 @@ export function renderUnifiedReviewComment(input: UnifiedReviewInput, ctx: Unifi
     blocks.push(details("Nits", nitsBody, `${nitsAll.length} non-blocking`, collapsiblesOpen));
   }
 
+  // dedupe uncapped so blockersAll is the FULL set: truncateFindingsForDisplay (the disclosed-truncation stage)
+  // then sees a real hiddenCount, and buildAiContextBlock below gets every blocker as its comment promises. The
+  // 12-item DISPLAY default is preserved here (not in dedupeLines) so an unset maxFindingsCaps still caps the
+  // human list, now with a "+N more" footer rather than silent loss (#9670).
   const blockersAll = dedupeLines(input.blockers ?? []);
-  const blockersTrunc = truncateFindingsForDisplay(blockersAll, input.maxFindingsCaps?.blockers);
+  const blockersTrunc = truncateFindingsForDisplay(blockersAll, input.maxFindingsCaps?.blockers ?? DEFAULT_FINDINGS_DISPLAY_CAP);
   if (blockersAll.length) {
     const heading = status === "blocked" ? "Why this is blocked" : "Concerns raised — review before merging";
     const blockersBody = blockersTrunc.shown.length

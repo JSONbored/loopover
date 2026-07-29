@@ -262,6 +262,21 @@ It exposes these read-only tools, generated from the `@loopover/contract` regist
 | `loopover_miner_list_claims` | Read-only listing of the local claim ledger: which issues this miner has claimed (repo, issue number, status, claimed-at, note). Optional repoFullName/status filters pass through to the existing listClaims query. Exposes no claim/release mutation and no conflict-resolution logic. |
 | `loopover_miner_list_plans` | Read-only list of the miner's PERSISTED plan store (planId, plan DAG, status, updatedAt), optionally filtered by status. Wraps plan-store.js's existing listPlans query -- no new logic, no mutation. NOTE: this is the store-backed AMS plan store; it is distinct from ORB's stateless loopover_plan_status tool, which reads the caller's in-memory plan object rather than any persisted store. |
 
+#### ops
+
+| Tool | Description |
+| --- | --- |
+| `loopover_miner_claim_release` | Release this miner's claim on one issue, so the claim ledger no longer reserves it. Dispatches through the governor-gated chokepoint and is recorded in the event ledger with source=mcp. |
+| `loopover_miner_deny_hooks_decide` | Approve or reject one synthesized deny-hook awaiting review. Approving puts it into force for future runs; rejecting discards it. Dispatches through the governor-gated chokepoint and is recorded in the event ledger with source=mcp. |
+| `loopover_miner_doctor` | Read-only diagnostic checks for this AMS miner: state directory, engine version match, store reachability, credentials, and configuration. Split out of loopover_miner_status (#9523) so status stays cheap and doctor can grow checks. Every check runs and reports its own pass/warn/fail — nothing is mutated and nothing stops at the first failure. |
+| `loopover_miner_get_metrics_snapshot` | The same Prometheus metric families the `metrics` CLI exports, as structured JSON — so an agent can read them without parsing the text exposition format. Read-only. |
+| `loopover_miner_governor_pause` | Pause this miner's governor: no new work is admitted until it resumes. Administrative control, not a content write — the same action the dashboard's pause button dispatches, through the same governor-gated chokepoint, firing the same notification side-channel. Recorded in the event ledger with source=mcp. |
+| `loopover_miner_governor_resume` | Resume this miner's governor after a pause, re-admitting work. The same action the dashboard's resume button dispatches, through the same governor-gated chokepoint. Recorded in the event ledger with source=mcp. |
+| `loopover_miner_purge_repo` | Right-to-be-forgotten: delete every trace of one repo from this miner's local stores, returning the same per-store report as the CLI. IRREVERSIBLE — the rows are gone, not archived. Requires confirm=true, elicits confirmation where the client supports it, and dispatches through the governor-gated chokepoint. |
+| `loopover_miner_queue_release` | Release one claimed portfolio-queue item back to unclaimed, so another cycle can pick it up. Mirrors the dashboard's release action and dispatches through the same governor-gated chokepoint. Recorded in the event ledger with source=mcp. |
+| `loopover_miner_queue_requeue` | Return one portfolio-queue item to the pending pool for another attempt. Mirrors the dashboard's requeue action and dispatches through the same governor-gated chokepoint. Recorded in the event ledger with source=mcp. |
+| `loopover_miner_run_migrations` | Apply pending schema migrations to this miner's EXISTING local stores — it never creates a store that is not already there. Reports each store as migrated, up-to-date, or failed. There is no dry-run mode: applying a migration is opening the store, and the CLI has none either. Dispatches through the governor-gated chokepoint. |
+
 #### utility
 
 | Tool | Description |

@@ -116,3 +116,18 @@ export async function destroyTenant(
   const path = `/v1/tenants/${encodeURIComponent(input.name)}?product=${encodeURIComponent(input.product)}`;
   return controlPlaneRequest(env, "DELETE", path, undefined, options);
 }
+
+/** `GET /v1/tenants/:name/health?product=ams` -- the AMS tenant's wake schedule and last cycle outcome. */
+export async function getAmsTenantHealth(env: Env, input: { name: string }, options: ControlPlaneOptions = {}): Promise<TenantRecord> {
+  return controlPlaneRequest(env, "GET", `/v1/tenants/${encodeURIComponent(input.name)}/health?product=ams`, undefined, options);
+}
+
+/**
+ * `POST /v1/tenants/:name/wake?product=ams` -- trigger a cycle now.
+ *
+ * The control plane applies the SAME per-tenant schedule guard the cron path obeys, so a wake too soon after
+ * the last one comes back as a throttled answer rather than being forced through here.
+ */
+export async function wakeAmsTenant(env: Env, input: { name: string }, options: ControlPlaneOptions = {}): Promise<TenantRecord> {
+  return controlPlaneRequest(env, "POST", `/v1/tenants/${encodeURIComponent(input.name)}/wake?product=ams`, {}, options);
+}

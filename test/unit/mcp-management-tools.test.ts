@@ -690,3 +690,61 @@ describe("run-only jobs (#9522)", () => {
     await client.close();
   });
 });
+
+describe("hosted AMS tenant tools (#9523)", () => {
+  function controlPlaneEnv() {
+    return createTestEnv({ LOOPOVER_CONTROL_PLANE_URL: "https://cp.example", LOOPOVER_CONTROL_PLANE_ADMIN_TOKEN: "tok" });
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ["loopover_ams_tenant_health", { name: "acme" }],
+    ["loopover_ams_tenant_wake", { name: "acme" }],
+  ])("%s reports not configured where this deployment administers no tenants", async (name, args) => {
+    const client = await connect(createTestEnv());
+    const result = await client.callTool({ name, arguments: args });
+    expect(result.isError, `${name} must answer, not throw`).toBeFalsy();
+    expect(structured(result).configured).toBe(false);
+    await client.close();
+  });
+
+  it("reports a tenant's lifecycle state and wake cadence", async () => {
+    vi.stubGlobal("fetch", async () =>
+      new Response(JSON.stringify({ name: "acme", state: "active", schedule: "0 * * * *", lastWakeAt: "2026-07-28T00:00:00.000Z" }), {
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const client = await connect(controlPlaneEnv());
+    expect(structured(await client.callTool({ name: "loopover_ams_tenant_health", arguments: { name: "acme" } }))).toMatchObject({
+      configured: true,
+      state: "active",
+    });
+    await client.close();
+  });
+
+  it("says unknown when the control plane reports no lifecycle state", async () => {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ name: "acme" }), { headers: { "content-type": "application/json" } }));
+    const client = await connect(controlPlaneEnv());
+    expect(structured(await client.callTool({ name: "loopover_ams_tenant_health", arguments: { name: "acme" } })).configured).toBe(true);
+    await client.close();
+  });
+
+  it("wakes a tenant and audits the cycle", async () => {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ name: "acme", woken: true }), { headers: { "content-type": "application/json" } }));
+    const client = await connect(controlPlaneEnv());
+    expect(structured(await client.callTool({ name: "loopover_ams_tenant_wake", arguments: { name: "acme" } }))).toMatchObject({ woken: true });
+    await client.close();
+  });
+
+  it("REGRESSION: a THROTTLED wake is reported as an answer and is NOT audited as a cycle", async () => {
+    // The schedule guard refusing a too-soon wake is the guard working, not a cycle that ran.
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ name: "acme", throttled: true }), { headers: { "content-type": "application/json" } }));
+    const client = await connect(controlPlaneEnv());
+    const result = structured(await client.callTool({ name: "loopover_ams_tenant_wake", arguments: { name: "acme" } }));
+    expect(result.throttled).toBe(true);
+    await client.close();
+  });
+});

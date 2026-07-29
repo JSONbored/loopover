@@ -27,6 +27,7 @@ export default defineConfig({
       // first, it silently intercepted "@loopover/contract/tools" too and rewrote it to a bogus
       // "<index.ts path>/tools" that resolved nowhere. Confirmed by reproducing the failure with a
       // throwaway probe test before reordering, not assumed from reading Vite's docs alone.
+      "@loopover/contract/discovery": new URL("./packages/loopover-contract/src/discovery.ts", import.meta.url).pathname,
       "@loopover/contract/enums": new URL("./packages/loopover-contract/src/enums.ts", import.meta.url).pathname,
       "@loopover/contract/tools": new URL("./packages/loopover-contract/src/tools/index.ts", import.meta.url).pathname,
       "@loopover/contract/cli-config": new URL("./packages/loopover-contract/src/cli-config.ts", import.meta.url).pathname,

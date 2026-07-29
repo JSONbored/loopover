@@ -1,0 +1,77 @@
+name: Publish MCP Registry
+
+# Publishes server.json to the official MCP registry (#9526), so `io.github.JSONbored/loopover` is
+# discoverable by any registry-aware client.
+#
+# workflow_dispatch ONLY, and main-only. Publishing announces a version to a public registry, which is not
+# something a branch build or a merge should do on its own -- the version it advertises comes from
+# @loopover/mcp's package.json, which the release automation bumps, so a publish is a deliberate follow-up to
+# a release rather than a side effect of one.
+#
+# ANTI-ROT: the first step re-runs scripts/check-server-manifest.ts, which asserts every watched path still
+# EXISTS before validating any field. metagraphed's version-sync workflow rotted silently for months because
+# it watched a path that had been renamed -- it kept passing while doing nothing at all. A workflow that can
+# quietly watch nothing is worse than no workflow, so this one fails loudly instead.
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Validate and print what would be published, without publishing"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  # GitHub OIDC is how mcp-publisher proves this repo owns the io.github.JSONbored/* namespace. No
+  # long-lived registry credential exists to leak.
+  id-token: write
+
+concurrency:
+  group: publish-mcp-registry
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish server.json
+    runs-on: ubuntu-latest
+    # Belt and braces alongside the dispatch-only trigger: a dispatch can name any ref, and a registry
+    # publish must only ever describe what is on main.
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+
+      # Runs BEFORE anything else: a manifest whose version disagrees with the shipped package, or a watched
+      # path that has been renamed away, must stop the publish rather than announce something untrue.
+      - name: Validate server.json and its watched paths
+        run: node --experimental-strip-types scripts/check-server-manifest.ts
+
+      - name: Install mcp-publisher
+        env:
+          # SHA-pinned: this binary authenticates as this repo and writes to a public registry, so it is not
+          # something to float on a moving tag.
+          MCP_PUBLISHER_VERSION: v1.2.3
+        run: |
+          set -euo pipefail
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" -o mcp-publisher.tar.gz
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+          chmod +x mcp-publisher
+
+      - name: Login via GitHub OIDC
+        run: ./mcp-publisher login github-oidc
+
+      - name: Publish
+        if: ${{ !inputs.dry_run }}
+        run: ./mcp-publisher publish
+
+      - name: Dry run — report what would be published
+        if: ${{ inputs.dry_run }}
+        run: |
+          echo "DRY RUN: server.json validated and OIDC login succeeded; publish skipped."
+          cat server.json

@@ -179,6 +179,7 @@ import { computeFleetAnalytics } from "../orb/analytics";
 import { handleMcpRequest } from "../mcp/server";
 import { simulateOpenPrPressureShape } from "../mcp/server";
 import { simulateOpenPrPressure, type OpenPrPressureInput } from "../services/open-pr-pressure-scenarios";
+import { DISCOVERY_PATHS, discoveryDocumentsFor, respondWithDocument, toolsForDeployment } from "../mcp/discovery-routes";
 import { buildOpenApiSpec } from "../openapi/spec";
 import { COMMAND_RATE_LIMIT_EVENT_TYPE, generateSignalSnapshots } from "../queue/processors";
 import { generateChatQaAnswer } from "../services/ai-chat-qa";
@@ -1251,6 +1252,22 @@ export function createApp() {
   // enums/analyzer metadata (no DB/env/private data); excluded from requiresApiToken below.
   app.get("/v1/mcp/finding-taxonomy", (c) => c.json(buildFindingTaxonomyDocument()));
   app.get("/v1/mcp/enrichment-analyzers", (c) => c.json(buildEnrichmentAnalyzersTaxonomyDocument()));
+  // #9526: the MCP discovery surfaces, computed at request time from the contract registry (never a
+  // committed artifact -- a committed card is what made every concurrent tool PR conflict in metagraphed).
+  // Unauthenticated public metadata: tool names, descriptions, and schemas are already public, so these are
+  // excluded from requiresApiToken alongside the other unauthenticated document routes.
+  for (const path of DISCOVERY_PATHS) {
+    app.get(path, (c) => {
+      const documents = discoveryDocumentsFor({
+        version: LATEST_RECOMMENDED_MCP_VERSION,
+        deployment: "cloud",
+        baseUrl: c.env.PUBLIC_API_ORIGIN ?? new URL(c.req.url).origin,
+        tools: toolsForDeployment("cloud"),
+      });
+      return respondWithDocument(documents[path]!, c.req.header("if-none-match") ?? null);
+    });
+  }
+
   app.get("/openapi.json", (c) => c.json(buildOpenApiSpec()));
   app.all("/mcp", handleMcpRequest);
 

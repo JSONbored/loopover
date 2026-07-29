@@ -68,6 +68,10 @@ export function requiresApiToken(path: string): boolean {
   if (/^\/v1\/public\/decision-records\/[^/]+\/[^/]+\/[^/]+$/.test(path)) return false;
   if (path === "/openapi.json") return false;
   if (path === "/mcp") return false;
+  // #9526: the MCP discovery surfaces. Every field they carry -- tool names, descriptions, and JSON
+  // schemas -- is already public via /mcp's own tools/list and the published OpenAPI document, so gating
+  // them would only stop a registry crawler from finding a server that advertises itself on purpose.
+  if (path === "/.well-known/mcp.json" || path.startsWith("/.well-known/agent-tools/")) return false;
   // Public OAuth draft-submission flow (LOOPOVER_REVIEW_DRAFT): the submission entry points are unauthenticated
   // by design. The handlers themselves 404 when the flag is off, so this exemption is inert flag-OFF.
   if (path === "/v1/drafts" || path.startsWith("/v1/drafts/")) return false;

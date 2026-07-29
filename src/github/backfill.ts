@@ -910,9 +910,9 @@ export const REQUIRED_INSTALLATION_EVENTS = [
  * `status` in particular matters more than its optional standing suggests: codecov/patch is a commit status,
  * and it is the gate's hardest required check.
  */
-export const DIAGNOSED_INSTALLATION_EVENTS = ["pull_request_review_thread", "status", "workflow_run", "deployment_status", "push"] as const;
+const DIAGNOSED_INSTALLATION_EVENTS = ["pull_request_review_thread", "status", "workflow_run", "deployment_status", "push"] as const;
 
-export const OPTIONAL_VISIBLE_INSTALLATION_EVENTS = ["installation_target", "installation_repositories"] as const;
+const OPTIONAL_VISIBLE_INSTALLATION_EVENTS = ["installation_target", "installation_repositories"] as const;
 
 /**
  * The complete event set a new App should subscribe to: everything required, plus everything diagnosed.

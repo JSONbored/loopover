@@ -71,7 +71,7 @@ export function scheduledAlpha(arm: "close" | "merge", usablePairs: number): num
   if (usablePairs >= 350) return 0.025;
   return 0.05;
 }
-export function riskControlDelta(env: Env): number {
+function riskControlDelta(env: Env): number {
   return parseBudget(env.LOOPOVER_RISK_CONTROL_DELTA, 0.05, 0.2);
 }
 

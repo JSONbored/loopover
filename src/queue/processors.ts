@@ -8037,7 +8037,7 @@ export async function resolveLinkedIssueAuthorLogins(
 // than risking only some remembering to add it. The live open-reference fetch is skipped entirely (resolves
 // `true` with no network call) unless `linkedIssueGateMode` is actually "block" -- the only mode where
 // whether a citation is open can change the gate's outcome.
-export async function resolveLinkedIssueAdvisoryContext(
+async function resolveLinkedIssueAdvisoryContext(
   env: Env,
   installationId: number | null | undefined,
   repoFullName: string,

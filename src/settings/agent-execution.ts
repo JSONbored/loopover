@@ -138,7 +138,7 @@ export function requiredAgentActionPermissions(
   return requirements;
 }
 
-export function missingAgentActionPermissions(input: {
+function missingAgentActionPermissions(input: {
   autonomy: AutonomyPolicy | null | undefined;
   installationPermissions: Record<string, string> | null | undefined;
   actionClass?: AgentActionClass | null | undefined;

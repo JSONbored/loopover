@@ -38,11 +38,11 @@ export const REPO_CULTURE_PROFILE_SCHEMA_VERSION = 1;
 export const MIN_SAMPLE_PULL_REQUESTS = 5;
 
 /** Signal type this profile is cached under in `signal_snapshots` (mirrors REPO_FOCUS_MANIFEST_SIGNAL's naming). */
-export const REPO_CULTURE_PROFILE_SIGNAL = "repo-culture-profile";
+const REPO_CULTURE_PROFILE_SIGNAL = "repo-culture-profile";
 
 /** Default cache freshness window -- matches REPO_FOCUS_MANIFEST_MAX_AGE_MS's order of magnitude (a repo's merge
  *  norms drift slowly; there is no need to re-derive this on every review). */
-export const REPO_CULTURE_PROFILE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const REPO_CULTURE_PROFILE_MAX_AGE_MS = 6 * 60 * 60 * 1000;
 
 export type RepoCulturePrSizeBand = "tiny" | "small" | "medium" | "large";
 

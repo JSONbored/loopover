@@ -14,7 +14,7 @@ import { closedAtMs } from "./review-recap";
 
 export const PUBLIC_QUALITY_TREND_WEEKS = 8;
 /** Below this per-week gate-block sample the weekly false-positive rate is too noisy to publish. */
-export const MIN_GATE_TREND_SAMPLE = 3;
+const MIN_GATE_TREND_SAMPLE = 3;
 
 export type PublicQualityTrendWeek = {
   /** UTC Monday (YYYY-MM-DD) that starts the bucket. */
@@ -199,7 +199,7 @@ function topPublicGateTypes(gatePrecision: GatePrecisionReport): PublicQualityGa
 }
 
 /** Assemble the public-safe per-repo quality payload from existing telemetry. Pure. */
-export function buildPublicQualityMetrics(args: {
+function buildPublicQualityMetrics(args: {
   repoFullName: string;
   generatedAt: string;
   gatePrecision: GatePrecisionReport;

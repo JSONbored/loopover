@@ -22,8 +22,8 @@ import { errorMessage } from "../utils/json";
  * that re-derives everything from live state.
  */
 
-export const PENDING_CLOSURE_FLAGGED_EVENT = "agent.linked_issue.pending_closure_flagged";
-export const PENDING_CLOSURE_REQUEUED_EVENT = "agent.linked_issue.pending_closure_requeued";
+const PENDING_CLOSURE_FLAGGED_EVENT = "agent.linked_issue.pending_closure_flagged";
+const PENDING_CLOSURE_REQUEUED_EVENT = "agent.linked_issue.pending_closure_requeued";
 
 /** Grace beyond the flag's own deadline before the watchdog steps in, so a job merely waiting its turn behind a
  *  busy queue is never mistaken for a lost one. */

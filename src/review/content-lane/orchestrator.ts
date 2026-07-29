@@ -86,7 +86,7 @@ export function diffAppendedSurfaceEntries(headRaw: string | null, baseRaw: stri
  * exactly what it is -- zero appended entries. Arrays keep their order (order IS meaning there, same rule as
  * decision-record.ts's canonicalJson).
  */
-export function canonicalEntryKey(entry: unknown): string {
+function canonicalEntryKey(entry: unknown): string {
   return JSON.stringify(sortKeysDeep(entry));
 }
 

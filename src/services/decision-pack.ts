@@ -78,7 +78,7 @@ function resolveOssEmissionShare(constants: Record<string, number> | undefined):
   const value = constants?.OSS_EMISSION_SHARE;
   return typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_OSS_EMISSION_SHARE;
 }
-export const DECISION_PACK_REBUILD_DEBOUNCE_MS = 15 * 1000;
+const DECISION_PACK_REBUILD_DEBOUNCE_MS = 15 * 1000;
 const pendingDecisionPackRebuilds = new Map<string, Promise<boolean>>();
 
 async function loadContributorPullRequestFilePaths(

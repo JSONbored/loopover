@@ -85,7 +85,7 @@ export const MAX_SCREENSHOT_HEIGHT = 20000;
 // The real cost ceiling: width × height, so a narrow-tall page is judged by what it actually costs to
 // render rather than by height alone.
 export const MAX_SCREENSHOT_PIXELS = 14_400_000; // 1440 × 10000 — one full desktop-width page.
-export const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
+const MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024;
 const SCREENSHOT_TIMEOUT_MS = 10000;
 const SCREENSHOT_HEIGHT_PROBE_TIMEOUT_MS = 2_000;
 const THEME_STORAGE_WRITE_TIMEOUT_MS = 2_000;
@@ -139,7 +139,7 @@ const AUTH_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 900"
 
 /** True when `url`'s path looks like a sign-in / auth wall. Used to avoid presenting a screenshot of the
  *  login screen as the route's preview. */
-export function isAuthWallUrl(url: string | undefined): boolean {
+function isAuthWallUrl(url: string | undefined): boolean {
   if (!url) return false;
   try {
     const p = new URL(url).pathname.toLowerCase();
@@ -417,7 +417,7 @@ export async function captureShot(env: Env, url: string, viewport: Viewport = VI
 
 /** Back-compat thin wrapper: render a page to a PNG (or null on failure / auth wall). The on-demand
  *  `/shot?url=` route uses this; the capture pipeline uses `captureShot` to also learn `authWalled`. */
-export async function renderScreenshot(env: Env, url: string, viewport: Viewport = VIEWPORT, opts: CaptureShotOptions = {}): Promise<Uint8Array | null> {
+async function renderScreenshot(env: Env, url: string, viewport: Viewport = VIEWPORT, opts: CaptureShotOptions = {}): Promise<Uint8Array | null> {
   return (await captureShot(env, url, viewport, opts)).png;
 }
 

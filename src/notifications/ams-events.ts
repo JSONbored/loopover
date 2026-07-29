@@ -5,7 +5,7 @@
 import type { DetectedNotificationEvent, NotificationEventType } from "../types";
 import { nowIso } from "../utils/json";
 
-export const AMS_NOTIFICATION_EVENT_TYPES = [
+const AMS_NOTIFICATION_EVENT_TYPES = [
   "ams_attempt_started",
   "ams_attempt_failed",
   "ams_governor_paused",

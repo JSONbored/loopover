@@ -98,7 +98,7 @@ export type RagRetrievalResult = {
  *  model id; the self-host embed path (`createOpenAiCompatibleAi` in src/selfhost/ai.ts) discards any
  *  `@cf/`-prefixed id and substitutes its own configured/default embed model (`AI_EMBED_MODEL`), so this
  *  constant only matters for a genuine Cloudflare Workers AI inference binding. */
-export const EMBED_MODEL = "@cf/baai/bge-m3";
+const EMBED_MODEL = "@cf/baai/bge-m3";
 /** Default bge-m3 output dimension. Self-host can override this when QDRANT_DIM selects another model width. */
 export const RAG_DIMENSIONS = 1024;
 

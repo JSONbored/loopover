@@ -12,7 +12,7 @@ import {
 
 export const SECRET_KEY =
   /(token|secret|key|password|passwd|authorization|auth|dsn|cookie|bearer|credential|private)/i;
-export const PAYLOAD_KEY =
+const PAYLOAD_KEY =
   /(^|[_-])(body|payload|patch|diff|prompt|rubric|guardrail|headers?|cookies?|title|config|review[-_]?text|review[-_]?content|comment[-_]?text|comment[-_]?body)([_-]|$)|^(body|payload|patch|diff|prompt|rubric|guardrail|headers?|cookies?|title|config|review[-_]?text|review[-_]?content|comment[-_]?text|comment[-_]?body)$/i;
 export const SECRET_VALUE = new RegExp(
   [
@@ -30,10 +30,10 @@ export const SECRET_VALUE = new RegExp(
   ].join("|"),
   "gi",
 );
-export const JWT_VALUE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
-export const QUERY_SECRET_VALUE =
+const JWT_VALUE = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g;
+const QUERY_SECRET_VALUE =
   /([?&;][^=\s&#;]*(?:token|secret|key|password|passwd|authorization|auth|dsn|cookie|bearer|credential|private)[^=\s&#;]*=)[^&#\s;]+/gi;
-export const PRIVATE_TEXT =
+const PRIVATE_TEXT =
   /\b(raw[-_\s]?score|scoring context|private rubric|gate prompt|review prompt|guardrail paths?|pull request body|pr body|pr title|raw diff)\b/gi;
 export const PUBLIC_UNSAFE_SCRUB = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b`, "gi");
 export const REDACTED = "[redacted]";
@@ -106,14 +106,14 @@ function normalizeInstallationId(value: unknown): string | undefined {
 
 /** Hash a raw installation id into a short, non-reversible tag -- undefined when the hasher hasn't been
  *  loaded yet ({@link loadNodeHasher}) or the value isn't a real installation id. */
-export function installationIdHash(value: unknown): string | undefined {
+function installationIdHash(value: unknown): string | undefined {
   if (!digestHexSync) return undefined;
   const normalized = normalizeInstallationId(value);
   if (!normalized) return undefined;
   return digestHexSync(`${INSTALLATION_HASH_SEED}${normalized}`).slice(0, 16);
 }
 
-export function isInstallationIdKey(key: string): boolean {
+function isInstallationIdKey(key: string): boolean {
   return key.replace(/[^A-Za-z0-9]/g, "").toLowerCase() === "installationid";
 }
 
@@ -130,7 +130,7 @@ export function hashedInstallationContext(context: Record<string, unknown>): Rec
   return safe;
 }
 
-export function shouldRedactKey(key: string): boolean {
+function shouldRedactKey(key: string): boolean {
   const compact = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
   return (
     SECRET_KEY.test(key) ||
@@ -149,11 +149,11 @@ export function scrubString(value: string): string {
     .replace(PRIVATE_TEXT, "private context");
 }
 
-export function isUrlKey(key: string): boolean {
+function isUrlKey(key: string): boolean {
   return key.replace(/[^A-Za-z0-9]/g, "").toLowerCase().endsWith("url");
 }
 
-export function isQueryKey(key: string): boolean {
+function isQueryKey(key: string): boolean {
   const compact = key.replace(/[^A-Za-z0-9]/g, "").toLowerCase();
   return compact === "query" || compact === "querystring";
 }

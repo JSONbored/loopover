@@ -857,11 +857,6 @@ export function extractLastJsonObject(text: string): string | null {
   return last;
 }
 
-/** Default reviewer confidence when the model omits a usable `confidence` (#8) — 1.0, so an absent/garbage value
- *  degrades to EXACTLY the historical hardcoded `confidence: 1` (a defect always cleared the floor). Shared by the
- *  parser and the combiners so the fallback is identical everywhere. */
-export const DEFAULT_REVIEW_CONFIDENCE = 1;
-
 /** #8833: the fallback when a model states NO usable confidence at all. The old fallback was 1.0 — "the
  *  model said nothing" read as MAXIMUM certainty, so a review missing the field skipped every low-confidence
  *  safeguard (#4603's disposition, the close-confidence floor) and drove a straight close. 0.5 sits below
@@ -1042,7 +1037,7 @@ export function demoteStaleBaseClaimBlockers(review: ModelReview): { review: Mod
  *  hallucination pattern lives in (a symbol/import/guard/handler the model merely could not SEE). Every
  *  other kind remains free-form judgment; this list is deliberately closed so a novel kind string can never
  *  smuggle a claim past verification (unknown kinds are treated as plain judgment, not as absence). */
-export const ABSENCE_CLAIM_KINDS = new Set(["missing_symbol", "missing_import", "missing_guard", "missing_handling", "missing_registration"]);
+const ABSENCE_CLAIM_KINDS = new Set(["missing_symbol", "missing_import", "missing_guard", "missing_handling", "missing_registration"]);
 
 /** #8833: the minimum usable evidence quote. Shorter fragments ("x", ") {") appear in virtually any diff, so
  *  they would verify vacuously — a quote must be long enough to plausibly identify ONE breaking line. */

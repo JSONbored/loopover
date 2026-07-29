@@ -5,7 +5,7 @@
 // before the npm package itself is actually tagged/published.
 import loopoverMcpPackageJson from "../../packages/loopover-mcp/package.json";
 
-export const LOOPOVER_API_VERSION = "0.1.0";
+const LOOPOVER_API_VERSION = "0.1.0";
 export const LOOPOVER_MCP_PACKAGE_NAME = "@loopover/mcp";
 export const MINIMUM_SUPPORTED_MCP_VERSION = "0.5.0";
 export const LATEST_RECOMMENDED_MCP_VERSION: string = loopoverMcpPackageJson.version;

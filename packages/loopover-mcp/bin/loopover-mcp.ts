@@ -158,7 +158,7 @@ import {
   getToolContract,
   ListPendingActionsStdioInput,
 } from "@loopover/contract/tools";
-import type { ToolContract } from "@loopover/contract";
+import { AUTONOMY_LEVELS as MAINTAIN_AUTONOMY_LEVELS, MAINTAIN_ACTION_CLASSES, PROPOSE_ACTION_CLASSES, type ToolContract } from "@loopover/contract";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "../lib/cli-error.js";
@@ -359,28 +359,18 @@ const REPEATABLE_FLAGS = new Set(Object.entries(CLI_FLAG_SPEC).filter(([, kind])
 const BOOLEAN_FLAGS = new Set(Object.entries(CLI_FLAG_SPEC).filter(([, kind]) => kind === "boolean").map(([flag]) => flag));
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
-// #784 maintain set-level — the autonomy dial's action classes + levels.
+// #784 maintain set-level — the autonomy dial's action classes + levels, from @loopover/contract.
 //
-// Both are hand-synced literals, not imports: this file resolves @loopover/engine through the PUBLISHED package
-// (`^3.0.0`), whose export map exposes only `.` + a few `./scoring/*`/`./signals/*` subpaths — neither surfaces
-// AUTONOMY_LEVELS, so importing the canonical list would mean widening the engine's public API (#6153). The
-// drift this invites is real and has bitten once already, so test/unit/mcp-cli-maintain.test.ts pins LEVELS
-// against the live enum and fails the moment the two disagree.
+// #9762: these were hand-synced literals, justified by a comment saying the canonical lists could not be
+// imported because this file resolves @loopover/engine through the PUBLISHED package, whose export map does
+// not surface AUTONOMY_LEVELS (#6153). That reason went away when the contract did: this file already
+// imports @loopover/contract, and the contract carries all three lists as its own pinned copies. The
+// drift the old comment warned about (LEVELS carried "suggest"/"propose" for the whole life of #4620,
+// after the server had dropped them) is now impossible rather than test-detected.
 //
-// LEVELS mirrors AUTONOMY_LEVELS (src/settings/autonomy.ts -> packages/loopover-engine/src/settings/autonomy.ts)
-// exactly. #6153: it carried "suggest"/"propose" for the whole life of #4620, which dropped them server-side --
-// PUT /settings validates against the live enum (src/api/routes.ts), so every value this list accepted but the
-// server didn't turned an immediate, clear client-side error into a confusing 400 from the API.
-//
-// ACTION_CLASSES is deliberately NOT the engine's full AGENT_ACTION_CLASSES: it is the operator-settable subset
-// the maintain surface exposes, and src/mcp/server.ts's MAINTAIN_AUTONOMY_ACTION_CLASSES mirrors these six on
-// purpose. Do not "sync" it to the engine list.
-const MAINTAIN_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label"];
-const MAINTAIN_AUTONOMY_LEVELS = ["observe", "auto_with_approval", "auto"];
-// #6744: the loopover_propose_action / POST .../agent/pending-actions action-class enum. A superset of
-// MAINTAIN_ACTION_CLASSES (adds review_state_label) — kept separate so `maintain propose` accepts exactly what the
-// route + MCP tool accept, while set-level keeps its own autonomy-configurable subset above.
-const PROPOSE_ACTION_CLASSES = ["review", "request_changes", "approve", "merge", "close", "label", "review_state_label"];
+// MAINTAIN_ACTION_CLASSES is deliberately NOT the engine's full AGENT_ACTION_CLASSES: it is the
+// operator-settable subset the maintain surface exposes. PROPOSE_ACTION_CLASSES is that subset plus
+// review_state_label, which the propose route accepts and the set-level dial does not.
 
 // #783 plan DAG -- one implementation, in @loopover/engine (#9537). This file carried a
 // hand-copied, untyped duplicate of buildPlanDag/validatePlanDag/nextReadySteps/the step state

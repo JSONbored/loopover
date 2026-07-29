@@ -1,4 +1,5 @@
 import { OpenApiGeneratorV3, OpenAPIRegistry } from "@asteasolutions/zod-to-openapi";
+import { PUBLIC_SURFACE_SKIP_REASONS } from "@loopover/contract";
 import { requiresApiToken } from "../auth/route-auth";
 import { registerDiscoveryRouteSpecs } from "./discovery-route-specs";
 import { registerOrbAndControlRouteSpecs } from "./orb-and-control-route-specs";
@@ -2206,7 +2207,7 @@ export function buildOpenApiSpec() {
           param: { description: "Optional repository filter. Browser sessions must have control-panel access to this repo." },
           example: "JSONbored/loopover",
         }),
-        reason: z.enum(["surface_off", "missing_author", "bot_author", "ignored_author", "maintainer_author", "miner_detection_unavailable", "not_official_gittensor_miner"]).optional().openapi({
+        reason: z.enum(PUBLIC_SURFACE_SKIP_REASONS).optional().openapi({
           param: { description: "Optional PR skip reason filter." },
           example: "not_official_gittensor_miner",
         }),

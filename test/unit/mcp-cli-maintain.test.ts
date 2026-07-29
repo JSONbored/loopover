@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -10,6 +10,7 @@ import {
   it,
   vi,
 } from "vitest";
+import { AUTONOMY_LEVELS as CONTRACT_AUTONOMY_LEVELS } from "@loopover/contract";
 import { AUTONOMY_LEVELS } from "../../src/settings/autonomy";
 
 // TS5097: keep the .ts specifier out of a literal import() position (same indirection as the template).
@@ -20,22 +21,14 @@ import {
   startFixtureServer,
 } from "./support/mcp-cli-harness";
 
-// #6153: MAINTAIN_AUTONOMY_LEVELS is a hand-synced copy of the live enum (the CLI reaches @loopover/engine only
-// through its published export map, which doesn't surface AUTONOMY_LEVELS), so nothing but a test can catch the
-// two drifting apart. The source is parsed rather than imported because bin/loopover-mcp.js is an executable
-// entrypoint that starts a server on import.
-const CLI_SOURCE = readFileSync(
-  join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js"),
-  "utf8",
-);
-
-/** The `maintain set-level` levels the committed CLI source really accepts. */
-function declaredLevels(): string[] {
-  const raw =
-    /const MAINTAIN_AUTONOMY_LEVELS = \[([^\]]*)\];/.exec(CLI_SOURCE)?.[1] ??
-    "";
-  return [...raw.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
-}
+// #6153: the CLI carried its own hand-synced copy of the autonomy levels, because it reaches
+// @loopover/engine through a published export map that does not surface AUTONOMY_LEVELS -- and it drifted,
+// accepting "suggest"/"propose" for the whole life of #4620 after the server dropped them. #9762 deleted the
+// copy: the bin imports the list from @loopover/contract, which both packages can reach.
+//
+// So the guard below stopped being a text comparison and became a behavioural one. It runs `set-level` for
+// every level the live enum declares and asserts each is accepted, then asserts an invented level is not --
+// which is the property that actually matters, and one no import-shaped assertion could establish.
 
 // #8587: these cases assert JSON / plain business output that the exported runCli produces in-process (the
 // isProcessEntrypoint guard lets the committed .ts source be imported without hijacking argv), so they no longer
@@ -670,10 +663,24 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
     ).rejects.toThrow(/Unknown level/);
   }, 45_000);
 
-  // Pins the INVARIANT (the two lists agree), not today's three values -- restating the literal here would just
-  // create a third hand-synced copy that rots alongside the one this guards.
-  it("set-level's levels stay in sync with the live autonomy enum (#6153)", () => {
-    expect(declaredLevels()).toEqual([...AUTONOMY_LEVELS]);
+  // Pins the INVARIANT -- the CLI accepts exactly what the live enum declares -- by EXERCISING it, not by
+  // reading the source. #9762 removed the hand-synced literal this used to scrape, and a grep for the
+  // replacement import would assert how the code is written rather than what it does: it would pass just as
+  // happily on a CLI that imported the list and then ignored it.
+  it("accepts every level the live autonomy enum declares (#6153, #9762)", async () => {
+    for (const level of AUTONOMY_LEVELS) {
+      await expect(cli(["maintain", "set-level", "review", level, "--repo", "owner/repo", "--json"])).resolves.toBeDefined();
+    }
+  }, 45_000);
+
+  it("accepts NOTHING outside it, and says so naming the live enum (#6153, #9762)", async () => {
+    // The #6153 defect: the CLI carried "suggest"/"propose" for the whole life of #4620, after the server had
+    // dropped them. The rejection message is derived from the same enum, so a level added server-side cannot
+    // leave the error text stale either.
+    await expect(cli(["maintain", "set-level", "review", "definitely-not-a-level", "--repo", "owner/repo"])).rejects.toThrow(
+      new RegExp(AUTONOMY_LEVELS.join(", ")),
+    );
+    expect([...CONTRACT_AUTONOMY_LEVELS], "the value the CLI imports is still the engine's").toEqual([...AUTONOMY_LEVELS]);
   });
 
   // #6153 regression: the CLI accepted "suggest"/"propose" for the whole life of #4620, which dropped them

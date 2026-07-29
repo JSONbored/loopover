@@ -54,15 +54,47 @@ export function cliApiPaths(binSource: string): string[] {
  * braces and a `?:` with slashes in both arms), then the segments are re-keyed positionally against the
  * document's parameter names, so the emitted key is exactly the string `openapi.json` uses.
  */
-export function cliParameterisedApiPaths(binSource: string, document: OpenApiDocument): string[] {
+/**
+ * The path SHAPES the bin's own declarations announce, by name (#9773).
+ *
+ * The CLI composes most of its per-repo calls on a base it built earlier -- `` `${repoBase}/settings` `` --
+ * so a scanner reading the call site alone sees a template starting with an interpolation and can resolve
+ * nothing. Those bases now carry a template-literal ANNOTATION (`const repoBase: \`/v1/repos/\${string}/\${string}\``)
+ * and the helper that builds them declares the same as its return type, because the type checker needs that
+ * to resolve the response schema. This reads the same annotations, so the scanner and the type system agree
+ * about what a base is rather than each guessing.
+ */
+export function declaredPathShapes(binSource: string): Map<string, string> {
+  const shapes = new Map<string, string>();
+  for (const match of binSource.matchAll(/\bconst ([A-Za-z0-9_]+): `(\/v1\/[^`]*)`\s*=/g)) shapes.set(match[1]!, match[2]!);
+  for (const match of binSource.matchAll(/\bfunction ([A-Za-z0-9_]+)\([^)]*\): `(\/v1\/[^`]*)`/g)) shapes.set(`${match[1]!}()`, match[2]!);
+  return shapes;
+}
+
+/**
+ * The parameterised calls the CLI makes, as `METHOD path` (#9773).
+ *
+ * Keyed by METHOD, not by path alone. `/v1/repos/{owner}/{repo}/agent/pending-actions` is called with GET
+ * to list the queue and POST to propose an action, and those return different shapes -- a path-keyed table
+ * had to guess between them, and guessing "post" handed the GET call site the POST response type.
+ */
+export function cliParameterisedApiCalls(binSource: string, document: OpenApiDocument): string[] {
   const documented = Object.keys(document.paths).filter((path) => path.includes("{"));
   const shapes = new Map<string, string>();
   for (const documentPath of documented) shapes.set(documentPath.replace(/\{[^}]+\}/g, "{}"), documentPath);
 
+  const declared = declaredPathShapes(binSource);
   const found = new Set<string>();
-  for (const match of binSource.matchAll(/api(?:Get|Post|Delete|Fetch)\(\s*`(\/v1\/[^`]*)`/g)) {
-    const raw = match[1]!;
-    if (!raw.includes("${")) continue;
+  const METHOD_BY_HELPER: Record<string, string> = { apiGet: "GET", apiPost: "POST", apiDelete: "DELETE" };
+  // A leading `${base}` or `${helper(...)}` is replaced with that declaration's own shape before collapsing,
+  // so a composed call resolves to the same path the type checker resolves it to.
+  const resolveLead = (template: string): string =>
+    template.replace(/^\$\{\s*([A-Za-z0-9_]+)\s*(\([^)]*\))?\s*\}/, (whole, name: string, call?: string) => declared.get(call ? `${name}()` : name) ?? whole);
+
+  for (const match of binSource.matchAll(/\b(apiGet|apiPost|apiDelete)\(\s*`([^`]*)`/g)) {
+    const method = METHOD_BY_HELPER[match[1]!]!;
+    const raw = resolveLead(match[2]!);
+    if (!raw.startsWith("/v1/") || !raw.includes("${")) continue;
     // Collapse each interpolation, honouring nested braces, then drop any trailing query the template adds.
     let collapsed = "";
     for (let index = 0; index < raw.length; index += 1) {
@@ -84,16 +116,36 @@ export function cliParameterisedApiPaths(binSource: string, document: OpenApiDoc
     // A template whose interpolation spans a slash (a conditional query suffix, say) cannot be a path
     // shape; it simply will not match a documented one, and is left unvalidated exactly as before.
     const documentPath = shapes.get(withoutQuery);
-    if (documentPath) found.add(documentPath);
+    if (documentPath) found.add(`${method} ${documentPath}`);
   }
   return [...found].sort();
 }
 
+/** `METHOD path` -> the schema THAT METHOD's 200 names, for the calls the CLI actually makes. */
+export function responseSchemaByCall(document: OpenApiDocument, calls: readonly string[]): Map<string, string> {
+  const byCall = new Map<string, string>();
+  for (const call of calls) {
+    const [method, path] = call.split(" ") as [string, string];
+    const operation = (document.paths[path]?.[method.toLowerCase()] ?? {}) as {
+      responses?: Record<string, { content?: Record<string, { schema?: { $ref?: string } }> }>;
+    };
+    const ref = operation.responses?.["200"]?.content?.["application/json"]?.schema?.$ref;
+    if (ref) byCall.set(call, `${ref.split("/").pop()}Schema`);
+  }
+  return byCall;
+}
+
 type SchemaBlock = { name: string; source: string; exported: boolean };
 
-/** Every top-level `const XSchema = ...` in the source, in declaration order, with its full body. */
+/**
+ * Every top-level `const` in the source, in declaration order, with its full body.
+ *
+ * Not just `XSchema`: a schema routinely references a plain value declared beside it
+ * (`const AGENT_ACTION_CLASS_VALUES = [...] as const`), and a copy that carried the schema but not that
+ * value would emit a file that does not compile. `closure` decides which of these are actually reachable.
+ */
 export function parseSchemaBlocks(source: string): SchemaBlock[] {
-  const declarations = [...source.matchAll(/^(export )?const ([A-Za-z0-9_]+Schema)\s*=/gm)];
+  const declarations = [...source.matchAll(/^(export )?const ([A-Za-z0-9_]+)\s*[:=]/gm)];
   return declarations.map((declaration, index) => {
     const start = declaration.index!;
     const end = index + 1 < declarations.length ? declarations[index + 1]!.index! : source.length;
@@ -130,7 +182,9 @@ export function closure(blocks: SchemaBlock[], roots: readonly string[]): Schema
   const queue = [...reached];
   while (queue.length > 0) {
     const block = byName.get(queue.pop()!)!;
-    for (const match of block.source.matchAll(/\b([A-Za-z0-9_]+Schema)\b/g)) {
+    // Any declared name, not just `*Schema`: a schema's dependency can be a plain value declared beside it,
+    // and following only Schema-suffixed references is what left those behind (#9773).
+    for (const match of block.source.matchAll(/\b([A-Za-z0-9_]+)\b/g)) {
       const dependency = match[1]!;
       if (dependency !== block.name && byName.has(dependency) && !reached.has(dependency)) {
         reached.add(dependency);
@@ -139,6 +193,33 @@ export function closure(blocks: SchemaBlock[], roots: readonly string[]): Schema
     }
   }
   return blocks.filter((block) => reached.has(block.name));
+}
+
+/**
+ * The bounds a copied schema references but the copy does not define (#9773).
+ *
+ * `closure` follows schema-to-schema references; a schema also referencing a plain constant
+ * (`MAX_CONTRIBUTOR_OPEN_ITEM_CAP`) would emit a file that does not compile. Those constants live in
+ * @loopover/contract's own limits.ts, restated and pinned there, so the generator imports them -- and a
+ * constant that has NOT been added there fails the contract build, which is the loud failure this wants.
+ */
+export function referencedLimits(blocks: SchemaBlock[]): string[] {
+  const defined = new Set(blocks.map((block) => block.name));
+  const referenced = new Set<string>();
+  for (const block of blocks) {
+    // Comments and string literals FIRST. Without stripping them, prose picks up every capitalised word a
+    // doc comment happens to contain ("DELETE", "REQUIRED", "REST") and emits an import for each.
+    const code = block.source
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/\/\/[^\n]*/g, " ")
+      .replace(/"(?:[^"\\]|\\.)*"/g, '""')
+      .replace(/'(?:[^'\\]|\\.)*'/g, "''");
+    for (const match of code.matchAll(/\b([A-Z][A-Z0-9_]{3,})\b/g)) {
+      const name = match[1]!;
+      if (!defined.has(name)) referenced.add(name);
+    }
+  }
+  return [...referenced].sort();
 }
 
 const HEADER = `// GENERATED by scripts/gen-contract-api-schemas.ts -- do not edit.
@@ -156,8 +237,9 @@ import { z } from "zod";
 export function renderApiSchemas(sourceText: string, documentText: string, binSource: string): string {
   const document = JSON.parse(documentText) as OpenApiDocument;
   const byPath = responseSchemaByPath(document, cliApiPaths(binSource));
-  const byPattern = responseSchemaByPath(document, cliParameterisedApiPaths(binSource, document));
+  const byPattern = responseSchemaByCall(document, cliParameterisedApiCalls(binSource, document));
   const blocks = closure(parseSchemaBlocks(sourceText), [...new Set([...byPath.values(), ...byPattern.values()])]);
+  const limits = referencedLimits(blocks);
   const body = blocks
     .map((block) =>
       block.source
@@ -174,7 +256,8 @@ export function renderApiSchemas(sourceText: string, documentText: string, binSo
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([path, schema]) => `  "${path}": ${schema},`)
     .join("\n");
-  return `${HEADER}${body.trimEnd()}\n\n${TABLE_HEADER}${table}\n} as const;\n\n${PATTERN_TABLE_HEADER}${patternTable}\n} as const;\n\n${TABLE_TYPES}`;
+  const limitsImport = limits.length > 0 ? `import { ${limits.join(", ")} } from "./limits.js";\n\n` : "";
+  return `${HEADER}${limitsImport}${body.trimEnd()}\n\n${TABLE_HEADER}${table}\n} as const;\n\n${PATTERN_TABLE_HEADER}${patternTable}\n} as const;\n\n${TABLE_TYPES}`;
 }
 
 const TABLE_HEADER = `/**
@@ -202,8 +285,8 @@ export type ValidatedApiPath = keyof typeof CLI_RESPONSE_SCHEMAS;
 /** The parsed response type for a validated path -- what the CLI call sites get instead of \`any\`. */
 export type ApiResponse<Path extends ValidatedApiPath> = z.infer<(typeof CLI_RESPONSE_SCHEMAS)[Path]>;
 
-/** A parameterised path pattern the client validates. */
-export type ParameterisedApiPath = keyof typeof CLI_PARAMETERISED_RESPONSE_SCHEMAS;
+/** A parameterised call the client validates, as \`METHOD path\`. */
+export type ParameterisedApiCall = keyof typeof CLI_PARAMETERISED_RESPONSE_SCHEMAS;
 
 /**
  * A pattern with every \`{param}\` widened to \`\${string}\`, so a concrete path can be matched against it.
@@ -216,17 +299,21 @@ export type TemplatedApiPath<Pattern extends string> = Pattern extends \`\${infe
   : Pattern;
 
 /**
- * The pattern a CONCRETE path matches, or \`never\` when it matches none.
+ * The call a CONCRETE path matches for a given METHOD, or \`never\` when it matches none.
  *
  * This is what lets the CLI keep writing its natural interpolated template and still get the exact response
- * type: the mapped type distributes over every known pattern and keeps only the arms the string satisfies.
+ * type: the mapped type distributes over every known call and keeps only the arms whose method matches AND
+ * whose pattern the string satisfies. Method-aware because one path can serve two of them with different
+ * shapes -- \`/v1/repos/{owner}/{repo}/agent/pending-actions\` lists on GET and proposes on POST.
  */
-export type MatchApiPath<Path extends string> = {
-  [Pattern in ParameterisedApiPath]: Path extends TemplatedApiPath<Pattern> ? Pattern : never;
-}[ParameterisedApiPath];
+export type MatchApiCall<Method extends string, Path extends string> = {
+  [Call in ParameterisedApiCall]: Call extends \`\${Method} \${infer Pattern}\` ? (Path extends TemplatedApiPath<Pattern> ? Call : never) : never;
+}[ParameterisedApiCall];
 
-/** The parsed response for a concrete parameterised path. */
-export type ParameterisedApiResponse<Path extends string> = z.infer<(typeof CLI_PARAMETERISED_RESPONSE_SCHEMAS)[MatchApiPath<Path>]>;
+/** The parsed response for a concrete parameterised call. */
+export type ParameterisedApiResponse<Method extends string, Path extends string> = z.infer<
+  (typeof CLI_PARAMETERISED_RESPONSE_SCHEMAS)[MatchApiCall<Method, Path>]
+>;
 `;
 
 export function generate(deps: { readFile?: (path: string) => string } = {}): string {

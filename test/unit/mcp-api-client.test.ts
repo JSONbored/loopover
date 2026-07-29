@@ -2,7 +2,16 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CLI_RESPONSE_SCHEMAS } from "@loopover/contract/api-schemas";
-import { cliApiPaths, responseSchemaByPath } from "../../scripts/gen-contract-api-schemas";
+import {
+  cliApiPaths,
+  cliParameterisedApiCalls,
+  closure,
+  declaredPathShapes,
+  parseSchemaBlocks,
+  referencedLimits,
+  responseSchemaByCall,
+  responseSchemaByPath,
+} from "../../scripts/gen-contract-api-schemas";
 
 // #9521: the typed validated API client. The stdio CLI used to read every response as `payload: any`;
 // these pin the three properties that keep that from coming back: the literal is extinct, the validated
@@ -97,5 +106,51 @@ describe("responseSchemaByPath", () => {
   it("omits an inline 200 and an undocumented path rather than inventing a shape", () => {
     const byPath = responseSchemaByPath(document, ["/v1/inline", "/v1/undocumented"]);
     expect(byPath.size).toBe(0);
+  });
+});
+
+// #9773: the PARAMETERISED half. Every per-repo and per-contributor call the CLI makes used to miss the
+// typed overload, because the scanner rejected any template containing an interpolation -- so those payloads
+// read as `any` while the published document described most of them precisely.
+describe("parameterised response schemas (#9773)", () => {
+  const document = JSON.parse(readFileSync(join(process.cwd(), "apps/loopover-ui/public/openapi.json"), "utf8")) as Parameters<typeof responseSchemaByCall>[0];
+  const bin = readFileSync(join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.ts"), "utf8");
+
+  it("keys by METHOD, because one path can serve two of them with different shapes", () => {
+    // /v1/repos/{owner}/{repo}/agent/pending-actions LISTS on GET and PROPOSES on POST. A path-keyed table
+    // had to guess between them, and guessing handed the GET call site the POST response type -- which the
+    // CLI's own `payload.pendingActions` read then contradicted the moment a schema was attached at all.
+    const calls = cliParameterisedApiCalls(bin, document);
+    expect(calls).toContain("GET /v1/repos/{owner}/{repo}/agent/pending-actions");
+    expect(calls).toContain("POST /v1/repos/{owner}/{repo}/agent/pending-actions");
+
+    const byCall = responseSchemaByCall(document, calls);
+    expect(byCall.get("GET /v1/repos/{owner}/{repo}/agent/pending-actions")).toBe("ListPendingActionsResponseSchema");
+    expect(byCall.get("POST /v1/repos/{owner}/{repo}/agent/pending-actions")).toBe("ProposeActionResponseSchema");
+  });
+
+  it("resolves a call composed on a declared base path", () => {
+    // The CLI writes `${repoBase}/settings`, never the whole literal. The scanner and the type checker both
+    // read the base's declared template-literal shape, so they cannot disagree about what that base is.
+    expect(declaredPathShapes(bin).get("toolRepoBase()")).toBe("/v1/repos/${string}/${string}");
+    expect(cliParameterisedApiCalls(bin, document)).toContain("GET /v1/repos/{owner}/{repo}/settings");
+  });
+
+  it("covers substantially more than the eight paths written out in full", () => {
+    expect(cliParameterisedApiCalls(bin, document).length).toBeGreaterThan(20);
+  });
+
+  it("carries a bound a copied schema references rather than emitting a file that cannot compile", () => {
+    // `closure` follows schema-to-schema references; a schema referencing a plain constant needs that too.
+    // Anything declared in the source is copied, anything else is imported from limits.ts where it is
+    // restated and pinned -- and a constant missing there fails the contract build, loudly.
+    const blocks = closure(parseSchemaBlocks(readFileSync(join(process.cwd(), "src/openapi/schemas.ts"), "utf8")), ["AutomationStateSchema", "RepositorySettingsSchema"]);
+    expect(blocks.some((block) => block.name === "AGENT_ACTION_CLASS_VALUES"), "a referenced value is copied").toBe(true);
+    expect(referencedLimits(blocks), "one declared elsewhere is imported").toContain("MAX_REVIEW_NAG_COOLDOWN_DAYS");
+  });
+
+  it("does not mistake a capitalised word in prose for a constant", () => {
+    // The first cut scanned comments too and emitted an import for DELETE, REQUIRED, REST and friends.
+    expect(referencedLimits([{ name: "XSchema", exported: true, source: '// DELETE and REQUIRED and REST\nconst XSchema = z.string();' }])).toEqual([]);
   });
 });

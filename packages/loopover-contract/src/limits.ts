@@ -109,3 +109,15 @@ export const PUBLIC_SURFACE_SKIP_REASONS = [
   "miner_detection_unavailable",
   "not_official_gittensor_miner",
 ] as const;
+
+/**
+ * Bounds the API RESPONSE schemas apply (#9773).
+ *
+ * Reached the contract when the parameterised-path response tables did: a schema copied by
+ * gen-contract-api-schemas.ts brings its bounds with it, and this package cannot import the Worker.
+ * Pinned against their originals like every other entry here.
+ */
+/** src/types.ts */
+export const MAX_CONTRIBUTOR_OPEN_ITEM_CAP = 100;
+/** src/settings/agent-actions.ts -- keeps the review-nag lookback from overflowing Date arithmetic. */
+export const MAX_REVIEW_NAG_COOLDOWN_DAYS = 365;

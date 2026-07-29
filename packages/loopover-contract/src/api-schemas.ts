@@ -8,6 +8,8 @@
 // boundary has no other way to share a composed schema's parts.
 import { z } from "zod";
 
+import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP, MAX_REVIEW_NAG_COOLDOWN_DAYS } from "./limits.js";
+
 export const FindingSchema = z
   .object({
     code: z.string(),
@@ -47,6 +49,20 @@ export const RegistrySnapshotSchema = z
     repositories: z.array(RegistryRepoSchema),
   });
 
+export const RepositorySchema = z
+  .object({
+    fullName: z.string(),
+    owner: z.string(),
+    name: z.string(),
+    installationId: z.number().nullable().optional(),
+    isInstalled: z.boolean(),
+    isRegistered: z.boolean(),
+    isPrivate: z.boolean(),
+    htmlUrl: z.string().nullable().optional(),
+    defaultBranch: z.string().nullable().optional(),
+    registryConfig: RegistryRepoSchema.nullable().optional(),
+  });
+
 export const LaneAdviceSchema = z
   .object({
     lane: z.enum(["direct_pr", "issue_discovery", "split", "inactive", "unknown"]),
@@ -82,6 +98,49 @@ export const CollisionClusterSchema = z
     risk: z.enum(["low", "medium", "high"]),
     reason: z.string(),
     items: z.array(CollisionItemSchema),
+  });
+
+export const QueueHealthSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    burdenScore: z.number(),
+    level: z.enum(["low", "medium", "high", "critical"]),
+    summary: z.string(),
+    // #9517: draftPullRequests, slopFlaggedPullRequests and duplicateFlaggedPullRequests are all
+    // REQUIRED on the QueueHealth type and always emitted by buildQueueHealth, but were missing
+    // here -- the published spec understated the response. The two flagged counts are deliberately
+    // public-safe counts, carrying no score or ranking detail.
+    signals: z.object({
+      openIssues: z.number(),
+      openPullRequests: z.number(),
+      unlinkedPullRequests: z.number(),
+      stalePullRequests: z.number(),
+      draftPullRequests: z.number(),
+      maintainerAuthoredPullRequests: z.number(),
+      collisionClusters: z.number(),
+      slopFlaggedPullRequests: z.number(),
+      duplicateFlaggedPullRequests: z.number(),
+      ageBuckets: z.object({
+        under7Days: z.number(),
+        days7To30: z.number(),
+        over30Days: z.number(),
+      }),
+      likelyReviewablePullRequests: z.number(),
+      cachedOpenPullRequests: z.number().optional(),
+      likelyReviewablePullRequestsSource: z.enum(["cache", "sampled_cache", "authoritative"]).optional(),
+    }),
+    findings: z.array(FindingSchema),
+    rankedPullRequests: z
+      .array(
+        z.object({
+          number: z.number(),
+          title: z.string(),
+          authorLogin: z.string(),
+          recommendation: z.string(),
+        }),
+      )
+      .optional(),
   });
 
 export const ContributorProfileSchema = z
@@ -290,6 +349,34 @@ export const LocalDiffPreflightResultSchema = PreflightResultSchema.extend({
   }),
 });
 
+export const PullRequestMaintainerPacketSchema = z
+  .object({
+    repoFullName: z.string(),
+    pullNumber: z.number(),
+    generatedAt: z.string(),
+    reviewPriority: z.enum(["review", "needs_author", "watch"]),
+    summary: z.string(),
+    changeSummary: z.object({
+      fileCount: z.number(),
+      codeFileCount: z.number(),
+      testFileCount: z.number(),
+      additions: z.number(),
+      deletions: z.number(),
+      topPaths: z.array(z.string()),
+    }),
+    reviewSignals: z.object({
+      reviewCount: z.number(),
+      approvalCount: z.number(),
+      changeRequestCount: z.number(),
+      checkFailureCount: z.number(),
+      linkedIssues: z.array(z.number()),
+      collisionClusters: z.number(),
+    }),
+    findings: z.array(FindingSchema),
+    contributorNextSteps: z.array(z.string()),
+    maintainerNotes: z.array(z.string()),
+  });
+
 export const BountySourceContextSchema = z.object({
   sourceUrl: z.string().nullable().optional(),
   discoveredAt: z.string().nullable().optional(),
@@ -305,6 +392,16 @@ export const BountyLinkedPrSchema = z.object({
   isActive: z.boolean(),
 });
 
+export const BountyOpportunityContextSchema = z.object({
+  id: z.string(),
+  lifecycle: z.enum(["active", "historical", "completed", "cancelled", "stale", "ambiguous", "unknown"]),
+  isActiveOpportunity: z.boolean(),
+  fundingStatus: z.enum(["funded", "target_only", "unknown"]),
+  consensusRisk: z.enum(["low", "medium", "high"]),
+  source: BountySourceContextSchema,
+  linkedPrs: z.array(BountyLinkedPrSchema),
+});
+
 export const BountyAdvisorySchema = z
   .object({
     id: z.string(),
@@ -318,6 +415,332 @@ export const BountyAdvisorySchema = z
     source: BountySourceContextSchema,
     linkedPrs: z.array(BountyLinkedPrSchema),
     findings: z.array(FindingSchema),
+  });
+
+export const RepositorySettingsSchema = z
+  .object({
+    repoFullName: z.string(),
+    commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]),
+    publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]),
+    publicSignalLevel: z.enum(["minimal", "standard"]),
+    checkRunMode: z.enum(["off", "enabled"]),
+    checkRunDetailLevel: z.enum(["minimal", "standard"]),
+    regateSweepOrderMode: z.enum(["staleness", "oldest-first"]),
+    reviewCheckMode: z.enum(["required", "visible", "disabled"]),
+    autoProjectMilestoneMatch: z.enum(["off", "suggest", "auto"]).optional(),
+    autoProjectMilestoneMatchBackend: z.enum(["github", "linear"]).optional(),
+    gatePack: z.enum(["gittensor", "oss-anti-slop"]),
+    linkedIssueGateMode: z.enum(["off", "advisory", "block"]),
+    duplicatePrGateMode: z.enum(["off", "advisory", "block"]),
+    qualityGateMode: z.enum(["off", "advisory", "block"]),
+    qualityGateMinScore: z.number().nullable().optional(),
+    closeAuditHoldoutPct: z.number().nullable().optional(),
+    slopGateMode: z.enum(["off", "advisory", "block"]),
+    sizeGateMode: z.enum(["off", "advisory", "block"]).optional(),
+    sizeGateMaxFiles: z.number().optional(),
+    sizeGateMaxLines: z.number().optional(),
+    lockfileIntegrityGateMode: z.enum(["off", "advisory", "block"]).optional(),
+    claGateMode: z.enum(["off", "advisory", "block"]).optional(),
+    claConsentPhrase: z.string().nullable().optional(),
+    claCheckRunName: z.string().nullable().optional(),
+    claCheckRunAppSlug: z.string().nullable().optional(),
+    // #9531: `expectedCiContexts` is declared `| null` on the type and read as a distinct value from absent
+    // (focus-manifest.ts's `!== null` gate), but the published schema omitted `.nullable()` -- so a client
+    // generated from the spec typed it as never-null, unlike its identically-shaped sibling below. Found by
+    // the compile-time parity assertion in test/unit/openapi-settings-schema-parity.test.ts.
+    expectedCiContexts: z.array(z.string()).readonly().nullable().optional(),
+    advisoryCheckRuns: z.array(z.object({ name: z.string(), appSlug: z.string() })).readonly().nullable().optional(),
+    copycatGateMode: z.enum(["off", "warn", "label", "block"]).optional(),
+    copycatGateMinScore: z.number().nullable().optional(),
+    gateDryRun: z.boolean().optional(),
+    premergeContentRecheck: z.boolean().optional(),
+    requireFreshRebaseWindowMinutes: z.number().int().positive().nullable().optional(),
+    staleBaseAheadByThreshold: z.number().int().positive().nullable().optional(),
+    mergeReadinessGateMode: z.enum(["off", "advisory", "block"]),
+    manifestPolicyGateMode: z.enum(["off", "advisory", "block"]),
+    selfAuthoredLinkedIssueGateMode: z.enum(["off", "advisory", "block"]),
+    linkedIssueSatisfactionGateMode: z.enum(["off", "advisory", "block"]),
+    contentLaneDeliverableGateMode: z.enum(["off", "advisory", "block"]),
+    backtestRegressionGateMode: z.enum(["off", "advisory", "block"]),
+    slopGateMinScore: z.number().nullable().optional(),
+    slopAiAdvisory: z.boolean(),
+    aiReviewMode: z.enum(["off", "advisory", "block"]),
+    aiReviewByok: z.boolean(),
+    aiReviewProvider: z.enum(["anthropic", "openai"]).nullable().optional(),
+    aiReviewModel: z.string().nullable().optional(),
+    aiReviewAllAuthors: z.boolean(),
+    aiReviewConfirmedContributorsOnly: z.boolean().nullable().optional(),
+    aiReviewCloseConfidence: z.number().nullable().optional(),
+    aiReviewSalvageabilityMinScore: z.number().nullable().optional(),
+    aiReviewLowConfidenceDisposition: z.enum(["one_shot", "hold_for_review", "advisory_only"]).nullable().optional(),
+    aiReviewCombine: z.enum(["single", "consensus", "synthesis"]).nullable().optional(),
+    aiReviewOnMerge: z.enum(["either", "both"]).nullable().optional(),
+    aiReviewReviewers: z
+      .array(z.object({ model: z.string(), fallback: z.string().nullable().optional() }))
+      .readonly()
+      .nullable()
+      .optional(),
+    closeOwnerAuthors: z.boolean(),
+    autoLabelEnabled: z.boolean(),
+    typeLabelsEnabled: z.boolean(),
+    // Open `category -> label name` record (#label-modularity): bug/feature/priority are the built-in
+    // categories, but a self-hoster may register any number of additional ones (e.g. `security`).
+    typeLabels: z.record(z.string(), z.string()).optional(),
+    // loopover_plan_repo_issues config-as-code surface (#7429) -- see the field's own doc comment on
+    // RepositorySettings (src/types.ts) for the full contract.
+    issuePlanEnabled: z.boolean().optional(),
+    issuePlanExtraLabels: z.array(z.string()).optional(),
+    issuePlanMilestoneReuse: z.boolean().optional(),
+    linkedIssueLabelPropagation: z
+      .object({
+        enabled: z.boolean(),
+        mode: z.enum(["exclusive_type_label"]),
+        mappings: z.array(
+          z.object({
+            issueLabel: z.string(),
+            prLabel: z.string(),
+            removeOtherTypeLabels: z.boolean(),
+            trustMaintainerAuthoredIssue: z.boolean().optional(),
+            trustMaintainerAuthoredIssueForReward: z.boolean().optional(),
+          }),
+        ),
+      }),
+    linkedIssueHardRules: z
+      .object({
+        ownerAssignedClose: z.enum(["block", "off"]),
+        assignedIssueClose: z.enum(["block", "off"]),
+        missingPointLabelClose: z.enum(["block", "off"]),
+        maintainerOnlyLabelClose: z.enum(["block", "off"]),
+        pointBearingLabels: z.array(z.string()),
+        maintainerOnlyLabels: z.array(z.string()),
+        defaultLabelRepo: z.boolean(),
+        verifyBeforeClose: z.boolean(),
+        closeDelaySeconds: z.number().int().min(0).max(300),
+      }),
+    unlinkedIssueGuardrail: z
+      .object({
+        mode: z.enum(["hold", "off"]),
+        minConfidence: z.number().min(0).max(1),
+      })
+      .optional(),
+    advisoryAiRouting: z
+      .object({
+        slop: z.boolean(),
+        e2eTestGen: z.boolean(),
+        planner: z.boolean(),
+        summaries: z.boolean(),
+        chatQa: z
+          .boolean()
+          .describe(
+            "Opt the `@loopover chat <question>` grounded Q&A surface (#4595) into local Ollama inference. Ollama-first: unlike the four capabilities above, it declines instead of falling back to the frontier env.AI when env.AI_ADVISORY is unconfigured, unless `chatQaFrontierFallback` is also enabled. Co-requisite: set `commandRateLimitPolicy` to `hold` (it defaults to `off` fleet-wide) so the tighter `commandRateLimitAiMaxPerWindow` ceiling actually throttles this cost-bearing command.",
+          ),
+        chatQaFrontierFallback: z
+          .boolean()
+          .describe(
+            "Opt-in only (#4595 follow-up): when true, `@loopover chat` falls back to the shared frontier env.AI chain if env.AI_ADVISORY is unconfigured, instead of declining. Meaningless unless `chatQa` is also true. Default false -- a self-hoster without a local GPU may enable this to use their own frontier subscription/tokens for chat instead.",
+          ),
+        intentRouting: z
+          .boolean()
+          .describe(
+            "Opt a closed-set intent-classification router (#4596) into unrecognized `@loopover` mentions: maps a free-text question to the closest existing Q&A command (never an action command) instead of the plain did-you-mean hint. Ollama-only, same as chatQa. Co-requisite: set `commandRateLimitPolicy` to `hold`.",
+          ),
+      })
+      .optional(),
+    gittensorLabel: z.string(),
+    blacklistLabel: z.string().nullable(),
+    createMissingLabel: z.boolean(),
+    publicSurface: z
+      .enum(["off", "comment_and_label", "comment_only", "label_only"])
+      .describe(
+        "Governs ONLY the PR comment and label -- never the LoopOver Context check (checkRunMode) or the LoopOver Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run.",
+      ),
+    includeMaintainerAuthors: z.boolean(),
+    requireLinkedIssue: z.boolean(),
+    backfillEnabled: z.boolean(),
+    badgeEnabled: z.boolean().optional(),
+    publicQualityMetrics: z.boolean().optional(),
+    commandAuthorization: z.object({
+      default: z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"])),
+      commands: z.record(z.string(), z.array(z.enum(["maintainer", "collaborator", "pr_author", "confirmed_miner"]))),
+    }),
+    contributorBlacklist: z.array(
+      z.object({
+        login: z.string(),
+        // #9125's immutable-id field, returned by the API since it landed and absent from this
+        // schema until the parity assertion flagged it (#9531).
+        githubId: z.number().int().optional(),
+        reason: z.string().optional(),
+        evidence: z.array(z.string()).optional(),
+        addedAt: z.string().optional(),
+      }),
+    ),
+    // #9531: partialRecord, because AutonomyPolicy is Partial<Record<...>> -- a repo configures the
+    // classes it configures. And the LIVE level set: "suggest"/"propose" were removed server-side by
+    // #4620 and silently dropped on persist ever since, yet this schema kept advertising them -- the
+    // exact drift class #9517's enum notes warned about, republished here. The compile-time parity
+    // assertion in src/openapi/schema-type-parity.ts is what finally caught it.
+    autonomy: z.partialRecord(
+      z.enum(["review", "request_changes", "approve", "merge", "close", "label", "review_state_label", "update_branch", "assign"]),
+      z.enum(["observe", "auto_with_approval", "auto"]),
+    ),
+    autoMaintain: z.object({ requireApprovals: z.number().int(), mergeMethod: z.enum(["merge", "squash", "rebase"]) }).optional(),
+    agentPaused: z.boolean().optional(),
+    agentDryRun: z.boolean().optional(),
+    contributorOpenPrCap: z.number().int().positive().max(MAX_CONTRIBUTOR_OPEN_ITEM_CAP).nullable().optional(),
+    contributorOpenIssueCap: z.number().int().positive().max(MAX_CONTRIBUTOR_OPEN_ITEM_CAP).nullable().optional(),
+    contributorCapLabel: z.string().nullable().optional(),
+    contributorCapCancelCi: z.boolean().nullable().optional(),
+    reviewNagPolicy: z.enum(["off", "hold", "close"]).optional(),
+    reviewNagMaxPings: z.number().int().positive().optional(),
+    reviewNagCooldownDays: z.number().int().positive().max(MAX_REVIEW_NAG_COOLDOWN_DAYS).optional(),
+    reviewNagLabel: z.string().nullable().optional(),
+    reviewNagMonitoredMentions: z.array(z.string()).optional(),
+    autoCloseExemptLogins: z.array(z.string()).optional(),
+    hardGuardrailGlobs: z.array(z.string()).nullable().optional(),
+    hardGuardrailGlobsOverridesInvariants: z.boolean().nullable().optional(),
+    manualReviewLabel: z.string().nullable().optional(),
+    readyToMergeLabel: z.string().nullable().optional(),
+    changesRequestedLabel: z.string().nullable().optional(),
+    migrationCollisionLabel: z.string().nullable().optional(),
+    pendingClosureLabel: z.string().nullable().optional(),
+    accountAgeThresholdDays: z.number().int().positive().nullable().optional(),
+    newAccountLabel: z.string().optional(),
+    commandRateLimitPolicy: z.enum(["off", "hold"]).optional(),
+    commandRateLimitMaxPerWindow: z.number().int().positive().optional(),
+    commandRateLimitAiMaxPerWindow: z.number().int().positive().optional(),
+    commandRateLimitWindowHours: z.number().int().positive().optional(),
+    moderationGateMode: z
+      .enum(["inherit", "off", "enabled"])
+      .describe(
+        "Gates ONLY the shared cross-repo violation tally -- does NOT disable the four underlying anti-abuse mechanisms (contributor cap, blacklist, review-nag, review-evasion), each of which runs on its own independent setting.",
+      ),
+    // #9531: "copycat" is a real member of the type's union and a real value this route can return -- the
+    // published enum simply never gained it when the mechanism landed, so a client generated from the spec
+    // rejected a payload the API legitimately produces.
+    moderationRules: z.array(z.enum(["contributor_cap", "blacklist", "review_nag", "review_evasion", "copycat"])).optional(),
+    moderationWarningLabel: z.string().optional(),
+    moderationBannedLabel: z.string().optional(),
+    fairnessAnalyticsMode: z
+      .enum(["inherit", "off", "enabled"])
+      .describe(
+        "Per-repo participation in cross-repo contributor fairness/accuracy analytics -- 'off' excludes this repo's gate decisions and moderation history from every aggregation, independent of whether the internal fairness-analytics routes are enabled fleet-wide.",
+      ),
+    skipAutomationBotAuthors: z.enum(["inherit", "off", "enabled"]).optional(),
+    duplicateWinnerMode: z.enum(["inherit", "off", "enabled"]).optional(),
+    openPrFileCollisionMode: z.enum(["inherit", "off", "enabled"]).optional(),
+    plannerMode: z.enum(["inherit", "off", "enabled"]).optional(),
+    reviewEvasionProtection: z
+      .enum(["off", "close"])
+      .describe(
+        "Effective default is \"close\" as of #4011 -- \"off\" is an explicit opt-out, not the default. \"off\" only suppresses the enforcement close; the ready<->draft cycling counter keeps incrementing regardless, so re-enabling can immediately treat a historical off-period cycle as \"repeated.\"",
+      ),
+    reviewEvasionLabel: z.string().nullable().optional(),
+    reviewEvasionComment: z.boolean().optional(),
+    draftPrClosePolicy: z
+      .enum(["off", "close"])
+      .describe(
+        "Off by default (opt-in, unlike reviewEvasionProtection's default-close). \"close\" enforces on ANY draft PR, including the very first one, before a review pass has had a chance to run -- distinct from reviewEvasionProtection's family, which only enforces after a review already ran or on the 2nd+ draft conversion.",
+      ),
+    synchronizeClosePolicy: z
+      .enum(["off", "close"])
+      .describe(
+        "Off by default (opt-in, config-as-code only -- no dashboard/DB column). \"close\" closes a contributor's own PR immediately when they push an additional commit (synchronize) before it's been merged or closed -- this repo's review is one-shot, so the first push is the only push. Never fires for a push that isn't from the PR's own author (e.g. the engine's own rebase-if-behind), nor for the repo owner/admin, a protected automation author, or anyone with write+ collaborator access.",
+      ),
+    mergeTrainMode: z.enum(["off", "audit", "enforce"]).optional(),
+    screenshotTableGate: z
+      .object({
+        enabled: z.boolean(),
+        whenLabels: z.array(z.string()),
+        whenPaths: z.array(z.string()),
+        action: z.enum(["close", "advisory"]),
+        requireViewports: z.array(z.string()),
+        requireThemes: z.array(z.string()),
+        message: z.string().optional(),
+        skillFileUrl: z.string().optional(),
+      }),
+    createdAt: z.string().nullable().optional(),
+    updatedAt: z.string().nullable().optional(),
+  });
+
+// #6742: the derived automation view returned by GET /v1/repos/:owner/:repo/automation-state, matching
+// buildAutomationState's AutomationState shape. Distinct from RepositorySettings: these are computed fields
+// (mode/permissionReadiness/pendingActionCount/acting classes), not the stored settings row.
+export const AGENT_ACTION_CLASS_VALUES = [
+  "review",
+  "request_changes",
+  "approve",
+  "merge",
+  "close",
+  "label",
+  "review_state_label",
+  "update_branch",
+  "assign",
+] as const;
+export const AUTONOMY_LEVEL_VALUES = ["observe", "auto_with_approval", "auto"] as const;
+
+export const AutomationStateSchema = z
+  .object({
+    repoFullName: z.string(),
+    configured: z.boolean(),
+    autonomy: z.record(z.enum(AGENT_ACTION_CLASS_VALUES), z.enum(AUTONOMY_LEVEL_VALUES)),
+    autoMaintain: z.boolean().nullable().optional(),
+    agentPaused: z.boolean(),
+    agentDryRun: z.boolean(),
+    mode: z.enum(["paused", "dry_run", "live"]),
+    permissionReadiness: z.enum(["not_required", "ready", "reconsent_required"]),
+    actingActionClasses: z.array(z.enum(AGENT_ACTION_CLASS_VALUES)),
+    pendingActionCount: z.number(),
+  });
+
+// #6743 — the public result shape of the loopover_refresh_repo_docs MCP tool and its REST
+// (`POST /v1/repos/:owner/:repo/repo-docs/refresh`) mirror. Both trim RepoDocPullRequestResult's internal
+// `claudeMode` field (src/github/repo-doc-pr.ts) the same way, so this schema matches what each surface
+// actually returns, not the runner's raw result.
+export const RepoDocRefreshResultSchema = z
+  .discriminatedUnion("opened", [
+    z.object({ opened: z.literal(true), reused: z.boolean(), pullNumber: z.number().int(), url: z.string() }),
+    z.object({ opened: z.literal(false), reason: z.string() }),
+  ]);
+
+// #9307 — the agent approval-queue routes under /v1/repos/:owner/:repo/agent/pending-actions, documented to
+// match the loopover_propose_action / loopover_list_pending_actions / loopover_decide_pending_action MCP tools
+// they mirror (src/mcp/server.ts). The audit-feed neighbor (same agent/* prefix) is already documented; these
+// three were the gap. Field-level source of truth is each MCP tool's raw Zod shape, hand-mirrored here so the
+// codegen path never pulls the heavy MCP server module into the OpenAPI build.
+export const PendingActionEntrySchema = z.object({
+  id: z.string(),
+  actionClass: z.string(),
+  pullNumber: z.number(),
+  status: z.string(),
+  autonomyLevel: z.string(),
+  reason: z.string().nullable(),
+  decidedBy: z.string().nullable(),
+  decidedAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+
+export const ListPendingActionsResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    status: z.string().optional(),
+    pendingActions: z.array(PendingActionEntrySchema).optional(),
+  });
+
+// Mirrors `ProposeActionInput` in @loopover/contract minus owner/repo (both are path params on the REST route), matching the request
+// body proposePendingActionSchema already validates in src/api/routes.ts.
+export const ProposeActionResponseSchema = z
+  .object({
+    created: z.boolean().optional(),
+    action: z
+      .object({ id: z.string(), actionClass: z.string(), pullNumber: z.number(), status: z.string(), reason: z.string().nullable() })
+      .optional(),
+  });
+
+export const DecidePendingActionResponseSchema = z
+  .object({
+    status: z.string().optional(),
+    executionOutcome: z.string().optional(),
+    action: PendingActionEntrySchema.optional(),
   });
 
 export const SkippedPrAuditExportSchema = z
@@ -510,6 +933,78 @@ export const ScorePreviewSchema = z
     generatedAt: z.string(),
   });
 
+export const IssueQualityReportSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    lane: LaneAdviceSchema,
+    issues: z.array(
+      z.object({
+        number: z.number(),
+        title: z.string(),
+        lifecycle: z.enum(["open", "closed_not_solved", "solved", "valid_solved", "stale", "duplicate", "invalid"]).optional(),
+        linkage: z
+          .object({
+            status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]),
+            source: z.enum(["official_mirror", "github_cache", "missing"]),
+            solvedByPullRequests: z.array(z.number()),
+            reason: z.string(),
+            warnings: z.array(z.string()),
+          })
+          .optional(),
+        bounty: BountyOpportunityContextSchema.optional(),
+        status: z.enum(["ready", "needs_proof", "hold", "do_not_use"]),
+        score: z.number(),
+        reasons: z.array(z.string()),
+        warnings: z.array(z.string()),
+      }),
+    ),
+    summary: z.string(),
+  });
+
+export const IssueQualityResponseSchema = z
+  .object({
+    status: z.enum(["ready"]),
+    source: z.enum(["snapshot", "computed"]),
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    report: IssueQualityReportSchema,
+  });
+
+/** AMS probe payload for ORB live gate thresholds (#6486) — snake_case column names only. */
+export const LiveGateThresholdsResponseSchema = z
+  .object({
+    repoFullName: z.string(),
+    confidence_floor: z.number().nullable(),
+    scope_cap_files: z.number().int().nullable(),
+    scope_cap_lines: z.number().int().nullable(),
+  });
+
+export const GateConfigEffectiveResponseSchema = z
+  .object({
+    repoFullName: z.string(),
+    effective: z.object({
+      confidenceFloor: z.number().nullable(),
+      scopeCap: z.object({
+        files: z.number().int().nullable(),
+        lines: z.number().int().nullable(),
+      }),
+    }),
+    shadowPending: z.boolean(),
+  });
+
+/** #9303: mirrors selftuneOverrideAuditOutputSchema (src/mcp/server.ts) — audit rows stay z.unknown(),
+ * listOverrideAudit is the single source of truth for the event fields. */
+export const ClearSelftuneOverrideResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    cleared: z.boolean().optional(),
+  });
+
+/**
+ * Response body for POST /v1/scoring/eligibility-plan. Field-level parity with `GetEligibilityPlanOutput` in @loopover/contract
+ * (the `loopover_get_eligibility_plan` MCP tool `outputSchema`) in src/mcp/server.ts — #9301.
+ */
 export const EligibilityPlanResponseSchema = z
   .object({
     eligible: z.boolean().optional(),
@@ -600,6 +1095,51 @@ export const IssueRagRetrieveResponseSchema = z
  * Request body for POST /v1/loop/evaluate-escalation. Field-level parity with `EvaluateEscalationInput` in @loopover/contract
  * (the `loopover_evaluate_escalation` MCP tool `inputSchema`) in src/mcp/server.ts — #9309.
  */
+export const ValidateLinkedIssueResponseSchema = z
+  .object({
+    status: z.string().optional(),
+    repoFullName: z.string().optional(),
+    issueNumber: z.number().optional(),
+    found: z.boolean().optional(),
+    multiplierStatus: z.string().optional(),
+    multiplierWouldApply: z.boolean().optional(),
+    blockingReason: z.string().optional(),
+    reasons: z.unknown().optional(),
+    report: z.unknown().optional(),
+  });
+
+/**
+ * Request body for POST /v1/repos/{owner}/{repo}/check-before-start. Field-level parity with
+ * `CheckBeforeStartInput` in @loopover/contract (the `loopover_check_before_start` MCP tool `inputSchema`) — #9304.
+ */
+export const CheckBeforeStartResponseSchema = z
+  .object({
+    status: z.string().optional(),
+    repoFullName: z.string().optional(),
+    found: z.boolean().optional(),
+    claimStatus: z.string().optional(),
+    duplicateClusterRisk: z.string().optional(),
+    recommendation: z.string().optional(),
+    reasons: z.unknown().optional(),
+    blockers: z.unknown().optional(),
+    report: z.unknown().optional(),
+  });
+
+/**
+ * Request body for POST /v1/loop/results-payload. Field-level parity with `BuildResultsPayloadInput` in @loopover/contract
+ * (the `loopover_build_results_payload` MCP tool `inputSchema`) in src/mcp/server.ts — #9309.
+ */
+export const BurdenForecastSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    horizonDays: z.union([z.literal(7), z.literal(30)]),
+    level: z.enum(["low", "medium", "high", "critical"]),
+    forecast: z.record(z.string(), z.number()),
+    findings: z.array(FindingSchema),
+    summary: z.string(),
+  });
+
 export const RoleContextSchema = z
   .object({
     login: z.string(),
@@ -679,6 +1219,49 @@ export const ContributorOutcomeHistorySchema = z
     successPatterns: z.array(z.record(z.string(), z.unknown())),
     failurePatterns: z.array(z.record(z.string(), z.unknown())),
     summary: z.string(),
+  });
+
+export const RepoOutcomeEvidenceCompletenessSchema = z
+  .object({
+    pullRequestsAnalyzed: z.number(),
+    withFileDetail: z.number(),
+    withReviewDetail: z.number(),
+    withCheckDetail: z.number(),
+    filesCompletenessRatio: z.number(),
+    reviewsCompletenessRatio: z.number(),
+    checksCompletenessRatio: z.number(),
+    fullyDecidedWithDetail: z.number(),
+    status: z.enum(["complete", "partial", "missing"]),
+  });
+
+export const RepoOutcomePatternsSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    lane: z.enum(["direct_pr", "issue_discovery", "split", "inactive", "unknown"]),
+    primaryLanguage: z.string().nullable(),
+    sampleSize: z.number(),
+    totals: z.record(z.string(), z.number()),
+    outsideContributorMergeRate: z.number(),
+    maintainerLaneMergeRate: z.number(),
+    dimensions: z.array(z.record(z.string(), z.unknown())),
+    successPatterns: z.array(z.record(z.string(), z.unknown())),
+    riskPatterns: z.array(z.record(z.string(), z.unknown())),
+    evidenceCompleteness: RepoOutcomeEvidenceCompletenessSchema,
+    findings: z.array(FindingSchema),
+    summary: z.string(),
+  });
+
+export const RepoOutcomePatternsResponseSchema = z
+  .object({
+    status: z.enum(["ready"]),
+    source: z.enum(["snapshot", "computed"]),
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    ageSeconds: z.number(),
+    freshness: z.enum(["fresh", "stale"]),
+    patterns: RepoOutcomePatternsSchema,
+    dataQuality: z.record(z.string(), z.unknown()).optional(),
   });
 
 export const DecisionPackFreshnessSchema = z.enum(["fresh", "stale", "rebuilding", "missing"]);
@@ -835,6 +1418,164 @@ export const RepoDecisionResponseSchema = z
     freshness: DecisionPackFreshnessSchema,
     rebuildEnqueued: z.boolean(),
     decision: z.record(z.string(), z.unknown()),
+    dataQuality: z.record(z.string(), z.unknown()),
+  });
+
+export const RepoIntelligenceSchema = z
+  .object({
+    status: z.enum(["ready"]),
+    source: z.enum(["computed", "snapshot"]),
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    repo: RepositorySchema.nullable(),
+    lane: LaneAdviceSchema,
+    queueHealth: z.record(z.string(), z.unknown()).nullable().optional(),
+    queueTrends: z.record(z.string(), z.unknown()).nullable().optional(),
+    collisions: z.record(z.string(), z.unknown()).optional(),
+    configQuality: z.record(z.string(), z.unknown()).nullable().optional(),
+    labelAudit: z.record(z.string(), z.unknown()).nullable().optional(),
+    maintainerLane: z.record(z.string(), z.unknown()).nullable().optional(),
+    maintainerCutReadiness: z.record(z.string(), z.unknown()).nullable().optional(),
+    contributorIntakeHealth: z.record(z.string(), z.unknown()).nullable().optional(),
+    dataQuality: z.record(z.string(), z.unknown()),
+    burdenForecast: BurdenForecastSchema.optional(),
+    burdenForecastFreshness: z
+      .object({
+        source: z.enum(["snapshot", "computed"]),
+        generatedAt: z.string(),
+        ageSeconds: z.number(),
+        freshness: z.enum(["fresh", "stale"]),
+      })
+      .optional(),
+  });
+
+export const RegistrationReadinessSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    ready: z.boolean(),
+    recommendedRegistrationMode: z.enum(["direct_pr", "issue_discovery", "split"]),
+    issuePolicy: z.enum(["issue_discovery_enabled", "split_pr_and_issue_discovery_enabled", "direct_pr_requires_linked_issue", "direct_pr_no_issue_required"]),
+    directPrReadiness: z.object({ ready: z.boolean(), reasons: z.array(z.string()) }),
+    issueDiscoveryReadiness: z.object({ ready: z.boolean(), recommendation: z.enum(["enabled", "recommended", "not_recommended"]), reasons: z.array(z.string()) }),
+    labelPolicy: z.record(z.string(), z.unknown()),
+    maintainerCutReadiness: z.record(z.string(), z.unknown()),
+    testCoverageHealth: z.object({
+      status: z.enum(["gate_ready", "gate_unknown"]),
+      trustedLabelPipelineReady: z.boolean(),
+      checkRunMode: z.enum(["off", "enabled"]),
+      requiredGate: z.array(z.string()),
+      note: z.string(),
+      warnings: z.array(z.string()),
+    }),
+    queueHealth: z.object({ level: z.enum(["low", "medium", "high", "critical"]), burdenScore: z.number(), reviewablePullRequests: z.number(), summary: z.string() }),
+    contributorIntakeHealth: z.record(z.string(), z.unknown()),
+    docsCompleteness: z.record(z.string(), z.unknown()),
+    githubApp: z.object({
+      installed: z.boolean(),
+      publicSurface: z
+      .enum(["off", "comment_and_label", "comment_only", "label_only"])
+      .describe(
+        "Governs ONLY the PR comment and label -- never the LoopOver Context check (checkRunMode) or the LoopOver Orb Review Agent gate check (reviewCheckMode), which are independent axes by design (#2852). Setting this to \"off\" does NOT silence either check-run.",
+      ),
+      commentMode: z.enum(["off", "detected_contributors_only", "all_prs"]),
+      publicAudienceMode: z.enum(["oss_maintainer", "gittensor_only"]),
+      checkRunMode: z.enum(["off", "enabled"]),
+      reviewCheckMode: z.enum(["required", "visible", "disabled"]),
+      autoProjectMilestoneMatch: z.enum(["off", "suggest", "auto"]).optional(),
+      autoProjectMilestoneMatchBackend: z.enum(["github", "linear"]).optional(),
+      quietByDefault: z.boolean(),
+      behavior: z.string(),
+      warnings: z.array(z.string()),
+    }),
+    policyReadiness: z
+      .object({
+        repoFullName: z.string(),
+        source: z.enum(["focus_manifest_policy"]),
+        previewOnly: z.boolean(),
+        present: z.boolean(),
+        publicWarnings: z.array(
+          z.object({
+            code: z.string(),
+            category: z.enum(["contribution_flow", "direct_pr_policy", "issue_discovery", "validation", "maintainer_burden"]),
+            severity: z.enum(["info", "warning", "critical"]),
+            title: z.string(),
+            detail: z.string(),
+            action: z.string(),
+          }),
+        ),
+        // Owner-only focus-manifest metadata is intentionally excluded from this broad route.
+        droppedPublicWarnings: z.array(
+          z.object({
+            code: z.string(),
+            reason: z.enum(["unsafe_public_text"]),
+          }),
+        ),
+        summary: z.string(),
+      })
+      .nullable(),
+    onboardingPackPreview: z
+      .object({
+        repoFullName: z.string(),
+        generatedAt: z.string(),
+        source: z.enum(["policy_compiler"]),
+        previewOnly: z.literal(true),
+        publicSafe: z.literal(true),
+        contributionLanes: z.array(
+          z.object({
+            id: z.string(),
+            title: z.string(),
+            summary: z.string(),
+            preferredPaths: z.array(z.string()),
+            discouragedPaths: z.array(z.string()),
+            validationExpectations: z.array(z.string()),
+            publicNotes: z.array(z.string()),
+          }),
+        ),
+        labelPolicy: z.object({
+          preferredLabels: z.array(z.string()),
+          requiredLabels: z.array(z.string()),
+          discouragedLabels: z.array(z.string()),
+          note: z.string().nullable(),
+        }),
+        validationExpectations: z.array(z.string()),
+        readinessWarnings: z.array(z.string()),
+        maintainerExpectations: z.array(z.string()),
+        publicOutputBoundaries: z.array(z.string()),
+        previewMarkdown: z.string(),
+        droppedPublicItems: z.array(
+          z.object({
+            field: z.string(),
+            reason: z.enum(["empty", "unsafe_public_text"]),
+          }),
+        ),
+        privateOwnerContext: z.object({
+          itemCount: z.number(),
+          includedInPublicPreview: z.literal(false),
+        }),
+        publication: z.object({
+          status: z.enum(["preview_only"]),
+          allowed: z.literal(false),
+          actions: z.array(z.string()),
+          reason: z.string(),
+        }),
+      })
+      .nullable(),
+    blockers: z.array(z.string()),
+    warnings: z.array(z.string()),
+    dataQuality: z.record(z.string(), z.unknown()),
+  });
+
+export const GittensorConfigRecommendationSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    privateOnly: z.boolean(),
+    current: z.record(z.string(), z.unknown()).nullable(),
+    recommended: z.record(z.string(), z.unknown()),
+    tradeoffs: z.array(z.string()),
+    reasons: z.array(z.string()),
+    warnings: z.array(z.string()),
     dataQuality: z.record(z.string(), z.unknown()),
   });
 
@@ -1109,6 +1850,87 @@ export const LocalBranchAnalysisSchema = z
     dataQuality: z.record(z.string(), z.unknown()),
   });
 
+export const MaintainerNoiseReportSchema = z
+  .object({
+    repoFullName: z.string(),
+    generatedAt: z.string(),
+    score: z.number(),
+    level: z.enum(["low", "medium", "high", "critical"]),
+    noiseSources: z.array(z.string()),
+    maintainerActions: z.array(z.enum(["review_now", "needs_author", "likely_duplicate", "close_or_redirect", "watch", "maintainer_lane"])),
+    queueHealth: QueueHealthSchema,
+    summary: z.string(),
+  });
+
+export const AmsMinerCohortMetricsSchema = z.object({
+  submitterCount: z.number(),
+  prVolume: z.number(),
+  acceptanceRate: z.number().nullable(),
+  avgReviewCycleCount: z.number().nullable(),
+  avgTimeToMergeMs: z.number().nullable(),
+});
+
+export const AmsMinerCohortComparisonSchema = z
+  .object({
+    present: z.boolean(),
+    windowDays: z.number(),
+    totalSubmitterCount: z.number(),
+    checkedSubmitterCount: z.number(),
+    amsCohort: AmsMinerCohortMetricsSchema,
+    humanCohort: AmsMinerCohortMetricsSchema,
+  });
+
+/**
+ * Response body for GET /v1/repos/{owner}/{repo}/gate-precision. Field-level parity with
+ * `gatePrecisionOutputSchema` (the `loopover_get_gate_precision` MCP tool `outputSchema`) in
+ * src/mcp/server.ts — #9302.
+ */
+export const ActivationPreviewResponseSchema = z
+  .object({
+    repoFullName: z.string().optional(),
+    generatedAt: z.string().optional(),
+    currentReviewCheckMode: z.string().optional(),
+    aiReviewConfigured: z.boolean().optional(),
+    evaluatedCount: z.number().optional(),
+    withFindingsCount: z.number().optional(),
+    findingCodeCounts: z.array(z.unknown()).optional(),
+    samples: z.array(z.unknown()).optional(),
+    recommendedAction: z.string().nullable().optional(),
+    summary: z.string().optional(),
+  });
+
+export const PullRequestReviewabilitySchema = z
+  .object({
+    repoFullName: z.string(),
+    pullNumber: z.number(),
+    generatedAt: z.string(),
+    score: z.number(),
+    action: z.enum(["review_now", "needs_author", "likely_duplicate", "close_or_redirect", "watch", "maintainer_lane"]),
+    noiseSources: z.array(z.string()),
+    whyThisHelps: z.array(z.string()),
+    maintainerNextSteps: z.array(z.string()),
+    privateSummary: z.string(),
+  });
+
+export const PullRequestAiReviewFindingsSchema = z
+  .object({
+    status: z.enum(["ready", "not_found", "ai_review_off"]),
+    repoFullName: z.string(),
+    pullNumber: z.number(),
+    login: z.string(),
+    headSha: z.string().nullable().optional(),
+    findings: z.array(
+      z.object({
+        category: z.string(),
+        path: z.string(),
+        severity: z.enum(["blocker", "nit"]),
+        line: z.number(),
+        body: z.string(),
+      }),
+    ),
+    categoryCounts: z.record(z.string(), z.number()),
+  });
+
 export const RegistryChangeReportSchema = z
   .object({
     generatedAt: z.string(),
@@ -1319,14 +2141,36 @@ export const CLI_RESPONSE_SCHEMAS = {
  * with interpolation, so the match happens at the type level (see MatchApiPath) rather than by key.
  */
 export const CLI_PARAMETERISED_RESPONSE_SCHEMAS = {
-  "/v1/agent/runs/{id}": AgentRunBundleSchema,
-  "/v1/bounties/{id}/advisory": BountyAdvisorySchema,
-  "/v1/contributors/{login}/decision-pack": ContributorDecisionPackSchema,
-  "/v1/contributors/{login}/notifications": NotificationFeedSchema,
-  "/v1/contributors/{login}/notifications/read": NotificationsMarkedSchema,
-  "/v1/contributors/{login}/open-pr-monitor": ContributorOpenPrMonitorSchema,
-  "/v1/contributors/{login}/profile": ContributorProfileSchema,
-  "/v1/contributors/{login}/repos/{owner}/{repo}/decision": RepoDecisionResponseSchema,
+  "DELETE /v1/repos/{owner}/{repo}/selftune/overrides": ClearSelftuneOverrideResponseSchema,
+  "GET /v1/agent/runs/{id}": AgentRunBundleSchema,
+  "GET /v1/bounties/{id}/advisory": BountyAdvisorySchema,
+  "GET /v1/contributors/{login}/decision-pack": ContributorDecisionPackSchema,
+  "GET /v1/contributors/{login}/notifications": NotificationFeedSchema,
+  "GET /v1/contributors/{login}/open-pr-monitor": ContributorOpenPrMonitorSchema,
+  "GET /v1/contributors/{login}/profile": ContributorProfileSchema,
+  "GET /v1/contributors/{login}/repos/{owner}/{repo}/decision": RepoDecisionResponseSchema,
+  "GET /v1/repos/{owner}/{repo}/activation-preview": ActivationPreviewResponseSchema,
+  "GET /v1/repos/{owner}/{repo}/agent/pending-actions": ListPendingActionsResponseSchema,
+  "GET /v1/repos/{owner}/{repo}/ams-miner-cohort": AmsMinerCohortComparisonSchema,
+  "GET /v1/repos/{owner}/{repo}/automation-state": AutomationStateSchema,
+  "GET /v1/repos/{owner}/{repo}/gate-config/effective": GateConfigEffectiveResponseSchema,
+  "GET /v1/repos/{owner}/{repo}/gittensor-config-recommendation": GittensorConfigRecommendationSchema,
+  "GET /v1/repos/{owner}/{repo}/intelligence": RepoIntelligenceSchema,
+  "GET /v1/repos/{owner}/{repo}/issue-quality": IssueQualityResponseSchema,
+  "GET /v1/repos/{owner}/{repo}/live-gate-thresholds": LiveGateThresholdsResponseSchema,
+  "GET /v1/repos/{owner}/{repo}/maintainer-noise": MaintainerNoiseReportSchema,
+  "GET /v1/repos/{owner}/{repo}/outcome-patterns": RepoOutcomePatternsResponseSchema,
+  "GET /v1/repos/{owner}/{repo}/pulls/{number}/ai-review-findings": PullRequestAiReviewFindingsSchema,
+  "GET /v1/repos/{owner}/{repo}/pulls/{number}/maintainer-packet": PullRequestMaintainerPacketSchema,
+  "GET /v1/repos/{owner}/{repo}/pulls/{number}/reviewability": PullRequestReviewabilitySchema,
+  "GET /v1/repos/{owner}/{repo}/registration-readiness": RegistrationReadinessSchema,
+  "GET /v1/repos/{owner}/{repo}/settings": RepositorySettingsSchema,
+  "POST /v1/contributors/{login}/notifications/read": NotificationsMarkedSchema,
+  "POST /v1/repos/{owner}/{repo}/agent/pending-actions": ProposeActionResponseSchema,
+  "POST /v1/repos/{owner}/{repo}/agent/pending-actions/{id}/{decision}": DecidePendingActionResponseSchema,
+  "POST /v1/repos/{owner}/{repo}/check-before-start": CheckBeforeStartResponseSchema,
+  "POST /v1/repos/{owner}/{repo}/repo-docs/refresh": RepoDocRefreshResultSchema,
+  "POST /v1/repos/{owner}/{repo}/validate-linked-issue": ValidateLinkedIssueResponseSchema,
 } as const;
 
 /** A path the client validates. */
@@ -1335,8 +2179,8 @@ export type ValidatedApiPath = keyof typeof CLI_RESPONSE_SCHEMAS;
 /** The parsed response type for a validated path -- what the CLI call sites get instead of `any`. */
 export type ApiResponse<Path extends ValidatedApiPath> = z.infer<(typeof CLI_RESPONSE_SCHEMAS)[Path]>;
 
-/** A parameterised path pattern the client validates. */
-export type ParameterisedApiPath = keyof typeof CLI_PARAMETERISED_RESPONSE_SCHEMAS;
+/** A parameterised call the client validates, as `METHOD path`. */
+export type ParameterisedApiCall = keyof typeof CLI_PARAMETERISED_RESPONSE_SCHEMAS;
 
 /**
  * A pattern with every `{param}` widened to `${string}`, so a concrete path can be matched against it.
@@ -1349,14 +2193,18 @@ export type TemplatedApiPath<Pattern extends string> = Pattern extends `${infer 
   : Pattern;
 
 /**
- * The pattern a CONCRETE path matches, or `never` when it matches none.
+ * The call a CONCRETE path matches for a given METHOD, or `never` when it matches none.
  *
  * This is what lets the CLI keep writing its natural interpolated template and still get the exact response
- * type: the mapped type distributes over every known pattern and keeps only the arms the string satisfies.
+ * type: the mapped type distributes over every known call and keeps only the arms whose method matches AND
+ * whose pattern the string satisfies. Method-aware because one path can serve two of them with different
+ * shapes -- `/v1/repos/{owner}/{repo}/agent/pending-actions` lists on GET and proposes on POST.
  */
-export type MatchApiPath<Path extends string> = {
-  [Pattern in ParameterisedApiPath]: Path extends TemplatedApiPath<Pattern> ? Pattern : never;
-}[ParameterisedApiPath];
+export type MatchApiCall<Method extends string, Path extends string> = {
+  [Call in ParameterisedApiCall]: Call extends `${Method} ${infer Pattern}` ? (Path extends TemplatedApiPath<Pattern> ? Call : never) : never;
+}[ParameterisedApiCall];
 
-/** The parsed response for a concrete parameterised path. */
-export type ParameterisedApiResponse<Path extends string> = z.infer<(typeof CLI_PARAMETERISED_RESPONSE_SCHEMAS)[MatchApiPath<Path>]>;
+/** The parsed response for a concrete parameterised call. */
+export type ParameterisedApiResponse<Method extends string, Path extends string> = z.infer<
+  (typeof CLI_PARAMETERISED_RESPONSE_SCHEMAS)[MatchApiCall<Method, Path>]
+>;

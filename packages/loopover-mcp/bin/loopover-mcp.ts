@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   CLI_RESPONSE_SCHEMAS,
   type ApiResponse,
-  type MatchApiPath,
+  type MatchApiCall,
   type ParameterisedApiResponse,
   type ValidatedApiPath,
 } from "@loopover/contract/api-schemas";
@@ -918,7 +918,7 @@ function registerStdioTool<TInput>(
 registerStdioTool(
   "loopover_get_repo_context",
   async ({ owner, repo }: z.infer<typeof GetRepoContextInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver repo intelligence.", await apiGet(`${prefix}/intelligence`));
   },
 );
@@ -926,7 +926,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_pr_reviewability",
   async ({ owner, repo, number }: z.infer<typeof GetPrReviewabilityInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver PR reviewability.", await apiGet(`${prefix}/pulls/${number}/reviewability`));
   },
 );
@@ -934,7 +934,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_pr_maintainer_packet",
   async ({ owner, repo, number }: z.infer<typeof GetPrMaintainerPacketInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver PR maintainer packet.", await apiGet(`${prefix}/pulls/${number}/maintainer-packet`));
   },
 );
@@ -947,7 +947,7 @@ registerStdioTool(
   async ({ owner, repo, number, login }: z.infer<typeof GetPrAiReviewFindingsInput>) => {
     const authorLogin = login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
     if (!authorLogin) throw new Error("No GitHub login: pass `login`, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult(
       "LoopOver PR AI-review findings.",
       await apiGet(`${prefix}/pulls/${number}/ai-review-findings?login=${encodeURIComponent(authorLogin)}`),
@@ -958,7 +958,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_maintainer_noise",
   async ({ owner, repo }: z.infer<typeof GetMaintainerNoiseInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver maintainer noise report.", await apiGet(`${prefix}/maintainer-noise`));
   },
 );
@@ -972,7 +972,7 @@ registerStdioTool(
     const query = new URLSearchParams();
     if (since !== undefined) query.set("since", String(since));
     if (limit !== undefined) query.set("limit", String(limit));
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult(`LoopOver agent audit feed for ${owner}/${repo}.`, await apiGet(`${prefix}/agent/audit-feed${query.size > 0 ? `?${query}` : ""}`));
   },
 );
@@ -983,7 +983,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_refresh_repo_docs",
   async ({ owner, repo }: z.infer<typeof RefreshRepoDocsInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult(`LoopOver repo-doc refresh for ${owner}/${repo}.`, await apiPost(`${prefix}/repo-docs/refresh`, {}));
   },
 );
@@ -991,7 +991,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_ams_miner_cohort",
   async ({ owner, repo }: z.infer<typeof GetAmsMinerCohortInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver AMS miner cohort.", await apiGet(`${prefix}/ams-miner-cohort`));
   },
 );
@@ -1002,7 +1002,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_repo_focus_manifest",
   async ({ owner, repo }: z.infer<typeof GetRepoFocusManifestInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver focus manifest.", await apiGet(`${prefix}/focus-manifest`));
   },
 );
@@ -1014,7 +1014,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_repo_onboarding_pack",
   async ({ owner, repo, refresh }: z.infer<typeof GetRepoOnboardingPackInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const query = refresh === true ? "?refresh=true" : "";
     return toolResult(
       `LoopOver onboarding pack preview for ${owner}/${repo} (preview-only, not published).`,
@@ -1029,7 +1029,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_activation_preview",
   async ({ owner, repo }: z.infer<typeof GetActivationPreviewInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver activation preview.", await apiGet(`${prefix}/activation-preview`));
   },
 );
@@ -1037,7 +1037,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_live_gate_thresholds",
   async ({ owner, repo }: z.infer<typeof GetLiveGateThresholdsInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver live gate thresholds.", await apiGet(`${prefix}/live-gate-thresholds`));
   },
 );
@@ -1045,7 +1045,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_gate_config_effective",
   async ({ owner, repo }: z.infer<typeof GetGateConfigEffectiveInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver effective gate config.", await apiGet(`${prefix}/gate-config/effective`));
   },
 );
@@ -1053,7 +1053,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_issue_quality",
   async ({ owner, repo }: z.infer<typeof GetIssueQualityInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver issue-quality report.", await apiGet(`${prefix}/issue-quality`));
   },
 );
@@ -1061,7 +1061,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_registration_readiness",
   async ({ owner, repo }: z.infer<typeof GetRegistrationReadinessInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver registration-readiness report.", await apiGet(`${prefix}/registration-readiness`));
   },
 );
@@ -1069,7 +1069,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_config_recommendation",
   async ({ owner, repo }: z.infer<typeof GetConfigRecommendationInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver config recommendation.", await apiGet(`${prefix}/gittensor-config-recommendation`));
   },
 );
@@ -1106,7 +1106,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_validate_linked_issue",
   async ({ owner, repo, issueNumber, plannedChange }: z.infer<typeof ValidateLinkedIssueInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const body = { issueNumber, ...(plannedChange ? { plannedChange } : {}) };
     return toolResult("LoopOver linked-issue validation.", await apiPost(`${prefix}/validate-linked-issue`, body));
   },
@@ -1115,7 +1115,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_check_before_start",
   async ({ owner, repo, issueNumber, title, plannedPaths }: z.infer<typeof CheckBeforeStartInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const body = {
       ...(issueNumber != null ? { issueNumber } : {}),
       ...(title ? { title } : {}),
@@ -1402,7 +1402,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_label_audit",
   async ({ owner, repo }: z.infer<typeof GetLabelAuditInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const intelligence = await apiGet(`${prefix}/intelligence`);
     return toolResult("LoopOver label audit.", {
       repoFullName: intelligence?.repoFullName ?? `${owner}/${repo}`,
@@ -1418,7 +1418,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_maintainer_lane",
   async ({ owner, repo }: z.infer<typeof GetMaintainerLaneInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const intelligence = await apiGet(`${prefix}/intelligence`);
     return toolResult("LoopOver maintainer lane.", {
       repoFullName: intelligence?.repoFullName ?? `${owner}/${repo}`,
@@ -1431,7 +1431,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_burden_forecast",
   async ({ owner, repo }: z.infer<typeof GetBurdenForecastInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const intelligence = await apiGet(`${prefix}/intelligence`);
     return toolResult("LoopOver burden forecast.", {
       repoFullName: intelligence?.repoFullName ?? `${owner}/${repo}`,
@@ -1447,7 +1447,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_repo_outcome_patterns",
   async ({ owner, repo }: z.infer<typeof GetRepoOutcomePatternsInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver repo outcome patterns.", await apiGet(`${prefix}/outcome-patterns`));
   },
 );
@@ -1852,7 +1852,15 @@ registerStdioTool(
 // from there) -- no new HTTP paths, and no behaviour the CLI doesn't already have.
 
 /** `/v1/repos/:owner/:repo` for a tool's owner+repo input, matching maintainCli's own repoBase. */
-function toolRepoBase(owner: string, repo: string) {
+/**
+ * The per-repo base path (#9773).
+ *
+ * The return type is a TEMPLATE-LITERAL type, not `string`. That is what lets `apiGet(`${toolRepoBase(o, r)}/settings`)`
+ * still resolve to `/v1/repos/{owner}/{repo}/settings` and pick up that route's published response schema --
+ * a plain `string` return erases the path at the type level, which is why every payload built on this helper
+ * fell through to the untyped overload.
+ */
+function toolRepoBase(owner: string, repo: string): `/v1/repos/${string}/${string}` {
   return `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 }
 
@@ -2734,7 +2742,7 @@ export async function maintainCli(args: readonly string[]) {
   // The defaults never fire: the guard proved the string contains a "/". They exist because
   // noUncheckedIndexedAccess types a destructured split as possibly-undefined.
   const [owner = "", repo = ""] = repoFullName.split("/", 2);
-  const repoBase = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const repoBase: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
   const queueBase = `${repoBase}/agent/pending-actions`;
   const emit = (payload: unknown, line: string) => {
     if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -3672,7 +3680,7 @@ async function notificationsCli(options: CliOptions) {
 // loopover_watch_issues stdio tool so there is no duplicated HTTP logic. action maps list=GET, watch=POST,
 // unwatch=DELETE on the /v1/contributors/:login/watches route family (the same routes the CLI already hit).
 function watchIssuesRequest(login: string, action: any, repoFullName?: any, labels?: any) {
-  const base = `/v1/contributors/${encodeURIComponent(login)}/watches`;
+  const base: `/v1/contributors/${string}/watches` = `/v1/contributors/${encodeURIComponent(login)}/watches`;
   if (action === "watch") return apiPost(base, { repoFullName, ...(labels && labels.length > 0 ? { labels } : {}) });
   if (action === "unwatch") return apiDelete(base, { repoFullName });
   return apiGet(base);
@@ -5840,14 +5848,14 @@ async function apiGet<Path extends ValidatedApiPath>(path: Path): Promise<ApiRes
 // the TYPE level rather than by key -- `/v1/contributors/${login}/profile` resolves to the
 // `/v1/contributors/{login}/profile` schema without the call site naming it. A path matching no known
 // pattern has `MatchApiPath` = never and falls through to the untyped overload below, exactly as before.
-async function apiGet<Path extends string>(path: MatchApiPath<Path> extends never ? never : Path): Promise<ParameterisedApiResponse<Path>>;
+async function apiGet<Path extends string>(path: MatchApiCall<"GET", Path> extends never ? never : Path): Promise<ParameterisedApiResponse<"GET", Path>>;
 async function apiGet(path: string): Promise<any>;
 async function apiGet(path: string) {
   return apiFetch(path, { method: "GET" });
 }
 
 async function apiPost<Path extends ValidatedApiPath>(path: Path, body: unknown): Promise<ApiResponse<Path>>;
-async function apiPost<Path extends string>(path: MatchApiPath<Path> extends never ? never : Path, body: unknown): Promise<ParameterisedApiResponse<Path>>;
+async function apiPost<Path extends string>(path: MatchApiCall<"POST", Path> extends never ? never : Path, body: unknown): Promise<ParameterisedApiResponse<"POST", Path>>;
 async function apiPost(path: string, body: unknown): Promise<any>;
 async function apiPost(path: string, body: unknown) {
   return apiFetch(path, { method: "POST", body: JSON.stringify(body) });

@@ -8,7 +8,7 @@
 // #2568 pattern for the sibling per-repo quality trend) can recompute any historical week correctly on every
 // request -- no cron-miss gap risk, no second copy of the number to keep in sync, and the SAME formula as the
 // live figure by construction, so the two can never silently diverge or read as inconsistent to a public viewer.
-import { PUBLISHED_PR_KEYS, publicStatsProjects, safeAll } from "../review/public-stats";
+import { loadReversalObservability, PUBLISHED_PR_KEYS, publicStatsProjects, safeAll } from "../review/public-stats";
 import { isoWeekStart } from "./public-quality-metrics";
 
 export const PUBLIC_ACCURACY_TREND_WEEKS = 8;
@@ -24,7 +24,13 @@ export type PublicAccuracyTrendWeek = {
   accuracyPct: number | null;
 };
 
-type DayRow = { day: string; merged: number; closed: number; reversed: number };
+/** `merged`/`closed` are the DISPLAYED volume (own ledger + registered Orb fleet). `ownMerged`/`ownClosed` are
+ *  the own-ledger-only pairing for `reversed`, which is own-ledger-only by construction (the Orb aggregate has
+ *  no reversal concept). Accuracy divides the own-ledger numbers ONLY -- #7449 fixed exactly this asymmetry for
+ *  the lifetime figure in public-stats.ts and it was never carried across to this trend, so the denominator grew
+ *  with every newly registered install while the numerator stayed own-ledger-scoped, trending every week toward
+ *  100% independent of real reversal behavior. */
+type DayRow = { day: string; merged: number; closed: number; ownMerged: number; ownClosed: number; reversed: number };
 
 const MS_PER_WEEK = 7 * 86_400_000;
 
@@ -33,20 +39,35 @@ function roundPct(value: number): number {
 }
 
 /** Same formula as public-stats.ts's accuracyPct, reused so the trend and the live number can never drift
- *  apart into two competing definitions of "accuracy". */
-function publicBucketOf(bucket: { merged: number; closed: number; reversed: number }): Omit<PublicAccuracyTrendWeek, "weekStart"> {
+ *  apart into two competing definitions of "accuracy". `reversalObservable` false means this deployment records
+ *  no terminal auto-actions for a reversal to be attributed to, so the week's accuracy is unknown, not perfect --
+ *  the volume columns still publish, since those ARE measured. */
+function publicBucketOf(
+  bucket: { merged: number; closed: number; ownMerged: number; ownClosed: number; reversed: number },
+  reversalObservable: boolean,
+): Omit<PublicAccuracyTrendWeek, "weekStart"> {
   const decided = bucket.merged + bucket.closed;
   if (decided < MIN_ACCURACY_TREND_SAMPLE) return { merged: null, closed: null, reversed: null, accuracyPct: null };
-  const reversalRate = Math.min(1, bucket.reversed / decided);
-  return { merged: bucket.merged, closed: bucket.closed, reversed: bucket.reversed, accuracyPct: roundPct(1 - reversalRate) };
+  const observed = { merged: bucket.merged, closed: bucket.closed, reversed: bucket.reversed };
+  if (!reversalObservable) return { ...observed, accuracyPct: null };
+  // Own-ledger-only denominator: `reversed` can only ever be attributed to own-ledger PRs (see DayRow).
+  const ownDecided = bucket.ownMerged + bucket.ownClosed;
+  if (ownDecided <= 0) return { ...observed, accuracyPct: null };
+  const reversalRate = Math.min(1, bucket.reversed / ownDecided);
+  return { ...observed, accuracyPct: roundPct(1 - reversalRate) };
 }
 
 /** Fold day-granularity rows into `weeks` trailing UTC-Monday buckets ending in the week containing `nowMs`.
  *  Pure -- mirrors buildPublicQualityTrend's own bucketing shape (public-quality-metrics.ts). */
-export function buildPublicAccuracyTrend(dayRows: DayRow[], nowMs: number, weeks: number = PUBLIC_ACCURACY_TREND_WEEKS): PublicAccuracyTrendWeek[] {
+export function buildPublicAccuracyTrend(
+  dayRows: DayRow[],
+  nowMs: number,
+  weeks: number = PUBLIC_ACCURACY_TREND_WEEKS,
+  reversalObservable = true,
+): PublicAccuracyTrendWeek[] {
   const currentStartMs = Date.parse(isoWeekStart(nowMs));
   const oldestStartMs = currentStartMs - (weeks - 1) * MS_PER_WEEK;
-  const buckets = Array.from({ length: weeks }, () => ({ merged: 0, closed: 0, reversed: 0 }));
+  const buckets = Array.from({ length: weeks }, () => ({ merged: 0, closed: 0, ownMerged: 0, ownClosed: 0, reversed: 0 }));
 
   for (const row of dayRows) {
     const dayMs = Date.parse(`${row.day}T00:00:00.000Z`);
@@ -56,12 +77,14 @@ export function buildPublicAccuracyTrend(dayRows: DayRow[], nowMs: number, weeks
     const bucket = buckets[weekOffset]!;
     bucket.merged += row.merged;
     bucket.closed += row.closed;
+    bucket.ownMerged += row.ownMerged;
+    bucket.ownClosed += row.ownClosed;
     bucket.reversed += row.reversed;
   }
 
   return buckets.map((bucket, offset) => ({
     weekStart: isoWeekStart(oldestStartMs + offset * MS_PER_WEEK),
-    ...publicBucketOf(bucket),
+    ...publicBucketOf(bucket, reversalObservable),
   }));
 }
 
@@ -169,10 +192,11 @@ export async function loadPublicAccuracyTrend(env: Env, nowMs: number = Date.now
   const projects = publicStatsProjects(env);
   const sinceIso = new Date(Date.parse(isoWeekStart(nowMs)) - (PUBLIC_ACCURACY_TREND_WEEKS - 1) * MS_PER_WEEK).toISOString();
 
-  const [ownLedger, reversals, orb] = await Promise.all([
+  const [ownLedger, reversals, orb, reversalObservable] = await Promise.all([
     loadOwnLedgerDayRows(env, projects, sinceIso),
     loadReversalDayRows(env, projects, sinceIso),
     loadOrbDayRows(env, sinceIso),
+    loadReversalObservability(env),
   ]);
 
   const days = new Set([...ownLedger.keys(), ...reversals.keys(), ...orb.keys()]);
@@ -180,8 +204,10 @@ export async function loadPublicAccuracyTrend(env: Env, nowMs: number = Date.now
     day,
     merged: (ownLedger.get(day)?.merged ?? 0) + (orb.get(day)?.merged ?? 0),
     closed: (ownLedger.get(day)?.closed ?? 0) + (orb.get(day)?.closed ?? 0),
+    ownMerged: ownLedger.get(day)?.merged ?? 0,
+    ownClosed: ownLedger.get(day)?.closed ?? 0,
     reversed: reversals.get(day) ?? 0,
   }));
 
-  return buildPublicAccuracyTrend(dayRows, nowMs);
+  return buildPublicAccuracyTrend(dayRows, nowMs, PUBLIC_ACCURACY_TREND_WEEKS, reversalObservable);
 }

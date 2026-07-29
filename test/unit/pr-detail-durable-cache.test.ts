@@ -555,7 +555,7 @@ describe("durable CI-state cache (#selfhost-ci-verification)", () => {
     hasMissingRequiredContext: false,
     failingDetails: [{ name: "ci/build", summary: "failed", detailsUrl: "https://ci.example.test/1" }],
     nonRequiredFailingDetails: [],
-    advisoryHoldDetails: [],
+    advisoryHoldDetails: [], ignoredCheckDetails: [],
     ciCompletenessWarning: null,
   };
 
@@ -695,7 +695,7 @@ describe("durable CI-state cache (#selfhost-ci-verification)", () => {
         hasMissingRequiredContext: false,
         failingDetails: [],
         nonRequiredFailingDetails: [],
-        advisoryHoldDetails: [],
+        advisoryHoldDetails: [], ignoredCheckDetails: [],
         ciCompletenessWarning: null,
       });
     });

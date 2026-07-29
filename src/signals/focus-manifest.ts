@@ -538,6 +538,7 @@ function applyGateConfigOverrides(effective: RepositorySettings, gate: FocusMani
   if (gate.claCheckRunAppSlug !== null) effective.claCheckRunAppSlug = gate.claCheckRunAppSlug;
   if (gate.expectedCiContexts !== null) effective.expectedCiContexts = gate.expectedCiContexts;
   if (gate.advisoryCheckRuns !== null) effective.advisoryCheckRuns = gate.advisoryCheckRuns;
+  if (gate.ignoredCheckRuns !== null) effective.ignoredCheckRuns = gate.ignoredCheckRuns;
   if (gate.copycatMode !== null) effective.copycatGateMode = gate.copycatMode;
   if (gate.copycatMinScore !== null) effective.copycatGateMinScore = gate.copycatMinScore;
 }

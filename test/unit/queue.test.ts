@@ -1796,7 +1796,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     let gateChecks = 0;
@@ -1848,7 +1848,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     let gateChecks = 0;
@@ -1910,7 +1910,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     let gateChecks = 0;
@@ -1988,7 +1988,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     let liveHeadSha = "a7";
@@ -2066,7 +2066,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2137,7 +2137,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     let gateChecks = 0;
@@ -2193,7 +2193,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     let gateChecks = 0;
@@ -2257,7 +2257,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     let gateChecks = 0;
@@ -2312,7 +2312,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: true,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     let gateChecks = 0;
@@ -2381,7 +2381,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: true,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     let gateChecks = 0;
@@ -2447,7 +2447,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: true,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     let gateChecks = 0;
@@ -2510,7 +2510,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: true,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     let gateChecks = 0;
@@ -2559,7 +2559,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: "CI resolved to passed with no branch-protection required checks configured — cannot verify every expected workflow ran.",
     });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2603,7 +2603,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2710,7 +2710,7 @@ describe("queue processors", () => {
         hasMissingRequiredContext: false,
         failingDetails: [],
         nonRequiredFailingDetails: [],
-        advisoryHoldDetails: [],
+        advisoryHoldDetails: [], ignoredCheckDetails: [],
         ciCompletenessWarning: null,
       });
 
@@ -2934,7 +2934,7 @@ describe("queue processors", () => {
         hasMissingRequiredContext: false,
         failingDetails: [],
         nonRequiredFailingDetails: [],
-        advisoryHoldDetails: [],
+        advisoryHoldDetails: [], ignoredCheckDetails: [],
         ciCompletenessWarning: null,
       });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -2972,7 +2972,7 @@ describe("queue processors", () => {
         hasMissingRequiredContext: false,
         failingDetails: [],
         nonRequiredFailingDetails: [],
-        advisoryHoldDetails: [],
+        advisoryHoldDetails: [], ignoredCheckDetails: [],
         ciCompletenessWarning: null,
       });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3020,7 +3020,7 @@ describe("queue processors", () => {
         hasMissingRequiredContext: false,
         failingDetails: [],
         nonRequiredFailingDetails: [],
-        advisoryHoldDetails: [],
+        advisoryHoldDetails: [], ignoredCheckDetails: [],
         ciCompletenessWarning: null,
       });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3080,7 +3080,7 @@ describe("queue processors", () => {
         hasMissingRequiredContext: false,
         failingDetails: [],
         nonRequiredFailingDetails: [],
-        advisoryHoldDetails: [],
+        advisoryHoldDetails: [], ignoredCheckDetails: [],
         ciCompletenessWarning: null,
       });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3130,7 +3130,7 @@ describe("queue processors", () => {
         hasMissingRequiredContext: false,
         failingDetails: [],
         nonRequiredFailingDetails: [],
-        advisoryHoldDetails: [],
+        advisoryHoldDetails: [], ignoredCheckDetails: [],
         ciCompletenessWarning: null,
       });
       let branchProtectionReadable = false;
@@ -3192,7 +3192,7 @@ describe("queue processors", () => {
         hasMissingRequiredContext: false,
         failingDetails: [],
         nonRequiredFailingDetails: [],
-        advisoryHoldDetails: [],
+        advisoryHoldDetails: [], ignoredCheckDetails: [],
         ciCompletenessWarning: null,
       });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -3243,7 +3243,7 @@ describe("queue processors", () => {
         hasMissingRequiredContext: false,
         failingDetails: [],
         nonRequiredFailingDetails: [],
-        advisoryHoldDetails: [],
+        advisoryHoldDetails: [], ignoredCheckDetails: [],
         ciCompletenessWarning: null,
       });
       vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

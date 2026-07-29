@@ -83,7 +83,7 @@ describe("cachedLiveCiAggregate request-scoped memoization (#4498)", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     const facts = emptyFacts();
@@ -116,7 +116,7 @@ describe("cachedLiveCiAggregate request-scoped memoization (#4498)", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     const facts = emptyFacts();

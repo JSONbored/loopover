@@ -474,7 +474,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
 
@@ -570,7 +570,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: false,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
 
@@ -2260,7 +2260,7 @@ describe("queue processors", () => {
       hasMissingRequiredContext: true,
       failingDetails: [],
       nonRequiredFailingDetails: [],
-      advisoryHoldDetails: [],
+      advisoryHoldDetails: [], ignoredCheckDetails: [],
       ciCompletenessWarning: null,
     });
     vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {

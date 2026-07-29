@@ -304,6 +304,7 @@ import { isFairnessAnalyticsEnabled, resolveFairnessAnalyticsManifestOverride } 
 import { isRagEnabled } from "../review/rag-wire";
 import { loadDecisionLedgerTip, loadPublicDecisionRecord, loadPublicLedgerRow, verifyDecisionLedger } from "../review/decision-record";
 import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
+import { buildPublicCorpusCommitments } from "../review/public-eval-corpus";
 import { anchorSigningInput, buildLedgerAnchorPayload, currentAnchorKey, parseAnchorPublicKeys, publicAnchorStatus, signLedgerAnchorPayload } from "../review/ledger-anchor";
 import { resolveProofPage } from "../review/proof-summary";
 import { renderProofBadgeSvg } from "./proof-badge";
@@ -572,6 +573,10 @@ export function createApp() {
       c.header("Access-Control-Allow-Headers", "authorization, content-type");
       c.header("Access-Control-Allow-Methods", "GET, OPTIONS");
       c.header("Access-Control-Max-Age", "600");
+      // The response varies by Origin (this branch fires only when the request carried one), so a shared cache
+      // must not serve this Origin-specific response to a no-Origin request or vice versa — append Vary the same
+      // way the credentialed branch does at the else-arm below (#9712).
+      c.header("Vary", "Origin", { append: true });
     } else {
       const allowedOrigin = allowedCorsOrigin(c.env, origin);
       if (allowedOrigin) {
@@ -901,7 +906,13 @@ export function createApp() {
     // IO-touching source (the benchmark_run records from #9265) is exactly where real error handling belongs,
     // added when that source actually exists, not as untestable defensive code here.
     const precision = await loadPublicRulePrecision(c.env);
-    const records = await buildEvalScoreRecordsFromRulePrecision(precision, new Date().toISOString());
+    // #9805: the per-rule fallback commitment, when no backtest run is persisted. Loaded HERE rather than
+    // inside the record builder so that module stays pure -- and loaded through the same
+    // loadPublicEvalCorpus the /v1/public/eval-corpus route serves, so the checksum a record commits to is by
+    // construction the one a reader re-derives from the bytes they downloaded, not a parallel computation
+    // that could drift from it.
+    const corpusChecksumByRuleId = await buildPublicCorpusCommitments(c.env, precision.rules.map((rule) => rule.ruleId));
+    const records = await buildEvalScoreRecordsFromRulePrecision(precision, new Date().toISOString(), corpusChecksumByRuleId);
     const filtered = filterEvalScoreRecords(records, {
       subject: c.req.query("subject"),
       since: c.req.query("since"),

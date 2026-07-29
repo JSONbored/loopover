@@ -158,6 +158,87 @@ describe("verifyEvalScoreRecordDigest", () => {
   });
 });
 
+// #9805: on a deployment with review execution retired (the hosted Worker), no backtest run is ever
+// persisted, so this surface served [] while /v1/public/eval-corpus published a complete, downloadable
+// corpus for the same rule over the same window. The fallback commits each record to THAT corpus.
+describe("per-rule corpus commitments when no backtest run is persisted (#9805)", () => {
+  const precisionOf = (rules: PublicRulePrecision["rules"], latestBacktestRun: PublicRulePrecision["latestBacktestRun"] = null): PublicRulePrecision => ({
+    windowDays: 90,
+    rules,
+    reversals: { reopened: 0, reverted: 0, superseded: 0 },
+    latestBacktestRun,
+  });
+  const rule = (ruleId: string): PublicRulePrecision["rules"][number] =>
+    ({ ruleId, decided: 40, confirmed: 25, precision: 0.625 }) as PublicRulePrecision["rules"][number];
+
+  it("REGRESSION: publishes a record per rule instead of [], committing to that rule's published corpus", async () => {
+    const records = await buildEvalScoreRecordsFromRulePrecision(
+      precisionOf([rule("ai_consensus_defect")]),
+      ISSUED_AT,
+      new Map([["ai_consensus_defect", "a".repeat(64)]]),
+    );
+    expect(records).toHaveLength(1);
+    expect(records[0]!.commitments.corpusChecksum).toBe("a".repeat(64));
+    expect(records[0]!.trust.tier).toBe("reproducible");
+    await expect(verifyEvalScoreRecordDigest(records[0]!)).resolves.toBe(true);
+  });
+
+  it("REGRESSION: two rules get their OWN checksums -- one run's checksum stamped across every record was the latent bug", async () => {
+    const records = await buildEvalScoreRecordsFromRulePrecision(
+      precisionOf([rule("rule_a"), rule("rule_b")]),
+      ISSUED_AT,
+      new Map([
+        ["rule_a", "a".repeat(64)],
+        ["rule_b", "b".repeat(64)],
+      ]),
+    );
+    const byRule = new Map(records.map((r) => [(r.workUnit as { ruleId: string }).ruleId, r.commitments.corpusChecksum]));
+    expect(byRule.get("rule_a")).toBe("a".repeat(64));
+    expect(byRule.get("rule_b")).toBe("b".repeat(64));
+    expect(byRule.get("rule_a")).not.toBe(byRule.get("rule_b"));
+  });
+
+  it("omits only the rule with no commitment, still publishing the others", async () => {
+    const records = await buildEvalScoreRecordsFromRulePrecision(
+      precisionOf([rule("has_corpus"), rule("no_corpus")]),
+      ISSUED_AT,
+      new Map([["has_corpus", "c".repeat(64)]]),
+    );
+    expect(records.map((r) => (r.workUnit as { ruleId: string }).ruleId)).toEqual(["has_corpus"]);
+  });
+
+  it("refuses the empty-corpus checksum even when supplied as a fallback", async () => {
+    const records = await buildEvalScoreRecordsFromRulePrecision(
+      precisionOf([rule("ai_consensus_defect")]),
+      ISSUED_AT,
+      new Map([["ai_consensus_defect", EMPTY_CORPUS_CHECKSUM]]),
+    );
+    expect(records).toEqual([]);
+  });
+
+  it("INVARIANT: a persisted backtest run still WINS, so self-host behaviour is unchanged", async () => {
+    const records = await buildEvalScoreRecordsFromRulePrecision(
+      precisionOf([rule("ai_consensus_defect")], { corpusChecksum: "d".repeat(64), at: ISSUED_AT }),
+      ISSUED_AT,
+      new Map([["ai_consensus_defect", "e".repeat(64)]]),
+    );
+    expect(records[0]!.commitments.corpusChecksum).toBe("d".repeat(64));
+  });
+
+  it("falls back when the persisted run's checksum is the empty-corpus one, rather than publishing nothing", async () => {
+    // The run exists but commits to nothing; the rule's real corpus does. Preferring the run here would keep
+    // the surface empty for no benefit.
+    const records = await buildEvalScoreRecordsFromRulePrecision(
+      precisionOf([rule("ai_consensus_defect")], { corpusChecksum: EMPTY_CORPUS_CHECKSUM, at: ISSUED_AT }),
+      ISSUED_AT,
+      new Map([["ai_consensus_defect", "f".repeat(64)]]),
+    );
+    expect(records[0]!.commitments.corpusChecksum).toBe("f".repeat(64));
+  });
+
+  it("still returns [] with neither a run nor any commitment -- the #9215 rule is unchanged", async () => {
+    expect(await buildEvalScoreRecordsFromRulePrecision(precisionOf([rule("ai_consensus_defect")]), ISSUED_AT)).toEqual([]);
+
 // #9639 Deliverable 4: the /v1/public/eval-scores regression, pinned end to end over a real D1. The unit
 // tests above feed buildEvalScoreRecordsFromRulePrecision a hand-built PublicRulePrecision; this one starts
 // from an in-Worker threshold backtest and goes all the way to records, because the defect lived in the seam

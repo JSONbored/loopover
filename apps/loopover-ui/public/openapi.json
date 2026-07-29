@@ -10127,6 +10127,25 @@
           "updatedAt": {
             "type": "string",
             "nullable": true
+          },
+          "ignoredCheckRuns": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "appSlug": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "appSlug"
+              ]
+            }
           }
         },
         "required": [
@@ -26272,14 +26291,20 @@
           }
         ],
         "responses": {
-          "200": {
-            "description": "Transfer requested"
+          "202": {
+            "description": "Transfer initiation accepted (pending acceptance)"
           },
           "400": {
             "description": "Malformed request"
           },
           "401": {
             "description": "Missing or invalid token"
+          },
+          "409": {
+            "description": "Transfer gate rejected the request; GitHub was not touched"
+          },
+          "502": {
+            "description": "Transfer attempt failed downstream"
           }
         }
       }

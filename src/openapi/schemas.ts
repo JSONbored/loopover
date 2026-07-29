@@ -745,6 +745,7 @@ export const RepositorySettingsSchema = z
     // the compile-time parity assertion in test/unit/openapi-settings-schema-parity.test.ts.
     expectedCiContexts: z.array(z.string()).readonly().nullable().optional(),
     advisoryCheckRuns: z.array(z.object({ name: z.string(), appSlug: z.string() })).readonly().nullable().optional(),
+    ignoredCheckRuns: z.array(z.object({ name: z.string(), appSlug: z.string() })).readonly().nullable().optional(),
     copycatGateMode: z.enum(["off", "warn", "label", "block"]).optional(),
     copycatGateMinScore: z.number().nullable().optional(),
     gateDryRun: z.boolean().optional(),

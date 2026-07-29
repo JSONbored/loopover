@@ -245,6 +245,9 @@ export type RepositorySettings = {
    *  counts as "still running"); a non-passing conclusion routes the PR to the manual-review hold instead of
    *  being swallowed. Config-as-code only — no DB column; set via `.loopover.yml gate.advisoryCheckRuns`. */
   advisoryCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null | undefined;
+  /** `gate.ignoredCheckRuns` (#9810): check-runs excluded from CI resolution entirely -- never gate, never
+   *  pend, never hold. Config-as-code only; same `{ name, appSlug }` anti-spoof shape as advisoryCheckRuns. */
+  ignoredCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null | undefined;
   /** Dry-run disposition (#gate-dryrun). When true, the gate renders the would-be merge/close/manual verdict (every
    *  advisory sub-gate promoted to block) WITHOUT enforcing — the posted check stays non-blocking. Lets advisory mode
    *  preview exactly what it would do before the maintainer flips to real enforcement. Default off. */

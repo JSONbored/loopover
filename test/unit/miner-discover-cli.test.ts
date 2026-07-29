@@ -1652,7 +1652,7 @@ describe("runDiscover onResult hook (#6522)", () => {
               fired.push({ ruleId: event.ruleId, targetKey: event.targetKey, outcome: event.outcome });
             }),
             recordHumanOverride: vi.fn(async () => undefined),
-            queryRuleHistory: vi.fn(async () => ({ fired: [], overrides: [] })),
+            queryRuleHistory: vi.fn(async () => ({ fired: [], overrides: [], saturated: false })),
           },
         };
       }
@@ -1733,7 +1733,7 @@ describe("runDiscover onResult hook (#6522)", () => {
           initSignalTrackingStore: () => ({
             recordRuleFired,
             recordHumanOverride: vi.fn(async () => undefined),
-            queryRuleHistory: vi.fn(async () => ({ fired: [], overrides: [] })),
+            queryRuleHistory: vi.fn(async () => ({ fired: [], overrides: [], saturated: false })),
           }),
         });
         expect(exitCode).toBe(0);

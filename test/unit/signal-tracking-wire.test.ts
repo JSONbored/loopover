@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { listAuditEventsByType, recordAuditEvent } from "../../src/db/repositories";
-import { createSignalStore } from "../../src/review/signal-tracking-wire";
+import { createSignalStore, DEFAULT_RULE_HISTORY_LIMIT } from "../../src/review/signal-tracking-wire";
 import { createTestEnv } from "../helpers/d1";
 
 const ONE_HOUR_MS = 60 * 60 * 1000;
@@ -269,5 +269,64 @@ describe("listAuditEventsByType (#7982) — corrupt-row resilience", () => {
     const rows = await listAuditEventsByType(env, "signal.rule_fired:rule_a", new Date(Date.now() - ONE_HOUR_MS).toISOString());
     expect(rows).toHaveLength(1);
     expect(rows[0]?.metadata).toEqual({});
+  });
+});
+
+// #9805: the read bound is now explicit, and `saturated` reports whether it was hit. This matters because
+// /v1/public/eval-corpus publishes a checksum over what this returns -- committing a published score to a
+// silently-truncated corpus is the failure the flag exists to make impossible.
+describe("queryRuleHistory read bound and saturation (#9805)", () => {
+  const seed = async (env: Env, ruleId: string, n: number) => {
+    const store = createSignalStore(env);
+    for (let i = 0; i < n; i += 1) {
+      await store.recordRuleFired({
+        ruleId,
+        targetKey: `acme/widgets#${i}`,
+        outcome: "close",
+        occurredAt: new Date(Date.now() - 10_000 - i).toISOString(),
+        metadata: { confidence: 0.5 },
+      });
+    }
+  };
+
+  it("reports saturated=false when the read comfortably fits inside its bound", async () => {
+    const env = createTestEnv();
+    await seed(env, "small_rule", 3);
+    const history = await createSignalStore(env).queryRuleHistory("small_rule", Date.now() - 86_400_000, 10);
+    expect(history.fired).toHaveLength(3);
+    expect(history.saturated).toBe(false);
+  });
+
+  it("reports saturated=true when the read comes back AT its bound, and returns only that many", async () => {
+    const env = createTestEnv();
+    await seed(env, "big_rule", 6);
+    const history = await createSignalStore(env).queryRuleHistory("big_rule", Date.now() - 86_400_000, 4);
+    expect(history.fired).toHaveLength(4); // rows were left behind
+    expect(history.saturated).toBe(true);
+  });
+
+  it("saturates on the OVERRIDES side too, not just firings", async () => {
+    const env = createTestEnv();
+    const store = createSignalStore(env);
+    for (let i = 0; i < 5; i += 1) {
+      await store.recordHumanOverride({
+        ruleId: "override_heavy",
+        targetKey: `acme/widgets#${i}`,
+        verdict: "confirmed",
+        occurredAt: new Date(Date.now() - 10_000 - i).toISOString(),
+      });
+    }
+    const history = await store.queryRuleHistory("override_heavy", Date.now() - 86_400_000, 5);
+    expect(history.fired).toHaveLength(0);
+    expect(history.saturated).toBe(true);
+  });
+
+  it("defaults to DEFAULT_RULE_HISTORY_LIMIT when no bound is given, preserving every pre-existing caller", async () => {
+    const env = createTestEnv();
+    await seed(env, "defaulted", 2);
+    const history = await createSignalStore(env).queryRuleHistory("defaulted", Date.now() - 86_400_000);
+    expect(history.fired).toHaveLength(2);
+    expect(history.saturated).toBe(false);
+    expect(DEFAULT_RULE_HISTORY_LIMIT).toBe(500);
   });
 });

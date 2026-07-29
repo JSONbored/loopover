@@ -62,7 +62,7 @@ export function assessMergeableState(state: string | null | undefined): Mergeabl
  *
  * A hold NEVER closes a PR. Each of these downgrades a merge into a held-for-review state and nothing more.
  */
-export const MERGE_HOLD_INPUTS = {
+const MERGE_HOLD_INPUTS = {
   guardrailHit: "the PR touches a hard-guardrail path",
   migrationCollisionHold: "two migrations claim the same number",
   unlinkedIssueMatchHold: "an unlinked issue appears to match this work",

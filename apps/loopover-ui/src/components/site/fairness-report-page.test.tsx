@@ -40,6 +40,16 @@ function renderWithClient(ui: ReactNode) {
 const FIXTURE: PublicStats = {
   // The wire always carries rulePrecision (#8230/#8231). A fixture without it is not a payload the
   // current backend can produce -- the one test that needs that shape strips it explicitly.
+  reviewParity: {
+    windowStart: "2026-07-22T00:00:00.000Z",
+    windowEnd: "2026-07-29T00:00:00.000Z",
+    verdicts: 0,
+    reevaluations: 0,
+    reevaluationRatePct: null,
+    byReason: [],
+    byAuthorClass: [],
+    byProject: [],
+  },
   rulePrecision: {
     windowDays: 90,
     rules: [],
@@ -123,7 +133,9 @@ describe("FairnessReportPage (#fairness-analytics)", () => {
     expect(screen.getByText(/Reproducibility freeze point/)).toBeTruthy();
     expect(screen.getByText(/aaaaaaaaaaaaaaaa…/)).toBeTruthy();
     // And the walkthrough link points at the docs page.
-    expect(screen.getByRole("link", { name: /verify this review/i })).toBeTruthy();
+    // Both the per-rule precision block and the review-parity block (#9744) invite the reader to
+    // reproduce their numbers, so there is deliberately more than one of these links.
+    expect(screen.getAllByRole("link", { name: /verify this review/i }).length).toBeGreaterThan(0);
   });
 
   it("hides the per-rule section entirely when the API response predates rulePrecision (deployment skew) or has no rules (#8231)", async () => {
@@ -397,5 +409,104 @@ describe("FairnessReportPage (#fairness-analytics)", () => {
       screen.getByText("Anti-gaming flags caught").closest("div")!.parentElement!.textContent,
     ).toContain("—");
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  // #9744: the two series #9743 computes, and the zero-state conventions they must honour.
+  function parityFixture(over: Record<string, unknown>) {
+    return {
+      ok: true,
+      durationMs: 10,
+      data: {
+        ...FIXTURE,
+        reviewParity: {
+          windowStart: "2026-07-22T00:00:00.000Z",
+          windowEnd: "2026-07-29T00:00:00.000Z",
+          verdicts: 0,
+          reevaluations: 0,
+          reevaluationRatePct: null,
+          byReason: [],
+          byAuthorClass: [],
+          byProject: [],
+          ...over,
+        },
+      },
+    };
+  }
+
+  it("renders the re-evaluation reason table and the author-class parity table", async () => {
+    apiFetch.mockResolvedValue(
+      parityFixture({
+        verdicts: 10,
+        reevaluations: 3,
+        reevaluationRatePct: 30,
+        byReason: [{ reason: "scheduled_recheck", count: 3, shareOfVerdictsPct: 30 }],
+        byAuthorClass: [
+          {
+            authorClass: "maintainer",
+            verdicts: 4,
+            pullRequests: 4,
+            reviewsPerPr: 1,
+            findingsPerPr: 2,
+            findingsBasis: 4,
+            closeRate: 0,
+            holdRate: 25,
+          },
+          {
+            authorClass: "contributor",
+            verdicts: 6,
+            pullRequests: 3,
+            reviewsPerPr: 2,
+            findingsPerPr: null,
+            findingsBasis: 0,
+            closeRate: 50,
+            holdRate: 0,
+          },
+        ],
+      }),
+    );
+    renderWithClient(<FairnessReportPage />);
+
+    expect(await screen.findByText(/Re-evaluation and review parity/i)).toBeTruthy();
+    expect(screen.getByText("scheduled_recheck")).toBeTruthy();
+    expect(screen.getByText(/3 of 10 verdicts were re-evaluations/i)).toBeTruthy();
+    expect(screen.getByText("maintainer")).toBeTruthy();
+    expect(screen.getByText("contributor")).toBeTruthy();
+    // The coverage a mean was earned at is published beside it, and an absent mean reads as
+    // insufficient data rather than as 0.
+    expect(screen.getByText(/n=4/)).toBeTruthy();
+    expect(screen.getAllByText(/insufficient data/i).length).toBeGreaterThan(0);
+  });
+
+  it("renders an EMPTY window as a measured zero with its dates, not as missing data", async () => {
+    apiFetch.mockResolvedValue(parityFixture({}));
+    renderWithClient(<FairnessReportPage />);
+
+    expect(await screen.findByText(/No verdicts recorded/i)).toBeTruthy();
+    expect(screen.getByText(/measured zero over the dates above, not missing data/i)).toBeTruthy();
+  });
+
+  it("distinguishes 'no re-evaluations' from 'no verdicts' — both are measured zeros, not the same one", async () => {
+    apiFetch.mockResolvedValue(
+      parityFixture({
+        verdicts: 5,
+        reevaluationRatePct: 0,
+        byAuthorClass: [
+          {
+            authorClass: "contributor",
+            verdicts: 5,
+            pullRequests: 5,
+            reviewsPerPr: 1,
+            findingsPerPr: 1,
+            findingsBasis: 5,
+            closeRate: 20,
+            holdRate: 0,
+          },
+        ],
+      }),
+    );
+    renderWithClient(<FairnessReportPage />);
+
+    expect(await screen.findByText(/No re-evaluations recorded/i)).toBeTruthy();
+    expect(screen.queryByText(/No verdicts recorded/i)).toBeNull();
   });
 });

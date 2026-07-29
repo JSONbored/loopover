@@ -423,6 +423,169 @@ export function FairnessReportPage() {
                 ) : null}
               </div>
             ) : null}
+
+            {/* #9744: re-evaluation rate + author-class parity. Rendered UNCONDITIONALLY when the block is
+                present -- a window with no verdicts is a MEASURED zero and says so with its own bounds,
+                which is a different claim from "we did not compute this" and must not look identical. */}
+            {data.reviewParity ? (
+              <div className="mt-10">
+                <h2 className="text-token-lg font-medium">Re-evaluation and review parity</h2>
+                <p className="mt-2 text-token-sm text-muted-foreground">
+                  Every verdict is written to an append-only ledger, and a repeat verdict for the
+                  same commit has to declare why. This is how often that happened, and whether a
+                  pull request faced the same scrutiny regardless of who wrote it. Computed from the
+                  ledger alone over {new Date(data.reviewParity.windowStart).toLocaleDateString()} –{" "}
+                  {new Date(data.reviewParity.windowEnd).toLocaleDateString()}, so you can recompute
+                  all of it yourself:{" "}
+                  <Link
+                    to="/docs/$slug"
+                    params={{ slug: "verify-this-review" }}
+                    className="underline underline-offset-2"
+                  >
+                    verify this review
+                  </Link>
+                  .
+                </p>
+
+                {data.reviewParity.verdicts === 0 ? (
+                  <p className="mt-4 text-token-sm text-muted-foreground">
+                    <span className="font-medium text-foreground">No verdicts recorded</span> in
+                    this window — a measured zero over the dates above, not missing data.
+                  </p>
+                ) : (
+                  <>
+                    <p className="mt-4 text-token-sm">
+                      {intFmt.format(data.reviewParity.reevaluations)} of{" "}
+                      {intFmt.format(data.reviewParity.verdicts)} verdicts were re-evaluations
+                      {data.reviewParity.reevaluationRatePct != null
+                        ? ` (${pctFmt.format(data.reviewParity.reevaluationRatePct)}%)`
+                        : ""}
+                      .
+                    </p>
+                    {data.reviewParity.byReason.length > 0 ? (
+                      <TableScroll className="mt-4" label="Re-evaluations by declared reason">
+                        <table className="w-full min-w-[28rem] text-left text-token-sm">
+                          <caption className="sr-only">
+                            Re-evaluations by declared reason, and each reason&apos;s share of all
+                            verdicts.
+                          </caption>
+                          <thead className="text-token-xs text-muted-foreground">
+                            <tr>
+                              <th scope="col" className="pb-2 pr-4 font-medium">
+                                Reason
+                              </th>
+                              <th scope="col" className="pb-2 pr-4 font-medium">
+                                Count
+                              </th>
+                              <th scope="col" className="pb-2 font-medium">
+                                Share of verdicts
+                              </th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {data.reviewParity.byReason.map((entry) => (
+                              <tr key={entry.reason} className="border-t border-hairline">
+                                <td className="py-2 pr-4 font-mono text-token-xs">
+                                  {entry.reason}
+                                </td>
+                                <td className="py-2 pr-4">{intFmt.format(entry.count)}</td>
+                                <td className="py-2">
+                                  {entry.shareOfVerdictsPct != null
+                                    ? `${pctFmt.format(entry.shareOfVerdictsPct)}%`
+                                    : "—"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </TableScroll>
+                    ) : (
+                      <p className="mt-3 text-token-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">
+                          No re-evaluations recorded
+                        </span>{" "}
+                        in this window — every verdict was a first evaluation.
+                      </p>
+                    )}
+
+                    <h3 className="mt-8 text-token-sm font-medium">By author class</h3>
+                    <p className="mt-2 text-token-xs text-muted-foreground">
+                      Author class is GitHub&apos;s own{" "}
+                      <span className="font-mono">author_association</span>, not a list this project
+                      maintains. Reviews counts evaluations, not pull requests. Findings per PR is a
+                      mean over the verdicts that recorded a count — the count behind it is shown,
+                      because a mean over three cases is not the same claim as a mean over four
+                      hundred. An unrecorded association is its own row rather than folded into
+                      either side.
+                    </p>
+                    <TableScroll className="mt-4" label="Review parity by author class">
+                      <table className="w-full min-w-[34rem] text-left text-token-sm">
+                        <caption className="sr-only">
+                          Reviews, findings, close rate and hold rate per author class.
+                        </caption>
+                        <thead className="text-token-xs text-muted-foreground">
+                          <tr>
+                            <th scope="col" className="pb-2 pr-4 font-medium">
+                              Author
+                            </th>
+                            <th scope="col" className="pb-2 pr-4 font-medium">
+                              PRs
+                            </th>
+                            <th scope="col" className="pb-2 pr-4 font-medium">
+                              Reviews / PR
+                            </th>
+                            <th scope="col" className="pb-2 pr-4 font-medium">
+                              Findings / PR
+                            </th>
+                            <th scope="col" className="pb-2 pr-4 font-medium">
+                              Close rate
+                            </th>
+                            <th scope="col" className="pb-2 font-medium">
+                              Hold rate
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.reviewParity.byAuthorClass.map((rollup) => (
+                            <tr key={rollup.authorClass} className="border-t border-hairline">
+                              <td className="py-2 pr-4">{rollup.authorClass}</td>
+                              <td className="py-2 pr-4">{intFmt.format(rollup.pullRequests)}</td>
+                              <td className="py-2 pr-4">
+                                {rollup.reviewsPerPr != null
+                                  ? pctFmt.format(rollup.reviewsPerPr)
+                                  : "—"}
+                              </td>
+                              <td className="py-2 pr-4">
+                                {rollup.findingsPerPr != null ? (
+                                  <>
+                                    {pctFmt.format(rollup.findingsPerPr)}{" "}
+                                    <span className="text-token-xs text-muted-foreground">
+                                      (n={intFmt.format(rollup.findingsBasis)})
+                                    </span>
+                                  </>
+                                ) : (
+                                  <span className="text-muted-foreground">insufficient data</span>
+                                )}
+                              </td>
+                              <td className="py-2 pr-4">
+                                {rollup.closeRate != null
+                                  ? `${pctFmt.format(rollup.closeRate)}%`
+                                  : "—"}
+                              </td>
+                              <td className="py-2">
+                                {rollup.holdRate != null
+                                  ? `${pctFmt.format(rollup.holdRate)}%`
+                                  : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </TableScroll>
+                  </>
+                )}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </StateBoundary>

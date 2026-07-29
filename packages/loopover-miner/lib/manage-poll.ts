@@ -11,6 +11,7 @@ import type { PortfolioQueueStore } from "./portfolio-queue.js";
 import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 import { resolveGitHubToken } from "./github-token-resolution.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 
 const MANAGE_POLL_USAGE =
   "Usage: loopover-miner manage poll <owner/repo> <pr#> [--branch <name>] [--dry-run] [--json]";
@@ -52,6 +53,9 @@ function parseRepoArg(value: string): { repoFullName: string } | { error: string
   const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) {
+    return { error: "Repository must be in owner/repo form." };
+  }
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) {
     return { error: "Repository must be in owner/repo form." };
   }
   return { repoFullName: `${owner}/${repo}` };

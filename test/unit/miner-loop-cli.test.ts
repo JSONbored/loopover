@@ -157,6 +157,15 @@ describe("parseLoopArgs (#5135)", () => {
     });
   });
 
+  it("REGRESSION (#9684): rejects a path-traversal repo target segment", () => {
+    expect(parseLoopArgs(["../acme", "--miner-login", "alice"])).toEqual({
+      error: "Repository must be in owner/repo form: ../acme",
+    });
+    expect(parseLoopArgs(["acme/..", "--miner-login", "alice"])).toEqual({
+      error: "Repository must be in owner/repo form: acme/..",
+    });
+  });
+
   it("rejects a non-integer or negative --max-cycles / --cycle-delay-ms", () => {
     expect(parseLoopArgs(["acme/widgets", "--miner-login", "alice", "--max-cycles", "abc"])).toHaveProperty("error");
     expect(parseLoopArgs(["acme/widgets", "--miner-login", "alice", "--max-cycles", "-1"])).toHaveProperty("error");

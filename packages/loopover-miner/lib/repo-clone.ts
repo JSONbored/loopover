@@ -66,9 +66,8 @@ export function resolveRepoCloneBaseDir(env?: Record<string, string | undefined>
 // GitHub owner/repo names are restricted to alphanumerics, hyphens, underscores, and periods, and are never
 // exactly "." or ".." -- both are rejected here so a value like "../foo" can't make resolveRepoCloneDir's
 // join(cloneBaseDir, owner, repo) escape the intended clone directory (a real path-traversal finding).
-// Exported so every other owner/repo parser in this package (#5831) shares this one definition instead of
-// duplicating it (cross-repo-evaluation.js) or skipping it entirely (attempt-cli.js, claim-ledger-cli.js,
-// event-ledger-cli.js, claim-ledger.js).
+// Exported so every owner/repo parser in this package (#5831) shares this one definition instead of
+// duplicating it or skipping it entirely.
 export const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 export function isPathTraversalSegment(segment: string): boolean {

@@ -2,6 +2,7 @@ import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 import {
   EVENT_LEDGER_PURGE_SPEC,
   EVENT_LEDGER_RETENTION_SPEC,
@@ -83,6 +84,7 @@ function normalizeOptionalRepoFullName(repoFullName: unknown): string | null {
   if (typeof repoFullName !== "string") throw new Error("invalid_repo_full_name");
   const [owner, repo, extra] = repoFullName.trim().split("/");
   if (!owner || !repo || extra !== undefined) throw new Error("invalid_repo_full_name");
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) throw new Error("invalid_repo_full_name");
   return `${owner}/${repo}`;
 }
 

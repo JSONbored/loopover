@@ -104,6 +104,64 @@ describe("loadLiveProviderTrackRecords (#8229 stage 1 read path)", () => {
     env.DB = { prepare: () => { throw new Error("store down"); } } as never;
     expect(await loadLiveProviderTrackRecords(env)).toEqual([]);
   });
+
+  it("REGRESSION: the vote read is totally ordered (ORDER BY created_at ASC, id ASC) so the LATER vote wins a re-review (#9638)", async () => {
+    const env = createTestEnv();
+    // Capture the vote-read SQL to pin the total order in the query itself — the tie-break survives even a
+    // backend/index whose default scan order happens to already be chronological, which a behavioural
+    // assertion alone cannot distinguish from a load-bearing ORDER BY.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    let voteSql = "";
+    env.DB.prepare = ((sql: string) => {
+      if (sql.includes("FROM audit_events WHERE event_type")) voteSql = sql;
+      return realPrepare(sql);
+    }) as never;
+
+    const store = createSignalStore(env);
+    const now = Date.now();
+    const targetKey = `${REPO}#1`;
+    // A confirmed target: a fail vote scores precision 1; a non_fail vote leaves failDecided 0 ⇒ precision null.
+    await store.recordRuleFired({ ruleId: "ai_consensus_defect", targetKey, outcome: "close", occurredAt: new Date(now - 10_000).toISOString(), metadata: { confidence: 0.97 } });
+    await store.recordHumanOverride({ ruleId: "ai_consensus_defect", targetKey, verdict: "confirmed", occurredAt: new Date(now - 5_000).toISOString() });
+    // Stored NEWEST-FIRST (later "fail" vote gets the lower rowid); the ascending order must still surface the
+    // later vote last so the last-write-wins dedup keeps it.
+    await env.DB.prepare("INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES ('v-late', ?, 'claude-code', ?, 'completed', 'v', ?, ?)")
+      .bind(REVIEWER_VOTE_EVENT_TYPE, targetKey, JSON.stringify({ repoFullName: REPO, vote: "fail" }), new Date(now - 1_000).toISOString())
+      .run();
+    await env.DB.prepare("INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES ('v-early', ?, 'claude-code', ?, 'completed', 'v', ?, ?)")
+      .bind(REVIEWER_VOTE_EVENT_TYPE, targetKey, JSON.stringify({ repoFullName: REPO, vote: "non_fail" }), new Date(now - 3_000).toISOString())
+      .run();
+
+    const records = await loadLiveProviderTrackRecords(env, now);
+    const repoRow = records.find((row) => row.provider === "claude-code" && row.repoFullName === REPO)!;
+    expect(voteSql).toContain("ORDER BY created_at ASC, id ASC"); // the total order is in the query, not left to the backend
+    expect(repoRow.signals).toBe(1); // the two votes dedupe to a single signal
+    expect(repoRow.precision).toBe(1); // the LATER fail vote wins; null would mean the earlier vote leaked through
+  });
+
+  it("REGRESSION: the id tie-break makes the winner deterministic when two votes share a created_at (#9638)", async () => {
+    const env = createTestEnv();
+    const store = createSignalStore(env);
+    const now = Date.now();
+    const targetKey = `${REPO}#2`;
+    await store.recordRuleFired({ ruleId: "ai_consensus_defect", targetKey, outcome: "close", occurredAt: new Date(now - 10_000).toISOString(), metadata: { confidence: 0.97 } });
+    await store.recordHumanOverride({ ruleId: "ai_consensus_defect", targetKey, verdict: "confirmed", occurredAt: new Date(now - 5_000).toISOString() });
+    // Same created_at, so ordering falls entirely to the id tie-break: 'z-fail' > 'a-nonfail' lexicographically,
+    // so the fail vote sorts LAST and wins deterministically. Inserted higher-id-first so an unordered rowid
+    // scan would instead keep 'a-nonfail' ⇒ precision null; the ORDER BY id ASC is what makes it reproducible.
+    const shared = new Date(now - 2_000).toISOString();
+    await env.DB.prepare("INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES ('z-fail', ?, 'claude-code', ?, 'completed', 'v', ?, ?)")
+      .bind(REVIEWER_VOTE_EVENT_TYPE, targetKey, JSON.stringify({ repoFullName: REPO, vote: "fail" }), shared)
+      .run();
+    await env.DB.prepare("INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES ('a-nonfail', ?, 'claude-code', ?, 'completed', 'v', ?, ?)")
+      .bind(REVIEWER_VOTE_EVENT_TYPE, targetKey, JSON.stringify({ repoFullName: REPO, vote: "non_fail" }), shared)
+      .run();
+
+    const records = await loadLiveProviderTrackRecords(env, now);
+    const repoRow = records.find((row) => row.provider === "claude-code" && row.repoFullName === REPO)!;
+    expect(repoRow.signals).toBe(1);
+    expect(repoRow.precision).toBe(1); // 'z-fail' sorts last on the id tie-break and wins deterministically
+  });
 });
 
 describe("recordRoutingShadow (#8229 stage 1 write path)", () => {

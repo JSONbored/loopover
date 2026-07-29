@@ -71,7 +71,11 @@ export function computeWouldHaveRouted(
 export async function loadLiveProviderTrackRecords(env: Env, nowMs: number = Date.now()): Promise<ProviderTrackRecord[]> {
   try {
     const votes = await env.DB.prepare(
-      "SELECT actor, target_key, metadata_json FROM audit_events WHERE event_type = ? AND created_at >= ?",
+      // ORDER BY is mandatory, not cosmetic: computeProviderTrackRecords dedupes latest-vote-wins by taking
+      // the LAST array element, so an unordered scan makes a re-voted PR's surviving stance backend-dependent
+      // (#9638). created_at alone is insufficient — same-loop votes share a timestamp — so the id tie-break
+      // is required, mirroring risk-control-wire.ts's `created_at, id` discipline.
+      "SELECT actor, target_key, metadata_json FROM audit_events WHERE event_type = ? AND created_at >= ? ORDER BY created_at ASC, id ASC",
     )
       .bind(REVIEWER_VOTE_EVENT_TYPE, new Date(nowMs - CORPUS_LOOKBACK_MS).toISOString())
       .all<{ actor: string; target_key: string; metadata_json: string }>();

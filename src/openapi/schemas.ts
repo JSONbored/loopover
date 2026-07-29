@@ -1,4 +1,6 @@
 import { z } from "zod";
+// #9762: the enums these schemas validate against, from the one place that defines them.
+import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS, FEASIBILITY_VERDICTS, PUBLIC_SURFACE_SKIP_REASONS } from "@loopover/contract";
 import { MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
 import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP } from "../types";
 import {
@@ -873,8 +875,8 @@ export const RepositorySettingsSchema = z
     // exact drift class #9517's enum notes warned about, republished here. The compile-time parity
     // assertion in src/openapi/schema-type-parity.ts is what finally caught it.
     autonomy: z.partialRecord(
-      z.enum(["review", "request_changes", "approve", "merge", "close", "label", "review_state_label", "update_branch", "assign"]),
-      z.enum(["observe", "auto_with_approval", "auto"]),
+      z.enum(AGENT_ACTION_CLASSES),
+      z.enum(AUTONOMY_LEVELS),
     ),
     autoMaintain: z.object({ requireApprovals: z.number().int(), mergeMethod: z.enum(["merge", "squash", "rebase"]) }).optional(),
     agentPaused: z.boolean().optional(),
@@ -1158,7 +1160,7 @@ export const RepoSettingsPreviewSchema = z
       willLabel: z.boolean(),
       willCheckRun: z.boolean(),
       skipped: z.boolean(),
-      skipReason: z.enum(["surface_off", "missing_author", "bot_author", "ignored_author", "maintainer_author", "miner_detection_unavailable", "not_official_gittensor_miner"]).nullable(),
+      skipReason: z.enum(PUBLIC_SURFACE_SKIP_REASONS).nullable(),
       actions: z.array(z.enum(["skip", "comment", "label", "check_run", "none"])),
       summary: z.string(),
     }),
@@ -2296,7 +2298,7 @@ export const IntakeIdeaRequestSchema = z
 export const IntakeIdeaResponseSchema = z
   .object({
     ok: z.boolean(),
-    verdict: z.enum(["go", "raise", "avoid"]).optional(),
+    verdict: z.enum(FEASIBILITY_VERDICTS).optional(),
     taskGraph: z.unknown().optional(),
     errors: z.array(z.string()).optional(),
   })
@@ -2331,7 +2333,7 @@ export const PlanIdeaClaimsRequestSchema = z
 export const PlanIdeaClaimsResponseSchema = z
   .object({
     ok: z.boolean(),
-    verdict: z.enum(["go", "raise", "avoid"]).optional(),
+    verdict: z.enum(FEASIBILITY_VERDICTS).optional(),
     claimPlan: z.unknown().optional(),
     errors: z.array(z.string()).optional(),
   })

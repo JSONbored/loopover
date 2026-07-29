@@ -35,6 +35,10 @@ jobs:
   publish:
     name: Publish server.json
     runs-on: ubuntu-latest
+    # A deployment environment, so the one job in this repo that holds `id-token: write` and writes to a
+    # public registry can carry protection rules (required reviewers, a wait timer) configured outside the
+    # workflow file. Without it, anyone who can dispatch a workflow can publish.
+    environment: mcp-registry
     # Belt and braces alongside the dispatch-only trigger: a dispatch can name any ref, and a registry
     # publish must only ever describe what is on main.
     if: github.ref == 'refs/heads/main'
@@ -54,12 +58,16 @@ jobs:
 
       - name: Install mcp-publisher
         env:
-          # SHA-pinned: this binary authenticates as this repo and writes to a public registry, so it is not
-          # something to float on a moving tag.
-          MCP_PUBLISHER_VERSION: v1.2.3
+          MCP_PUBLISHER_VERSION: v1.8.0
+          # The tag is mutable; this is not. A release tag can be moved to point at a different commit, and
+          # this binary authenticates as this repository and writes to a public registry -- so the download
+          # is checked against the exact bytes reviewed here, and a mismatch fails the job rather than
+          # publishing under a binary nobody looked at.
+          MCP_PUBLISHER_SHA256: 1370446bbe74d562608e8005a6ccce02d146a661fbd78674e11cc70b9618d6cf
         run: |
           set -euo pipefail
           curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/download/${MCP_PUBLISHER_VERSION}/mcp-publisher_linux_amd64.tar.gz" -o mcp-publisher.tar.gz
+          echo "${MCP_PUBLISHER_SHA256}  mcp-publisher.tar.gz" | sha256sum --check --strict -
           tar -xzf mcp-publisher.tar.gz mcp-publisher
           chmod +x mcp-publisher
 

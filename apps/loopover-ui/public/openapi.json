@@ -17365,6 +17365,9 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed installation id"
+          },
           "404": {
             "description": "Installation health not found"
           }
@@ -17407,6 +17410,9 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed installation id"
+          },
           "404": {
             "description": "Installation health not found"
           }
@@ -17448,6 +17454,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Malformed installation id"
           },
           "404": {
             "description": "Installation not found"
@@ -24011,6 +24020,9 @@
           "200": {
             "description": "Installation health"
           },
+          "400": {
+            "description": "Malformed installation id"
+          },
           "401": {
             "description": "Not signed in"
           },
@@ -24052,6 +24064,9 @@
           "200": {
             "description": "Repair plan"
           },
+          "400": {
+            "description": "Malformed installation id"
+          },
           "401": {
             "description": "Not signed in"
           },
@@ -24092,6 +24107,9 @@
         "responses": {
           "200": {
             "description": "Repair plan recomputed"
+          },
+          "400": {
+            "description": "Malformed installation id"
           },
           "401": {
             "description": "Not signed in"
@@ -24136,7 +24154,7 @@
             "description": "Settings applied"
           },
           "400": {
-            "description": "Malformed settings"
+            "description": "Malformed installation id or settings"
           },
           "401": {
             "description": "Not signed in"

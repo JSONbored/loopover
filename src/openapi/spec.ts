@@ -540,6 +540,7 @@ export function buildOpenApiSpec() {
     request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "GitHub App installation health", content: { "application/json": { schema: InstallationHealthSchema } } },
+      400: { description: "Malformed installation id" },
       404: { description: "Installation health not found" },
     },
   });
@@ -552,6 +553,7 @@ export function buildOpenApiSpec() {
     request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "GitHub App installation repair diagnostics", content: { "application/json": { schema: InstallationRepairSchema } } },
+      400: { description: "Malformed installation id" },
       404: { description: "Installation health not found" },
     },
   });
@@ -564,6 +566,7 @@ export function buildOpenApiSpec() {
     request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "Refreshed GitHub App installation repair diagnostics", content: { "application/json": { schema: InstallationRepairSchema } } },
+      400: { description: "Malformed installation id" },
       404: { description: "Installation not found" },
     },
   });

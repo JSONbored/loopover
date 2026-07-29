@@ -231,9 +231,41 @@ describe("assessSubnetDocument (whole-file gate: root netuid + exactly-one appen
     expect(assessSubnetDocument(dirty, { appendedEntry: entry, secretsScan: false }).verdict).toBe("merged");
   });
 
-  it("threads the normalized root netuid to the entry (string root coerces; conflicting entry netuid rejected)", () => {
-    expect(assessSubnetDocument({ netuid: "14", surfaces: [entry] }, { appendedEntry: entry }).verdict).toBe("merged");
+  it("threads the validated integer root netuid to the entry; a conflicting entry netuid is rejected", () => {
+    // A string root netuid is no longer coerced/accepted (#9665) — that is covered by the reject table below.
+    // Here the root is a real integer that matches the entry, and a conflicting entry netuid still fails.
+    expect(assessSubnetDocument(doc, { appendedEntry: { ...entry, netuid: 14 } }).verdict).toBe("merged");
     expect(assessSubnetDocument(doc, { appendedEntry: { ...entry, netuid: 99 } }).reason).toBe("unsupported-shape");
+  });
+
+  describe("root netuid must be a real non-negative integer, not a coercible value (#9665)", () => {
+    // Before #9665 the check was `!Number.isInteger(Number(doc.netuid))`, so Number() smuggled these through:
+    // Number(null)===0, Number("")===0, Number([])===0, Number(true)===1, Number("0x10")===16, Number("  7  ")===7.
+    for (const bad of [null, "", true, [], [5], "7", "0x10", 1.5, -1, undefined] as unknown[]) {
+      it(`rejects netuid ${JSON.stringify(bad)} with unsupported-shape`, () => {
+        const r = assessSubnetDocument({ netuid: bad, surfaces: [entry] }, { appendedEntry: entry });
+        expect(r.reason).toBe("unsupported-shape");
+        expect(r.summary).toBe("Subnet document netuid must be an integer.");
+      });
+    }
+
+    for (const good of [0, 64]) {
+      it(`keeps a valid integer netuid ${good} (not over-tightened)`, () => {
+        const r = assessSubnetDocument({ netuid: good, surfaces: [{ ...entry, netuid: good }] }, { appendedEntry: { ...entry, netuid: good } });
+        expect(r.reason).not.toBe("unsupported-shape");
+      });
+    }
+
+    it("no longer merges a document with netuid null and a surface declaring netuid 0 (end-to-end regression)", () => {
+      // The exact exploit: a null root coerced to subnet 0, and a surface netuid of 0 matched it, reaching a
+      // decisive merge on the surface lane. It must now fail on the root shape check instead.
+      const r = assessSubnetDocument(
+        { netuid: null, surfaces: [{ ...entry, netuid: 0 }] },
+        { appendedEntry: { ...entry, netuid: 0 } },
+      );
+      expect(r.verdict).not.toBe("merged");
+      expect(r.reason).toBe("unsupported-shape");
+    });
   });
 });
 

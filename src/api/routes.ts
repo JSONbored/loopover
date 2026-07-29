@@ -1370,6 +1370,9 @@ export function createApp() {
       c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
       return c.json(summary);
     } catch {
+      /* v8 ignore next -- defense in depth: loadProofSummary wraps every section (and the override loader
+         its own read) in try/catch, so nothing inside currently throws. Kept so a future read added there
+         without that discipline degrades to 503 rather than a 500 on an unauthenticated public route. */
       return c.json({ error: "unavailable" }, 503);
     }
   });
@@ -1393,8 +1396,13 @@ export function createApp() {
       c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
       return c.body(renderProofBadgeSvg(summary));
     } catch {
+      // Same defense-in-depth arm as the proof route above: a README embed gets the neutral badge rather
+      // than a broken image if a future unguarded read is added. Unreachable today -- every inner read is
+      // individually fail-safe -- so the whole arm is excluded rather than left as a coverage hole.
+      /* v8 ignore start */
       c.header("Cache-Control", "public, max-age=300");
       return c.body(renderProofBadgeSvg(null), 503);
+      /* v8 ignore stop */
     }
   });
 

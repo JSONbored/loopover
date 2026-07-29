@@ -364,5 +364,10 @@ describe("loadProofSummary + routes (#9569)", () => {
     expect(await loadProofPageRepoOverride(env, "o/r", async () => ({ publicProof: { present: true, enabled: true } }))).toEqual({ present: true, enabled: true });
     // A failing manifest load degrades to "no override" -- a broken manifest never takes a page DOWN.
     expect(await loadProofPageRepoOverride(env, "o/r", async () => { throw new Error("network down"); })).toEqual({ present: false, enabled: false });
+    // REGRESSION: a loader that throws SYNCHRONOUSLY (a driver-level failure before it returns a promise)
+    // skips a `.catch()` entirely -- the earlier implementation let that escape to the route and 503 a
+    // public page over an optional manifest read.
+    const syncThrow = (() => { throw new Error("d1 down"); }) as unknown as Parameters<typeof loadProofPageRepoOverride>[2];
+    expect(await loadProofPageRepoOverride(env, "o/r", syncThrow)).toEqual({ present: false, enabled: false });
   });
 });

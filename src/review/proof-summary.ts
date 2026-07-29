@@ -235,7 +235,16 @@ export async function loadProofPageRepoOverride(
   repoFullName: string,
   loadManifest: (env: Env, repoFullName: string) => Promise<{ publicProof: { present: boolean; enabled: boolean } } | null>,
 ): Promise<ProofPageRepoOverride> {
-  const manifest = await loadManifest(env, repoFullName).catch(() => null);
+  // try/catch, NOT `.catch()`: a loader that throws SYNCHRONOUSLY (a driver-level failure before it ever
+  // returns a promise) skips a promise handler entirely, and the throw would escape to the route and 503 a
+  // public page over a manifest read that is supposed to be optional. Same defect this file already had in
+  // loadProofSummary's section reads.
+  let manifest: { publicProof: { present: boolean; enabled: boolean } } | null = null;
+  try {
+    manifest = await loadManifest(env, repoFullName);
+  } catch {
+    return { present: false, enabled: false };
+  }
   if (!manifest?.publicProof?.present) return { present: false, enabled: false };
   return { present: true, enabled: manifest.publicProof.enabled };
 }

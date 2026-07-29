@@ -165,6 +165,7 @@ import {
   ValidateLinkedIssueInput,
   WatchIssuesInput,
   getToolContract,
+  projectToolDefinition,
   ListPendingActionsStdioInput,
 } from "@loopover/contract/tools";
 import { AUTONOMY_LEVELS as MAINTAIN_AUTONOMY_LEVELS, MAINTAIN_ACTION_CLASSES, PROPOSE_ACTION_CLASSES, type ToolContract } from "@loopover/contract";
@@ -897,12 +898,17 @@ function registerStdioTool<TInput>(
 ): void {
   const contract = getToolContract(name);
   if (!contract) throw new Error(`No @loopover/contract entry for stdio tool: ${name}`);
+  // The PROJECTED definition for everything advertised, so the defaults land once (#9655). Reading
+  // `contract.annotations` directly advertised the raw `Partial`: a tool declaring only
+  // `readOnlyHint: false` shipped without a `destructiveHint`, and a tool declaring none shipped with
+  // no annotations at all -- both disagreeing with what `listToolDefinitions()` publishes for it.
+  const advertised = projectToolDefinition(contract);
   locallyRegisteredToolNames.add(name);
   server.registerTool(
     name,
     {
-      title: contract.title,
-      description: contract.description,
+      title: advertised.title,
+      description: advertised.description,
       // The SCHEMA OBJECTS, not their `.shape`. The SDK accepts either, but a raw shape is
       // re-wrapped in a plain `z.object`, which silently discards the catchall -- so every output
       // modelled as a `looseObject` would be advertised and enforced as `additionalProperties:
@@ -910,7 +916,7 @@ function registerStdioTool<TInput>(
       // caller cannot do anything about. Passing the object preserves what the contract declared.
       inputSchema: overrides?.input ?? contract.input,
       outputSchema: contract.output,
-      ...(contract.annotations ? { annotations: contract.annotations } : {}),
+      annotations: advertised.annotations,
     },
     wrapStdioToolHandler(name, () => telemetryState().enabled, handler as (...args: unknown[]) => Promise<unknown>),
   );

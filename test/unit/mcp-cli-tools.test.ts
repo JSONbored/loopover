@@ -4,7 +4,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { getToolContract } from "@loopover/contract/tools";
+import { getToolContract, getToolDefinition } from "@loopover/contract/tools";
 import { closeFixtureServer, run, startFixtureServer } from "./support/mcp-cli-harness";
 
 const bin = join(process.cwd(), "packages/loopover-mcp/dist/bin/loopover-mcp.js");
@@ -106,7 +106,21 @@ describe("loopover-mcp CLI — tools", () => {
       expect(tool.inputSchema?.type, `${tool.name} input schema is not object-typed`).toBe("object");
       expect(tool.outputSchema, `${tool.name} advertises no output schema`).toBeTruthy();
       expect((tool.outputSchema as { type?: string }).type).toBe("object");
+
+      // #9655: and the PROJECTED metadata, not the raw contract. `contract.annotations` is a Partial
+      // stating only what differs from the default posture, so passing it through advertised
+      // `{ readOnlyHint: false }` with no `destructiveHint` for the five tools that declare one field,
+      // and no annotations at all for the ~95 that declare none.
+      const projected = getToolDefinition(tool.name)!;
+      expect(tool.title, `${tool.name} title drifted from the registry`).toBe(projected.title);
+      expect(tool.annotations, `${tool.name} posture drifted from the registry`).toMatchObject(projected.annotations);
     }
+
+    // The case that motivated it, over the real transport: a destructive tool this server serves says so,
+    // and a tool declaring nothing still advertises the complete default pair.
+    const byName = new Map(registered.map((tool) => [tool.name, tool]));
+    expect(byName.get("loopover_decide_pending_action")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+    expect(byName.get("loopover_get_repo_context")?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
   });
 
   it("prints name + description rows for humans and documents --json in help", () => {

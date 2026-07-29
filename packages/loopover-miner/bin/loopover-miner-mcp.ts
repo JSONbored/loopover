@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 import { readFileSync, realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, type ToolCallback } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 // #9536: every tool's schemas come from the shared contract instead of being declared here. The
 // remote and stdio servers already register from the same package (#9517/#9518) -- this closes the
 // gap that made AMS the one server with no structured output and no shared source of truth.
 import { z } from "zod";
 import {
+  projectToolDefinition,
+  type ToolContract,
   minerPingTool,
   minerPortfolioDashboardTool,
   minerManageStatusTool,
@@ -31,43 +33,12 @@ import {
   minerPurgeRepoTool,
 } from "@loopover/contract/tools";
 import {
-  MinerPingInput,
-  MinerPingOutput,
-  MinerPortfolioDashboardInput,
-  MinerPortfolioDashboardOutput,
-  MinerManageStatusInput,
-  MinerManageStatusOutput,
   MinerListClaimsInput,
-  MinerListClaimsOutput,
   MinerAuditFeedInput,
-  MinerAuditFeedOutput,
   MinerGetRunStateInput,
-  MinerGetRunStateOutput,
   MinerListPlansInput,
-  MinerListPlansOutput,
   MinerGetPlanInput,
-  MinerGetPlanOutput,
-  MinerDoctorInput,
-  MinerDoctorOutput,
-  MinerMetricsSnapshotInput,
-  MinerMetricsSnapshotOutput,
-  MinerGovernorPauseInput,
-  MinerGovernorResumeInput,
-  MinerQueueReleaseInput,
-  MinerQueueRequeueInput,
-  MinerClaimReleaseInput,
-  MinerDenyHooksDecideInput,
-  MinerRunMigrationsInput,
-  MinerRunMigrationsOutput,
-  MinerPurgeRepoInput,
-  MinerPurgeRepoOutput,
-  MinerGovernorActionOutput,
   MinerGovernorDecisionsInput,
-  MinerGovernorDecisionsOutput,
-  MinerStatusInput,
-  MinerStatusOutput,
-  MinerCalibrationReportInput,
-  MinerCalibrationReportOutput,
 } from "@loopover/contract/tools";
 import { openClaimLedger } from "../lib/claim-ledger.js";
 import { recordMinerDispatchTelemetry } from "../lib/mcp-dispatch-telemetry.js";
@@ -121,6 +92,42 @@ function toolErrorCode(error: unknown): MinerToolErrorCode {
   // A local SQLite store failing to open (missing file, corrupted file, permissions) is the one
   // failure mode every store-backed tool below can actually hit; anything else is unclassified.
   return error instanceof Error && /not found|not a database|permission|ENOENT/i.test(error.message) ? "store_unavailable" : "unknown_error";
+}
+
+/**
+ * Register one tool from its contract entry (#9655).
+ *
+ * Two defects this replaces, both invisible by reading a single call site:
+ *
+ * 1. Every config passed `SomeSchema.shape`. The SDK accepts a raw shape and re-wraps it in a plain
+ *    `z.object`, which DISCARDS the catchall -- and every miner output is a `looseObject`, so each one
+ *    was advertised and enforced as `additionalProperties: false` and any field the payload carried
+ *    beyond the modelled set came back as a -32602 the caller could do nothing about. #9762 fixed this
+ *    class on the other two servers and added a guard, but the guard's roots did not include this
+ *    directory, so all 21 registrations here kept the defect it exists to prevent.
+ *
+ * 2. No config carried `title` or `annotations`, so one contract entry produced a differently
+ *    advertised tool depending on which server you asked. `projectToolDefinition` applies the
+ *    registry's defaults, which is where that decision belongs.
+ */
+function registerMinerTool<TInput extends z.ZodObject, TOutput extends z.ZodObject>(
+  server: McpServer,
+  contract: ToolContract<TInput, TOutput>,
+  handler: ToolCallback<TInput>,
+): void {
+  const advertised = projectToolDefinition(contract);
+  server.registerTool<TOutput, TInput>(
+    contract.name,
+    {
+      title: advertised.title,
+      description: advertised.description,
+      annotations: advertised.annotations,
+      // The schema OBJECTS, never their `.shape` -- see above.
+      inputSchema: contract.input,
+      outputSchema: contract.output,
+    },
+    handler,
+  );
 }
 
 /**
@@ -267,20 +274,10 @@ export interface MinerMcpServerOptions {
 export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
   const server = new McpServer({ name: "loopover-miner", version: ownPackageJson.version });
 
-  server.registerTool(
-    minerPingTool.name,
-    { description: minerPingTool.description, inputSchema: MinerPingInput.shape, outputSchema: MinerPingOutput.shape },
-    async () => minerToolResult(MINER_PING_STATUS),
+  registerMinerTool(server, minerPingTool, async () => minerToolResult(MINER_PING_STATUS),
   );
 
-  server.registerTool(
-    minerPortfolioDashboardTool.name,
-    {
-      description: minerPortfolioDashboardTool.description,
-      inputSchema: MinerPortfolioDashboardInput.shape,
-      outputSchema: MinerPortfolioDashboardOutput.shape,
-    },
-    () =>
+  registerMinerTool(server, minerPortfolioDashboardTool, () =>
       withMinerToolErrorHandling(() => {
         const ownsQueue = options.initPortfolioQueue === undefined;
         const portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
@@ -292,14 +289,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       }, minerPortfolioDashboardTool.name),
   );
 
-  server.registerTool(
-    minerManageStatusTool.name,
-    {
-      description: minerManageStatusTool.description,
-      inputSchema: MinerManageStatusInput.shape,
-      outputSchema: MinerManageStatusOutput.shape,
-    },
-    () =>
+  registerMinerTool(server, minerManageStatusTool, () =>
       withMinerToolErrorHandling(() => {
         const ownsPortfolioQueue = options.initPortfolioQueue === undefined;
         const ownsEventLedger = options.initEventLedger === undefined;
@@ -328,10 +318,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       }, minerManageStatusTool.name),
   );
 
-  server.registerTool(
-    minerListClaimsTool.name,
-    { description: minerListClaimsTool.description, inputSchema: MinerListClaimsInput.shape, outputSchema: MinerListClaimsOutput.shape },
-    ({ repoFullName, status }: z.infer<typeof MinerListClaimsInput>) =>
+  registerMinerTool(server, minerListClaimsTool, ({ repoFullName, status }: z.infer<typeof MinerListClaimsInput>) =>
       withMinerToolErrorHandling(() => {
         const ownsLedger = options.openClaimLedger === undefined;
         const ledger = (options.openClaimLedger ?? openClaimLedger)();
@@ -349,10 +336,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       }, minerListClaimsTool.name),
   );
 
-  server.registerTool(
-    minerAuditFeedTool.name,
-    { description: minerAuditFeedTool.description, inputSchema: MinerAuditFeedInput.shape, outputSchema: MinerAuditFeedOutput.shape },
-    (input: z.infer<typeof MinerAuditFeedInput>) =>
+  registerMinerTool(server, minerAuditFeedTool, (input: z.infer<typeof MinerAuditFeedInput>) =>
       withMinerToolErrorHandling(() => {
         const ownsLedger = options.initEventLedger === undefined;
         const eventLedger = (options.initEventLedger ?? initEventLedger)();
@@ -370,14 +354,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       }, minerAuditFeedTool.name),
   );
 
-  server.registerTool(
-    minerGetRunStateTool.name,
-    {
-      description: minerGetRunStateTool.description,
-      inputSchema: MinerGetRunStateInput.shape,
-      outputSchema: MinerGetRunStateOutput.shape,
-    },
-    ({ repoFullName }: z.infer<typeof MinerGetRunStateInput>) =>
+  registerMinerTool(server, minerGetRunStateTool, ({ repoFullName }: z.infer<typeof MinerGetRunStateInput>) =>
       withMinerToolErrorHandling(() => {
         const ownsStore = options.initRunStateStore === undefined;
         const store = (options.initRunStateStore ?? initRunStateStore)();
@@ -389,10 +366,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       }, minerGetRunStateTool.name),
   );
 
-  server.registerTool(
-    minerListPlansTool.name,
-    { description: minerListPlansTool.description, inputSchema: MinerListPlansInput.shape, outputSchema: MinerListPlansOutput.shape },
-    ({ status }: z.infer<typeof MinerListPlansInput>) =>
+  registerMinerTool(server, minerListPlansTool, ({ status }: z.infer<typeof MinerListPlansInput>) =>
       withMinerToolErrorHandling(() => {
         const ownsStore = options.openPlanStore === undefined;
         const store = (options.openPlanStore ?? openPlanStore)();
@@ -407,10 +381,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       }, minerListPlansTool.name),
   );
 
-  server.registerTool(
-    minerGetPlanTool.name,
-    { description: minerGetPlanTool.description, inputSchema: MinerGetPlanInput.shape, outputSchema: MinerGetPlanOutput.shape },
-    ({ planId }: z.infer<typeof MinerGetPlanInput>) =>
+  registerMinerTool(server, minerGetPlanTool, ({ planId }: z.infer<typeof MinerGetPlanInput>) =>
       withMinerToolErrorHandling(() => {
         const ownsStore = options.openPlanStore === undefined;
         const store = (options.openPlanStore ?? openPlanStore)();
@@ -423,14 +394,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       }, minerGetPlanTool.name),
   );
 
-  server.registerTool(
-    minerGovernorDecisionsTool.name,
-    {
-      description: minerGovernorDecisionsTool.description,
-      inputSchema: MinerGovernorDecisionsInput.shape,
-      outputSchema: MinerGovernorDecisionsOutput.shape,
-    },
-    ({ repoFullName }: z.infer<typeof MinerGovernorDecisionsInput>) =>
+  registerMinerTool(server, minerGovernorDecisionsTool, ({ repoFullName }: z.infer<typeof MinerGovernorDecisionsInput>) =>
       withMinerToolErrorHandling(() => {
         const ownsLedger = options.initGovernorLedger === undefined;
         const ledger = (options.initGovernorLedger ?? initGovernorLedger)();
@@ -445,10 +409,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       }, minerGovernorDecisionsTool.name),
   );
 
-  server.registerTool(
-    minerStatusTool.name,
-    { description: minerStatusTool.description, inputSchema: MinerStatusInput.shape, outputSchema: MinerStatusOutput.shape },
-    () =>
+  registerMinerTool(server, minerStatusTool, () =>
       withMinerToolErrorHandling(() => ({
         status: (options.collectStatus ?? collectStatus)(),
         doctor: (options.runDoctorChecks ?? runDoctorChecks)(),
@@ -478,52 +439,28 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       return { ok: false, action, blocked: true, reason: result.status, ...(result.error ? { error: result.error } : {}) };
     };
 
-    server.registerTool(
-      minerGovernorPauseTool.name,
-      { description: minerGovernorPauseTool.description, inputSchema: MinerGovernorPauseInput.shape, outputSchema: MinerGovernorActionOutput.shape },
-      (input) => withMinerToolErrorHandling(() => dispatchResult(GOVERNOR_PAUSE_CHAT_ACTION, input.reason ? { reason: input.reason } : {}), minerGovernorPauseTool.name),
+    registerMinerTool(server, minerGovernorPauseTool, (input) => withMinerToolErrorHandling(() => dispatchResult(GOVERNOR_PAUSE_CHAT_ACTION, input.reason ? { reason: input.reason } : {}), minerGovernorPauseTool.name),
     );
 
-    server.registerTool(
-      minerGovernorResumeTool.name,
-      { description: minerGovernorResumeTool.description, inputSchema: MinerGovernorResumeInput.shape, outputSchema: MinerGovernorActionOutput.shape },
-      () => withMinerToolErrorHandling(() => dispatchResult(GOVERNOR_RESUME_CHAT_ACTION, {}), minerGovernorResumeTool.name),
+    registerMinerTool(server, minerGovernorResumeTool, () => withMinerToolErrorHandling(() => dispatchResult(GOVERNOR_RESUME_CHAT_ACTION, {}), minerGovernorResumeTool.name),
     );
 
-    server.registerTool(
-      minerQueueReleaseTool.name,
-      { description: minerQueueReleaseTool.description, inputSchema: MinerQueueReleaseInput.shape, outputSchema: MinerGovernorActionOutput.shape },
-      (input) => withMinerToolErrorHandling(() => dispatchResult(MINER_QUEUE_RELEASE_ACTION, { ...input }), minerQueueReleaseTool.name),
+    registerMinerTool(server, minerQueueReleaseTool, (input) => withMinerToolErrorHandling(() => dispatchResult(MINER_QUEUE_RELEASE_ACTION, { ...input }), minerQueueReleaseTool.name),
     );
 
-    server.registerTool(
-      minerQueueRequeueTool.name,
-      { description: minerQueueRequeueTool.description, inputSchema: MinerQueueRequeueInput.shape, outputSchema: MinerGovernorActionOutput.shape },
-      (input) => withMinerToolErrorHandling(() => dispatchResult(MINER_QUEUE_REQUEUE_ACTION, { ...input }), minerQueueRequeueTool.name),
+    registerMinerTool(server, minerQueueRequeueTool, (input) => withMinerToolErrorHandling(() => dispatchResult(MINER_QUEUE_REQUEUE_ACTION, { ...input }), minerQueueRequeueTool.name),
     );
 
-    server.registerTool(
-      minerClaimReleaseTool.name,
-      { description: minerClaimReleaseTool.description, inputSchema: MinerClaimReleaseInput.shape, outputSchema: MinerGovernorActionOutput.shape },
-      (input) => withMinerToolErrorHandling(() => dispatchResult(MINER_CLAIM_RELEASE_ACTION, { ...input }), minerClaimReleaseTool.name),
+    registerMinerTool(server, minerClaimReleaseTool, (input) => withMinerToolErrorHandling(() => dispatchResult(MINER_CLAIM_RELEASE_ACTION, { ...input }), minerClaimReleaseTool.name),
     );
 
-    server.registerTool(
-      minerDenyHooksDecideTool.name,
-      { description: minerDenyHooksDecideTool.description, inputSchema: MinerDenyHooksDecideInput.shape, outputSchema: MinerGovernorActionOutput.shape },
-      (input) => withMinerToolErrorHandling(() => dispatchResult(MINER_DENY_HOOKS_DECIDE_ACTION, { ...input }), minerDenyHooksDecideTool.name),
+    registerMinerTool(server, minerDenyHooksDecideTool, (input) => withMinerToolErrorHandling(() => dispatchResult(MINER_DENY_HOOKS_DECIDE_ACTION, { ...input }), minerDenyHooksDecideTool.name),
     );
 
-    server.registerTool(
-      minerRunMigrationsTool.name,
-      { description: minerRunMigrationsTool.description, inputSchema: MinerRunMigrationsInput.shape, outputSchema: MinerRunMigrationsOutput.shape },
-      () => withMinerToolErrorHandling(() => dispatchResult(MINER_RUN_MIGRATIONS_ACTION, {}), minerRunMigrationsTool.name),
+    registerMinerTool(server, minerRunMigrationsTool, () => withMinerToolErrorHandling(() => dispatchResult(MINER_RUN_MIGRATIONS_ACTION, {}), minerRunMigrationsTool.name),
     );
 
-    server.registerTool(
-      minerPurgeRepoTool.name,
-      { description: minerPurgeRepoTool.description, inputSchema: MinerPurgeRepoInput.shape, outputSchema: MinerPurgeRepoOutput.shape },
-      (input) =>
+    registerMinerTool(server, minerPurgeRepoTool, (input) =>
         withMinerToolErrorHandling(async () => {
           const result = await dispatchResult(MINER_PURGE_REPO_ACTION, { repoFullName: input.repoFullName });
           return { ...result, repoFullName: input.repoFullName };
@@ -532,10 +469,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
   }
 
   // ── #9523 reads ────────────────────────────────────────────────────────
-  server.registerTool(
-    minerDoctorTool.name,
-    { description: minerDoctorTool.description, inputSchema: MinerDoctorInput.shape, outputSchema: MinerDoctorOutput.shape },
-    () =>
+  registerMinerTool(server, minerDoctorTool, () =>
       withMinerToolErrorHandling(() => {
         // status.js reports each check as {name, ok, detail}. The contract carries pass/warn/fail because the
         // catalog wants doctor to GROW checks (#9523) and a boolean cannot express "degraded but working";
@@ -549,10 +483,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       }, minerDoctorTool.name),
   );
 
-  server.registerTool(
-    minerMetricsSnapshotTool.name,
-    { description: minerMetricsSnapshotTool.description, inputSchema: MinerMetricsSnapshotInput.shape, outputSchema: MinerMetricsSnapshotOutput.shape },
-    () =>
+  registerMinerTool(server, minerMetricsSnapshotTool, () =>
       withMinerToolErrorHandling(() => {
         const ownsPredictionLedger = options.initPredictionLedger === undefined;
         const ownsEventLedger = options.initEventLedger === undefined;
@@ -573,14 +504,7 @@ export function createMinerMcpServer(options: MinerMcpServerOptions = {}) {
       }, minerMetricsSnapshotTool.name),
   );
 
-  server.registerTool(
-    minerCalibrationReportTool.name,
-    {
-      description: minerCalibrationReportTool.description,
-      inputSchema: MinerCalibrationReportInput.shape,
-      outputSchema: MinerCalibrationReportOutput.shape,
-    },
-    () =>
+  registerMinerTool(server, minerCalibrationReportTool, () =>
       withMinerToolErrorHandling(() => {
         const ownsPredictionLedger = options.initPredictionLedger === undefined;
         const ownsEventLedger = options.initEventLedger === undefined;

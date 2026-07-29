@@ -7,7 +7,9 @@ import type { McpToolDefinition } from "@loopover/contract";
 
 export type ListedTool = {
   name: string;
+  title?: string | undefined;
   description?: string | undefined;
+  annotations?: { readOnlyHint?: boolean | undefined; destructiveHint?: boolean | undefined } | undefined;
   inputSchema?: { type?: string } | undefined;
   outputSchema?: { type?: string } | undefined;
 };
@@ -41,6 +43,37 @@ export function checkAdvertisedShape(listed: readonly ListedTool[]): string[] {
     if (tool.inputSchema?.type !== "object") failures.push(`${tool.name} advertises a non-object inputSchema`);
     if (!tool.outputSchema) failures.push(`${tool.name} advertises no outputSchema`);
     else if (tool.outputSchema.type !== "object") failures.push(`${tool.name} advertises a non-object outputSchema`);
+  }
+  return failures;
+}
+
+/**
+ * What a server ADVERTISES for a tool must be what the registry projects for it (#9655).
+ *
+ * `checkAdvertisedShape` above asks only whether a description exists, so three servers could -- and
+ * did -- serve three different descriptions, titles and annotation postures from one contract entry
+ * while every check stayed green. The posture is the part that matters operationally: a client that
+ * gates confirmation on `destructiveHint` got nothing at all for `loopover_delete_branch` from the
+ * server that performs the delete.
+ *
+ * Compares against the PROJECTION, which is where the `{ readOnlyHint: true, destructiveHint: false }`
+ * default is applied -- so "advertises no annotations" fails here rather than being read as agreement
+ * with an entry that declares none.
+ */
+export function checkAdvertisedMetadata(expected: readonly McpToolDefinition[], listed: readonly ListedTool[]): string[] {
+  const listedByName = new Map(listed.map((tool) => [tool.name, tool]));
+  const failures: string[] = [];
+  for (const tool of expected) {
+    const advertised = listedByName.get(tool.name);
+    // A missing tool is diffToolSets' finding to report; saying it twice makes one defect look like two.
+    if (!advertised) continue;
+    if (advertised.title !== tool.title) failures.push(`${tool.name} advertises title ${JSON.stringify(advertised.title)}, registry says ${JSON.stringify(tool.title)}`);
+    if (advertised.description !== tool.description) failures.push(`${tool.name} advertises a description the registry does not`);
+    for (const hint of ["readOnlyHint", "destructiveHint"] as const) {
+      if (advertised.annotations?.[hint] !== tool.annotations[hint]) {
+        failures.push(`${tool.name} advertises ${hint}=${String(advertised.annotations?.[hint])}, registry says ${String(tool.annotations[hint])}`);
+      }
+    }
   }
   return failures;
 }

@@ -29,6 +29,7 @@ import { LATEST_RECOMMENDED_MCP_VERSION } from "../../src/services/mcp-compatibi
 import { createMinerMcpServer } from "../../packages/loopover-miner/bin/loopover-miner-mcp";
 import { createTestEnv } from "../helpers/d1";
 import {
+  checkAdvertisedMetadata,
   checkAdvertisedShape,
   checkEveryToolCalled,
   checkVersionLock,
@@ -159,7 +160,7 @@ async function validateSurface(
   expected: readonly McpToolDefinition[],
 ): Promise<{ failures: string[]; tools: number; validated: number; declined: number }> {
   const listed = (await client.listTools()).tools as unknown as ListedTool[];
-  const failures = [...diffToolSets(expected, listed), ...checkAdvertisedShape(listed)];
+  const failures = [...diffToolSets(expected, listed), ...checkAdvertisedShape(listed), ...checkAdvertisedMetadata(expected, listed)];
   const { validators, failures: compileFailures } = compileOutputSchemas(listed);
   failures.push(...compileFailures);
   const { called, failures: callFailures, validated, declined } = await smokeCallAll(client, listed, validators);
@@ -206,6 +207,29 @@ describe("MCP contract validator (#9520)", () => {
         .map((tool) => tool.name)
         .filter((name) => !registered.has(name));
       expect(missing).toEqual([]);
+    } finally {
+      await client.close().catch(() => undefined);
+    }
+  }, 180_000);
+
+  it("enforces the remote server's ADMIN surface, which no other case can see", async () => {
+    // #9657: the five admin tools register only when LOOPOVER_MCP_ADMIN_ENABLED is set, and every other
+    // case here boots a server without it -- so the admin category was never diffed, compiled,
+    // smoke-called or output-validated. That is how `loopover_admin_rotate_secret` kept registering from
+    // schemas declared in src/mcp/server.ts long after its four siblings moved to the contract: the
+    // validator's own "nothing is registered without a contract entry" assertion was structurally unable
+    // to see the one tool that violated it.
+    const client = await connect(new LoopoverMcp({ ...createTestEnv(), LOOPOVER_MCP_ADMIN_ENABLED: "1" }).createServer());
+    try {
+      const registered = new Set(((await client.listTools()).tools as unknown as ListedTool[]).map((tool) => tool.name));
+      const result = await validateSurface(client, listToolDefinitions().filter((tool) => registered.has(tool.name)));
+      report("remote+admin", result);
+      expect(result.failures).toEqual([]);
+
+      // Every admin tool the registry knows, with none left behind in a local declaration.
+      const adminTools = listToolDefinitions({ category: ["admin"] }).map((tool) => tool.name);
+      expect(adminTools.length).toBeGreaterThanOrEqual(5);
+      expect(adminTools.filter((name) => !registered.has(name))).toEqual([]);
     } finally {
       await client.close().catch(() => undefined);
     }

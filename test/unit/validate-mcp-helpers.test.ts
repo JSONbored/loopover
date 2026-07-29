@@ -5,6 +5,7 @@
 // that is not object-typed, a version that has drifted, a release path that has been deleted.
 import { describe, expect, it } from "vitest";
 import {
+  checkAdvertisedMetadata,
   checkAdvertisedShape,
   checkEveryToolCalled,
   checkVersionLock,
@@ -33,6 +34,60 @@ describe("validate-mcp invariants", () => {
 
   it("passes when the two sets agree", () => {
     expect(diffToolSets([tool("a")], [{ name: "a" }])).toEqual([]);
+  });
+
+  describe("advertised metadata matches the registry's projection (#9655)", () => {
+    const projected = (name: string, overrides: Partial<McpToolDefinition> = {}): McpToolDefinition =>
+      ({ name, title: `${name} title`, description: `${name} description`, annotations: { readOnlyHint: true, destructiveHint: false }, ...overrides }) as McpToolDefinition;
+    const advertised = (name: string) => ({
+      name,
+      title: `${name} title`,
+      description: `${name} description`,
+      annotations: { readOnlyHint: true, destructiveHint: false },
+    });
+
+    it("passes when every advertised field is the projected one", () => {
+      expect(checkAdvertisedMetadata([projected("a"), projected("b")], [advertised("a"), advertised("b")])).toEqual([]);
+    });
+
+    it("reports a title the server rewrote", () => {
+      expect(checkAdvertisedMetadata([projected("a")], [{ ...advertised("a"), title: "Something else" }])).toEqual([
+        'a advertises title "Something else", registry says "a title"',
+      ]);
+    });
+
+    it("reports a description the server rewrote", () => {
+      // The exact text is deliberately NOT in the failure: 35 of these were paragraph-length, and a
+      // failure listing both in full is unreadable at the point it fires.
+      expect(checkAdvertisedMetadata([projected("a")], [{ ...advertised("a"), description: "drifted" }])).toEqual([
+        "a advertises a description the registry does not",
+      ]);
+    });
+
+    it("reports a readOnlyHint that disagrees", () => {
+      expect(
+        checkAdvertisedMetadata([projected("a", { annotations: { readOnlyHint: false, destructiveHint: false } })], [advertised("a")]),
+      ).toEqual(["a advertises readOnlyHint=true, registry says false"]);
+    });
+
+    it("reports a destructiveHint that disagrees", () => {
+      expect(
+        checkAdvertisedMetadata([projected("a", { annotations: { readOnlyHint: false, destructiveHint: true } })], [{ ...advertised("a"), annotations: { readOnlyHint: false, destructiveHint: false } }]),
+      ).toEqual(["a advertises destructiveHint=false, registry says true"]);
+    });
+
+    it("reports a tool advertising no annotations at all", () => {
+      // The defect this check was written for: the raw `Partial` is not what the projection publishes,
+      // so "absent" and "the default posture" are different things on the wire.
+      expect(checkAdvertisedMetadata([projected("a")], [{ name: "a", title: "a title", description: "a description" }])).toEqual([
+        "a advertises readOnlyHint=undefined, registry says true",
+        "a advertises destructiveHint=undefined, registry says false",
+      ]);
+    });
+
+    it("stays quiet about a tool the server never registered — that is diffToolSets' finding", () => {
+      expect(checkAdvertisedMetadata([projected("a")], [])).toEqual([]);
+    });
   });
 
   it("requires a description and object-typed input and output schemas", () => {

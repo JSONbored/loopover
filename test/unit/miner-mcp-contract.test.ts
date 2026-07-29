@@ -9,6 +9,7 @@ import {
   type MinerMcpServerOptions,
 } from "../../packages/loopover-miner/bin/loopover-miner-mcp";
 import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger";
+import { getToolDefinition } from "@loopover/contract/tools";
 // The SAME secret-shape matcher the miner pack validator uses — imported from its single source of truth (rather
 // than hand-duplicated here) so the two stay byte-for-byte in sync instead of relying on manual vigilance.
 import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content";
@@ -300,5 +301,37 @@ describe("contract assertions catch violations (canary)", () => {
 
   it("assertUniformErrorShape throws when a non-error (success) result is passed", () => {
     expect(() => assertUniformErrorShape({ content: [{ type: "text", text: "ok" }], isError: false })).toThrow();
+  });
+});
+
+// #9655: the AMS server advertised neither `title` nor `annotations` on any of its 21 registrations, and
+// passed every schema as a raw `.shape` -- which the SDK re-wraps in a plain `z.object`, discarding the
+// catchall. Every miner output is a `looseObject`, so each one was advertised and ENFORCED as
+// `additionalProperties: false`: any field a payload carried beyond the modelled set came back to the
+// caller as a -32602 they could do nothing about.
+describe("the miner server advertises the registry's projection (#9655)", () => {
+  it("carries the projected title and posture, and keeps its outputs open", async () => {
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const client = new Client({ name: "miner-mcp-advertised", version: "0.0.0" });
+    await Promise.all([createMinerMcpServer({}).connect(serverTransport), client.connect(clientTransport)]);
+    try {
+      const { tools } = await client.listTools();
+      expect(tools.length).toBeGreaterThan(0);
+      for (const tool of tools) {
+        const projected = getToolDefinition(tool.name);
+        expect(projected, `${tool.name} is registered but has no registry entry`).toBeTruthy();
+        expect(tool.title, `${tool.name} title`).toBe(projected!.title);
+        expect(tool.description, `${tool.name} description`).toBe(projected!.description);
+        expect(tool.annotations, `${tool.name} posture`).toMatchObject(projected!.annotations);
+        // The catchall survived registration: a loose output must NOT be advertised as closed.
+        expect((tool.outputSchema as { additionalProperties?: unknown }).additionalProperties, `${tool.name} output is closed`).not.toBe(false);
+      }
+
+      const byName = new Map(tools.map((tool) => [tool.name, tool]));
+      expect(byName.get("loopover_miner_purge_repo")?.annotations).toMatchObject({ readOnlyHint: false, destructiveHint: true });
+      expect(byName.get("loopover_miner_ping")?.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
+    } finally {
+      await client.close().catch(() => undefined);
+    }
   });
 });

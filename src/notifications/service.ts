@@ -1,4 +1,5 @@
 import { sanitizePublicComment } from "../github/commands";
+import { parseAmsPrOutcomeDecision } from "./ams-events";
 import {
   countRecentNotificationDeliveries,
   getNotificationDeliveryById,
@@ -88,8 +89,10 @@ export function buildAmsGovernorPausedNotification(_event: DetectedNotificationE
 
 export function buildAmsPrOutcomeNotification(event: DetectedNotificationEvent): { title: string; body: string } {
   const ref = `${event.repoFullName}#${event.pullNumber}`;
-  // buildAmsPrOutcomeEvent embeds `:merged:` or `:closed:` in the dedupKey after the PR number.
-  const merged = event.dedupKey.includes(":merged:");
+  // The decision is carried in the dedupKey; read it through the single anchored parser rather than a loose
+  // substring scan. A null parse renders the CLOSED copy -- never claim an unproven merge -- though the ingest
+  // normalizer now rejects a malformed ams_pr_outcome key upstream, so that arm is unreachable from ingest (#9703).
+  const merged = parseAmsPrOutcomeDecision(event.dedupKey) === "merged";
   if (merged) {
     return {
       title: sanitizePublicComment(`AMS recorded merge: ${ref}`),

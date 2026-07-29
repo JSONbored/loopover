@@ -185,6 +185,7 @@ export * from "./calibration/attestation-envelope.js";
 export * from "./calibration/attester.js";
 export * from "./calibration/benchmark-proposal.js";
 export * from "./calibration/benchmark-ground-truth.js";
+export * from "./calibration/benchmark-score.js";
 export {
   GOVERNOR_LEDGER_EVENT_TYPES,
   normalizeGovernorLedgerEvent,

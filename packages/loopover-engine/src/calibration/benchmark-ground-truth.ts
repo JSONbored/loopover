@@ -26,6 +26,21 @@
 //   later event — including a later reversal — cannot retroactively change a settled label. That is what
 //   makes a leaderboard reproducible instead of drifting under its own scores.
 //
+// Three inputs this module REJECTS rather than mislabels, each a caller/snapshot-builder bug that must fail
+// loudly instead of scoring corrupted numbers — the same throw-for-caller-bug discipline `splitBacktestCorpus`
+// uses for an out-of-range fraction:
+//
+//   INVALID `frozenAt`. An unparseable `frozenAt` throws `invalid_frozen_at` — checked in `benchmarkHorizonEnd`
+//   before any label is derived, so a bad window fails closed instead of producing an `Invalid Date` horizon
+//   whose every subsequent comparison silently drops the event.
+//
+//   INVALID `horizonDays`. A non-finite `horizonDays` throws `invalid_horizon_days`, in the same guard, for the
+//   same reason — a `NaN` window is a caller bug, not an empty benchmark.
+//
+//   DUPLICATE ROSTER ENTRY. A `workUnitIds` roster containing the same id twice throws
+//   `invalid_duplicate_work_unit_id` — silently de-duplicating would hide a corrupted snapshot (#9259) while
+//   double-counting the unit in `workUnits`, in `unresolved`, and in every rate divided by them.
+//
 // Pure core (this module); the IO wrapper that reads events from D1 lives engine-side of the harness, the
 // same split every sibling calibration module uses.
 
@@ -99,7 +114,16 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 /** The inclusive horizon end for a snapshot. Exported so the harness, the scorer, and any third-party
  *  verifier compute the SAME instant rather than three slightly different ones. */
 export function benchmarkHorizonEnd(frozenAt: string, horizonDays: number): string {
-  return new Date(Date.parse(frozenAt) + horizonDays * MS_PER_DAY).toISOString();
+  const frozenAtMs = Date.parse(frozenAt);
+  // Negated-compound guards so a NaN also fails closed, rather than flowing into `new Date(NaN).toISOString()`
+  // (a bare `RangeError`) — a named reason names the offending field the way the sibling validators do.
+  if (!Number.isFinite(frozenAtMs)) {
+    throw new Error(`invalid_frozen_at: ${frozenAt}`);
+  }
+  if (!Number.isFinite(horizonDays)) {
+    throw new Error(`invalid_horizon_days: ${horizonDays}`);
+  }
+  return new Date(frozenAtMs + horizonDays * MS_PER_DAY).toISOString();
 }
 
 function withinHorizon(occurredAt: string, frozenAtMs: number, horizonEndMs: number): boolean {
@@ -125,9 +149,21 @@ export function deriveBenchmarkGroundTruth(input: {
   events: readonly RealizedMaintainerEvent[];
   reversals?: readonly RealizedReversalEvent[] | undefined;
 }): BenchmarkGroundTruthSet {
-  const frozenAtMs = Date.parse(input.frozenAt);
+  // Reject an invalid window BEFORE any other work, so no partial result is ever computed for a bad horizon.
   const horizonEnd = benchmarkHorizonEnd(input.frozenAt, input.horizonDays);
+  const frozenAtMs = Date.parse(input.frozenAt);
   const horizonEndMs = Date.parse(horizonEnd);
+
+  // A duplicated roster entry is a snapshot-builder bug (#9259): emitting two truths for one id would
+  // double-count it in `workUnits`, in `unresolved`, and in `unresolvedRate`'s denominator. Reject it loudly
+  // rather than de-duplicating, which would let the corrupted snapshot score as if it were clean.
+  const seenWorkUnitIds = new Set<string>();
+  for (const workUnitId of input.workUnitIds) {
+    if (seenWorkUnitIds.has(workUnitId)) {
+      throw new Error(`invalid_duplicate_work_unit_id: ${workUnitId}`);
+    }
+    seenWorkUnitIds.add(workUnitId);
+  }
 
   // The SETTLED state is the LAST qualifying action in the window, not the first: a maintainer who labels,
   // then requests changes, then merges has settled on the merge. Ties on identical timestamps keep the

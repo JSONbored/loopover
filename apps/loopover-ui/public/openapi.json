@@ -10146,6 +10146,51 @@
                 "appSlug"
               ]
             }
+          },
+          "aiReviewEffort": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+              null
+            ]
+          },
+          "aiReviewSelfConsistencyRuns": {
+            "type": "number",
+            "nullable": true
+          },
+          "guardrailEscalationProvider": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "anthropic",
+              "openai",
+              null
+            ]
+          },
+          "guardrailEscalationModel": {
+            "type": "string",
+            "nullable": true
+          },
+          "guardrailEscalationEffort": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max",
+              null
+            ]
+          },
+          "guardrailEscalationSelfConsistencyRuns": {
+            "type": "number",
+            "nullable": true
           }
         },
         "required": [

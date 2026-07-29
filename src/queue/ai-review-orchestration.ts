@@ -14,6 +14,8 @@
 // (staying) and this file's own runAiReviewForAdvisory, so processors.ts imports it back rather than this
 // file importing it from processors.ts, keeping the dependency one-directional.
 
+import { describeReviewEscalation, resolveReviewKnobs } from "../review/review-knobs";
+import { isGuardrailHit } from "../signals/change-guardrail";
 import {
   claimTransientLock,
   releaseTransientLockIfOwner,
@@ -833,7 +835,41 @@ export async function runAiReviewForAdvisory(
       args.repoFullName,
       args.reviewInlineComments,
     );
+    // #9808/#9821: resolve the effective review knobs for THIS PR before invoking. A PR touching a
+    // `hardGuardrailGlobs` path escalates -- higher reasoning effort, more independent runs, optionally a
+    // different model/provider -- instead of reviewing identically to every other file and merely being held
+    // for a human afterwards. isGuardrailHit is the SHARED matcher (src/signals/change-guardrail.ts), never a
+    // second copy. Every layer unset ⇒ null throughout ⇒ byte-identical to the previous behavior.
+    const reviewKnobs = resolveReviewKnobs({
+      guardrailHit: isGuardrailHit(files.map((file) => file.path), args.settings.hardGuardrailGlobs ?? []),
+      escalation: {
+        provider: args.settings.guardrailEscalationProvider ?? null,
+        model: args.settings.guardrailEscalationModel ?? null,
+        effort: args.settings.guardrailEscalationEffort ?? null,
+        selfConsistencyRuns: args.settings.guardrailEscalationSelfConsistencyRuns ?? null,
+      },
+      repo: {
+        provider: args.settings.aiReviewProvider ?? null,
+        model: args.settings.aiReviewModel ?? null,
+        effort: args.settings.aiReviewEffort ?? null,
+        selfConsistencyRuns: args.settings.aiReviewSelfConsistencyRuns ?? null,
+      },
+    });
+    const escalationNote = describeReviewEscalation(reviewKnobs);
+    if (escalationNote) {
+      console.log(
+        JSON.stringify({
+          event: "ai_review_guardrail_escalated",
+          repo: args.repoFullName,
+          pr: args.pr.number,
+          fields: reviewKnobs.escalatedFields,
+          effort: reviewKnobs.effort,
+          selfConsistencyRuns: reviewKnobs.selfConsistencyRuns,
+        }),
+      );
+    }
     const result = await runLoopOverAiReview(env, {
+      reviewKnobs,
       repoFullName: args.repoFullName,
       prNumber: args.pr.number,
       title: args.pr.title,
@@ -842,7 +878,12 @@ export async function runAiReviewForAdvisory(
       actor: args.author,
       mode: args.settings.aiReviewMode === "block" ? "block" : "advisory",
       jobId: args.deliveryId,
-      providerKey,
+      // #9821: a provider chosen by gate.aiReview.provider or a guardrail escalation must also govern the BYOK
+      // key, not just the model. The `providerKey` gate above ran before the knobs were resolved and only knew
+      // `settings.aiReviewProvider`, so an ESCALATED provider would otherwise have kept using a stored key
+      // belonging to a different one. Same rule the gate above applies, re-applied with the resolved value:
+      // a mismatch drops the key and the review falls back to the operator's own configured provider.
+      providerKey: reviewKnobs.provider && providerKey && reviewKnobs.provider !== providerKey.provider ? null : providerKey,
       grounding,
       ragContext: ragContextResult?.text,
       cultureProfileContext,
@@ -861,18 +902,28 @@ export async function runAiReviewForAdvisory(
       // Self-host per-repo model/effort/timeout override (#selfhost-ai-model-override, #8364): absent/null
       // fields fall through runLoopOverAiReview -> runWorkersOpinion -> the self-host provider's own
       // global-env/hardcoded default, exactly as if review.ai_model had never been set.
-      claudeModel: args.reviewSelfHostAiModel?.claudeModel ?? null,
-      claudeEffort: args.reviewSelfHostAiModel?.claudeEffort ?? null,
-      codexModel: args.reviewSelfHostAiModel?.codexModel ?? null,
-      codexEffort: args.reviewSelfHostAiModel?.codexEffort ?? null,
+      //
+      // #9808/#9821: `reviewKnobs` (gate.aiReview.effort/model, or the guardrailEscalation override when this
+      // PR touched a guarded path) takes priority over `review.ai_model` when set. Both are per-repo
+      // config-as-code; this one is strictly more specific -- it is the only one that can differ PER PR, and
+      // the whole point of an escalation is that it wins for the PR that triggered it. Unset ⇒ `??` falls
+      // straight through to review.ai_model, then to the global env, exactly as before.
+      //
+      // The provider CLIs read model and effort separately, so the resolved values are applied to BOTH the
+      // claude and codex pairs: whichever provider actually runs sees them, and the other's fields are inert.
+      claudeModel: reviewKnobs.model ?? args.reviewSelfHostAiModel?.claudeModel ?? null,
+      claudeEffort: reviewKnobs.effort ?? args.reviewSelfHostAiModel?.claudeEffort ?? null,
+      codexModel: reviewKnobs.model ?? args.reviewSelfHostAiModel?.codexModel ?? null,
+      codexEffort: reviewKnobs.effort ?? args.reviewSelfHostAiModel?.codexEffort ?? null,
       claudeTimeoutMs: args.reviewSelfHostAiModel?.claudeTimeoutMs ?? null,
       codexTimeoutMs: args.reviewSelfHostAiModel?.codexTimeoutMs ?? null,
       claudeFirstOutputTimeoutMs: args.reviewSelfHostAiModel?.claudeFirstOutputTimeoutMs ?? null,
       codexFirstOutputTimeoutMs: args.reviewSelfHostAiModel?.codexFirstOutputTimeoutMs ?? null,
-      ollamaModel: args.reviewSelfHostAiModel?.ollamaModel ?? null,
-      openaiModel: args.reviewSelfHostAiModel?.openaiModel ?? null,
-      openaiCompatibleModel: args.reviewSelfHostAiModel?.openaiCompatibleModel ?? null,
-      anthropicModel: args.reviewSelfHostAiModel?.anthropicModel ?? null,
+      // Same precedence for the HTTP-API providers, which take a model but have no effort concept.
+      ollamaModel: reviewKnobs.model ?? args.reviewSelfHostAiModel?.ollamaModel ?? null,
+      openaiModel: reviewKnobs.model ?? args.reviewSelfHostAiModel?.openaiModel ?? null,
+      openaiCompatibleModel: reviewKnobs.model ?? args.reviewSelfHostAiModel?.openaiCompatibleModel ?? null,
+      anthropicModel: reviewKnobs.model ?? args.reviewSelfHostAiModel?.anthropicModel ?? null,
       // Inline comments (#inline-comments): ask the model for line-anchored findings only when the operator flag,
       // the cutover allowlist, AND the per-repo manifest toggle all pass. Otherwise the prompt is byte-identical.
       inlineFindings: inlineFindingsRequested,

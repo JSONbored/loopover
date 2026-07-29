@@ -510,6 +510,12 @@ function applyGateConfigOverrides(effective: RepositorySettings, gate: FocusMani
   if (gate.aiReviewByok !== null) effective.aiReviewByok = gate.aiReviewByok;
   if (gate.aiReviewProvider !== null) effective.aiReviewProvider = gate.aiReviewProvider;
   if (gate.aiReviewModel !== null) effective.aiReviewModel = gate.aiReviewModel;
+  if (gate.aiReviewEffort !== null) effective.aiReviewEffort = gate.aiReviewEffort;
+  if (gate.aiReviewSelfConsistencyRuns !== null) effective.aiReviewSelfConsistencyRuns = gate.aiReviewSelfConsistencyRuns;
+  if (gate.guardrailEscalationProvider !== null) effective.guardrailEscalationProvider = gate.guardrailEscalationProvider;
+  if (gate.guardrailEscalationModel !== null) effective.guardrailEscalationModel = gate.guardrailEscalationModel;
+  if (gate.guardrailEscalationEffort !== null) effective.guardrailEscalationEffort = gate.guardrailEscalationEffort;
+  if (gate.guardrailEscalationSelfConsistencyRuns !== null) effective.guardrailEscalationSelfConsistencyRuns = gate.guardrailEscalationSelfConsistencyRuns;
   if (gate.aiReviewAllAuthors !== null) effective.aiReviewAllAuthors = gate.aiReviewAllAuthors;
   if (gate.aiReviewCloseConfidence !== null) effective.aiReviewCloseConfidence = gate.aiReviewCloseConfidence;
   if (gate.aiReviewSalvageabilityMinScore !== null) effective.aiReviewSalvageabilityMinScore = gate.aiReviewSalvageabilityMinScore;

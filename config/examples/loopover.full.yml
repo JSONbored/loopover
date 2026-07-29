@@ -290,6 +290,25 @@ gate:
     - name: Contributor trust
       appSlug: example-security-app
 
+  # Check-runs to IGNORE ENTIRELY (#9810) — the stronger sibling of advisoryCheckRuns above. Same
+  # spoof-resistant { name, appSlug } matching, but a matched run is treated as if it did not exist: it never
+  # gates CI, never counts as "still running", and — unlike advisory — never routes the PR to a manual-review
+  # hold either. Its conclusion is surfaced informationally only.
+  #
+  # Use this when a check's verdict carries no signal for YOUR repo while OTHER checks from the same app stay
+  # meaningful. The motivating case: a vendor app publishes both a real security scan AND a heuristic
+  # contributor-trust score. The scan is worth gating on; the trust score fails for perfectly good
+  # contributors, and listing it under advisoryCheckRuns still converts every one of their otherwise-clean PRs
+  # into a manual review — automation replaced by a queue of human decisions, and contributors left wondering
+  # whether they are being judged fairly. Ignoring the trust check keeps the scan's protection and drops the
+  # noise. If BOTH lists name the same check, ignore wins (it is the stronger, more explicit intent).
+  #
+  # List of { name, appSlug }, or omit. Default: not configured (byte-identical behavior for every repo that
+  # doesn't opt in). Config-as-code only — no DB column or dashboard toggle.
+  ignoredCheckRuns:
+    - name: Contributor trust
+      appSlug: example-security-app
+
   # Promote a confident AI-judgment-only finding (one the reviewer itself placed under "Blockers", never
   # a "Nit") into a real, deterministic gate blocker instead of leaving it advisory (#3907). Only matters
   # for repos already running the registry content lane (see contentLane below) — content/registry repos

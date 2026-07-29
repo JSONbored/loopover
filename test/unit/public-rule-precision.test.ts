@@ -8,6 +8,7 @@ import {
 import { sha256Hex } from "../../src/review/decision-record";
 import { recordAuditEvent } from "../../src/db/repositories";
 import { createSignalStore } from "../../src/review/signal-tracking-wire";
+import { persistThresholdBacktestRuns, runThresholdBacktestAdvisory } from "../../src/services/threshold-backtest-run";
 import { createTestEnv } from "../helpers/d1";
 
 // #8230 (epic #8211 track G): the public measured-accuracy block. Load-bearing properties: the public
@@ -190,5 +191,63 @@ describe("loadPublicRulePrecision (#8230)", () => {
     });
     const serialized = JSON.stringify(await loadPublicRulePrecision(env, NOW));
     expect(serialized).not.toMatch(/acme|#\d|targetKey|confidence|wallet|hotkey|trust|reward|payout/i);
+  });
+});
+
+// #9639: the reader's `IN ('calibration.threshold_backtest_run', 'calibration.logic_backtest_run')` listed two
+// writers but only the CI-side logic one ever satisfied the companion `corpusChecksum IS NOT NULL` filter.
+// These pin the in-Worker writer's row as a first-class freeze point, end to end through the real service.
+describe("latestBacktestRun from an in-Worker threshold run (#9639)", () => {
+  const diff = [
+    "diff --git a/src/rules/advisory.ts b/src/rules/advisory.ts",
+    "@@ -980,7 +980,7 @@",
+    "-export const LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR = 0.5;",
+    "+export const LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR = 0.4;",
+  ].join("\n");
+
+  const seedAndRun = async (env: Env, now: number) => {
+    const store = createSignalStore(env);
+    // A labeled case needs BOTH halves: the firing (with its confidence) and the human verdict that scores it.
+    // Firings alone build an empty corpus, whose checksum is the rule-independent EMPTY_CORPUS_CHECKSUM.
+    for (let i = 0; i < 4; i += 1) {
+      await store.recordRuleFired({
+        ruleId: "linked_issue_scope_mismatch",
+        targetKey: `acme/widgets#${i + 1}`,
+        outcome: "unaddressed",
+        occurredAt: new Date(now - (i + 2) * 1000).toISOString(),
+        metadata: { confidence: 0.3 + i * 0.2 },
+      });
+      await store.recordHumanOverride({
+        ruleId: "linked_issue_scope_mismatch",
+        targetKey: `acme/widgets#${i + 1}`,
+        verdict: i % 2 === 0 ? "reversed" : "confirmed",
+        occurredAt: new Date(now - (i + 1) * 1000).toISOString(),
+      });
+    }
+    const run = await runThresholdBacktestAdvisory(env, diff, now);
+    await persistThresholdBacktestRuns(env, "acme/widgets", 7, run.changed, run.comparisons, run.corpusChecksumByRuleId);
+    return run;
+  };
+
+  it("REGRESSION: a threshold_backtest_run is now a usable freeze point -- this returned null before the writer emitted corpusChecksum", async () => {
+    const env = createTestEnv();
+    const now = Date.now();
+    const run = await seedAndRun(env, now);
+
+    const block = await loadPublicRulePrecision(env, now);
+    expect(block.latestBacktestRun).not.toBeNull();
+    expect(block.latestBacktestRun?.corpusChecksum).toBe(run.corpusChecksumByRuleId.get("linked_issue_scope_mismatch"));
+    expect(block.latestBacktestRun?.corpusChecksum).not.toBe(EMPTY_CORPUS_CHECKSUM);
+  });
+
+  it("still returns null when the same writer ran against an empty corpus -- a hash over zero cases commits to nothing", async () => {
+    // No seeded history, so the corpus is empty and its checksum is the rule-independent EMPTY_CORPUS_CHECKSUM.
+    // The row IS written (the run happened); the reader is what declines to treat it as a commitment.
+    const env = createTestEnv();
+    const now = Date.now();
+    const run = await runThresholdBacktestAdvisory(env, diff, now);
+    await persistThresholdBacktestRuns(env, "acme/widgets", 7, run.changed, run.comparisons, run.corpusChecksumByRuleId);
+
+    expect((await loadPublicRulePrecision(env, now)).latestBacktestRun).toBeNull();
   });
 });

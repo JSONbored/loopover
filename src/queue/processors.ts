@@ -8599,9 +8599,12 @@ export async function resolveThresholdBacktestAdvisory(
   if (mode === "off") return "";
   if (!files.some((file) => THRESHOLD_BACKTEST_WATCHED_PATHS.has(file.path))) return "";
   try {
-    const { changed, comparisons } = await runThresholdBacktestAdvisory(env, buildSecretScanDiff(files));
+    const { changed, comparisons, corpusChecksumByRuleId } = await runThresholdBacktestAdvisory(env, buildSecretScanDiff(files));
     if (comparisons.length === 0) return "";
-    await persistThresholdBacktestRuns(env, repoFullName, pr.number, changed, comparisons);
+    // #9639: the freeze point travels with the run. Without it the persisted event is invisible to
+    // loadPublicRulePrecision's `corpusChecksum IS NOT NULL` filter, so /v1/public/eval-scores publishes
+    // nothing no matter how many backtests this deployment has actually run.
+    await persistThresholdBacktestRuns(env, repoFullName, pr.number, changed, comparisons, corpusChecksumByRuleId);
     // #8105 block mode: a REGRESSED verdict becomes a configured gate blocker. The finding only exists in
     // block mode (advisory keeps today's comment-only behavior byte-identically), and
     // isConfiguredGateBlocker's own `backtest_regression` branch is the defense-in-depth mirror of this

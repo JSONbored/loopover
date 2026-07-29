@@ -209,7 +209,9 @@ export {
   MINER_PREDICTIONS_TOTAL,
   MINER_PREDICTION_CORRECT_TOTAL,
   MINER_PREDICTION_INCORRECT_TOTAL,
+  collectMinerPredictionMetrics,
   renderMinerPredictionMetrics,
+  type MinerPredictionMetricFamily,
   type MinerPredictionMetricRow,
 } from "./miner-prediction-metrics.js";
 export {

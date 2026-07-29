@@ -298,6 +298,27 @@ function renderPurgeSummary(summary: PurgeSummary): string {
   ].join(" ");
 }
 
+/**
+ * Purge one repo from every purgeable store and return the summary (#9523).
+ *
+ * Extracted from {@link runPurge} so the MCP `loopover_miner_purge_repo` tool runs the SAME purge, over the
+ * same target list, producing the same per-store report -- rather than a second implementation free to miss
+ * a store the CLI covers. `runPurge` keeps ownership of argv parsing, printing, and the exit code.
+ */
+export function purgeRepoAcrossStores(repoFullName: string, options: PurgeCliOptions = {}): PurgeSummary {
+  const perStoreResults: PurgeStoreResult[] = REAL_PURGE_TARGETS.map((target) => purgeOneStore(target, options, repoFullName));
+  perStoreResults.push({ store: "attempt-log", purged: null, note: ATTEMPT_LOG_NOT_PURGEABLE_NOTE });
+  const totalPurged = perStoreResults.reduce((sum, entry) => sum + (entry.purged ?? 0), 0);
+  const hadError = perStoreResults.some((entry) => "error" in entry);
+  return {
+    outcome: hadError ? "partial" : "purged",
+    repoFullName,
+    totalPurged,
+    stores: perStoreResults,
+    purgedAt: new Date().toISOString(),
+  };
+}
+
 export function runPurge(args: string[], options: PurgeCliOptions = {}): number {
   const parsed = parsePurgeArgs(args);
   if ("error" in parsed) {
@@ -308,20 +329,7 @@ export function runPurge(args: string[], options: PurgeCliOptions = {}): number 
     return runPurgeDryRun(parsed, options);
   }
 
-  const perStoreResults: PurgeStoreResult[] = REAL_PURGE_TARGETS.map((target) =>
-    purgeOneStore(target, options, parsed.repoFullName),
-  );
-  perStoreResults.push({ store: "attempt-log", purged: null, note: ATTEMPT_LOG_NOT_PURGEABLE_NOTE });
-
-  const totalPurged = perStoreResults.reduce((sum, entry) => sum + (entry.purged ?? 0), 0);
-  const hadError = perStoreResults.some((entry) => "error" in entry);
-  const summary: PurgeSummary = {
-    outcome: hadError ? "partial" : "purged",
-    repoFullName: parsed.repoFullName,
-    totalPurged,
-    stores: perStoreResults,
-    purgedAt: new Date().toISOString(),
-  };
+  const summary = purgeRepoAcrossStores(parsed.repoFullName, options);
 
   // Audit-observable by design (#5564): print the summary in BOTH the success and partial-failure case, so a
   // purge -- or a purge that only partly succeeded -- is never silent.
@@ -330,5 +338,5 @@ export function runPurge(args: string[], options: PurgeCliOptions = {}): number 
   } else {
     console.log(renderPurgeSummary(summary));
   }
-  return hadError ? 2 : 0;
+  return summary.outcome === "partial" ? 2 : 0;
 }

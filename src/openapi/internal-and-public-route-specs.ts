@@ -234,7 +234,11 @@ const PUBLIC_ROUTES: SpecEntry[] = [
     tags: ["Public"],
     summary: "Return a shields.io-compatible badge payload for a repo",
     auth: "public",
-    responses: { 200: { description: "Badge payload" } },
+    responses: {
+      200: { description: "Badge payload" },
+      404: { description: "The repo has no public badge (unknown, private, uninstalled, or badgeEnabled off)" },
+      503: { description: "The badge data could not be loaded (a transient loader failure, short-cached)" },
+    },
   },
   {
     method: "get",
@@ -243,7 +247,11 @@ const PUBLIC_ROUTES: SpecEntry[] = [
     tags: ["Public"],
     summary: "Return a rendered SVG badge for a repo",
     auth: "public",
-    responses: { 200: { description: "SVG badge" } },
+    responses: {
+      200: { description: "SVG badge" },
+      404: { description: "The repo has no public badge (unknown, private, uninstalled, or badgeEnabled off)" },
+      503: { description: "The badge data could not be loaded (a transient loader failure, short-cached)" },
+    },
   },
   {
     method: "get",
@@ -303,7 +311,31 @@ const MISC_ROUTES: SpecEntry[] = [
     // Its own shared-secret header, like the ORB ingress -- not a LoopOver bearer.
     auth: "orb",
     summary: "Ingest an AMS miner telemetry batch",
-    responses: { 202: { description: "Batch accepted" }, 400: { description: "Malformed batch" }, 401: { description: "Missing or invalid ingest credential" } },
+    // 200, not 202: the handler returns 200 on success, and that is the shipped, client-observed status. 413
+    // reflects the readOrbIngestBody 1 MiB (MAX_ORB_INGEST_BODY_BYTES) hard body ceiling.
+    responses: {
+      200: { description: "Batch accepted" },
+      400: { description: "Malformed batch" },
+      401: { description: "Missing or invalid ingest credential" },
+      413: { description: "Batch exceeds the 1 MiB (MAX_ORB_INGEST_BODY_BYTES) body ceiling" },
+    },
+  },
+  {
+    method: "post",
+    path: "/v1/orb/ingest",
+    operationId: "postOrbIngest",
+    tags: ["ORB"],
+    // Its own ORB_INGEST_TOKEN shared-secret bearer, not a LoopOver API token -- so auth: "orb", which is
+    // what derives the OrbBearer security stanza (the legacy registerPath block had none at all).
+    auth: "orb",
+    summary: "Ingest a batch of Orb events",
+    responses: {
+      200: { description: "Batch accepted; returns { accepted: number }" },
+      400: { description: "Malformed JSON or invalid payload shape" },
+      401: { description: "Missing or invalid ingest credential" },
+      403: { description: "Instance not authenticated" },
+      413: { description: "Batch exceeds the 1 MiB (MAX_ORB_INGEST_BODY_BYTES) body ceiling" },
+    },
   },
   {
     method: "post",

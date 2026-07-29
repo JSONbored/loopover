@@ -109,6 +109,20 @@ export const MCP_TOOL_REFERENCE: readonly McpToolReferenceEntry[] = [
     "description": "Create a queued copilot-only LoopOver agent run. The agent plans and explains; it does not edit code or open PRs."
   },
   {
+    "name": "loopover_ams_tenant_health",
+    "category": "tenant",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Operator only. One hosted AMS tenant's health: lifecycle state, its cron-wake cadence, when it last woke, that cycle's outcome, and container health. Read-only, and scoped server-side to the authenticated tenant — a name outside that scope is refused rather than answered."
+  },
+  {
+    "name": "loopover_ams_tenant_wake",
+    "category": "tenant",
+    "locality": "remote",
+    "availability": "cloud",
+    "description": "Operator only. Trigger an immediate cycle for one hosted AMS tenant, instead of waiting for its next scheduled wake. Bounded by the SAME per-tenant schedule guards the cron path obeys — a wake too soon after the last one is reported as throttled rather than forced through."
+  },
+  {
     "name": "loopover_apply_labels",
     "category": "agent",
     "locality": "remote",
@@ -697,6 +711,27 @@ export const MCP_TOOL_REFERENCE: readonly McpToolReferenceEntry[] = [
     "description": "Mark a contributor's own delivered notifications as read (clears the badge). Self-scoped; pass `ids` to clear specific notifications or omit to clear all."
   },
   {
+    "name": "loopover_miner_claim_release",
+    "category": "ops",
+    "locality": "miner",
+    "availability": "selfhost",
+    "description": "Release this miner's claim on one issue, so the claim ledger no longer reserves it. Dispatches through the governor-gated chokepoint and is recorded in the event ledger with source=mcp."
+  },
+  {
+    "name": "loopover_miner_deny_hooks_decide",
+    "category": "ops",
+    "locality": "miner",
+    "availability": "selfhost",
+    "description": "Approve or reject one synthesized deny-hook awaiting review. Approving puts it into force for future runs; rejecting discards it. Dispatches through the governor-gated chokepoint and is recorded in the event ledger with source=mcp."
+  },
+  {
+    "name": "loopover_miner_doctor",
+    "category": "ops",
+    "locality": "miner",
+    "availability": "selfhost",
+    "description": "Read-only diagnostic checks for this AMS miner: state directory, engine version match, store reachability, credentials, and configuration. Split out of loopover_miner_status (#9523) so status stays cheap and doctor can grow checks. Every check runs and reports its own pass/warn/fail — nothing is mutated and nothing stops at the first failure."
+  },
+  {
     "name": "loopover_miner_get_audit_feed",
     "category": "agent",
     "locality": "miner",
@@ -725,6 +760,13 @@ export const MCP_TOOL_REFERENCE: readonly McpToolReferenceEntry[] = [
     "description": "Read-only manage-phase status: the per-managed-PR rows `loopover-miner manage status` reports (branch, CI state, gate verdict, outcome, last-polled-at, queue status/priority) plus the run-level portfolio view (one row per tracked repo: run state, updated-at, PR count). Joins the portfolio queue, the append-only event ledger, and run-state by reusing the existing collectManageStatus/collectRunPortfolio aggregators -- no new join logic. Read-only: never calls GitHub, never mutates local stores. Takes no arguments."
   },
   {
+    "name": "loopover_miner_get_metrics_snapshot",
+    "category": "ops",
+    "locality": "miner",
+    "availability": "selfhost",
+    "description": "The same Prometheus metric families the `metrics` CLI exports, as structured JSON — so an agent can read them without parsing the text exposition format. Read-only."
+  },
+  {
     "name": "loopover_miner_get_plan",
     "category": "agent",
     "locality": "miner",
@@ -746,6 +788,20 @@ export const MCP_TOOL_REFERENCE: readonly McpToolReferenceEntry[] = [
     "description": "Read-only per-repo miner run-state (idle/discovering/planning/preparing). Pass repoFullName for a single repo (a null state means none has been recorded for it yet), or omit it to list every repo's state. The read-only analog of ORB's loopover_get_automation_state; adds no state-set or mutation capability."
   },
   {
+    "name": "loopover_miner_governor_pause",
+    "category": "ops",
+    "locality": "miner",
+    "availability": "selfhost",
+    "description": "Pause this miner's governor: no new work is admitted until it resumes. Administrative control, not a content write — the same action the dashboard's pause button dispatches, through the same governor-gated chokepoint, firing the same notification side-channel. Recorded in the event ledger with source=mcp."
+  },
+  {
+    "name": "loopover_miner_governor_resume",
+    "category": "ops",
+    "locality": "miner",
+    "availability": "selfhost",
+    "description": "Resume this miner's governor after a pause, re-admitting work. The same action the dashboard's resume button dispatches, through the same governor-gated chokepoint. Recorded in the event ledger with source=mcp."
+  },
+  {
     "name": "loopover_miner_list_claims",
     "category": "agent",
     "locality": "miner",
@@ -765,6 +821,34 @@ export const MCP_TOOL_REFERENCE: readonly McpToolReferenceEntry[] = [
     "locality": "miner",
     "availability": "selfhost",
     "description": "Health check for the loopover-miner MCP server. Returns a static status object confirming the server is reachable. Reads no AMS state and takes no arguments."
+  },
+  {
+    "name": "loopover_miner_purge_repo",
+    "category": "ops",
+    "locality": "miner",
+    "availability": "selfhost",
+    "description": "Right-to-be-forgotten: delete every trace of one repo from this miner's local stores, returning the same per-store report as the CLI. IRREVERSIBLE — the rows are gone, not archived. Requires confirm=true, elicits confirmation where the client supports it, and dispatches through the governor-gated chokepoint."
+  },
+  {
+    "name": "loopover_miner_queue_release",
+    "category": "ops",
+    "locality": "miner",
+    "availability": "selfhost",
+    "description": "Release one claimed portfolio-queue item back to unclaimed, so another cycle can pick it up. Mirrors the dashboard's release action and dispatches through the same governor-gated chokepoint. Recorded in the event ledger with source=mcp."
+  },
+  {
+    "name": "loopover_miner_queue_requeue",
+    "category": "ops",
+    "locality": "miner",
+    "availability": "selfhost",
+    "description": "Return one portfolio-queue item to the pending pool for another attempt. Mirrors the dashboard's requeue action and dispatches through the same governor-gated chokepoint. Recorded in the event ledger with source=mcp."
+  },
+  {
+    "name": "loopover_miner_run_migrations",
+    "category": "ops",
+    "locality": "miner",
+    "availability": "selfhost",
+    "description": "Apply pending schema migrations to this miner's EXISTING local stores — it never creates a store that is not already there. Reports each store as migrated, up-to-date, or failed. There is no dry-run mode: applying a migration is opening the store, and the CLI has none either. Dispatches through the governor-gated chokepoint."
   },
   {
     "name": "loopover_miner_status",

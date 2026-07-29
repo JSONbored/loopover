@@ -13,7 +13,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "deploy:api": "npm --workspace @loopover/engine run build && wrangler d1 migrations apply loopover --remote && wrangler deploy",
+    "deploy:api": "turbo run build --filter=@loopover/engine --filter=@loopover/contract && wrangler d1 migrations apply loopover --remote && wrangler deploy",
     "selfhost:postgres:migrate": "tsx scripts/migrate-selfhost-sqlite-to-postgres.ts",
     "selfhost:env-reference": "node --experimental-strip-types scripts/gen-selfhost-env-reference.ts",
     "selfhost:env-reference:check": "node --experimental-strip-types scripts/gen-selfhost-env-reference.ts --check",

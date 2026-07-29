@@ -4,7 +4,7 @@
 // It adds no new scoring and no new trust -- the numbers are the same ones `/v1/public/stats` already
 // publishes, just committed to a corpus checksum and made independently re-derivable per-record.
 import { canonicalJson, contentDigest } from "./decision-record";
-import type { PublicRulePrecision } from "./public-rule-precision";
+import { EMPTY_CORPUS_CHECKSUM, type PublicRulePrecision } from "./public-rule-precision";
 
 export const EVAL_SCORE_RECORD_SCHEMA_VERSION = 1 as const;
 
@@ -76,6 +76,14 @@ async function finalizeRecord(input: EvalScoreRecordDigestInput): Promise<EvalSc
  * a record whose commitments cannot be independently re-derived (no corpus checksum to point at) is not
  * publishable, so this deliberately emits nothing rather than a record with a placeholder commitment.
  *
+ * Also returns an empty array when the run's checksum is {@link EMPTY_CORPUS_CHECKSUM}. A hash over zero
+ * cases is the same 32 bytes for every rule, every window, and every deployment, so it points at nothing a
+ * consumer could re-derive the scores from -- it is a placeholder commitment wearing a real hash's clothes,
+ * and pairing it with a `reproducible` trust tier claims a reproducibility the artifact cannot support. The
+ * scores themselves come from a different dataset (live human-override events) and are unaffected by whether
+ * a corpus was exported, so an empty corpus never means the numbers are zero -- it means they are
+ * uncommitted, which is exactly the state #9215 says must not be published.
+ *
  * `recall` and `abstained` do not apply to this work-unit kind: ORB's gate rules fire deterministically (no
  * agent choosing to abstain) and this data measures precision, not a false-negative rate. `recall` is
  * `null` (genuinely inapplicable, never a misleading `0`); `abstained` is `0` (there is no abstention
@@ -85,6 +93,7 @@ async function finalizeRecord(input: EvalScoreRecordDigestInput): Promise<EvalSc
 export async function buildEvalScoreRecordsFromRulePrecision(precision: PublicRulePrecision, issuedAt: string): Promise<EvalScoreRecord[]> {
   if (!precision.latestBacktestRun) return [];
   const { corpusChecksum } = precision.latestBacktestRun;
+  if (corpusChecksum === EMPTY_CORPUS_CHECKSUM) return [];
   const windowStart = new Date(Date.parse(issuedAt) - precision.windowDays * 24 * 60 * 60 * 1000).toISOString();
 
   const records = await Promise.all(
@@ -145,3 +154,4 @@ export async function verifyEvalScoreRecordDigest(record: EvalScoreRecord): Prom
 // Re-exported so callers that only import this module never need a second import from decision-record.ts
 // just to canonicalize something alongside a record (e.g. logging, or a future signed-bundle wrapper).
 export { canonicalJson, contentDigest };
+export { EMPTY_CORPUS_CHECKSUM };

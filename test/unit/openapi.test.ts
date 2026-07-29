@@ -191,6 +191,14 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/auth/github/token"]?.post?.security).toEqual([{ LoopOverSessionCookie: [] }]);
   });
 
+  it("#9710: both public badge routes declare 200, 404, and 503 -- the statuses a monitor distinguishes", () => {
+    const spec = buildOpenApiSpec();
+    for (const path of ["/v1/public/repos/{owner}/{repo}/badge.svg", "/v1/public/repos/{owner}/{repo}/badge.json"]) {
+      const responses = spec.paths[path]?.get?.responses ?? {};
+      expect(Object.keys(responses).sort()).toEqual(expect.arrayContaining(["200", "404", "503"]));
+    }
+  });
+
   // #9303: selftune-override routes were live but undocumented; assert both paths, their HTTP methods, and the
   // response schema keys matching each route's MCP tool output shape (selftuneOverrideAuditOutputSchema /
   // clearSelftuneOverrideOutputSchema in src/mcp/server.ts).

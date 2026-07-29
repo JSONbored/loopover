@@ -23,6 +23,15 @@ export const PUBLIC_PRECISION_MIN_DECIDED = 10;
 // duplication rule-calibration-trend.ts documents for its identical queries.
 const HUMAN_OVERRIDE_EVENT_TYPE_PREFIX = "signal.human_override:";
 
+/** `checksumCases([])` — SHA-256 over the canonicalized empty case list (the two-byte string `"[]"`), i.e. what
+ *  a corpus export produces for a rule with no labeled cases at all. A hash over zero cases is the same 32
+ *  bytes for every rule, every window and every deployment, so it is not the "independently-verifiable freeze
+ *  point" {@link PublicRulePrecision.latestBacktestRun} claims to be — it points at nothing a skeptic could
+ *  re-derive anything from. Hard-coded because the canonicalization that produces it
+ *  (`scripts/backtest-corpus-export-core.ts`) runs on `node:crypto` and is unimportable from the Workers
+ *  runtime; this module's own test re-derives it from `sha256Hex("[]")` so it can never drift. */
+export const EMPTY_CORPUS_CHECKSUM = "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945";
+
 export type PublicRulePrecisionRow = {
   ruleId: string;
   decided: number;
@@ -40,9 +49,28 @@ export type PublicRulePrecision = {
   /** All three reversal shapes counted over the window — the "counted against ourselves" number. */
   reversals: { reopened: number; reverted: number; superseded: number };
   /** The latest persisted backtest run carrying a corpus checksum — the independently-verifiable freeze
-   *  point — or null when no run has been recorded yet. */
+   *  point — or null when no run has been recorded yet, or when the latest run's corpus was empty (see
+   *  {@link EMPTY_CORPUS_CHECKSUM}: a commitment to nothing is not a freeze point, so it is reported as
+   *  absent rather than published as though it were verifiable). */
   latestBacktestRun: { corpusChecksum: string; at: string } | null;
 };
+
+/**
+ * Provenance tags whose override rows carry a verdict that was NOT a human decision about the rule the row is
+ * filed under, and so cannot support a per-rule "measured accuracy" claim.
+ *
+ * `slop_replay_backfill_v1` (#8277) is the counterfactual replay: it re-scores the deterministic slop signals
+ * over archived diffs, but takes each label verbatim from the `ai_consensus_defect` corpus's human verdict on
+ * the same target (`scripts/backfill-slop-corpus.ts`'s `manifestToSourceCases`). That is exactly the evidence
+ * it was built to be -- internal input to a flip-to-live decision, and by its own module header a LOWER BOUND
+ * on live scoring -- but published under "precision of each automated rule over its human-decided cases" it
+ * asserts something untrue: those were another rule's human-decided cases. It also made the public table print
+ * one number twice, since both rules then shared a label set and a target set.
+ *
+ * NOT excluded: `review_targets_decision_level` (#8083's own backfill), whose labels come from what actually
+ * happened to the PRs THAT rule fired on -- synthesized rows, but genuinely about that rule.
+ */
+const NON_ATTRIBUTABLE_OVERRIDE_PROVENANCES = ["slop_replay_backfill_v1"] as const;
 
 /**
  * Load the public per-rule precision block. Fail-safe per section (the same degradation contract as
@@ -57,6 +85,7 @@ export async function loadPublicRulePrecision(env: Env, nowMs: number = Date.now
             SUM(CASE WHEN json_extract(metadata_json, '$.verdict') = 'reversed' THEN 1 ELSE 0 END) AS reversed
        FROM audit_events
       WHERE event_type LIKE '${HUMAN_OVERRIDE_EVENT_TYPE_PREFIX}%' AND created_at >= ?
+        AND COALESCE(json_extract(metadata_json, '$.provenance'), '') NOT IN (${NON_ATTRIBUTABLE_OVERRIDE_PROVENANCES.map((tag) => `'${tag}'`).join(", ")})
       GROUP BY rule_id`,
     sinceIso,
   );
@@ -102,6 +131,9 @@ export async function loadPublicRulePrecision(env: Env, nowMs: number = Date.now
       reverted: reversalCount("reversal_reverted"),
       superseded: reversalCount("reversal_superseded"),
     },
-    latestBacktestRun: latest && typeof latest.checksum === "string" && latest.checksum !== "" ? { corpusChecksum: latest.checksum, at: latest.created_at } : null,
+    latestBacktestRun:
+      latest && typeof latest.checksum === "string" && latest.checksum !== "" && latest.checksum !== EMPTY_CORPUS_CHECKSUM
+        ? { corpusChecksum: latest.checksum, at: latest.created_at }
+        : null,
   };
 }

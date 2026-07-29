@@ -10,6 +10,8 @@ import {
   publishAmsNotificationEvents,
   scheduleAmsNotificationEvents,
 } from "../../packages/loopover-miner/lib/ams-notifications";
+// #9703: the SERVER's anchored decision-parser -- the consumer this producer must stay format-compatible with.
+import { parseAmsPrOutcomeDecision } from "../../src/notifications/ams-events";
 
 const roots: string[] = [];
 
@@ -239,5 +241,15 @@ describe("ams-notifications (#7657)", () => {
 
   it("returns sent 0 for an empty event list", async () => {
     await expect(publishAmsNotificationEvents([])).resolves.toEqual({ sent: 0 });
+  });
+
+  // #9703: the miner producer here is what actually runs; the server consumer recovers the merged/closed
+  // decision by parsing this dedupKey. Pin the producer's output against the server's anchored pattern so a
+  // reorder of decision/closedAt (which would silently flip every merge to "closed without merge") fails loudly.
+  it("buildAmsPrOutcomePayload's dedupKey satisfies the server's AMS_PR_OUTCOME_DEDUP_KEY_PATTERN (drift guard)", () => {
+    for (const decision of ["merged", "closed"] as const) {
+      const payload = buildAmsPrOutcomePayload({ recipientLogin: "miner", repoFullName: "acme/widgets", pullNumber: 7, decision, closedAt: "2026-07-21T00:00:00.000Z" });
+      expect(parseAmsPrOutcomeDecision(payload.dedupKey)).toBe(decision);
+    }
   });
 });

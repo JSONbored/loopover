@@ -540,6 +540,7 @@ export function buildOpenApiSpec() {
     request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "GitHub App installation health", content: { "application/json": { schema: InstallationHealthSchema } } },
+      400: { description: "Malformed installation id" },
       404: { description: "Installation health not found" },
     },
   });
@@ -552,6 +553,7 @@ export function buildOpenApiSpec() {
     request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "GitHub App installation repair diagnostics", content: { "application/json": { schema: InstallationRepairSchema } } },
+      400: { description: "Malformed installation id" },
       404: { description: "Installation health not found" },
     },
   });
@@ -564,6 +566,7 @@ export function buildOpenApiSpec() {
     request: { params: z.object({ id: z.string() }) },
     responses: {
       200: { description: "Refreshed GitHub App installation repair diagnostics", content: { "application/json": { schema: InstallationRepairSchema } } },
+      400: { description: "Malformed installation id" },
       404: { description: "Installation not found" },
     },
   });
@@ -1903,7 +1906,7 @@ export function buildOpenApiSpec() {
     summary: "Every external anchoring attempt, success and failure, paginated newest-first — anchoring's own health as a public fact",
     request: { query: z.object({ backend: z.enum(["rekor", "git", "ots", "bittensor"]).optional(), before: z.string().optional(), limit: z.string().optional() }) },
     responses: {
-      200: { description: "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore } — a failed attempt is returned identically to a successful one, never filtered out or reshaped" },
+      200: { description: "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore, status } — a failed attempt is returned identically to a successful one, never filtered out or reshaped. The top-level `status` (anchored | empty_ledger | unconfigured | pending) says why the list looks as it does, so an empty list cannot be mistaken for a healthy one; it is omitted when a backend/before filter is applied, where empty just means none matched" },
     },
   });
   registry.registerPath({
@@ -1980,17 +1983,6 @@ export function buildOpenApiSpec() {
     responses: {
       200: { description: "{ records: EvalScoreRecord[] }, optionally filtered by subject id and/or minimum issuedAt -- degrades to an empty array on an internal read error rather than a non-200 status, matching loadPublicRulePrecision's own fail-safe contract" },
       404: { description: "Public stats disabled (same flag as /v1/public/stats)" },
-    },
-  });
-  registry.registerPath({
-    method: "post",
-    path: "/v1/orb/ingest",
-    operationId: "postOrbIngest",
-    tags: ["ORB"],
-    summary: "Ingest a batch of Orb events",
-    responses: {
-      200: { description: "Batch accepted; returns { accepted: number }" },
-      400: { description: "Malformed JSON or invalid payload shape" },
     },
   });
   registry.registerPath({

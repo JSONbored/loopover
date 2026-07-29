@@ -170,6 +170,40 @@ describe("tenant self-service installation health/repair (#7661)", () => {
     await expect(missing.json()).resolves.toMatchObject({ error: "installation_health_not_found" });
   });
 
+  it("#9716: rejects a fractional/exponent/zero/negative installation id with 400 on every id route (Number.isFinite let those through)", async () => {
+    const app = createApp();
+    const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
+    await seedFleet(env);
+
+    // A GitHub installation id is always a positive integer. Number.isFinite accepted "1.5"->1.5 (fractional) and
+    // "0"/"-1" (non-positive), binding them straight into the D1 lookup; each must now be a 400. ("1e3"->1000 is a
+    // genuine integer and is deliberately NOT rejected -- it is exponent notation for a valid id, asserted below.)
+    const badIds = ["1.5", "0", "-1"];
+    const routes: Array<{ path: (id: string) => string; method: "GET" | "POST" | "PUT"; body?: string }> = [
+      { path: (id) => `/v1/installations/${id}/health`, method: "GET" },
+      { path: (id) => `/v1/installations/${id}/repair`, method: "GET" },
+      { path: (id) => `/v1/installations/${id}/repair/refresh`, method: "POST" },
+      { path: (id) => `/v1/app/installations/${id}/health`, method: "GET" },
+      { path: (id) => `/v1/app/installations/${id}/repair`, method: "GET" },
+      { path: (id) => `/v1/app/installations/${id}/repair/refresh`, method: "POST" },
+      { path: (id) => `/v1/app/installations/${id}/agent/bulk-settings`, method: "PUT", body: JSON.stringify({ autonomy: {} }) },
+    ];
+    for (const route of routes) {
+      for (const badId of badIds) {
+        const res = await app.request(
+          route.path(badId),
+          { method: route.method, headers: apiHeaders(env), ...(route.body !== undefined ? { body: route.body } : {}) },
+          env,
+        );
+        expect(res.status, `${route.method} ${route.path(badId)}`).toBe(400);
+        await expect(res.json()).resolves.toMatchObject({ error: "invalid_installation_id" });
+      }
+    }
+
+    // A valid positive integer id still passes the guard and reaches the handler (200 for the owned installation).
+    expect((await app.request("/v1/app/installations/600/health", { headers: apiHeaders(env) }, env)).status).toBe(200);
+  });
+
   it("scopes per-installation repair diagnostics and their error branches", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });

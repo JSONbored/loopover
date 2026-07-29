@@ -15,6 +15,19 @@ import type { PublicStats } from "@/components/site/proof-of-power-stats-model";
 // count, with a short methodology note. Counts only; no PR content, contributor identities, or trust scores.
 
 const pctFmt = new Intl.NumberFormat("en", { maximumFractionDigits: 1 });
+/** Why an accuracy cell reads "—". Reversal-grounded accuracy needs the deployment to have recorded the
+ *  terminal auto-actions a reversal attaches to; where it hasn't, `1 - 0/N` would render as a flawless 100%
+ *  over a numerator that can never move, so the backend publishes null and the page says so out loud. */
+function UnmeasurableAccuracyNote() {
+  return (
+    <p className="mt-3 text-token-xs text-muted-foreground">
+      An accuracy of <span className="font-mono">—</span> means not measurable on this deployment,
+      not 100%: no auto-merge/auto-close was recorded here for a human reversal to be counted
+      against. The volume columns beside it are measured directly and are unaffected.
+    </p>
+  );
+}
+
 const intFmt = new Intl.NumberFormat("en");
 
 async function fetchPublicStats(): Promise<PublicStats | null> {
@@ -119,6 +132,23 @@ export function FairnessReportPage() {
                       ? `${intFmt.format(data.totals.reversed)} human-reversed, lifetime`
                       : "reversal-grounded, lifetime"}
                 </p>
+                {/* #9168 computes `basis` precisely so this number is not read as corroborated-across-operators
+                    when it is one operator's own disclosed outcomes; the page used to drop the field entirely. */}
+                {fleetEligible && data.fleetAccuracy.basis === "single_instance_self_report" ? (
+                  <p className="mt-2 text-token-xs text-muted-foreground">
+                    Self-reported by that single instance, not corroborated across operators
+                    {data.fleetAccuracy.decidedCount != null
+                      ? ` (${intFmt.format(data.fleetAccuracy.decidedCount)} decided`
+                      : ""}
+                    {data.fleetAccuracy.decidedCount != null &&
+                    data.fleetAccuracy.accuracyCiPct != null
+                      ? `, 95% CI ${pctFmt.format(data.fleetAccuracy.accuracyCiPct.lo)}–${pctFmt.format(data.fleetAccuracy.accuracyCiPct.hi)}%)`
+                      : data.fleetAccuracy.decidedCount != null
+                        ? ")"
+                        : ""}
+                    .
+                  </p>
+                ) : null}
               </Card>
               <Card className="p-5">
                 <div className="text-token-xs text-muted-foreground">Anti-gaming flags caught</div>
@@ -149,11 +179,15 @@ export function FairnessReportPage() {
 
             <div className="mt-10 space-y-2 rounded-token border-hairline px-4 py-4 text-token-sm text-muted-foreground">
               <p>
-                <span className="font-medium text-foreground">How accuracy is measured:</span> 1
-                minus the share of auto-merged/auto-closed PRs a human later overturned — a
-                bot-closed PR a contributor reopened, or a bot-merged PR undone by a separate revert
-                PR. Nothing here is a prediction or a self-assessment; it's counted after the fact
-                from what actually happened on GitHub.
+                <span className="font-medium text-foreground">How accuracy is measured:</span> the
+                headline scores the gate's own merge/close <em>decisions</em> — the share the
+                realized outcome confirmed, with holds excluded because a deferral to a human is not
+                a decision that can be right or wrong (#8820). The per-repository and weekly tables
+                below are a different, stricter measure: 1 minus the share of
+                auto-merged/auto-closed PRs a human later overturned — a bot-closed PR a contributor
+                reopened, or a bot-merged PR undone by a separate revert PR. Neither is a prediction
+                or a self-assessment; both are counted after the fact from what actually happened on
+                GitHub, which is also why the two can differ.
               </p>
               <p>
                 <span className="font-medium text-foreground">
@@ -206,6 +240,9 @@ export function FairnessReportPage() {
                     </tbody>
                   </table>
                 </TableScroll>
+                {data.byProject.some((row) => row.accuracyPct == null) ? (
+                  <UnmeasurableAccuracyNote />
+                ) : null}
               </div>
             ) : null}
 
@@ -256,6 +293,11 @@ export function FairnessReportPage() {
                   </tbody>
                 </table>
               </TableScroll>
+              {data.accuracyTrend.some(
+                (week) => week.merged != null && week.accuracyPct == null,
+              ) ? (
+                <UnmeasurableAccuracyNote />
+              ) : null}
             </div>
 
             {data.rulePrecision && data.rulePrecision.rules.length > 0 ? (

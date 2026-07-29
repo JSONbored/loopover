@@ -6,8 +6,10 @@ import {
   getPublicStats,
   isPublicStatsEnabled,
   MINUTES_SAVED_PER_PR,
+  loadReversalObservability,
   resolvePublicStatsManifestOverride,
 } from "../../src/review/public-stats";
+import { recordAuditEvent, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 
 const SELF_REPO = "JSONbored/loopover";
 
@@ -718,6 +720,36 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.totals.minutesSaved).not.toBe(2 * MINUTES_SAVED_PER_PR);
   });
 
+  it("REGRESSION: publishes null accuracy, never 100%, when no reversal could have been recorded (real D1)", async () => {
+    // On a runtime that does not execute reviews, `recordReversalSignals` never runs, so `reversed` is pinned
+    // at 0 while merged/closed keep growing -- and `1 - 0/N` rendered as a perfect 100% on the fairness page
+    // for every repo and every week. That is a structural zero, not a measurement.
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/loopover" });
+    await upsertRepositoryFromGitHub(env, { name: "loopover", full_name: "JSONbored/loopover", private: false, owner: { login: "JSONbored" } }, 1);
+    await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number: 1, title: "PR 1", state: "closed", merged_at: "2026-06-20T09:00:00.000Z", user: { login: "a" }, head: { sha: "s1" }, labels: [] });
+    await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: "JSONbored/loopover#1", outcome: "completed", createdAt: "2026-06-20T09:00:00.000Z" });
+
+    const out = await getPublicStats(env, NOW);
+    expect(out.totals.merged).toBe(1);
+    expect(out.totals.reversed).toBe(0);
+    // The volume IS measured and still publishes; only the unmeasurable ratio is withheld.
+    expect(out.totals.accuracyPct).toBeNull();
+    expect(out.byProject.map((row) => row.accuracyPct)).toEqual([null]);
+  });
+
+  it("publishes a real accuracy once the deployment records the auto-actions a reversal attaches to (real D1)", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/loopover" });
+    await upsertRepositoryFromGitHub(env, { name: "loopover", full_name: "JSONbored/loopover", private: false, owner: { login: "JSONbored" } }, 1);
+    await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number: 1, title: "PR 1", state: "closed", merged_at: "2026-06-20T09:00:00.000Z", user: { login: "a" }, head: { sha: "s1" }, labels: [] });
+    await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: "JSONbored/loopover#1", outcome: "completed", createdAt: "2026-06-20T09:00:00.000Z" });
+    // The engine actually merged it here -- so a reversal WOULD have been recorded had one happened.
+    await recordAuditEvent(env, { eventType: "agent.action.merge", targetKey: "JSONbored/loopover#1", outcome: "completed", createdAt: "2026-06-20T09:00:00.000Z" });
+
+    const out = await getPublicStats(env, NOW);
+    expect(out.totals.accuracyPct).toBe(100);
+    expect(out.byProject.map((row) => row.accuracyPct)).toEqual([100]);
+  });
+
   it("deduplicates repeated public-surface publishes before averaging reviewEffortMinutes (real D1)", async () => {
     const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/loopover" });
     const db = env.DB;
@@ -910,6 +942,29 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.totals.handled).toBe(0);
     expect(out.byProject).toEqual([]);
     expect(out.weekly).toEqual({ reviewed: 0, merged: 0 });
+  });
+});
+
+describe("loadReversalObservability", () => {
+  it("short-circuits to true on a known reversal without querying at all", async () => {
+    const env = { DB: { prepare: () => { throw new Error("must not query"); } } } as unknown as Env;
+    expect(await loadReversalObservability(env, 1)).toBe(true);
+  });
+
+  it("is false on a deployment that has recorded no terminal auto-action", async () => {
+    expect(await loadReversalObservability(createTestEnv(), 0)).toBe(false);
+  });
+
+  it("is true once a terminal auto-action exists in the retained window", async () => {
+    const env = createTestEnv();
+    await recordAuditEvent(env, { eventType: "agent.action.close", targetKey: "JSONbored/loopover#3", outcome: "completed" });
+    expect(await loadReversalObservability(env, 0)).toBe(true);
+  });
+
+  it("degrades to false (never throws) when the probe query itself fails", async () => {
+    const broken = createTestEnv();
+    broken.DB = { prepare: () => { throw new Error("boom"); } } as never;
+    expect(await loadReversalObservability(broken, 0)).toBe(false);
   });
 });
 

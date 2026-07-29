@@ -17365,6 +17365,9 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed installation id"
+          },
           "404": {
             "description": "Installation health not found"
           }
@@ -17407,6 +17410,9 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed installation id"
+          },
           "404": {
             "description": "Installation health not found"
           }
@@ -17448,6 +17454,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Malformed installation id"
           },
           "404": {
             "description": "Installation not found"
@@ -20793,7 +20802,7 @@
         ],
         "responses": {
           "200": {
-            "description": "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore } — a failed attempt is returned identically to a successful one, never filtered out or reshaped"
+            "description": "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore, status } — a failed attempt is returned identically to a successful one, never filtered out or reshaped. The top-level `status` (anchored | empty_ledger | unconfigured | pending) says why the list looks as it does, so an empty list cannot be mistaken for a healthy one; it is omitted when a backend/before filter is applied, where empty just means none matched"
           }
         },
         "operationId": "listPublicDecisionLedgerAnchors",
@@ -20892,11 +20901,25 @@
           },
           "400": {
             "description": "Malformed JSON or invalid payload shape"
+          },
+          "401": {
+            "description": "Missing or invalid ingest credential"
+          },
+          "403": {
+            "description": "Instance not authenticated"
+          },
+          "413": {
+            "description": "Batch exceeds the 1 MiB (MAX_ORB_INGEST_BODY_BYTES) body ceiling"
           }
         },
         "operationId": "postOrbIngest",
         "tags": [
           "ORB"
+        ],
+        "security": [
+          {
+            "OrbBearer": []
+          }
         ]
       }
     },
@@ -24011,6 +24034,9 @@
           "200": {
             "description": "Installation health"
           },
+          "400": {
+            "description": "Malformed installation id"
+          },
           "401": {
             "description": "Not signed in"
           },
@@ -24052,6 +24078,9 @@
           "200": {
             "description": "Repair plan"
           },
+          "400": {
+            "description": "Malformed installation id"
+          },
           "401": {
             "description": "Not signed in"
           },
@@ -24092,6 +24121,9 @@
         "responses": {
           "200": {
             "description": "Repair plan recomputed"
+          },
+          "400": {
+            "description": "Malformed installation id"
           },
           "401": {
             "description": "Not signed in"
@@ -24136,7 +24168,7 @@
             "description": "Settings applied"
           },
           "400": {
-            "description": "Malformed settings"
+            "description": "Malformed installation id or settings"
           },
           "401": {
             "description": "Not signed in"
@@ -25897,6 +25929,12 @@
         "responses": {
           "200": {
             "description": "Badge payload"
+          },
+          "404": {
+            "description": "The repo has no public badge (unknown, private, uninstalled, or badgeEnabled off)"
+          },
+          "503": {
+            "description": "The badge data could not be loaded (a transient loader failure, short-cached)"
           }
         },
         "security": []
@@ -25930,6 +25968,12 @@
         "responses": {
           "200": {
             "description": "SVG badge"
+          },
+          "404": {
+            "description": "The repo has no public badge (unknown, private, uninstalled, or badgeEnabled off)"
+          },
+          "503": {
+            "description": "The badge data could not be loaded (a transient loader failure, short-cached)"
           }
         },
         "security": []
@@ -26045,7 +26089,7 @@
           }
         ],
         "responses": {
-          "202": {
+          "200": {
             "description": "Batch accepted"
           },
           "400": {
@@ -26053,6 +26097,9 @@
           },
           "401": {
             "description": "Missing or invalid ingest credential"
+          },
+          "413": {
+            "description": "Batch exceeds the 1 MiB (MAX_ORB_INGEST_BODY_BYTES) body ceiling"
           }
         }
       }

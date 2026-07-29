@@ -29,12 +29,18 @@
 import { buildBacktestCorpus } from "@loopover/engine/calibration/backtest-corpus";
 import { canonicalJson, sha256Hex } from "./decision-record";
 import { NON_ATTRIBUTABLE_OVERRIDE_PROVENANCES, PUBLIC_PRECISION_WINDOW_DAYS } from "./public-rule-precision";
-import { createSignalStore } from "./signal-tracking-wire";
+import { createSignalStore, MAX_RULE_HISTORY_LIMIT } from "./signal-tracking-wire";
 
 /** Hard cap on published cases. The window is already bounded, but an unbounded array on an
  *  unauthenticated route is a footgun the moment a rule gets noisy; a truncated corpus is reported
  *  honestly via `truncated` rather than silently trimmed. */
-export const PUBLIC_EVAL_CORPUS_MAX_CASES = 5_000;
+// #9805: was 5_000, which could never bind. The corpus is built from a rule-history read that
+// listAuditEventsByType hard-clamps to MAX_RULE_HISTORY_LIMIT rows, so a cap above that ceiling is
+// unreachable and `truncated` was structurally always false -- while /v1/public/stats counts `decided` with
+// an UNBOUNDED SQL COUNT(*). The two surfaces therefore agreed only while the window stayed under the read
+// bound, and would have silently diverged after that: a complete-looking corpus serving a prefix of the
+// cases the published precision was computed over. Pinned to the real ceiling so the cap and the read agree.
+export const PUBLIC_EVAL_CORPUS_MAX_CASES = MAX_RULE_HISTORY_LIMIT;
 
 /** One published case: a {@link BacktestCase} minus `targetKey`, with `metadata` narrowed to the single
  *  key the shipped classifier reads. `metadata` is omitted entirely (never `undefined`) when the firing
@@ -124,8 +130,12 @@ export async function loadPublicEvalCorpus(env: Env, ruleId: string, nowMs: numb
   const sinceMs = nowMs - PUBLIC_PRECISION_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   let fired: Awaited<ReturnType<ReturnType<typeof createSignalStore>["queryRuleHistory"]>>["fired"] = [];
   let overrides: Awaited<ReturnType<ReturnType<typeof createSignalStore>["queryRuleHistory"]>>["overrides"] = [];
+  // A read that came back at its bound almost certainly left rows behind, and a corpus that silently omits
+  // them must say so -- committing a published score to a prefix, while claiming completeness, is exactly the
+  // unverifiable-artifact problem this endpoint exists to solve.
+  let saturated = false;
   try {
-    ({ fired, overrides } = await createSignalStore(env).queryRuleHistory(ruleId, sinceMs));
+    ({ fired, overrides, saturated } = await createSignalStore(env).queryRuleHistory(ruleId, sinceMs, MAX_RULE_HISTORY_LIMIT));
   } catch {
     // Fall through to an empty corpus rather than 500ing an unauthenticated route.
   }
@@ -144,8 +154,42 @@ export async function loadPublicEvalCorpus(env: Env, ruleId: string, nowMs: numb
     ruleId,
     windowDays: PUBLIC_PRECISION_WINDOW_DAYS,
     caseCount: cases.length,
-    truncated,
+    // Either bound truncates: the cap on the built cases, or the read that fed it. Reporting only the former
+    // is what made this field always-false.
+    truncated: truncated || saturated,
     checksum: await checksumPublicEvalCorpus(cases),
     cases,
   };
+}
+
+/**
+ * #9805: the publishable commitment for each of `ruleIds` -- the checksum of the corpus this deployment
+ * serves at `/v1/public/eval-corpus?ruleId=...`, for rules whose corpus can actually back a claim.
+ *
+ * A rule is OMITTED (rather than mapped to a checksum a reader would be misled by) when:
+ *
+ *   • the corpus is empty -- `checksumPublicEvalCorpus([])` is the same 32 bytes for every rule, every
+ *     window and every deployment, so it commits to nothing re-derivable. This is also where a failed read
+ *     lands, since loadPublicEvalCorpus degrades to an empty corpus rather than throwing a public route;
+ *   • the corpus is TRUNCATED at PUBLIC_EVAL_CORPUS_MAX_CASES -- the checksum would then cover a prefix of
+ *     the window while the record's `decided`/`confirmed` cover all of it. A reader who re-derived scores
+ *     from the published cases would get different numbers and reasonably conclude the published ones were
+ *     wrong. Omitting the record says "not committed"; publishing it would say something false.
+ *
+ * Sequential rather than Promise.all: each call is its own D1 read over a 90-day window, and the rule list
+ * is the handful that clear the publication floor -- fanning them out buys nothing and makes the read
+ * burst on an unauthenticated route.
+ */
+export async function buildPublicCorpusCommitments(
+  env: Env,
+  ruleIds: readonly string[],
+  nowMs: number = Date.now(),
+): Promise<Map<string, string>> {
+  const commitments = new Map<string, string>();
+  for (const ruleId of ruleIds) {
+    const corpus = await loadPublicEvalCorpus(env, ruleId, nowMs);
+    if (corpus.caseCount === 0 || corpus.truncated) continue;
+    commitments.set(ruleId, corpus.checksum);
+  }
+  return commitments;
 }

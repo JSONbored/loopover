@@ -609,3 +609,134 @@ describe("fleetFramingEligible (#9168)", () => {
     expect(a.gamingDetectionEligible).toBe(false);
   });
 });
+
+// #9783: orb_signals prunes at 90 days into orb_signal_rollups, so a window that reaches past the prune has
+// to read both halves or the headline silently under-counts as history ages out.
+describe("computeFleetAnalytics() over folded history (#9783)", () => {
+  const dayAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+
+  const foldedCell = async (env: Env, day: string, over: { verdict?: string; outcome?: string; n: number }) =>
+    env.DB
+      .prepare(
+        `INSERT INTO orb_signal_rollups (instance_id, day, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket, n, updated_at)
+         VALUES ('inst', ?, ?, ?, 'none', 'quality', ?, ?)`,
+      )
+      .bind(day.slice(0, 10), over.verdict ?? "merge", over.outcome ?? "merged", over.n, dayAgo(0))
+      .run();
+
+  it("scores a window whose raw rows have already been folded away", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES ('inst', 1)").run();
+    await foldedCell(env, dayAgo(20), { n: 8 });
+    await foldedCell(env, dayAgo(20), { outcome: "closed", n: 2 });
+
+    const analytics = await computeFleetAnalytics(env, { windowDays: 30 });
+    expect(analytics.fleet.decisionAccuracy).toBeCloseTo(0.8, 10);
+  });
+
+  it("sums raw and folded halves rather than reading only one", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES ('inst', 1)").run();
+    for (let i = 0; i < 5; i += 1) {
+      await env.DB
+        .prepare(
+          `INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket, decision_timestamp, received_at)
+           VALUES ('inst', 'r', ?1, 'merge', 'merged', 'none', 'quality', ?2, ?2)`,
+        )
+        .bind(`p${i}`, dayAgo(2))
+        .run();
+    }
+    await foldedCell(env, dayAgo(20), { outcome: "closed", n: 5 });
+
+    // 5 confirmed live + 5 disconfirmed folded. Reading either half alone would report 100% or 0%.
+    expect((await computeFleetAnalytics(env, { windowDays: 30 })).fleet.decisionAccuracy).toBeCloseTo(0.5, 10);
+  });
+
+  it("includes the window's boundary day, and excludes folded days outside it", async () => {
+    // The two halves are bounded by the same date-only `cutoff`, so the boundary day must land INSIDE the
+    // window on the folded side exactly as it does on the raw side -- and a day past it must still be out,
+    // or the rollup would quietly widen every window it is unioned into.
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES ('inst', 1)").run();
+    await foldedCell(env, dayAgo(30), { n: 7 });
+    await foldedCell(env, dayAgo(45), { n: 99 });
+    expect((await computeFleetAnalytics(env, { windowDays: 30 })).fleet.pooled.mergeVerdicts).toBe(7);
+  });
+
+  it("INVARIANT: folded history from an UNREGISTERED instance still never reaches the headline", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES ('inst', 0)").run();
+    await foldedCell(env, dayAgo(20), { outcome: "closed", n: 40 });
+    expect((await computeFleetAnalytics(env, { windowDays: 30 })).fleet.decisionAccuracy).toBeNull();
+  });
+});
+
+// #9783 review follow-up: the confusion matrix folds into per-day cells and sums back exactly, but cycle time
+// is percentiles over individual time_to_close_ms values -- not summable, and deliberately not stored in the
+// rollup. So a window reaching past the retention horizon must not quietly report percentiles computed from
+// only the surviving rows.
+describe("cycle-time observability across the retention horizon (#9783)", () => {
+  const dayAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+
+  const seedCycle = async (env: Env) => {
+    await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES ('inst', 1)").run();
+    for (let i = 0; i < 6; i += 1) {
+      await env.DB
+        .prepare(
+          `INSERT INTO orb_signals (instance_id, repo_hash, pr_hash, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket, decision_timestamp, received_at, time_to_close_ms)
+           VALUES ('inst', 'r', ?1, 'merge', 'merged', 'none', 'quality', ?2, ?2, ?3)`,
+        )
+        .bind(`p${i}`, dayAgo(2), (i + 1) * 1000)
+        .run();
+    }
+  };
+
+  it("publishes percentiles for the default window, which the retention window exactly covers", async () => {
+    const env = createTestEnv();
+    await seedCycle(env);
+    const analytics = await computeFleetAnalytics(env, { windowDays: 90 });
+    expect(analytics.cycleTimeObservable).toBe(true);
+    expect(analytics.fleet.cycleP50Ms).not.toBeNull();
+    expect(analytics.fleet.cycleP95Ms).not.toBeNull();
+  });
+
+  it("REGRESSION: nulls the percentiles for a window that outruns retention, instead of silently narrowing them", async () => {
+    // The exact reported scenario: ?days=365 against a table pruned at 90. Reading only the survivors would
+    // return a real-looking p50/p95 describing 90 days while the caller asked for 365.
+    const env = createTestEnv();
+    await seedCycle(env);
+    const analytics = await computeFleetAnalytics(env, { windowDays: 365 });
+    expect(analytics.cycleTimeObservable).toBe(false);
+    expect(analytics.fleet.cycleP50Ms).toBeNull();
+    expect(analytics.fleet.cycleP95Ms).toBeNull();
+  });
+
+  it("still folds the confusion matrix over that same long window -- only cycle time is affected", async () => {
+    // The distinction that makes nulling cycle time acceptable: accuracy IS reconstructable from the rollup,
+    // so a 365-day window keeps a real decisionAccuracy while cycle time goes null.
+    const env = createTestEnv();
+    await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES ('inst', 1)").run();
+    await env.DB
+      .prepare(
+        `INSERT INTO orb_signal_rollups (instance_id, day, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket, n, updated_at)
+         VALUES ('inst', ?, 'merge', 'merged', 'none', 'quality', 8, ?)`,
+      )
+      .bind(dayAgo(200).slice(0, 10), dayAgo(0))
+      .run();
+
+    const analytics = await computeFleetAnalytics(env, { windowDays: 365 });
+    expect(analytics.fleet.decisionAccuracy).toBeCloseTo(1, 10);
+    expect(analytics.cycleTimeObservable).toBe(false);
+    expect(analytics.fleet.cycleP50Ms).toBeNull();
+  });
+
+  it("reports observability honestly even on the no-data fallback", async () => {
+    const broken = createTestEnv();
+    broken.DB = { prepare: () => { throw new Error("boom"); } } as never;
+    const analytics = await computeFleetAnalytics(broken, { windowDays: 365 });
+    // Null because there is no data AND because the window outran retention -- the flag says which window
+    // was asked for, rather than implying the nulls are only about missing data.
+    expect(analytics.cycleTimeObservable).toBe(false);
+    expect(analytics.fleet.cycleP50Ms).toBeNull();
+  });
+});

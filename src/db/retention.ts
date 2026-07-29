@@ -22,6 +22,13 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
   // needs would be gone by the time the fold ran, and the rollup would permanently over-count exactly the
   // PRs the live query never counted.
   { table: "orb_pr_outcomes", column: "occurred_at", days: 90 },
+  // #9783: orb_signals had no rule at all and grew without bound, while being a PUBLIC data source
+  // (computeFleetAnalytics' /fairness headline, and #9775's weekly fleet trend). It could not simply be
+  // pruned: listFleetInstances reports a LIFETIME signalCount, and /v1/internal/fleet/analytics takes an
+  // arbitrary ?days=. Both are preserved by folding into orb_signal_rollups first -- see the special case in
+  // pruneExpiredRecords, and migrations/0202 for why the rollup keeps the whole confusion matrix per day
+  // rather than a scalar count.
+  { table: "orb_signals", column: "received_at", days: 90 },
   { table: "audit_events", column: "created_at", days: 90 },
   { table: "ai_usage_events", column: "created_at", days: 90 },
   { table: "product_usage_events", column: "occurred_at", days: 180 },
@@ -120,6 +127,12 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
 // not scan-optimal, which is acceptable for the lower row counts of the tables that fall back today.
 export const RETENTION_PK_COLUMN: Readonly<Record<string, string>> = {
   audit_events: "id",
+  // #9783: orb_signals has `id INTEGER PRIMARY KEY` (migrations/0060), so it maps cleanly here rather than
+  // joining RETENTION_COMPOSITE_PK_TABLES -- its UNIQUE (instance_id, repo_hash, pr_hash) is the ingest
+  // dedup key, not its primary key. The fold below uses its own bounded-slice path rather than the generic
+  // PK-batched delete, but the mapping still has to exist: the completeness guard requires every policy
+  // table to be in one list or the other, precisely so a new entry cannot ship silently unmapped.
+  orb_signals: "id",
   ai_usage_events: "id",
   product_usage_events: "id",
   github_rate_limit_observations: "id",
@@ -257,6 +270,62 @@ export async function pruneExpiredRecords(
     // is deliberately UNBATCHED for this one table: the aging cohort is one row per fleet-wide PR terminal
     // per day (hundreds at most, vs the six-figure log tables the batching exists for), and a bounded delete
     // would reintroduce the split-commit problem for whatever the bound left behind.
+    // #9783: orb_signals feeds published fleet accuracy AND a lifetime per-instance count, so its rows fold
+    // into per-instance/per-DAY confusion-matrix cells before deletion. Same atomic fold+delete and same
+    // bounded inclusive-boundary slicing as orb_pr_outcomes below, for the same two reasons: a fold and
+    // delete that could commit separately would double- or under-count, and an exclusive boundary against a
+    // run of tied timestamps selects zero rows and spins forever.
+    //
+    // Unlike that one, EVERY expiring row folds -- there is no "the live query never counted these" subset
+    // to skip. The registered-instance filter belongs at READ time (computeFleetAnalytics and the public
+    // trend both join orb_instances), not here: an instance can be registered after its signals arrive, and
+    // discarding an unregistered instance's history at prune time would make that later registration
+    // silently lossy.
+    if (rule.table === "orb_signals") {
+      let deleted = 0;
+      for (;;) {
+        const boundaryRow = await env.DB.prepare(
+          `SELECT ${rule.column} AS boundary FROM ${rule.table} WHERE ${retentionWhere(rule)} ORDER BY ${rule.column} LIMIT 1 OFFSET ${batchSize - 1}`,
+        )
+          .bind(cutoff)
+          .first<{ boundary: string }>();
+        const sliceIsFinal = boundaryRow == null;
+        const sliceWhere = sliceIsFinal ? `${rule.column} < ?1` : `${rule.column} <= ?1`;
+        const sliceBound = sliceIsFinal ? cutoff : boundaryRow.boundary;
+        const batchResults = await env.DB.batch([
+          env.DB.prepare(
+            // Bucketed on COALESCE(decision_timestamp, received_at) -- the same expression the weekly trend
+            // buckets live rows on, so a folded day lands in the week it would have landed in anyway.
+            // gate_verdict / gate_reasoncode_bucket COALESCE to '' because the rollup's PRIMARY KEY spans
+            // them and SQLite compares every NULL as distinct (migrations/0202 has the full note).
+            `INSERT INTO orb_signal_rollups (instance_id, day, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket, n, updated_at)
+             SELECT s.instance_id,
+                    substr(COALESCE(s.decision_timestamp, s.received_at), 1, 10) AS day,
+                    COALESCE(s.gate_verdict, '') AS gate_verdict,
+                    s.outcome,
+                    s.reversal_flag,
+                    COALESCE(s.gate_reasoncode_bucket, '') AS gate_reasoncode_bucket,
+                    COUNT(*) AS n,
+                    ?2 AS updated_at
+             FROM orb_signals s
+             WHERE s.${sliceWhere}
+             GROUP BY s.instance_id, day, COALESCE(s.gate_verdict, ''), s.outcome, s.reversal_flag, COALESCE(s.gate_reasoncode_bucket, '')
+             ON CONFLICT(instance_id, day, gate_verdict, outcome, reversal_flag, gate_reasoncode_bucket) DO UPDATE SET
+               n = orb_signal_rollups.n + excluded.n,
+               updated_at = excluded.updated_at`,
+          ).bind(sliceBound, nowIso()),
+          env.DB.prepare(`DELETE FROM ${rule.table} WHERE ${sliceWhere}`).bind(sliceBound),
+        ]);
+        /* v8 ignore next 2 -- defensive: batch() returns one result per statement on both backends; the
+         * `?.`/`?? 0` arms only satisfy the driver types and degrade the COUNT, never the prune. */
+        const changes = Number(batchResults[1]?.meta?.changes ?? 0);
+        deleted += changes;
+        if (sliceIsFinal || changes === 0 || deleted >= maxPerTable) break;
+      }
+      results.push({ table: rule.table, column: rule.column, cutoff, deleted });
+      continue;
+    }
+
     if (rule.table === "orb_pr_outcomes") {
       // #9474: this table feeds a CUMULATIVE public counter (getOrbGlobalStats -> the homepage "all-time"
       // merged/closed totals), so every row must be folded into the durable orb_outcome_rollups totals in the

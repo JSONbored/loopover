@@ -25,12 +25,12 @@ describe("loopover-mcp CLI — contributor-profile (#6737)", () => {
 
     const plain = await runAsync(["contributor-profile", "--login", "octocat"], e);
     expect(plain).toMatch(/LoopOver contributor profile for octocat\./);
-    expect(plain).toMatch(/3 registered repos; 12 merged PRs; strongest in review-tooling\./);
     expect(requests.at(-1)).toBe("/v1/contributors/octocat/profile");
 
-    const json = JSON.parse(await runAsync(["contributor-profile", "--login", "octocat", "--json"], e)) as { login: string; summary: string };
-    // Parity: the --json surface re-serializes the same payload the plain summary was built from.
-    expect(json).toMatchObject({ login: "octocat", summary: "3 registered repos; 12 merged PRs; strongest in review-tooling." });
+    const json = JSON.parse(await runAsync(["contributor-profile", "--login", "octocat", "--json"], e)) as { login: string; source: string };
+    // Parity: the --json surface re-serializes the payload verbatim. Asserted on fields the endpoint really
+    // returns -- the previous assertion named a `summary` that only ever existed in the fixture (#9773).
+    expect(json).toMatchObject({ login: "octocat", source: "github_cache" });
   });
 
   it("resolves the login from LOOPOVER_LOGIN when --login is omitted, and url-encodes it", async () => {

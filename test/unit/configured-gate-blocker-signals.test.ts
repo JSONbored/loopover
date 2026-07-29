@@ -200,7 +200,7 @@ describe("recordConfiguredGateBlockerSignals (#8104)", () => {
         throw new Error("signal store down");
       },
       recordHumanOverride: async () => undefined,
-      queryRuleHistory: async () => ({ fired: [], overrides: [] }),
+      queryRuleHistory: async () => ({ fired: [], overrides: [], saturated: false }),
     });
     await expect(
       recordConfiguredGateBlockerSignals(
@@ -355,7 +355,7 @@ describe("recordGateScoreSignals (#8223)", () => {
         throw new Error("signal store down");
       },
       recordHumanOverride: async () => undefined,
-      queryRuleHistory: async () => ({ fired: [], overrides: [] }),
+      queryRuleHistory: async () => ({ fired: [], overrides: [], saturated: false }),
     });
     await expect(
       recordGateScoreSignals(createTestEnv(), { slopGateMode: "block", slopRisk: 72, qualityGateMode: "advisory", readinessScore: 40, qualityGateMinScore: 70 }, "owner/repo", 7),

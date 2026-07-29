@@ -612,7 +612,7 @@ describe("runLinkedIssueSatisfactionForAdvisory (processor wiring, #1961/#3906)"
           throw new Error("signal store down");
         },
         recordHumanOverride: async () => undefined,
-        queryRuleHistory: async () => ({ fired: [], overrides: [] }),
+        queryRuleHistory: async () => ({ fired: [], overrides: [], saturated: false }),
       });
       const run = vi.fn(async () => ({ response: satisfactionJson({ status: "unaddressed", confidence: 0.9 }) }));
       const adv = advisory();

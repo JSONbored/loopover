@@ -113,12 +113,25 @@ export async function loadPublicFleetAccuracyTrend(env: Env, nowMs: number = Dat
     // genuine `Cell`, which is what foldInstance consumes, and summing per-instance cells within a week
     // yields exactly the pooled figure anyway. Narrowing the projection would mean hand-rolling a
     // near-Cell type and re-deriving the accounting -- the duplication foldInstance is exported to prevent.
+    // #9783: UNION live rows with the folded rollups -- orb_signals prunes at 90 days into
+    // orb_signal_rollups, and this series looks back 8 weeks, so a run shortly after a prune would otherwise
+    // show weeks collapsing to null as their raw rows aged out. The registered-instance join applies to both
+    // halves: the fold deliberately keeps unregistered instances' history (they can be registered later), so
+    // the trust gate has to be enforced here at read time.
     `SELECT substr(COALESCE(s.decision_timestamp, s.received_at), 1, 10) AS day, s.instance_id,
             s.gate_verdict AS verdict, s.outcome, s.reversal_flag, s.gate_reasoncode_bucket, COUNT(*) AS n
        FROM orb_signals s
        JOIN orb_instances i ON i.instance_id = s.instance_id AND i.registered = 1
-      WHERE COALESCE(s.decision_timestamp, s.received_at) >= ?
-      GROUP BY day, s.instance_id, s.gate_verdict, s.outcome, s.reversal_flag, s.gate_reasoncode_bucket`,
+      WHERE COALESCE(s.decision_timestamp, s.received_at) >= ?1
+      GROUP BY day, s.instance_id, s.gate_verdict, s.outcome, s.reversal_flag, s.gate_reasoncode_bucket
+      UNION ALL
+     SELECT r.day AS day, r.instance_id,
+            r.gate_verdict AS verdict, r.outcome, r.reversal_flag, r.gate_reasoncode_bucket, r.n
+       FROM orb_signal_rollups r
+       JOIN orb_instances i2 ON i2.instance_id = r.instance_id AND i2.registered = 1
+      -- substr, not a bare >=: day is YYYY-MM-DD and ?1 is a full ISO instant, so on the boundary date the
+      -- shorter string sorts BEFORE the longer one it prefixes and that whole day would be dropped.
+      WHERE r.day >= substr(?1, 1, 10)`,
     sinceIso,
   );
   // isoWeekStart is applied here rather than in SQL: SQLite's strftime('%W') is not ISO-8601 week numbering,

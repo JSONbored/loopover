@@ -1877,6 +1877,7 @@ describe("queue processors", () => {
         new Set(["trusted-required-ci"]),
         "installation:9001",
         undefined, // #4372: advisoryCheckRuns (unconfigured here)
+        undefined, // #9813: ignoredCheckRuns (unconfigured here)
       );
       expect(gateChecks).toBeGreaterThan(0);
       const finalized = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
@@ -3168,8 +3169,9 @@ describe("queue processors", () => {
         await processJob(env, { type: "agent-regate-pr", deliveryId: "required-contexts-lookup-recovers", repoFullName: "owner/agent-repo", prNumber: 7, installationId: 9001 });
         expect(liveCiSpy.mock.calls.length).toBeGreaterThan(liveReadsAfterFailedLookup);
         expect(await renderMetrics()).toContain('loopover_ci_state_cache_total{field="aggregate",result="miss"} 1');
-        // #4372: the durable cache key now folds in the advisory-check-runs fingerprint (empty "|adv:" when unconfigured).
-        expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "passed", ciRequiredContextsKey: `${JSON.stringify(["trusted-required-ci"])}|adv:` });
+        // #4372 + #9813: the durable cache key folds in the advisory-check-runs AND ignored-check-runs
+        // fingerprints (both empty here -- "|adv:|ign:" -- because neither is configured on this repo).
+        expect(await getPullRequestDetailSyncState(env, "owner/agent-repo", 7)).toMatchObject({ ciState: "passed", ciRequiredContextsKey: `${JSON.stringify(["trusted-required-ci"])}|adv:|ign:` });
       } finally {
         liveCiSpy.mockRestore();
       }

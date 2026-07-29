@@ -403,7 +403,13 @@ const MISC_ROUTES: SpecEntry[] = [
     tags: ["Loop"],
     summary: "Request an APR transfer for a rented loop",
     auth: "token",
-    responses: { 200: { description: "Transfer requested" }, 400: { description: "Malformed request" }, 401: { description: "Missing or invalid token" } },
+    responses: {
+      202: { description: "Transfer initiation accepted (pending acceptance)" },
+      400: { description: "Malformed request" },
+      401: { description: "Missing or invalid token" },
+      409: { description: "Transfer gate rejected the request; GitHub was not touched" },
+      502: { description: "Transfer attempt failed downstream" },
+    },
   },
   {
     method: "post",

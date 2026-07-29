@@ -2,8 +2,19 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildMaintainerRecap, contributorTotalsToList, foldMergedPrContributorTotals, runMaintainerRecap, type MaintainerRecapRepoInput } from "../../src/services/maintainer-recap";
 import { buildDriftRecapSection } from "../../src/services/maintainer-recap-drift";
 import type { OutcomeCalibration } from "../../src/services/outcome-calibration";
+import type { KnobDriftReport } from "../../src/services/loosening-knobs";
+import { loadLiveKnobStatuses, type KnobStatus } from "../../src/services/knob-loosening-run";
 import type { RecapReport } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
+
+// #9698: loadDriftRecapSection (maintainer-recap.ts) reads the sentinel's LIVE per-knob evaluation via
+// loadLiveKnobStatuses -- mocked here (real corpus math is knob-loosening-run.test.ts's own suite) so these
+// tests pin the WIRING: which statuses make it into the digest, not the drift evaluator's math.
+vi.mock("../../src/services/knob-loosening-run", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../src/services/knob-loosening-run")>()),
+  loadLiveKnobStatuses: vi.fn(),
+}));
+const mockedLoadLiveKnobStatuses = vi.mocked(loadLiveKnobStatuses);
 
 const GEN = "2026-07-08T00:00:00.000Z";
 const DISCORD_HOOK = "https://discord.com/api/webhooks/123/abc";
@@ -323,6 +334,7 @@ function leakyRecapReport(): RecapReport {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  mockedLoadLiveKnobStatuses.mockReset();
 });
 
 describe("runMaintainerRecap (#2252 end-to-end orchestration)", () => {
@@ -463,5 +475,131 @@ describe("runMaintainerRecap (#2252 end-to-end orchestration)", () => {
       expect(call.body.toLowerCase()).not.toMatch(/payout|\/users\/secret|\/root\/secrets/);
       expect(call.body).toMatch(/redacted/);
     }
+  });
+});
+
+// #9698: buildDriftRecapSection (#8214) had no production caller -- runMaintainerRecap now sources it itself
+// via a private loadDriftRecapSection, mirroring loadRoutingRecapSection's fail-safe wiring exactly.
+describe("runMaintainerRecap config-drift wiring (#9698)", () => {
+  function driftReport(overrides: Partial<KnobDriftReport> = {}): KnobDriftReport {
+    const comparison = { verdict: "improved" } as unknown as KnobDriftReport["visible"];
+    return {
+      knobId: "ai_review_close_confidence",
+      ruleId: "ai_consensus_defect",
+      liveValue: 0.93,
+      dominatingValue: 0.95,
+      direction: "tighter",
+      visibleCases: 60,
+      heldOutCases: 15,
+      visible: comparison,
+      heldOut: comparison,
+      ...overrides,
+    };
+  }
+
+  function knobStatus(knobId: string, drift: KnobDriftReport | null): KnobStatus {
+    return {
+      knobId,
+      applyMode: "live",
+      flagEnabled: false,
+      tightenFlagEnabled: null,
+      shippedValue: 0.93,
+      liveValue: 0.93,
+      storedOverride: null,
+      repoOverrides: [],
+      drift,
+      reliability: null,
+      applied: [],
+    };
+  }
+
+  async function insertFingerprintRow(env: Env, knobId: string, updatedAt: string): Promise<void> {
+    await env.DB.prepare("INSERT INTO system_flags (key, value, updated_at) VALUES (?, ?, ?)")
+      .bind(`config_drift_fingerprint:${knobId}`, `${knobId}:tighter:0.95`, updatedAt)
+      .run();
+  }
+
+  it("with the sentinel off, the digest carries the explicit disabled line without evaluating any knob", async () => {
+    stubRecapChannelFetch();
+    const result = await runMaintainerRecap(envWithBothWebhooks(), { generatedAt: GEN });
+    expect(result.skipped).toBe(false);
+    if (result.skipped) return;
+    expect(result.formatted).toContain("## Config drift");
+    expect(result.formatted).toContain("drift sentinel disabled — no drift evaluation ran this window.");
+    // The (expensive, per-knob) live evaluation never runs when the sentinel is off.
+    expect(mockedLoadLiveKnobStatuses).not.toHaveBeenCalled();
+  });
+
+  it("sentinel on: a knob drifting tighter with a persisted fingerprint renders its standing line; looser and unfingerprinted knobs are excluded, null-drift knobs count as clean", async () => {
+    stubRecapChannelFetch();
+    mockedLoadLiveKnobStatuses.mockResolvedValue([
+      knobStatus("clean_knob", null),
+      knobStatus("looser_knob", driftReport({ knobId: "looser_knob", direction: "looser" })),
+      knobStatus("ai_review_close_confidence", driftReport()),
+      knobStatus("unfingerprinted_knob", driftReport({ knobId: "unfingerprinted_knob" })),
+    ]);
+    const env = { ...envWithBothWebhooks(), CONFIG_DRIFT_SENTINEL_ENABLED: "true" as never } as Env;
+    // Standing 7 days: GEN is 2026-07-08T00:00:00.000Z, fingerprinted 2026-07-01T00:00:00.000Z.
+    await insertFingerprintRow(env, "ai_review_close_confidence", "2026-07-01T00:00:00.000Z");
+
+    const result = await runMaintainerRecap(env, { generatedAt: GEN });
+    expect(result.skipped).toBe(false);
+    if (result.skipped) return;
+    expect(result.formatted).toContain("## Config drift");
+    expect(result.formatted).toContain("ai_review_close_confidence (ai_consensus_defect): live 0.93 vs dominating 0.95 (tighter)");
+    expect(result.formatted).toContain("standing 7 day(s)");
+    // Only clean_knob counts as clean -- looser_knob and unfingerprinted_knob are excluded from BOTH arms.
+    expect(result.formatted).toContain("1 other evaluated knob(s) are clean.");
+    expect(result.formatted).not.toContain("looser_knob");
+    expect(result.formatted).not.toContain("unfingerprinted_knob");
+  });
+
+  it("sentinel on with nothing drifting renders the clean summary line over every evaluated knob", async () => {
+    stubRecapChannelFetch();
+    mockedLoadLiveKnobStatuses.mockResolvedValue([knobStatus("a", null), knobStatus("b", null)]);
+    const env = { ...envWithBothWebhooks(), CONFIG_DRIFT_SENTINEL_ENABLED: "true" as never } as Env;
+    const result = await runMaintainerRecap(env, { generatedAt: GEN });
+    expect(result.skipped).toBe(false);
+    if (result.skipped) return;
+    expect(result.formatted).toContain("Config drift clean: all 2 evaluated knob(s) remain their best-supported live values.");
+  });
+
+  it("a thrown system_flags read leaves the digest intact minus the config-drift section (fail-safe null arm)", async () => {
+    stubRecapChannelFetch();
+    mockedLoadLiveKnobStatuses.mockResolvedValue([knobStatus("ai_review_close_confidence", driftReport())]);
+    const base = { ...envWithBothWebhooks(), CONFIG_DRIFT_SENTINEL_ENABLED: "true" as never } as Env;
+    const env = new Proxy(base, {
+      get(target, prop, receiver) {
+        if (prop !== "DB") return Reflect.get(target, prop, receiver);
+        return new Proxy(target.DB, {
+          get(dbTarget, dbProp, dbReceiver) {
+            if (dbProp !== "prepare") return Reflect.get(dbTarget, dbProp, dbReceiver);
+            return (sql: string) => {
+              if (sql.includes("SELECT key, updated_at FROM system_flags")) throw new Error("fingerprint_read_blip");
+              return dbTarget.prepare(sql);
+            };
+          },
+        });
+      },
+    }) as Env;
+
+    const result = await runMaintainerRecap(env, { generatedAt: GEN });
+    expect(result.skipped).toBe(false);
+    if (result.skipped) return;
+    expect(result.formatted).not.toContain("## Config drift");
+    // The failure costs one section, not the recap.
+    expect(result.formatted).toContain("## Totals");
+  });
+
+  it("an explicitly-passed options.configDrift overrides the loaded projection and skips the live read", async () => {
+    stubRecapChannelFetch();
+    const explicit = buildDriftRecapSection({ generatedAt: GEN, sentinelEnabled: false, drifting: [], cleanKnobs: 0 });
+    const env = { ...envWithBothWebhooks(), CONFIG_DRIFT_SENTINEL_ENABLED: "true" as never } as Env;
+    const result = await runMaintainerRecap(env, { generatedAt: GEN, configDrift: explicit });
+    expect(result.skipped).toBe(false);
+    if (result.skipped) return;
+    expect(result.formatted).toContain("drift sentinel disabled — no drift evaluation ran this window.");
+    // The caller-supplied projection wins WITHOUT the loader ever reading the live knob statuses.
+    expect(mockedLoadLiveKnobStatuses).not.toHaveBeenCalled();
   });
 });

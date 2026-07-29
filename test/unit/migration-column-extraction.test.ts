@@ -107,6 +107,21 @@ describe("extractSchemaEvents (#2551)", () => {
     ]);
   });
 
+  it("extracts ALTER TABLE … RENAME TO as a single rename_table event, disambiguated from column rename (#9647)", () => {
+    // The exact rebuild-and-rename statement from migrations/0201_ledger_anchor_bittensor.sql.
+    expect(extractSchemaEvents("ALTER TABLE decision_ledger_anchors_new RENAME TO decision_ledger_anchors;")).toEqual([
+      { type: "rename_table", from: "decision_ledger_anchors_new", to: "decision_ledger_anchors" },
+    ]);
+    // The column-rename forms (with and without the COLUMN keyword) must NOT be misparsed as a table rename —
+    // they still produce the remove+define pair.
+    expect(extractSchemaEvents("ALTER TABLE widgets RENAME color TO hue;")).toEqual([
+      { type: "remove_column", table: "widgets", column: "color" },
+      { type: "define_column", table: "widgets", column: "hue" },
+    ]);
+    // And a table named like the "to" keyword must not confuse either regex.
+    expect(extractSchemaEvents("ALTER TABLE t RENAME TO t2;")).toEqual([{ type: "rename_table", from: "t", to: "t2" }]);
+  });
+
   it("extracts ADD COLUMN's terser SQLite form that omits the COLUMN keyword (#8368)", () => {
     expect(extractSchemaEvents("ALTER TABLE widgets ADD color TEXT;")).toEqual([{ type: "define_column", table: "widgets", column: "color" }]);
   });
@@ -206,6 +221,28 @@ describe("detectColumnCollisions (#2551)", () => {
       ["0001_a.sql", "CREATE TABLE t (id INTEGER, temp_col TEXT);"],
       ["0002_b.sql", "ALTER TABLE t DROP COLUMN temp_col;"],
       ["0003_c.sql", "ALTER TABLE t ADD COLUMN temp_col TEXT;"],
+    ];
+    expect(detectColumnCollisions(files)).toEqual([]);
+  });
+
+  it("REGRESSION: re-keys columns across a rebuild-and-rename so a later duplicate is still caught (#9647)", () => {
+    // The standard SQLite rebuild-and-rename (as migrations/0201 does): a new table is built with `backend`,
+    // then RENAMEd over the old one. Before #9647 the detector tracked the column under the *_new name and
+    // went blind — a later ADD COLUMN backend on the real table read as a fresh, non-colliding definition.
+    const files: Array<[string, string]> = [
+      ["0001_a.sql", "CREATE TABLE t (id INTEGER, backend TEXT);"],
+      ["0002_b.sql", "CREATE TABLE t_new (id INTEGER, backend TEXT); ALTER TABLE t_new RENAME TO t;"],
+      ["0003_c.sql", "ALTER TABLE t ADD COLUMN backend TEXT;"],
+    ];
+    // Exactly one collision on t.backend — the re-keyed column from 0002's renamed table collides with 0003's.
+    expect(detectColumnCollisions(files)).toEqual([{ table: "t", column: "backend", files: ["0002_b.sql", "0003_c.sql"] }]);
+  });
+
+  it("does not flag the renamed table's columns against the now-vacated old name (#9647)", () => {
+    const files: Array<[string, string]> = [
+      ["0001_a.sql", "CREATE TABLE t_new (id INTEGER, c TEXT); ALTER TABLE t_new RENAME TO t;"],
+      // A brand-new table reusing the OLD (vacated) name must not collide with the columns that moved off it.
+      ["0002_b.sql", "CREATE TABLE t_new (id INTEGER, c TEXT);"],
     ];
     expect(detectColumnCollisions(files)).toEqual([]);
   });

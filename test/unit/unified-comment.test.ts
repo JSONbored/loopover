@@ -927,6 +927,54 @@ describe("review.max_findings display caps (#2049)", () => {
     expect(capped).toContain("only nit");
     expect(capped).not.toMatch(/\+1 more/);
   });
+
+  describe("un-capped dedupe + default 12-item display cap (#9670)", () => {
+    // Before #9670 dedupeLines' default cap was 12, so it silently dropped findings 13+ BEFORE the disclosed
+    // truncation stage: the human list was cut with no "+N more" footer, and the "Copy for AI agents" block
+    // (which promises *every* blocker) never saw them. Now dedupeLines is un-capped and the 12-item default
+    // lives at the truncateFindingsForDisplay call, so overflow is disclosed and the AI block stays complete.
+    const thirteenBlockers = Array.from({ length: 13 }, (_, i) => `blocker ${i + 1}`);
+
+    it("caps the human blocker list at 12 with a +1 more footer while the AI block keeps all 13", () => {
+      const md = renderUnifiedReviewComment({
+        ...base,
+        recommendations: ["request_changes"],
+        blockers: thirteenBlockers,
+        // maxFindingsCaps intentionally unset -> the default 12-item display cap applies.
+      });
+      // The 12th blocker is the last one shown in the human list; the 13th is hidden behind the footer.
+      expect(md).toContain("- blocker 12");
+      const humanSection = md.split("📋 Copy for AI agents")[0]!;
+      expect(humanSection).not.toContain("- blocker 13");
+      expect(md).toContain("_+1 more_");
+      // The AI-context block lists the FULL set, including the 13th that the human list dropped.
+      const aiSection = md.split("📋 Copy for AI agents")[1]!;
+      expect(aiSection).toContain("13. blocker 13");
+    });
+
+    it("caps the nits list at 12 with a +1 more footer by default", () => {
+      const md = renderUnifiedReviewComment({
+        ...base,
+        nits: Array.from({ length: 13 }, (_, i) => `nit ${i + 1}`),
+      });
+      expect(md).toContain("- [ ] nit 12");
+      expect(md).not.toContain("- [ ] nit 13");
+      expect(md).toContain("_+1 more_");
+      // The section label counts every (deduped) nit, not just the shown 12.
+      expect(md).toContain("13 non-blocking");
+    });
+
+    it("derives the blocker chip count from the deduped set, so duplicates never inflate it", () => {
+      const md = renderUnifiedReviewComment({
+        ...base,
+        recommendations: ["request_changes"],
+        // Three raw blockers, but two are case-insensitive duplicates -> two distinct after dedupe.
+        blockers: ["Real defect", "real defect", "Second defect"],
+      });
+      expect(md).toContain("`2 blockers`");
+      expect(md).not.toContain("`3 blockers`");
+    });
+  });
 });
 
 describe("review.comment_verbosity (#2047)", () => {

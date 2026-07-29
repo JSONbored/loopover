@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { ExternalLink } from "lucide-react";
 
 import {
@@ -40,7 +41,6 @@ export function AuditFeed({ enabled = true }: AuditFeedProps) {
   const [repoFullName, setRepoFullName] = useState("");
   const [sinceInput, setSinceInput] = useState("");
   const [sinceIso, setSinceIso] = useState("");
-  const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<SkippedPrAuditExport | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -59,44 +59,54 @@ export function AuditFeed({ enabled = true }: AuditFeedProps) {
     [reason, repoFullName, sinceIso],
   );
 
-  const load = useCallback(async () => {
-    if (!enabled) {
-      setStatus("error");
-      setError("This audit feed is unavailable for your current role.");
-      setData(null);
-      return;
-    }
-    const generation = ++requestGenerationRef.current;
-    setLoadingMore(false);
-    setStatus("loading");
-    setError(null);
-    const origin = getApiOrigin().replace(/\/$/, "");
-    const result = await apiFetch<SkippedPrAuditExport>(`${origin}${filterPath}`, {
-      label: "Skipped PR audit",
-      credentials: "include",
-      headers: { Accept: "application/json" },
-    });
-    if (generation !== requestGenerationRef.current) return;
-    if (result.ok) {
+  // The FIRST page comes from react-query (#9588). Later pages are appended by `loadMore` below, so the
+  // rendered list stays state -- seeded from each new first-page response, gated on dataUpdatedAt and
+  // applied during render, which is also what resets pagination when the filters change.
+  const query = useQuery({
+    queryKey: ["skipped-pr-audit", filterPath],
+    enabled,
+    retry: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    queryFn: async () => {
+      const origin = getApiOrigin().replace(/\/$/, "");
+      const result = await apiFetch<SkippedPrAuditExport>(`${origin}${filterPath}`, {
+        label: "Skipped PR audit",
+        credentials: "include",
+        headers: { Accept: "application/json" },
+      });
+      if (!result.ok) throw new Error(result.message);
       const normalized = normalizeSkippedPrAuditExport(result.data);
-      if (!normalized) {
-        setData(null);
-        setError("The skipped PR audit endpoint returned an unexpected response.");
-        setStatus("error");
-        return;
-      }
-      setData(normalized);
-      setStatus("ready");
-      return;
-    }
-    setData(null);
-    setError(result.message);
-    setStatus("error");
-  }, [enabled, filterPath]);
+      if (!normalized)
+        throw new Error("The skipped PR audit endpoint returned an unexpected response.");
+      return normalized;
+    },
+  });
 
+  const [seededAt, setSeededAt] = useState<number | null>(null);
+  if (query.data && seededAt !== query.dataUpdatedAt) {
+    setSeededAt(query.dataUpdatedAt);
+    setData(query.data);
+    setLoadingMore(false);
+    setError(null);
+  }
+
+  // Invalidate any in-flight `loadMore` whenever the filters change or a fresh first page lands, so a
+  // late page cannot append itself onto a list it no longer belongs to. A ref WRITE, and therefore an
+  // effect rather than the render-time seed above -- refs may not be touched during render (#9588).
   useEffect(() => {
-    void load();
-  }, [load]);
+    requestGenerationRef.current += 1;
+  }, [filterPath, query.dataUpdatedAt]);
+
+  // A role that cannot read this feed is a DERIVED error, not a fetch that never happens.
+  const status: "loading" | "ready" | "error" =
+    !enabled || query.isError ? "error" : data !== null ? "ready" : "loading";
+  const errorMessage = !enabled
+    ? "This audit feed is unavailable for your current role."
+    : query.isError
+      ? query.error.message
+      : error;
+  const load = () => void query.refetch();
 
   const applyFilters = () => {
     setSinceIso(normalizeSinceInput(sinceInput));
@@ -168,7 +178,7 @@ export function AuditFeed({ enabled = true }: AuditFeedProps) {
     return (
       <ErrorState
         title="Couldn't load skip audit"
-        description={error ?? "The skipped PR audit endpoint did not respond."}
+        description={errorMessage ?? "The skipped PR audit endpoint did not respond."}
         onRetry={() => void load()}
       />
     );
@@ -291,7 +301,7 @@ export function AuditFeed({ enabled = true }: AuditFeedProps) {
             {loadingMore ? "Loading…" : "Load more"}
           </StateActionButton>
         ) : null}
-        {error ? <p className="text-token-xs text-destructive">{error}</p> : null}
+        {errorMessage ? <p className="text-token-xs text-destructive">{errorMessage}</p> : null}
         <StateActionButton onClick={() => void load()}>Refresh</StateActionButton>
       </div>
     </div>

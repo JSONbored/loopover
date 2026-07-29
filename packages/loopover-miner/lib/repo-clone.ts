@@ -326,6 +326,13 @@ async function ensureRepoClonedUnlocked(
     }
     const cloned = await runGit(["clone", cloneUrl, repoPath], cloneBaseDir, timeoutMs);
     if (!cloned.ok) return { ok: false, repoPath, error: cloned.stderr || "git_clone_failed" };
+    // A plain `git clone` creates exactly one local branch (origin's default HEAD). When baseBranch is anything
+    // else, `git worktree add -b <attempt> <path> <baseBranch>` in the consumer can't rev-parse a bare
+    // `<baseBranch>` name, so the first attempt fails with `invalid reference` until a later run's fetch+reset
+    // path DWIM-creates it. Check it out now (same call + error shape as the existing-clone path below); a
+    // fresh clone is already at origin's tip, so no fetch/reset is needed here.
+    const checkedOut = await runGit(["checkout", baseBranch], repoPath, timeoutMs);
+    if (!checkedOut.ok) return { ok: false, repoPath, error: checkedOut.stderr || "git_checkout_failed" };
     return { ok: true, repoPath };
   }
 

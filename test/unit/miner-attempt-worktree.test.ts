@@ -138,9 +138,11 @@ describe("prepareAttemptWorktree / cleanupAttemptWorktree (#5132)", () => {
     expect(firstCwd).toBe(root);
   });
 
-  it("returns ok:false with git's real stderr when git worktree add fails (e.g. an unknown base branch)", async () => {
-    // Real git subprocess round trip (origin init + a real clone + a failing `git worktree add`). See the
-    // REGRESSION test above for why this needs an explicit timeout.
+  it("returns ok:false with git's real stderr and the repoPath when an unknown base branch can't be prepared", async () => {
+    // Real git subprocess round trip (origin init + a real clone + a failing base-branch checkout). Since #9682
+    // the fresh-clone path checks out baseBranch, so an unknown base branch now fails there (inside
+    // ensureRepoCloned) rather than at `git worktree add`; either way prepareAttemptWorktree surfaces
+    // {ok:false, repoPath, error}. See the REGRESSION test above for why this needs an explicit timeout.
     const root = tempRoot("loopover-miner-attempt-worktree-addfail-");
     const originPath = initOriginRepo(root);
     const cloneBaseDir = join(root, "cache");

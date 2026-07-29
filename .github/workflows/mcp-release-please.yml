@@ -181,6 +181,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh workflow run publish-engine.yml --ref "${{ steps.release.outputs['packages/loopover-engine--tag_name'] }}" -f released_by_release_please=true
 
+      - name: Dispatch Contract publish
+        if: ${{ steps.release.outputs['packages/loopover-contract--release_created'] == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run publish-contract.yml --ref "${{ steps.release.outputs['packages/loopover-contract--tag_name'] }}" -f released_by_release_please=true
+
       - name: Dispatch Miner publish
         if: ${{ steps.release.outputs['packages/loopover-miner--release_created'] == 'true' }}
         env:
@@ -320,16 +326,24 @@ jobs:
             return 1
           }
 
-          engine_ok=true
+          # packages/loopover-mcp and packages/loopover-miner carry REAL runtime `dependencies` entries on
+          # BOTH @loopover/engine and @loopover/contract (#9749), so both prerequisites must be live on
+          # npm before either dependent publishes -- otherwise the dependent resolves a version that
+          # exists nowhere and fails ETARGET, the same race this whole block exists to avoid.
+          deps_ok=true
+          deps_published=false
+          if needs_publish packages/loopover-contract @loopover/contract; then
+            if dispatch_and_wait publish-contract.yml; then deps_published=true; else deps_ok=false; fi
+          fi
           if needs_publish packages/loopover-engine @loopover/engine; then
-            dispatch_and_wait publish-engine.yml || engine_ok=false
-            if [ "$engine_ok" = "true" ]; then
-              echo "Waiting for npm registry propagation before publishing engine's dependents..."
-              sleep 30
-            fi
+            if dispatch_and_wait publish-engine.yml; then deps_published=true; else deps_ok=false; fi
+          fi
+          if [ "$deps_ok" = "true" ] && [ "$deps_published" = "true" ]; then
+            echo "Waiting for npm registry propagation before publishing engine/contract dependents..."
+            sleep 30
           fi
 
-          if [ "$engine_ok" = "true" ]; then
+          if [ "$deps_ok" = "true" ]; then
             if needs_publish packages/loopover-mcp @loopover/mcp; then
               dispatch_and_wait_with_retry publish-mcp.yml || echo "::warning::publish-mcp.yml did not succeed after retries -- left for manual follow-up."
             fi
@@ -337,7 +351,7 @@ jobs:
               dispatch_and_wait_with_retry publish-miner.yml || echo "::warning::publish-miner.yml did not succeed after retries -- left for manual follow-up."
             fi
           else
-            echo "::warning::Skipping mcp/miner reconciliation -- publish-engine.yml did not succeed, and they depend on it."
+            echo "::warning::Skipping mcp/miner reconciliation -- publish-engine.yml and/or publish-contract.yml did not succeed, and they depend on both."
           fi
 
           if needs_publish packages/loopover-ui-kit @loopover/ui-kit; then
@@ -353,7 +367,7 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
         run: |
           set -euo pipefail
-          for dir_pkg in "packages/loopover-engine:@loopover/engine" "packages/loopover-mcp:@loopover/mcp" "packages/loopover-miner:@loopover/miner" "packages/loopover-ui-kit:@loopover/ui-kit"; do
+          for dir_pkg in "packages/loopover-contract:@loopover/contract" "packages/loopover-engine:@loopover/engine" "packages/loopover-mcp:@loopover/mcp" "packages/loopover-miner:@loopover/miner" "packages/loopover-ui-kit:@loopover/ui-kit"; do
             dir="${dir_pkg%%:*}"
             pkg="${dir_pkg##*:}"
             local_version="$(node -p "require('./$dir/package.json').version")"

@@ -1,0 +1,279 @@
+name: Publish Contract Package
+
+# workflow_dispatch-only, mirroring publish-engine.yml / publish-ui-kit.yml exactly (see publish-mcp.yml
+# for the fuller rationale): a GITHUB_TOKEN-created tag doesn't fire push-triggered workflows, so the
+# release automation must explicitly dispatch this after tagging. A bare manual dispatch (
+# released_by_release_please left false) is the human override path and self-tags HEAD from
+# packages/loopover-contract/package.json's version.
+#
+# @loopover/contract was bootstrap-published to npm at 0.1.0 from a maintainer's own authenticated
+# `npm login` session (#9749) -- npm's trusted publishing/OIDC cannot create a brand-new package -- and
+# a Trusted Publisher is configured for it in npmjs.com's package settings against THIS filename
+# (GitHub Actions provider, JSONbored/loopover, environment `release`). Renaming this file breaks that
+# connection and every publish with it.
+#
+# ORDERING: packages/loopover-mcp and packages/loopover-miner both carry a REAL runtime `dependencies`
+# entry on @loopover/contract, exactly as they do on @loopover/engine. mcp-release-please.yml's
+# reconciliation therefore dispatches this workflow alongside engine and BEFORE either dependent, for
+# the same ETARGET reason documented at length in that file.
+on:
+  workflow_dispatch:
+    inputs:
+      released_by_release_please:
+        description: "Internal: set by the release automation's dispatch so this run skips re-creating the GitHub release it already made."
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-contract-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  # Unprivileged: resolves the version, builds, and packs the tarball -- all with contents: read only.
+  # Same privilege-separation reasoning as publish-engine.yml's validate job.
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      release_sha: ${{ steps.version.outputs.release_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release commit is on main
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
+            echo "::error::Contract package releases must be cut from a commit reachable from main."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Resolve release version
+        id: version
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./packages/loopover-contract/package.json').version")"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid package version: $VERSION"
+            exit 1
+          fi
+          TAG="contract-v${VERSION}"
+          # The RELEASE COMMIT is the newest main commit that introduced this exact version string into
+          # package.json (the release PR's merge commit) -- NOT whatever main head happens to be when
+          # this run was dispatched. See publish-engine.yml's identical block and #8525 for why.
+          RELEASE_SHA="$(git log -n 1 --format=%H -S "\"version\": \"${VERSION}\"" refs/remotes/origin/main -- packages/loopover-contract/package.json)"
+          if [ -z "$RELEASE_SHA" ]; then
+            echo "::error::Could not resolve the commit that introduced version $VERSION into packages/loopover-contract/package.json -- refusing to guess (would tag main head). (#8525)"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
+            echo "::error::Resolved release commit $RELEASE_SHA is not reachable from main."
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            TAG_SHA="$(git rev-list -n 1 "$TAG")"
+            if [ "$TAG_SHA" != "$RELEASE_SHA" ]; then
+              echo "::error::Tag $TAG already exists but points at $TAG_SHA, not the resolved release commit $RELEASE_SHA"
+              exit 1
+            fi
+            echo "Tag $TAG already exists and matches the resolved release commit."
+          else
+            echo "Tag $TAG does not exist yet; the publish job will create it at $RELEASE_SHA."
+          fi
+          # Build/pack against the release commit's own tree, so the published artifact is
+          # byte-for-byte the content the version number describes.
+          git checkout --detach "$RELEASE_SHA"
+          {
+            echo "version=$VERSION"
+            echo "tag=$TAG"
+            echo "release_sha=$RELEASE_SHA"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Build + pack happen in THIS unprivileged job (no id-token). The privileged publish job below
+      # never runs npm install/build, so a compromised build dependency can't reach the OIDC token.
+      # There is no separate typecheck step because this package's `build` IS `tsc -p tsconfig.json`.
+      - name: Pack and smoke-test the tarball
+        run: |
+          set -euo pipefail
+          npm run build --workspace @loopover/contract
+          PACK_JSON="$(npm pack --workspace @loopover/contract --pack-destination "$RUNNER_TEMP" --json)"
+          TARBALL="$(node -e 'const fs=require("fs"); const input=fs.readFileSync(0,"utf8"); process.stdout.write(JSON.parse(input)[0].filename)' <<< "$PACK_JSON")"
+          TARBALL_PATH="$RUNNER_TEMP/$TARBALL"
+          UNEXPECTED_FILES="$(tar -tzf "$TARBALL_PATH" | grep -Ev '^(package/dist/.+|package/(package.json|README.md|CHANGELOG.md|LICENSE))$' || true)"
+          if [ -n "$UNEXPECTED_FILES" ]; then
+            printf '%s\n' "$UNEXPECTED_FILES"
+            echo "Unexpected file in package tarball"
+            exit 1
+          fi
+          # Secret scan, with ONE deliberate exclusion. Unlike its sibling packages, this one SHIPS the
+          # redaction logic: dist/telemetry.js defines SECRET_VALUE_PATTERN, whose source text contains
+          # a literal `-----BEGIN [A-Z ]*PRIVATE KEY-----` alternative (plus a doc comment quoting a
+          # full PEM header, describing the bug that alternative fixes). Scanning it with the siblings'
+          # verbatim pattern is a guaranteed false positive on EVERY release -- verified against the
+          # 0.1.0 bootstrap tarball. Excluding the module by name keeps the check meaningful for the
+          # other 92 files rather than weakening the pattern for all of them; if a second module ever
+          # legitimately needs excluding, that is a signal to reconsider the approach, not to extend
+          # this list quietly.
+          SCAN_DIR="$(mktemp -d)"
+          tar -xzf "$TARBALL_PATH" -C "$SCAN_DIR"
+          if grep -rqE '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|github_pat_|gh[pousr]_|gts_[0-9a-f]{64}|[A-Z0-9_]*(TOKEN|SECRET|PRIVATE_KEY)=)' \
+               "$SCAN_DIR/package" \
+               --exclude='telemetry.js' --exclude='telemetry.js.map' --exclude='telemetry.d.ts'; then
+            echo "Secret-like content found in package tarball"
+            exit 1
+          fi
+          # And prove the exclusion stayed narrow: the excluded module must still be the ONLY thing that
+          # would have tripped the scan. If a real secret ever lands in telemetry.js this still fires.
+          if grep -rqE '(github_pat_|gh[pousr]_[A-Za-z0-9]{16,}|gts_[0-9a-f]{64})' "$SCAN_DIR/package"; then
+            echo "Real token-shaped content found in package tarball (including the redaction module)"
+            exit 1
+          fi
+          TMP="$(mktemp -d)"
+          npm --prefix "$TMP" init -y >/dev/null
+          npm --prefix "$TMP" install "$TARBALL_PATH" --no-save >/dev/null
+          node --input-type=module -e "
+            import { TOOL_CATEGORIES } from '$TMP/node_modules/@loopover/contract/dist/index.js';
+            import { PublicStatsSchema } from '$TMP/node_modules/@loopover/contract/dist/public-api.js';
+            import { CLI_RESPONSE_SCHEMAS } from '$TMP/node_modules/@loopover/contract/dist/api-schemas.js';
+            if (!Array.isArray(TOOL_CATEGORIES) || TOOL_CATEGORIES.length === 0) throw new Error('TOOL_CATEGORIES smoke test failed');
+            if (typeof PublicStatsSchema?.parse !== 'function') throw new Error('PublicStatsSchema smoke test failed');
+            if (!CLI_RESPONSE_SCHEMAS) throw new Error('CLI_RESPONSE_SCHEMAS smoke test failed');
+          "
+
+      - name: Upload package tarball
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: loopover-contract-tarball
+          path: ${{ runner.temp }}/*.tgz
+          if-no-files-found: error
+          retention-days: 7
+
+  # Privileged: tags + publishes the EXACT tarball the unprivileged job already tested. environment:
+  # release requires reviewer approval per repo Settings > Environments, and is the environment name
+  # the npmjs.com Trusted Publisher for @loopover/contract is configured against.
+  publish:
+    runs-on: ubuntu-latest
+    needs: validate
+    environment: release
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify release commit is on main
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
+            echo "::error::Contract package releases must be cut from a commit reachable from main."
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+          registry-url: https://registry.npmjs.org
+
+      - name: Create or verify release tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          VERSION: ${{ needs.validate.outputs.version }}
+          RELEASE_SHA: ${{ needs.validate.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG already exists (verified against the resolved release commit by the validate job)."
+          else
+            echo "Creating tag $TAG at the resolved release commit ($RELEASE_SHA) -- never at HEAD (#8525)."
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "@loopover/contract v${VERSION}" "$RELEASE_SHA"
+            git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
+            gh auth setup-git
+            git push origin "$TAG"
+          fi
+
+      - name: Download package tarball
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: loopover-contract-tarball
+          path: ${{ runner.temp }}/loopover-contract-package
+
+      - name: Publish to npm (OIDC trusted publishing)
+        env:
+          NPM_CONFIG_PROVENANCE: "true"
+        run: |
+          set -euo pipefail
+          count=$(find "$RUNNER_TEMP/loopover-contract-package" -maxdepth 1 -type f -name "*.tgz" | wc -l | tr -d ' ')
+          if [ "$count" != "1" ]; then
+            echo "Expected exactly one tarball, found $count" >&2
+            find "$RUNNER_TEMP/loopover-contract-package" -maxdepth 1 -type f -name "*.tgz" -print >&2
+            exit 1
+          fi
+          tarball=$(find "$RUNNER_TEMP/loopover-contract-package" -maxdepth 1 -type f -name "*.tgz" -print -quit)
+          npx -y npm@11.15.0 publish "$tarball" --access public --provenance
+
+  github-release:
+    runs-on: ubuntu-latest
+    needs: [validate, publish]
+    # Skip when the release automation dispatched this run: it already created the GitHub release with
+    # its own generated changelog notes before dispatching, so running this unconditionally would
+    # overwrite those richer notes with the generic blurb below.
+    if: ${{ inputs.released_by_release_please != true }}
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          set -euo pipefail
+          NOTES_FILE="$(mktemp)"
+          cat > "$NOTES_FILE" <<EOF
+          Published [@loopover/contract v${RELEASE_VERSION}](https://www.npmjs.com/package/@loopover/contract/v/${RELEASE_VERSION}) to npm with provenance.
+
+          Install:
+
+          \`\`\`sh
+          npm install @loopover/contract@${RELEASE_VERSION}
+          \`\`\`
+          EOF
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "@loopover/contract v${RELEASE_VERSION}" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --title "@loopover/contract v${RELEASE_VERSION}" --notes-file "$NOTES_FILE" --verify-tag
+          fi

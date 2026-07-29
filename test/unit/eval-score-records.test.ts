@@ -6,9 +6,10 @@ import {
   ORB_GATE_SUBJECT_ID,
   OUTCOME_CONFIRMED_PRECISION_SCORING_RULE_VERSION,
   verifyEvalScoreRecordDigest,
+  EMPTY_CORPUS_CHECKSUM,
   type EvalScoreRecord,
 } from "../../src/review/eval-score-records";
-import { contentDigest } from "../../src/review/decision-record";
+import { contentDigest, sha256Hex } from "../../src/review/decision-record";
 import type { PublicRulePrecision } from "../../src/review/public-rule-precision";
 
 const ISSUED_AT = "2026-07-27T12:00:00.000Z";
@@ -27,6 +28,25 @@ describe("buildEvalScoreRecordsFromRulePrecision (#9266)", () => {
   it("returns an empty array when there is no persisted backtest run to commit to", async () => {
     const records = await buildEvalScoreRecordsFromRulePrecision({ ...PRECISION_WITH_FREEZE_POINT, latestBacktestRun: null }, ISSUED_AT);
     expect(records).toEqual([]);
+  });
+
+  it("refuses to publish records whose freeze point commits to an empty corpus", async () => {
+    // Regression: production published decided=460/confirmed=287 alongside sha256("[]") -- a hash that is
+    // byte-identical for every rule and every window, so it committed to nothing a consumer could re-derive.
+    const records = await buildEvalScoreRecordsFromRulePrecision(
+      { ...PRECISION_WITH_FREEZE_POINT, latestBacktestRun: { corpusChecksum: EMPTY_CORPUS_CHECKSUM, at: "2026-07-27T10:00:00.000Z" } },
+      ISSUED_AT,
+    );
+    expect(records).toEqual([]);
+  });
+
+  it("EMPTY_CORPUS_CHECKSUM is the exporter's own checksum over zero cases", async () => {
+    // scripts/backtest-corpus-export-core.ts hashes `JSON.stringify(cases.map(canonicalizeCase))`, which for
+    // an empty list is the two-byte string "[]" -- re-derived here so the hard-coded constant cannot drift
+    // from the exporter that produces the value it guards against. (That exporter's canonicalization and
+    // canonicalJson coincide ONLY on the empty case, so this hashes the literal preimage rather than
+    // round-tripping [] through either one.)
+    expect(EMPTY_CORPUS_CHECKSUM).toBe(await sha256Hex("[]"));
   });
 
   it("builds one record per rule, committed to the freeze point's corpus checksum", async () => {

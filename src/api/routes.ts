@@ -1,5 +1,6 @@
 import { Hono, type Context } from "hono";
 import { requiresApiToken } from "../auth/route-auth";
+import { handleAppError, nonErrorBoundary } from "./error-handler";
 import { createWorkerPostHogErrorMiddleware } from "./worker-posthog";
 import { z } from "zod";
 import { parsePositiveInt } from "../utils/json";
@@ -305,7 +306,9 @@ import { isFairnessAnalyticsEnabled, resolveFairnessAnalyticsManifestOverride } 
 import { isRagEnabled } from "../review/rag-wire";
 import { loadDecisionLedgerTip, loadPublicDecisionRecord, loadPublicLedgerRow, verifyDecisionLedger } from "../review/decision-record";
 import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
-import { anchorSigningInput, buildLedgerAnchorPayload, currentAnchorKey, parseAnchorPublicKeys, signLedgerAnchorPayload } from "../review/ledger-anchor";
+import { anchorSigningInput, buildLedgerAnchorPayload, currentAnchorKey, parseAnchorPublicKeys, publicAnchorStatus, signLedgerAnchorPayload } from "../review/ledger-anchor";
+import { resolveProofPage } from "../review/proof-summary";
+import { renderProofBadgeSvg } from "./proof-badge";
 import { ingestBittensorAnchorReport, parseBittensorAnchorReport } from "../review/ledger-anchor-bittensor";
 import { loadPublicLedgerAnchors } from "../review/ledger-anchor-persistence";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
@@ -1162,6 +1165,13 @@ function internalOpsAgentConfig(env: Env): OpsAgentConfig {
 
 export function createApp() {
   const app = new Hono<AppBindings>();
+  // The global error boundary. Hono installs its own default regardless, so this REPLACES a handler that
+  // returned a text/plain body from a JSON API and logged a raw Error the forwarder cannot classify --
+  // see error-handler.ts for what it preserves (HTTPException status) and what it refuses to leak.
+  app.onError(handleAppError);
+  // Registered OUTERMOST: Hono routes only `instanceof Error` to onError and RE-THROWS anything else, so a
+  // thrown non-Error would otherwise escape the boundary entirely -- no response, no log, no c.error.
+  app.use("*", nonErrorBoundary());
   // Registered FIRST/outermost so it wraps every other middleware and route below, including a thrown
   // exception from the CORS/rate-limit middleware right after this. REPLACES the old Sentry middleware
   // entirely (2026-07-25 epic #8286 correction: full replacement, not a parallel-run). No-ops completely
@@ -1346,8 +1356,59 @@ export function createApp() {
       ...(before !== undefined && { before }),
       ...(limit !== undefined && { limit }),
     });
+    // An empty list is ambiguous on its own -- say WHY, so "not configured" can never be mistaken for
+    // "healthy, nothing to report". Only computed for an unfiltered first page: with a backend/before filter an
+    // empty page means "none matched", which is a different question than "is anchoring running at all".
+    const unfiltered = backend === undefined && before === undefined;
+    const [tip, keys] = unfiltered
+      ? await Promise.all([loadDecisionLedgerTip(c.env), Promise.resolve(parseAnchorPublicKeys(c.env.LOOPOVER_LEDGER_ANCHOR_KEYS))])
+      : [null, []];
     c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-    return c.json(result);
+    return c.json({
+      ...result,
+      ...(tip !== null && {
+        status: publicAnchorStatus({
+          anchorCount: result.anchors.length,
+          tipSeq: tip.seq,
+          hasSigningKey: currentAnchorKey(keys) !== null && Boolean(c.env.LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY),
+        }),
+      }),
+    });
+  });
+
+  // #9569: the public proof page's data, and its README badge. Read-only over the SAME public sources the
+  // standalone endpoints already serve -- no new verification mechanism and no new SQL surface.
+  //
+  // Both handlers are thin renderers over ONE resolver (resolveProofPage): the gate, the read and the
+  // failure outcome are decided there, so the page and the badge cannot disagree about whether a repo is
+  // published. That is not a stylistic preference -- the gate previously lived inline in both bodies and
+  // exactly one of them was wired to the per-repo opt-out.
+  const proofPageDeps = {
+    loadManifest: loadRepoFocusManifest,
+    verifyLedger: (env: Env) => verifyDecisionLedger(env),
+    loadAnchors: (env: Env) => loadPublicLedgerAnchors(env, { limit: 20 }),
+  };
+
+  app.get("/v1/public/repos/:owner/:repo/proof", async (c) => {
+    const result = await resolveProofPage(c.env, `${c.req.param("owner")}/${c.req.param("repo")}`, proofPageDeps);
+    if (result.status === "disabled") return c.json({ error: "not_found" }, 404);
+    c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return c.json(result.summary);
+  });
+
+  // The badge deliberately reports the LEDGER's state rather than an accuracy percentage: a badge is a
+  // one-glance claim, and an accuracy number without the interval that makes it honest (which does not fit
+  // in a badge) is exactly the bare scalar the proof summary refuses to publish. A disabled repo renders
+  // the neutral badge rather than an error -- a broken image in a README is worse than an honest one.
+  app.get("/v1/public/repos/:owner/:repo/proof-badge.svg", async (c) => {
+    c.header("Content-Type", "image/svg+xml; charset=utf-8");
+    const result = await resolveProofPage(c.env, `${c.req.param("owner")}/${c.req.param("repo")}`, proofPageDeps);
+    if (result.status === "disabled") {
+      c.header("Cache-Control", "public, max-age=300");
+      return c.body(renderProofBadgeSvg(null), 404);
+    }
+    c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
+    return c.body(renderProofBadgeSvg(result.summary));
   });
 
   // #9277 (epic #9267): the current tip's SIGNED checkpoint, for the operator's off-Worker Bittensor
@@ -2698,7 +2759,7 @@ export function createApp() {
 
   app.get("/v1/installations/:id/health", async (c) => {
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     const health = await getInstallationHealth(c.env, installationId);
     if (!health) return c.json({ error: "installation_health_not_found" }, 404);
     return c.json(enrichInstallationHealth(health));
@@ -2706,7 +2767,7 @@ export function createApp() {
 
   app.get("/v1/installations/:id/repair", async (c) => {
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     const health = await getInstallationHealth(c.env, installationId);
     if (!health) return c.json({ error: "installation_health_not_found" }, 404);
     return c.json(await buildInstallationRepairDiagnostics(c.env, health));
@@ -2714,7 +2775,7 @@ export function createApp() {
 
   app.post("/v1/installations/:id/repair/refresh", async (c) => {
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     const refreshed = await refreshInstallationHealthForInstallation(c.env, installationId);
     if (!refreshed) return c.json({ error: "installation_not_found" }, 404);
     const health = await getInstallationHealth(c.env, installationId);
@@ -2744,7 +2805,7 @@ export function createApp() {
     const resolved = await resolveAppInstallationScope(c);
     if (resolved instanceof Response) return resolved;
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     const health = await getInstallationHealth(c.env, installationId);
     if (!health) return c.json({ error: "installation_health_not_found" }, 404);
     if (!installationRecordInScope(resolved.scope, health)) return c.json({ error: "forbidden_installation" }, 403);
@@ -2755,7 +2816,7 @@ export function createApp() {
     const resolved = await resolveAppInstallationScope(c);
     if (resolved instanceof Response) return resolved;
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     const health = await getInstallationHealth(c.env, installationId);
     if (!health) return c.json({ error: "installation_health_not_found" }, 404);
     if (!installationRecordInScope(resolved.scope, health)) return c.json({ error: "forbidden_installation" }, 403);
@@ -2766,7 +2827,7 @@ export function createApp() {
     const resolved = await resolveAppInstallationScope(c);
     if (resolved instanceof Response) return resolved;
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     // Ownership is enforced BEFORE the refresh side effect so a tenant can never trigger repair on an
     // installation they don't own; the existing health record supplies the account the scope is checked against.
     const existing = await getInstallationHealth(c.env, installationId);
@@ -2788,7 +2849,7 @@ export function createApp() {
     const resolved = await resolveAppInstallationScope(c);
     if (resolved instanceof Response) return resolved;
     const installationId = Number(c.req.param("id"));
-    if (!Number.isFinite(installationId)) return c.json({ error: "invalid_installation_id" }, 400);
+    if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "invalid_installation_id" }, 400);
     const installation = await getInstallation(c.env, installationId);
     if (!installation) return c.json({ error: "installation_not_found" }, 404);
     if (!installationRecordInScope(resolved.scope, { installationId: installation.id, accountLogin: installation.accountLogin })) {
@@ -3536,6 +3597,25 @@ export function createApp() {
 
     const [settings, pullRequest] = await Promise.all([resolveRepositorySettings(c.env, fullName), getPullRequest(c.env, fullName, number)]);
     if (!pullRequest) return c.json({ error: "pull_request_not_found" }, 404);
+
+    // When chat Q&A is disabled for the repo, generateChatQaAnswer is guaranteed to return `disabled` -- but only
+    // after this route has already spent a slot in the shared @loopover-chat rate-limit budget AND paid for the
+    // planNextWork grounding bundle (#9714). Gate on the SAME predicate the maintainer dashboard reads
+    // (isRepoChatQaEnabled at the capability map above), so the two can never disagree, and return
+    // generateChatQaAnswer's own disabled result (bundle unused on that path) rather than a second copy of it.
+    if (!isRepoChatQaEnabled(settings)) {
+      return c.json(
+        await generateChatQaAnswer(c.env, {
+          bundle: null,
+          question: parsed.data.question,
+          advisoryAiRouting: settings.advisoryAiRouting,
+          repoFullName: fullName,
+          issueNumber: number,
+          actor: resolveChatQaActor(gate.identity),
+          route: "app.maintainer_dashboard.chat_qa",
+        }),
+      );
+    }
 
     const actor = resolveChatQaActor(gate.identity);
     const targetKey = `${fullName}#${number}#chat`;

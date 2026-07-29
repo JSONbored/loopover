@@ -1493,3 +1493,17 @@ settings:
 #   # To stop trusting a peer, remove its key -- that is the whole revocation story, by design.
 #   peerKeys:
 #     - 0000000000000000000000000000000000000000000000000000000000000000
+
+# Public proof page (#9569) — the shareable, unauthenticated per-repo verification page
+# (`/proof/<owner>/<repo>`) and its README badge.
+#
+# OPT-OUT, not opt-in. Every figure the page renders is ALREADY publicly fetchable through the
+# ledger-verify, anchors and decision-record endpoints, so gating a page over data anyone can already
+# curl would add friction without adding privacy. This block exists because a page is nonetheless a
+# different artifact from an API: it is discoverable, linkable, and it markets this repo's numbers.
+#
+# Precedence: the operator's fleet-wide LOOPOVER_PUBLIC_PROOF flag must be on first. This block can turn
+# THIS repo's page OFF; it cannot turn one ON that the operator has not enabled. Omit the block entirely
+# to keep the page on once the operator enables it.
+# publicProof:
+#   enabled: false   # Bool. Default when the block is absent: true (opt-out).

@@ -11,15 +11,22 @@ import { createTestEnv } from "../helpers/d1";
 
 const NOW = Date.parse("2026-06-22T12:00:00.000Z");
 
+/** A day row whose volume is entirely own-ledger (no registered-Orb fold), which is what every case below
+ *  models -- so `ownMerged`/`ownClosed` mirror `merged`/`closed` and the accuracy denominator is unchanged.
+ *  The Orb-fold asymmetry gets its own explicit cases further down. */
+function row(day: string, merged: number, closed: number, reversed: number) {
+  return { day, merged, closed, ownMerged: merged, ownClosed: closed, reversed };
+}
+
 describe("buildPublicAccuracyTrend", () => {
   it("buckets day rows into weekly totals and computes the SAME accuracy formula as the live number", () => {
     const currentMonday = isoWeekStart(NOW);
     const priorMonday = isoWeekStart(NOW - 7 * 86_400_000);
     const trend = buildPublicAccuracyTrend(
       [
-        { day: priorMonday, merged: 4, closed: 2, reversed: 1 },
-        { day: priorMonday, merged: 1, closed: 0, reversed: 0 }, // a second day in the SAME week -- must accumulate
-        { day: currentMonday, merged: 3, closed: 3, reversed: 0 },
+        row(priorMonday, 4, 2, 1),
+        row(priorMonday, 1, 0, 0), // a second day in the SAME week -- must accumulate
+        row(currentMonday, 3, 3, 0),
       ],
       NOW,
       2,
@@ -45,33 +52,33 @@ describe("buildPublicAccuracyTrend", () => {
   it("REGRESSION: ignores day rows outside the trailing window instead of letting them corrupt the oldest bucket", () => {
     const currentMonday = isoWeekStart(NOW);
     const tooOld = isoWeekStart(NOW - 30 * 86_400_000);
-    const trend = buildPublicAccuracyTrend([{ day: tooOld, merged: 999, closed: 999, reversed: 999 }, { day: currentMonday, merged: MIN_ACCURACY_TREND_SAMPLE, closed: 0, reversed: 0 }], NOW, 2);
+    const trend = buildPublicAccuracyTrend([row(tooOld, 999, 999, 999), row(currentMonday, MIN_ACCURACY_TREND_SAMPLE, 0, 0)], NOW, 2);
     expect(trend[0]).toMatchObject({ merged: null, closed: null, reversed: null });
     expect(trend[1]).toMatchObject({ merged: MIN_ACCURACY_TREND_SAMPLE, closed: 0, reversed: 0 });
   });
 
   it("ignores an unparseable day string rather than throwing or corrupting a bucket", () => {
     const currentMonday = isoWeekStart(NOW);
-    const trend = buildPublicAccuracyTrend([{ day: "not-a-date", merged: 5, closed: 5, reversed: 5 }, { day: currentMonday, merged: MIN_ACCURACY_TREND_SAMPLE, closed: 0, reversed: 0 }], NOW, 1);
+    const trend = buildPublicAccuracyTrend([row("not-a-date", 5, 5, 5), row(currentMonday, MIN_ACCURACY_TREND_SAMPLE, 0, 0)], NOW, 1);
     expect(trend).toHaveLength(1);
     expect(trend[0]).toMatchObject({ merged: MIN_ACCURACY_TREND_SAMPLE, closed: 0, reversed: 0 });
   });
 
   it("REGRESSION: redacts counts and accuracyPct below MIN_ACCURACY_TREND_SAMPLE decided PRs", () => {
     const week = isoWeekStart(NOW);
-    const trend = buildPublicAccuracyTrend([{ day: week, merged: MIN_ACCURACY_TREND_SAMPLE - 1, closed: 0, reversed: 0 }], NOW, 1);
+    const trend = buildPublicAccuracyTrend([row(week, MIN_ACCURACY_TREND_SAMPLE - 1, 0, 0)], NOW, 1);
     expect(trend[0]).toMatchObject({ merged: null, closed: null, reversed: null, accuracyPct: null });
   });
 
   it("returns a real percentage at exactly MIN_ACCURACY_TREND_SAMPLE decided PRs", () => {
     const week = isoWeekStart(NOW);
-    const trend = buildPublicAccuracyTrend([{ day: week, merged: MIN_ACCURACY_TREND_SAMPLE, closed: 0, reversed: 0 }], NOW, 1);
+    const trend = buildPublicAccuracyTrend([row(week, MIN_ACCURACY_TREND_SAMPLE, 0, 0)], NOW, 1);
     expect(trend[0]?.accuracyPct).toBe(100);
   });
 
   it("clamps a reversed count that exceeds decided (a reopened auto-close dropped from merged+closed) to 0%, never negative", () => {
     const week = isoWeekStart(NOW);
-    const trend = buildPublicAccuracyTrend([{ day: week, merged: 0, closed: MIN_ACCURACY_TREND_SAMPLE, reversed: MIN_ACCURACY_TREND_SAMPLE + 5 }], NOW, 1);
+    const trend = buildPublicAccuracyTrend([row(week, 0, MIN_ACCURACY_TREND_SAMPLE, MIN_ACCURACY_TREND_SAMPLE + 5)], NOW, 1);
     expect(trend[0]?.accuracyPct).toBe(0);
   });
 
@@ -84,6 +91,38 @@ describe("buildPublicAccuracyTrend", () => {
     const trend = buildPublicAccuracyTrend([], NOW, 3);
     expect(trend).toHaveLength(3);
     for (const week of trend) expect(week).toMatchObject({ merged: null, closed: null, reversed: null, accuracyPct: null });
+  });
+
+  it("REGRESSION: divides reversals by the OWN-LEDGER denominator, not the Orb-folded volume", () => {
+    // #7449 fixed this asymmetry for the lifetime figure and it was never carried across to the trend: the Orb
+    // aggregate has no reversal concept, so folding its merged/closed into the denominator while the numerator
+    // stays own-ledger-only trends every week toward 100% as more installs register.
+    const week = isoWeekStart(NOW);
+    const trend = buildPublicAccuracyTrend(
+      [{ day: week, merged: 100, closed: 0, ownMerged: 4, ownClosed: 0, reversed: 1 }],
+      NOW,
+      1,
+    );
+    // 1 - 1/4 = 75%, NOT 1 - 1/100 = 99%.
+    expect(trend[0]).toEqual({ weekStart: week, merged: 100, closed: 0, reversed: 1, accuracyPct: 75 });
+  });
+
+  it("reports null accuracy — never 100% — when a reversal is not observable on this deployment", () => {
+    // Regression: on a runtime that does not execute reviews, `reversed` is pinned at 0 forever, so every week
+    // rendered as a perfect 100% over rising volume. The volume itself IS measured and still publishes.
+    const week = isoWeekStart(NOW);
+    const trend = buildPublicAccuracyTrend([row(week, 40, 10, 0)], NOW, 1, false);
+    expect(trend[0]).toEqual({ weekStart: week, merged: 40, closed: 10, reversed: 0, accuracyPct: null });
+  });
+
+  it("reports null accuracy when a week's volume is entirely Orb-folded (no own-ledger PRs to attribute a reversal to)", () => {
+    const week = isoWeekStart(NOW);
+    const trend = buildPublicAccuracyTrend(
+      [{ day: week, merged: 50, closed: 10, ownMerged: 0, ownClosed: 0, reversed: 0 }],
+      NOW,
+      1,
+    );
+    expect(trend[0]).toMatchObject({ merged: 50, closed: 10, reversed: 0, accuracyPct: null });
   });
 });
 

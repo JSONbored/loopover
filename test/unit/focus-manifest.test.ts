@@ -83,6 +83,44 @@ const FULL_MANIFEST = {
   publicNotes: ["Prefer small, focused PRs."],
 };
 
+describe("publicProof manifest block (#9569)", () => {
+  it("parses an explicit block, defaults `enabled` to false, and warns on a non-mapping instead of throwing", async () => {
+    const { parseFocusManifest, publicProofConfigToJson } = await import("../../src/signals/focus-manifest");
+
+    expect(parseFocusManifest({ publicProof: { enabled: false } }).publicProof).toEqual({ present: true, enabled: false });
+    expect(parseFocusManifest({ publicProof: { enabled: true } }).publicProof).toEqual({ present: true, enabled: true });
+    // A present block with no `enabled` key is present-but-false, not absent -- the resolver keys on
+    // `present`, so the distinction is load-bearing.
+    expect(parseFocusManifest({ publicProof: {} }).publicProof).toEqual({ present: true, enabled: false });
+    // Absent entirely.
+    expect(parseFocusManifest({ wantedPaths: ["src/**"] }).publicProof).toEqual({ present: false, enabled: false });
+
+    // A scalar or a list is a config mistake: warned about and ignored, never a thrown parse.
+    for (const bad of ["nonsense", ["a"], 42]) {
+      const parsed = parseFocusManifest({ publicProof: bad });
+      expect(parsed.publicProof).toEqual({ present: false, enabled: false });
+      expect(parsed.warnings.some((warning) => warning.includes('Manifest field "publicProof" must be a mapping'))).toBe(true);
+    }
+
+    // Round-trips through the snapshot serializer, so a cached manifest re-parses identically.
+    expect(publicProofConfigToJson({ present: false, enabled: false })).toBeNull();
+    expect(publicProofConfigToJson({ present: true, enabled: false })).toEqual({ enabled: false });
+    expect(publicProofConfigToJson({ present: true, enabled: true })).toEqual({ enabled: true });
+    const roundTripped = parseFocusManifest({ publicProof: publicProofConfigToJson({ present: true, enabled: false }) });
+    expect(roundTripped.publicProof).toEqual({ present: true, enabled: false });
+  });
+
+  it("REGRESSION: publicProof is a KNOWN top-level field — otherwise its warning rewrites the review comment", async () => {
+    const { parseFocusManifest } = await import("../../src/signals/focus-manifest");
+    // The writer/reader split behind #9569's regate churn: the loader serializes this field into the
+    // persisted snapshot, so a reader that did not recognize it warned on every reload, and that warning
+    // rewrote the published comment on every regate sweep (the #3379 class).
+    const parsed = parseFocusManifest({ publicProof: { enabled: false } });
+    expect(parsed.warnings.some((warning) => warning.includes("unknown top-level field"))).toBe(false);
+  });
+});
+
+
 describe("parseFocusManifest", () => {
   it("normalizes a fully specified manifest", () => {
     const manifest = parseFocusManifest(FULL_MANIFEST);
@@ -971,6 +1009,7 @@ describe("compileFocusManifestPolicy", () => {
       maintainerRecap: { present: false, enabled: false, cadence: "weekly", channel: "discord" },
       ops: { present: false, enabled: false },
       publicStats: { present: false, enabled: false },
+    publicProof: { present: false, enabled: false },
       fairnessAnalytics: { present: false, enabled: false },
       draftFlow: { present: false, enabled: false },
       upstreamDriftIssues: { present: false, enabled: false },

@@ -149,7 +149,21 @@ export function defineRoute<
 /** Spec-side view of a route definition: the same fields, with the request schemas widened, since
  *  emitting the document never needs the parsed types the handler does. */
 export type RouteSpecOptions = Omit<DefineRouteOptions<z.ZodTypeAny | undefined, z.ZodObject | undefined>, "request"> & {
-  request?: { body?: z.ZodTypeAny | undefined; query?: z.ZodObject | undefined } | undefined;
+  request?:
+    | {
+        body?: z.ZodTypeAny | undefined;
+        query?: z.ZodObject | undefined;
+        /**
+         * Narrower path parameters than the derived `z.string()` ones (#9707).
+         *
+         * Spec-only, and rare on purpose: the whole point of deriving parameters from the path is that
+         * nobody has to declare them twice. This exists for the handful of routes whose segment is a
+         * closed set -- `/v1/internal/provider-credentials/:provider` is `claude-code | codex` -- where
+         * publishing a bare string would tell a generated client less than the route actually enforces.
+         */
+        params?: z.ZodObject | undefined;
+      }
+    | undefined;
 };
 
 /** The spec half, exported separately so a route that cannot yet move its handler through the seam
@@ -175,7 +189,8 @@ export function registerRouteSpec(registry: OpenAPIRegistry, options: RouteSpecO
     method: options.method,
     path: toSpecPath(options.path),
     request: {
-      ...(pathParameters(options.path) ?? {}),
+      // A declared `params` wins over the derived one -- same parameters, a narrower schema.
+      ...(options.request?.params ? { params: options.request.params } : (pathParameters(options.path) ?? {})),
       ...(options.request?.body ? { body: { content: { "application/json": { schema: options.request.body } } } } : {}),
       ...(options.request?.query ? { query: options.request.query } : {}),
     },

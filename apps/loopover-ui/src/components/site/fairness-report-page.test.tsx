@@ -220,6 +220,65 @@ describe("FairnessReportPage (#fairness-analytics)", () => {
     expect(screen.getByText("2 human-reversed, lifetime")).toBeTruthy();
   });
 
+  it("explains a withheld accuracy instead of letting it read as a dash-shaped mystery", async () => {
+    // Backend publishes null when no auto-action was ever recorded for a reversal to attach to; the page must
+    // say that rather than leaving a bare "—" next to a healthy-looking volume.
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        ...FIXTURE,
+        byProject: [
+          { project: "owner/repo", reviewed: 100, merged: 60, closed: 30, accuracyPct: null },
+        ],
+        accuracyTrend: [
+          { weekStart: "2026-07-13", merged: 30, closed: 15, reversed: 0, accuracyPct: null },
+        ],
+      },
+      status: 200,
+      durationMs: 10,
+    });
+    renderWithClient(<FairnessReportPage />);
+
+    await waitFor(() => expect(screen.getByText("By repository")).toBeTruthy());
+    const notes = screen.getAllByText(/not measurable on this deployment, not 100%/);
+    expect(notes.length).toBe(2); // one under each affected table
+  });
+
+  it("does not show the unmeasurable-accuracy note when every accuracy is real", async () => {
+    apiFetch.mockResolvedValue({ ok: true, data: FIXTURE, status: 200, durationMs: 10 });
+    renderWithClient(<FairnessReportPage />);
+
+    await waitFor(() => expect(screen.getByText("By repository")).toBeTruthy());
+    expect(screen.queryByText(/not measurable on this deployment/)).toBeNull();
+  });
+
+  it("#9168: discloses a single-instance self-report rather than presenting it as fleet corroboration", async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        ...FIXTURE,
+        fleetAccuracy: {
+          ...FIXTURE.fleetAccuracy,
+          instanceCount: 1,
+          basis: "single_instance_self_report",
+          decidedCount: 5225,
+          accuracyCiPct: { lo: 93.9, hi: 95.2 },
+        },
+      },
+      status: 200,
+      durationMs: 10,
+    });
+    renderWithClient(<FairnessReportPage />);
+
+    await waitFor(() => expect(screen.getByText("Decision accuracy")).toBeTruthy());
+    expect(screen.getByText(/Self-reported by that single instance/).textContent).toContain(
+      "5,225 decided",
+    );
+    expect(screen.getByText(/Self-reported by that single instance/).textContent).toContain(
+      "93.9–95.2%",
+    );
+  });
+
   it("#9068: renders the insufficient-instances state (not a fabricated zero) when gamingFlagsCaught is null", async () => {
     apiFetch.mockResolvedValue({
       ok: true,

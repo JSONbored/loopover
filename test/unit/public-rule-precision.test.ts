@@ -3,7 +3,9 @@ import {
   loadPublicRulePrecision,
   PUBLIC_PRECISION_MIN_DECIDED,
   PUBLIC_PRECISION_WINDOW_DAYS,
+  EMPTY_CORPUS_CHECKSUM,
 } from "../../src/review/public-rule-precision";
+import { sha256Hex } from "../../src/review/decision-record";
 import { recordAuditEvent } from "../../src/db/repositories";
 import { createSignalStore } from "../../src/review/signal-tracking-wire";
 import { createTestEnv } from "../helpers/d1";
@@ -55,6 +57,46 @@ describe("loadPublicRulePrecision (#8230)", () => {
     expect(block.rules).toEqual([{ ruleId: "sparse_rule", decided: PUBLIC_PRECISION_MIN_DECIDED - 1, confirmed: PUBLIC_PRECISION_MIN_DECIDED - 1, precision: null }]);
   });
 
+  it("REGRESSION: excludes counterfactual-replay rows whose label came from a DIFFERENT rule's human verdicts", async () => {
+    // #8277's slop replay copies each label verbatim from the ai_consensus_defect corpus's verdict on the same
+    // target, so publishing it under "precision over its human-decided cases" both misattributes the verdict and
+    // made the public table print one number twice (both rules showed decided=460/confirmed=287 in production).
+    const env = createTestEnv();
+    await seedVerdicts(env, "ai_consensus_defect", 15, 5);
+    const store = createSignalStore(env);
+    for (let i = 0; i < 20; i += 1) {
+      await store.recordHumanOverride({
+        ruleId: "slop_gate_score",
+        targetKey: `acme/widgets#${i + 1}`,
+        verdict: i < 15 ? "confirmed" : "reversed",
+        occurredAt: new Date(NOW - 1000 - i).toISOString(),
+        metadata: { backfilled: true, provenance: "slop_replay_backfill_v1" },
+      });
+    }
+
+    const block = await loadPublicRulePrecision(env, NOW);
+    expect(block.rules).toEqual([{ ruleId: "ai_consensus_defect", decided: 20, confirmed: 15, precision: 0.75 }]);
+  });
+
+  it("keeps synthesized rows whose labels ARE about the rule they are filed under", async () => {
+    // review_targets_decision_level is #8083's own backfill: the labels come from what happened to the PRs that
+    // rule fired on, so they support a precision claim for it. Only the cross-rule copy is excluded.
+    const env = createTestEnv();
+    const store = createSignalStore(env);
+    for (let i = 0; i < 12; i += 1) {
+      await store.recordHumanOverride({
+        ruleId: "ai_consensus_defect",
+        targetKey: `acme/widgets#${i + 1}`,
+        verdict: i < 9 ? "confirmed" : "reversed",
+        occurredAt: new Date(NOW - 1000 - i).toISOString(),
+        metadata: { backfilled: true, provenance: "review_targets_decision_level" },
+      });
+    }
+
+    const block = await loadPublicRulePrecision(env, NOW);
+    expect(block.rules).toEqual([{ ruleId: "ai_consensus_defect", decided: 12, confirmed: 9, precision: 0.75 }]);
+  });
+
   it("counts all three reversal shapes over the window and surfaces the latest backtest run's corpus checksum", async () => {
     const env = createTestEnv();
     for (const [eventType, count] of [
@@ -93,6 +135,33 @@ describe("loadPublicRulePrecision (#8230)", () => {
     const block = await loadPublicRulePrecision(env, NOW);
     expect(block.reversals).toEqual({ reopened: 2, reverted: 1, superseded: 3 });
     expect(block.latestBacktestRun).toEqual({ corpusChecksum: "newest111", at: new Date(NOW - 30_000).toISOString() });
+  });
+
+  it("reports no freeze point when the latest run's corpus was empty", async () => {
+    // Regression: production's latest run carried sha256("[]") -- the checksum of ZERO cases -- and the
+    // fairness page rendered it as a "reproducibility freeze point" while /v1/public/eval-scores published
+    // records committed to it. A hash over no cases is identical everywhere, so it verifies nothing.
+    const env = createTestEnv();
+    await seedVerdicts(env, "ai_consensus_defect", 15, 5);
+    await recordAuditEvent(env, {
+      eventType: "calibration.logic_backtest_run",
+      targetKey: "rule",
+      outcome: "completed",
+      metadata: { corpusChecksum: EMPTY_CORPUS_CHECKSUM, comparison: {} },
+      createdAt: new Date(NOW - 1000).toISOString(),
+    });
+
+    const block = await loadPublicRulePrecision(env, NOW);
+    expect(block.latestBacktestRun).toBeNull();
+    // The scores come from a different dataset (human-override events) and are unaffected -- an empty corpus
+    // means the numbers are uncommitted, never that they are zero.
+    expect(block.rules).toEqual([{ ruleId: "ai_consensus_defect", decided: 20, confirmed: 15, precision: 0.75 }]);
+  });
+
+  it("EMPTY_CORPUS_CHECKSUM is the exporter's own checksum over zero cases", async () => {
+    // scripts/backtest-corpus-export-core.ts hashes `JSON.stringify(cases.map(canonicalizeCase))`, which for
+    // an empty list is the two-byte string "[]" -- re-derived here so the constant cannot drift from it.
+    expect(EMPTY_CORPUS_CHECKSUM).toBe(await sha256Hex("[]"));
   });
 
   it("degrades fail-safe on a broken store and reports null freeze point on a fresh ledger", async () => {

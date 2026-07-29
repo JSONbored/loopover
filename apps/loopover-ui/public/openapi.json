@@ -16718,8 +16718,8 @@
       "OrbWebhookSignature": {
         "type": "apiKey",
         "in": "header",
-        "name": "x-loopover-signature",
-        "description": "HMAC signature over the raw request body, verified against the instance's shared secret. The webhook carries no bearer token."
+        "name": "x-hub-signature-256",
+        "description": "GitHub-style HMAC-SHA256 signature over the raw request body, verified against the receiving app's own webhook secret. A webhook delivery carries no bearer token."
       }
     }
   },
@@ -17365,6 +17365,9 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed installation id"
+          },
           "404": {
             "description": "Installation health not found"
           }
@@ -17407,6 +17410,9 @@
               }
             }
           },
+          "400": {
+            "description": "Malformed installation id"
+          },
           "404": {
             "description": "Installation health not found"
           }
@@ -17448,6 +17454,9 @@
                 }
               }
             }
+          },
+          "400": {
+            "description": "Malformed installation id"
           },
           "404": {
             "description": "Installation not found"
@@ -20692,6 +20701,11 @@
         "operationId": "postGithubWebhook",
         "tags": [
           "Webhooks"
+        ],
+        "security": [
+          {
+            "OrbWebhookSignature": []
+          }
         ]
       }
     },
@@ -20793,7 +20807,7 @@
         ],
         "responses": {
           "200": {
-            "description": "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore } — a failed attempt is returned identically to a successful one, never filtered out or reshaped"
+            "description": "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore, status } — a failed attempt is returned identically to a successful one, never filtered out or reshaped. The top-level `status` (anchored | empty_ledger | unconfigured | pending) says why the list looks as it does, so an empty list cannot be mistaken for a healthy one; it is omitted when a backend/before filter is applied, where empty just means none matched"
           }
         },
         "operationId": "listPublicDecisionLedgerAnchors",
@@ -20892,11 +20906,25 @@
           },
           "400": {
             "description": "Malformed JSON or invalid payload shape"
+          },
+          "401": {
+            "description": "Missing or invalid ingest credential"
+          },
+          "403": {
+            "description": "Instance not authenticated"
+          },
+          "413": {
+            "description": "Batch exceeds the 1 MiB (MAX_ORB_INGEST_BODY_BYTES) body ceiling"
           }
         },
         "operationId": "postOrbIngest",
         "tags": [
           "ORB"
+        ],
+        "security": [
+          {
+            "OrbBearer": []
+          }
         ]
       }
     },
@@ -20954,7 +20982,8 @@
         "operationId": "postAuthGithubDeviceStart",
         "tags": [
           "Auth"
-        ]
+        ],
+        "security": []
       }
     },
     "/v1/auth/github/device/poll": {
@@ -20980,7 +21009,8 @@
         "operationId": "postAuthGithubDevicePoll",
         "tags": [
           "Auth"
-        ]
+        ],
+        "security": []
       }
     },
     "/v1/auth/github/session": {
@@ -21006,7 +21036,8 @@
         "operationId": "postAuthGithubSession",
         "tags": [
           "Auth"
-        ]
+        ],
+        "security": []
       }
     },
     "/v1/auth/logout": {
@@ -21032,7 +21063,8 @@
         "operationId": "postAuthLogout",
         "tags": [
           "Auth"
-        ]
+        ],
+        "security": []
       }
     },
     "/v1/auth/session": {
@@ -22047,6 +22079,9 @@
           "202": {
             "description": "Job queued"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -22070,6 +22105,9 @@
           "202": {
             "description": "Job queued"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -22092,6 +22130,9 @@
         "responses": {
           "202": {
             "description": "Job queued"
+          },
+          "400": {
+            "description": "Malformed job request"
           },
           "401": {
             "description": "Invalid internal token"
@@ -22180,18 +22221,24 @@
     },
     "/v1/internal/jobs/build-contributor-evidence": {
       "post": {
-        "summary": "Queue a contributor evidence build job",
+        "summary": "Queue a job to build contributor evidence",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
           }
         },
-        "operationId": "postInternalJobsBuildContributorEvidence",
+        "operationId": "queueBuildContributorEvidenceJob",
         "tags": [
-          "Internal"
+          "Internal",
+          "Jobs"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -22220,18 +22267,24 @@
     },
     "/v1/internal/jobs/build-burden-forecasts": {
       "post": {
-        "summary": "Queue a burden forecast build job",
+        "summary": "Queue a job to build burden forecasts",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
           }
         },
-        "operationId": "postInternalJobsBuildBurdenForecasts",
+        "operationId": "queueBuildBurdenForecastsJob",
         "tags": [
-          "Internal"
+          "Internal",
+          "Jobs"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -22283,18 +22336,24 @@
     },
     "/v1/internal/jobs/repair-data-fidelity": {
       "post": {
-        "summary": "Queue a data fidelity repair job",
+        "summary": "Queue a job to repair data fidelity",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
           }
         },
-        "operationId": "postInternalJobsRepairDataFidelity",
+        "operationId": "queueRepairDataFidelityJob",
         "tags": [
-          "Internal"
+          "Internal",
+          "Jobs"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -22312,6 +22371,11 @@
         "operationId": "postInternalBountiesImport",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -23526,6 +23590,11 @@
         "operationId": "getInternalProviderCredentialsByProvider",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       },
       "post": {
@@ -23544,23 +23613,6 @@
             "in": "path"
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "credential": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "credential"
-                ]
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Credential stored. Returns the secret-free status.",
@@ -23588,6 +23640,11 @@
         "operationId": "postInternalProviderCredentialsByProvider",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       },
       "delete": {
@@ -23638,6 +23695,11 @@
         "operationId": "deleteInternalProviderCredentialsByProvider",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -24011,6 +24073,9 @@
           "200": {
             "description": "Installation health"
           },
+          "400": {
+            "description": "Malformed installation id"
+          },
           "401": {
             "description": "Not signed in"
           },
@@ -24052,6 +24117,9 @@
           "200": {
             "description": "Repair plan"
           },
+          "400": {
+            "description": "Malformed installation id"
+          },
           "401": {
             "description": "Not signed in"
           },
@@ -24092,6 +24160,9 @@
         "responses": {
           "200": {
             "description": "Repair plan recomputed"
+          },
+          "400": {
+            "description": "Malformed installation id"
           },
           "401": {
             "description": "Not signed in"
@@ -24136,7 +24207,7 @@
             "description": "Settings applied"
           },
           "400": {
-            "description": "Malformed settings"
+            "description": "Malformed installation id or settings"
           },
           "401": {
             "description": "Not signed in"
@@ -24967,6 +25038,9 @@
           "200": {
             "description": "Job ran inline and returned its result"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -24990,6 +25064,9 @@
           "202": {
             "description": "Job queued"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -25012,6 +25089,9 @@
         "responses": {
           "200": {
             "description": "Job ran inline and returned its result"
+          },
+          "400": {
+            "description": "Malformed job request"
           },
           "401": {
             "description": "Invalid internal token"
@@ -25082,6 +25162,9 @@
           "200": {
             "description": "Job ran inline and returned its result"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -25128,6 +25211,9 @@
           "200": {
             "description": "Job ran inline and returned its result"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -25150,6 +25236,9 @@
         "responses": {
           "200": {
             "description": "Job ran inline and returned its result"
+          },
+          "400": {
+            "description": "Malformed job request"
           },
           "401": {
             "description": "Invalid internal token"
@@ -25256,21 +25345,21 @@
           "Internal",
           "Jobs"
         ],
-        "summary": "Run the job to index repository content for retrieval",
+        "summary": "Queue a job to index repository content for retrieval",
         "security": [
           {
             "LoopOverBearer": []
           }
         ],
         "responses": {
-          "200": {
-            "description": "Job ran inline and returned its result"
-          },
-          "400": {
-            "description": "Malformed job request"
+          "202": {
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
+          },
+          "404": {
+            "description": "Retrieval is not enabled on this deployment"
           }
         }
       }
@@ -25282,21 +25371,24 @@
           "Internal",
           "Jobs"
         ],
-        "summary": "Run the job to re-run the gate for one pull request",
+        "summary": "Queue a job to re-run the gate for one pull request",
         "security": [
           {
             "LoopOverBearer": []
           }
         ],
         "responses": {
-          "200": {
-            "description": "Job ran inline and returned its result"
+          "202": {
+            "description": "Job queued"
           },
           "400": {
             "description": "Malformed job request"
           },
           "401": {
             "description": "Invalid internal token"
+          },
+          "404": {
+            "description": "The repository is not installed"
           }
         }
       }
@@ -25897,6 +25989,12 @@
         "responses": {
           "200": {
             "description": "Badge payload"
+          },
+          "404": {
+            "description": "The repo has no public badge (unknown, private, uninstalled, or badgeEnabled off)"
+          },
+          "503": {
+            "description": "The badge data could not be loaded (a transient loader failure, short-cached)"
           }
         },
         "security": []
@@ -25930,6 +26028,12 @@
         "responses": {
           "200": {
             "description": "SVG badge"
+          },
+          "404": {
+            "description": "The repo has no public badge (unknown, private, uninstalled, or badgeEnabled off)"
+          },
+          "503": {
+            "description": "The badge data could not be loaded (a transient loader failure, short-cached)"
           }
         },
         "security": []
@@ -26045,7 +26149,7 @@
           }
         ],
         "responses": {
-          "202": {
+          "200": {
             "description": "Batch accepted"
           },
           "400": {
@@ -26053,6 +26157,9 @@
           },
           "401": {
             "description": "Missing or invalid ingest credential"
+          },
+          "413": {
+            "description": "Batch exceeds the 1 MiB (MAX_ORB_INGEST_BODY_BYTES) body ceiling"
           }
         }
       }
@@ -26249,6 +26356,87 @@
           },
           "422": {
             "description": "Authenticated but unverifiable: unknown_key, bad_signature, row_not_found, or row_hash_mismatch — an `ok` report must verify against a published key AND match the live chain row"
+          }
+        },
+        "security": [
+          {
+            "OrbBearer": []
+          }
+        ]
+      }
+    },
+    "/v1/public/repos/{owner}/{repo}/proof": {
+      "get": {
+        "operationId": "getPublicRepoProof",
+        "tags": [
+          "Public"
+        ],
+        "summary": "Public proof summary for one repo — ledger status, anchor, calibration with coverage and interval, sample records",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "ProofSummary. Any accuracy figure carries its coverage AND a Wilson confidence interval; below the sample floor it is an explicit `insufficient_data` state, never a bare percentage. Carries the verification-boundary statement in the payload"
+          },
+          "404": {
+            "description": "The proof page is disabled fleet-wide, or this repo has opted out"
+          },
+          "503": {
+            "description": "Composition failed — no partial or fabricated summary is served"
+          }
+        }
+      }
+    },
+    "/v1/public/repos/{owner}/{repo}/proof-badge.svg": {
+      "get": {
+        "operationId": "getPublicRepoProofBadge",
+        "tags": [
+          "Public"
+        ],
+        "summary": "README badge for the proof page — reports the ledger's state, never a bare accuracy percentage",
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "owner",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "repo",
+            "in": "path"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SVG badge"
+          },
+          "404": {
+            "description": "Disabled or opted out — still an SVG (a neutral 'unavailable' badge), so a README never shows a broken image"
+          },
+          "503": {
+            "description": "Same neutral SVG on an internal error"
           }
         }
       }

@@ -441,6 +441,21 @@ export type FocusManifestPublicStatsConfig = {
 };
 
 /**
+ * Per-repo opt-OUT for the public proof page and its badge (#9569), declared under `publicProof:`.
+ *
+ * Shape matches `publicStats:`/`ops:`, but the PRECEDENCE is deliberately different: those are fleet-wide
+ * and read from the operator's self-repo manifest, whereas this is read from the TARGET repo's own manifest,
+ * because the thing being opted out of is that repo's own page. Not present ⇒ enabled, once the operator's
+ * LOOPOVER_PUBLIC_PROOF flag is on — opt-OUT, since every figure the page renders is already publicly
+ * fetchable through the ledger-verify / anchors / decision-record endpoints. A repo can turn its page off;
+ * it cannot turn one on that the operator has not enabled.
+ */
+export type FocusManifestPublicProofConfig = {
+  present: boolean;
+  enabled: boolean;
+};
+
+/**
  * Config-as-code override for the internal, bearer-gated contributor-trust-profile / fairness-analytics
  * surface (LOOPOVER_FAIRNESS_ANALYTICS, #fairness-analytics), declared under `fairnessAnalytics:`. Same
  * shape and precedence as `publicStats:`/`ops:` above -- fleet-wide, self-repo-manifest-sourced, no DB-backed
@@ -1249,6 +1264,7 @@ export type FocusManifest = {
   maintainerRecap: FocusManifestMaintainerRecapConfig;
   ops: FocusManifestOpsConfig;
   publicStats: FocusManifestPublicStatsConfig;
+  publicProof: FocusManifestPublicProofConfig;
   fairnessAnalytics: FocusManifestFairnessAnalyticsConfig;
   draftFlow: FocusManifestDraftFlowConfig;
   upstreamDriftIssues: FocusManifestUpstreamDriftIssuesConfig;
@@ -1413,6 +1429,13 @@ const EMPTY_PUBLIC_STATS_CONFIG: FocusManifestPublicStatsConfig = {
   enabled: false,
 };
 
+/** #9569: absent means ENABLED at the resolver (opt-out), so `enabled:false` here is only the shape's
+ *  default — `present:false` is what the resolver actually keys on. */
+const EMPTY_PUBLIC_PROOF_CONFIG: FocusManifestPublicProofConfig = {
+  present: false,
+  enabled: false,
+};
+
 const EMPTY_FAIRNESS_ANALYTICS_CONFIG: FocusManifestFairnessAnalyticsConfig = {
   present: false,
   enabled: false,
@@ -1478,6 +1501,7 @@ const EMPTY_MANIFEST: FocusManifest = {
   maintainerRecap: { ...EMPTY_MAINTAINER_RECAP_CONFIG },
   ops: { ...EMPTY_OPS_CONFIG },
   publicStats: { ...EMPTY_PUBLIC_STATS_CONFIG },
+  publicProof: { ...EMPTY_PUBLIC_PROOF_CONFIG },
   fairnessAnalytics: { ...EMPTY_FAIRNESS_ANALYTICS_CONFIG },
   draftFlow: { ...EMPTY_DRAFT_FLOW_CONFIG },
   upstreamDriftIssues: { ...EMPTY_UPSTREAM_DRIFT_ISSUES_CONFIG },
@@ -1520,6 +1544,7 @@ function emptyManifest(source: FocusManifestSource, warnings: string[] = []): Fo
     maintainerRecap: { ...EMPTY_MAINTAINER_RECAP_CONFIG },
     ops: { ...EMPTY_OPS_CONFIG },
     publicStats: { ...EMPTY_PUBLIC_STATS_CONFIG },
+    publicProof: { ...EMPTY_PUBLIC_PROOF_CONFIG },
     fairnessAnalytics: { ...EMPTY_FAIRNESS_ANALYTICS_CONFIG },
     draftFlow: { ...EMPTY_DRAFT_FLOW_CONFIG },
     upstreamDriftIssues: { ...EMPTY_UPSTREAM_DRIFT_ISSUES_CONFIG },
@@ -2352,6 +2377,24 @@ function parsePublicStatsConfig(value: JsonValue | undefined, warnings: string[]
 /** Serialize a publicStats config back into the parse-compatible shape so a cached snapshot round-trips
  *  through {@link parsePublicStatsConfig} unchanged. Returns null when nothing is configured. */
 export function publicStatsConfigToJson(config: FocusManifestPublicStatsConfig): JsonValue {
+  if (!config.present) return null;
+  return { enabled: config.enabled };
+}
+
+/** Parse the optional `publicProof:` mapping (#9569). Mirrors {@link parsePublicStatsConfig} exactly. */
+function parsePublicProofConfig(value: JsonValue | undefined, warnings: string[]): FocusManifestPublicProofConfig {
+  if (value === undefined || value === null) return { ...EMPTY_PUBLIC_PROOF_CONFIG };
+  if (typeof value !== "object" || Array.isArray(value)) {
+    warnings.push('Manifest field "publicProof" must be a mapping; ignoring it.');
+    return { ...EMPTY_PUBLIC_PROOF_CONFIG };
+  }
+  const record = value as Record<string, JsonValue>;
+  const enabled = normalizeOptionalBoolean(record.enabled, "publicProof.enabled", warnings) ?? false;
+  return { present: true, enabled };
+}
+
+/** Serialize a publicProof config so a cached snapshot round-trips through {@link parsePublicProofConfig}. */
+export function publicProofConfigToJson(config: FocusManifestPublicProofConfig): JsonValue {
   if (!config.present) return null;
   return { enabled: config.enabled };
 }
@@ -4247,6 +4290,7 @@ export const FOCUS_MANIFEST_TOP_LEVEL_FIELDS = [
   "maintainerRecap",
   "ops",
   "publicStats",
+  "publicProof",
   "draftFlow",
   "upstreamDriftIssues",
   "sweepWatchdog",
@@ -4326,6 +4370,7 @@ export function parseFocusManifest(raw: unknown, source?: FocusManifestSource): 
     maintainerRecap: parseMaintainerRecapConfig(record.maintainerRecap, warnings),
     ops: parseOpsConfig(record.ops, warnings),
     publicStats: parsePublicStatsConfig(record.publicStats, warnings),
+    publicProof: parsePublicProofConfig(record.publicProof, warnings),
     fairnessAnalytics: parseFairnessAnalyticsConfig(record.fairnessAnalytics, warnings),
     draftFlow: parseDraftFlowConfig(record.draftFlow, warnings),
     upstreamDriftIssues: parseUpstreamDriftIssuesConfig(record.upstreamDriftIssues, warnings),

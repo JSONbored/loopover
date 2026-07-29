@@ -37,6 +37,7 @@ export {
   maintainerRecapConfigToJson,
   opsConfigToJson,
   publicStatsConfigToJson,
+  publicProofConfigToJson,
   fairnessAnalyticsConfigToJson,
   draftFlowConfigToJson,
   upstreamDriftIssuesConfigToJson,

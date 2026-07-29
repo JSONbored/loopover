@@ -210,6 +210,23 @@ export function anchorKeyById(keys: readonly AnchorPublicKey[], keyId: string): 
   return keys.find((key) => key.keyId === keyId) ?? null;
 }
 
+/** Why the public anchor list looks the way it does. Without this, "never configured", "no ledger to anchor",
+ *  and "anchoring is healthy but has not run yet" are all indistinguishable from outside — every one of them
+ *  renders as `{"anchors":[]}`, which reads as a healthy empty state. The module header of
+ *  ledger-anchor-persistence.ts states the goal ("an operator whose anchoring silently fails could quietly
+ *  regress the ledger back to tamper-evident-only with no visible signal"); that guarantee only held AFTER
+ *  both of the scheduler's guards passed, and this closes the gap before them. */
+export type PublicAnchorStatus = "anchored" | "empty_ledger" | "unconfigured" | "pending";
+
+/** PURE. Guard order deliberately mirrors runScheduledLedgerAnchor's own (tip first, then signing key), so the
+ *  status a reader sees always names the same reason the scheduler would act on, never a second opinion. */
+export function publicAnchorStatus(input: { anchorCount: number; tipSeq: number; hasSigningKey: boolean }): PublicAnchorStatus {
+  if (input.anchorCount > 0) return "anchored";
+  if (input.tipSeq === 0) return "empty_ledger";
+  if (!input.hasSigningKey) return "unconfigured";
+  return "pending";
+}
+
 /** Digest helpers re-exported so an anchor consumer (e.g. the git-commit backend, #9273, which commits the
  *  same canonicalized payload Rekor anchors) never needs a second import from decision-record.ts just to
  *  canonicalize or hash something alongside a signed anchor. */

@@ -3,6 +3,7 @@ import { createApp } from "../../src/api/routes";
 import { createTestEnv } from "../helpers/d1";
 import { recordLedgerAnchorAttempt } from "../../src/review/ledger-anchor-persistence";
 import { buildLedgerAnchorPayload } from "../../src/review/ledger-anchor";
+import { buildDecisionRecord, contentDigest, persistDecisionRecord } from "../../src/review/decision-record";
 
 // #9271 (epic #9267). The load-bearing behaviour: a failed attempt is served on this public listing exactly
 // like a success, since that's the entire point of recording failures at all.
@@ -12,7 +13,42 @@ describe("GET /v1/public/decision-ledger/anchors (#9271)", () => {
     const env = createTestEnv();
     const response = await createApp().request("/v1/public/decision-ledger/anchors", {}, env);
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ anchors: [], nextBefore: null });
+    // #9719: an empty list now says WHY -- a fresh env has no ledger rows, so there is nothing to anchor yet.
+    expect(await response.json()).toEqual({ anchors: [], nextBefore: null, status: "empty_ledger" });
+  });
+
+  it("REGRESSION: distinguishes an unconfigured deployment from a healthy empty one", async () => {
+    // Before #9719 all of "never configured", "nothing to anchor" and "healthy but not run yet" rendered as
+    // {"anchors":[]} -- indistinguishable from outside, so silent misconfiguration looked like success.
+    const env = createTestEnv();
+    await seedLedgerRow(env);
+    const response = await createApp().request("/v1/public/decision-ledger/anchors", {}, env);
+    expect(await response.json()).toMatchObject({ anchors: [], status: "unconfigured" });
+  });
+
+  it("reports pending once a ledger exists AND a signing key is published", async () => {
+    const env = createTestEnv();
+    await seedLedgerRow(env);
+    env.LOOPOVER_LEDGER_ANCHOR_KEYS = JSON.stringify([{ keyId: "k1", publicKeySpki: "c3BraQ==", notBefore: "2026-01-01T00:00:00.000Z", notAfter: null }]);
+    env.LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY = "test-private-key";
+    const response = await createApp().request("/v1/public/decision-ledger/anchors", {}, env);
+    expect(await response.json()).toMatchObject({ anchors: [], status: "pending" });
+  });
+
+  it("is still unconfigured when a key is published but the private half is not set", async () => {
+    // Both sides of the signing-key predicate: a published public key alone cannot sign anything.
+    const env = createTestEnv();
+    await seedLedgerRow(env);
+    env.LOOPOVER_LEDGER_ANCHOR_KEYS = JSON.stringify([{ keyId: "k1", publicKeySpki: "c3BraQ==", notBefore: "2026-01-01T00:00:00.000Z", notAfter: null }]);
+    const response = await createApp().request("/v1/public/decision-ledger/anchors", {}, env);
+    expect(await response.json()).toMatchObject({ anchors: [], status: "unconfigured" });
+  });
+
+  it("omits status on a filtered page, where an empty result only means nothing matched", async () => {
+    const env = createTestEnv();
+    const body = (await (await createApp().request("/v1/public/decision-ledger/anchors?backend=rekor", {}, env)).json()) as Record<string, unknown>;
+    expect(body).toEqual({ anchors: [], nextBefore: null });
+    expect("status" in body).toBe(false);
   });
 
   it("serves a FAILED anchor attempt on the public listing, identically shaped to a success", async () => {
@@ -91,3 +127,24 @@ describe("GET /v1/public/decision-ledger/anchors (#9271)", () => {
     expect(response.headers.get("Cache-Control")).toBe("public, max-age=60, stale-while-revalidate=300");
   });
 });
+
+/** One persisted decision record, so the ledger tip is non-zero — mirrors ledger-anchor-scheduler.test.ts's
+ *  seedOneDecision, which every scheduler case already calls for the same reason. */
+async function seedLedgerRow(env: Env): Promise<void> {
+  const { record, recordDigest } = await buildDecisionRecord({
+    repoFullName: "acme/widgets",
+    pullNumber: 1,
+    headSha: "abc1",
+    baseSha: null,
+    action: "merge",
+    reasonCode: "gate_clean",
+    configDigest: await contentDigest({ gatePack: "oss-anti-slop" }),
+    gatePack: "oss-anti-slop",
+    ciState: null,
+    modelIds: null,
+    promptDigest: null,
+    aiConfidence: null,
+    salvageability: null,
+  });
+  await persistDecisionRecord(env, record, recordDigest);
+}

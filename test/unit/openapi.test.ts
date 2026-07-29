@@ -184,11 +184,21 @@ describe("OpenAPI contract", () => {
     expect(spec.paths["/v1/repos"]?.get?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
     expect(spec.paths["/v1/app/overview"]?.get?.security).toEqual([{ LoopOverBearer: [] }, { LoopOverSessionCookie: [] }]);
     expect(spec.paths["/v1/auth/session"]?.get?.security).toBeUndefined();
-    expect(spec.paths["/v1/auth/logout"]?.post?.security).toBeUndefined();
+    // #9707: `[]`, not undefined. Logout publishes a 401, and an operation declaring one while stating no
+    // credential is unreadable — `[]` says "needs none" out loud, which is what this route means.
+    expect(spec.paths["/v1/auth/logout"]?.post?.security).toEqual([]);
     // #9531: session-only, not the generic pair. This handler returns 403 to a bearer-only caller
     // (`identity.kind !== "session"`), so advertising LoopOverBearer as sufficient was a published
     // lie -- one neither of the two former security models got right.
     expect(spec.paths["/v1/auth/github/token"]?.post?.security).toEqual([{ LoopOverSessionCookie: [] }]);
+  });
+
+  it("#9710: both public badge routes declare 200, 404, and 503 -- the statuses a monitor distinguishes", () => {
+    const spec = buildOpenApiSpec();
+    for (const path of ["/v1/public/repos/{owner}/{repo}/badge.svg", "/v1/public/repos/{owner}/{repo}/badge.json"]) {
+      const responses = spec.paths[path]?.get?.responses ?? {};
+      expect(Object.keys(responses).sort()).toEqual(expect.arrayContaining(["200", "404", "503"]));
+    }
   });
 
   // #9303: selftune-override routes were live but undocumented; assert both paths, their HTTP methods, and the

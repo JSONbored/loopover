@@ -20,6 +20,11 @@
       "release-type": "node",
       "component": "ui-kit",
       "package-name": "@loopover/ui-kit"
+    },
+    "packages/loopover-contract": {
+      "release-type": "node",
+      "component": "contract",
+      "package-name": "@loopover/contract"
     }
   },
   "include-component-in-tag": true,
@@ -34,7 +39,7 @@
     {
       "type": "linked-versions",
       "groupName": "engine-and-dependents",
-      "components": ["engine", "mcp", "miner"],
+      "components": ["engine", "contract", "mcp", "miner"],
       "merge": true
     }
   ],

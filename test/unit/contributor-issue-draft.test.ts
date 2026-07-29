@@ -457,6 +457,36 @@ describe("contributor issue drafts", () => {
     expect(candidates.some((entry) => entry.sections.implementationRequirements.some((line) => line.includes("npm run test:ci")))).toBe(true);
   });
 
+  it("#9704: a wanted-path candidate's implementationRequirements carry the SAME public-safe-filtered expectations as testingRequirements", () => {
+    const manifest = parseFocusManifestContent(
+      // A safe expectation that survives the filter and an unsafe one that must be dropped from BOTH lists.
+      '{"wantedPaths":["src/"],"testExpectations":["npm run test:ci","wallet seed phrase"],"issueDiscoveryPolicy":"discouraged"}',
+      "repo_file",
+    );
+    const testing = buildContributorIssueDraftTestingRequirements(manifest);
+    const candidates = buildContributorIssueDraftCandidates({
+      repoFullName: "owner/repo",
+      repo: { fullName: "owner/repo", isRegistered: true } as never,
+      settings: { requireLinkedIssue: false } as never,
+      lane: buildLaneAdvice({ fullName: "owner/repo", isRegistered: true } as never, "owner/repo"),
+      configQuality: buildConfigQuality({ fullName: "owner/repo" } as never, [], [], "owner/repo"),
+      labelAudit: buildLabelAudit({ fullName: "owner/repo" } as never, [], [], [], "owner/repo"),
+      queueHealth: buildQueueHealth({ fullName: "owner/repo" } as never, [], [], buildCollisionReport("owner/repo", [], [])),
+      contributorIntakeHealth: buildContributorIntakeHealth({ fullName: "owner/repo" } as never, [], [], "owner/repo", buildCollisionReport("owner/repo", [], [])),
+      openIssues: [],
+      upstreamDriftWarnings: [],
+      focusManifest: manifest,
+    });
+    const wantedPathCandidate = candidates.find((entry) => entry.topic?.startsWith("focus:wanted_path:"));
+    expect(wantedPathCandidate).toBeDefined();
+    const implExpectations = wantedPathCandidate!.sections.implementationRequirements.filter((line) => line.includes("test:ci") || /wallet|seed phrase/i.test(line));
+    const testingExpectations = testing.filter((line) => line.includes("test:ci") || /wallet|seed phrase/i.test(line));
+    // Both derive from the shared publicSafeTestExpectations helper: identical list, unsafe entry gone from each.
+    expect(implExpectations).toEqual(testingExpectations);
+    expect(implExpectations).not.toEqual([]);
+    expect(JSON.stringify(implExpectations)).not.toMatch(/wallet|seed phrase/i);
+  });
+
   it("ignores closed issues and empty title keys when checking duplicates", () => {
     const fingerprint = "fp";
     const title = "feat(issues): address validation policy readiness for repo";
@@ -490,7 +520,7 @@ describe("contributor issue drafts", () => {
     expect(new Set(candidates.map((entry) => entry.topic)).size).toBe(candidates.length);
   });
 
-  it("skips unsafe drafts when wanted-path validation text fails public hygiene", async () => {
+  it("#9704: filters a public-unsafe testExpectation out of BOTH requirement lists (never leaks into the draft)", async () => {
     const env = createTestEnv();
     await upsertRepoFocusManifest(env, "owner/unsafe-path", {
       wantedPaths: ["src/unsafe-path-only/"],
@@ -500,7 +530,12 @@ describe("contributor issue drafts", () => {
     });
     vi.spyOn(repositories, "listOpenIssues").mockResolvedValue([]);
     const result = await generateContributorIssueDrafts(env, "owner/unsafe-path", { dryRun: true, limit: 10 });
-    expect(result.drafts.some((draft) => draft.status === "skipped_unsafe")).toBe(true);
+    // Before #9704, implementationRequirements emitted a raw `Run wallet seed phrase ...` that only got caught
+    // downstream as skipped_unsafe. Now BOTH lists filter through isFocusManifestPublicSafe, so the unsafe
+    // expectation never reaches the draft at all -- the wanted-path draft is produced and carries no such text.
+    expect(result.drafts.some((draft) => draft.status === "skipped_unsafe")).toBe(false);
+    expect(JSON.stringify(result.drafts)).not.toMatch(/wallet|seed phrase/i);
+    expect(result.drafts.some((draft) => draft.topic?.startsWith("focus:wanted_path:"))).toBe(true);
   });
 
   it("returns null for invalid repo names when creating GitHub issues", async () => {

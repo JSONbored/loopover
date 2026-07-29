@@ -10,13 +10,16 @@ import type { ClaimEntry } from "../../packages/loopover-miner/lib/claim-ledger.
 import {
   parseClaimClaimArgs,
   parseClaimListArgs,
+  parseClaimReclaimArgs,
   parseClaimReleaseArgs,
   renderClaimsTable,
   runClaimClaim,
   runClaimCli,
   runClaimList,
+  runClaimReclaim,
   runClaimRelease,
 } from "../../packages/loopover-miner/lib/claim-ledger-cli";
+import { DEFAULT_MAX_CLAIM_AGE_MS } from "../../packages/loopover-miner/lib/claim-ledger-expiry";
 
 const roots: string[] = [];
 const ledgers: Array<{ close(): void }> = [];
@@ -33,6 +36,7 @@ afterEach(() => {
   for (const ledger of ledgers.splice(0)) ledger.close();
   closeDefaultClaimLedger();
   vi.restoreAllMocks();
+  vi.useRealTimers();
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -450,5 +454,117 @@ describe("loopover-miner claim ledger CLI (#4290)", () => {
       if (previousDbPath === undefined) delete process.env.LOOPOVER_MINER_CLAIM_LEDGER_DB;
       else process.env.LOOPOVER_MINER_CLAIM_LEDGER_DB = previousDbPath;
     }
+  });
+});
+
+describe("loopover-miner claim reclaim (#9686)", () => {
+  const CLAIM_RECLAIM_USAGE =
+    "Usage: loopover-miner claim reclaim [--max-age-ms <n>] [--dry-run] [--json]";
+
+  it("parseClaimReclaimArgs validates --max-age-ms, --dry-run, and --json", () => {
+    expect(parseClaimReclaimArgs([])).toEqual({ maxAgeMs: undefined, dryRun: false, json: false });
+    expect(parseClaimReclaimArgs(["--max-age-ms", "1000", "--dry-run", "--json"])).toEqual({
+      maxAgeMs: 1000,
+      dryRun: true,
+      json: true,
+    });
+    // 0 is a valid age (reclaim everything); the lower bound is inclusive.
+    expect(parseClaimReclaimArgs(["--max-age-ms", "0"])).toEqual({ maxAgeMs: 0, dryRun: false, json: false });
+    // Fractional, negative, non-numeric, and a missing value all return the usage string.
+    expect(parseClaimReclaimArgs(["--max-age-ms", "1.5"])).toEqual({ error: CLAIM_RECLAIM_USAGE });
+    expect(parseClaimReclaimArgs(["--max-age-ms", "-1"])).toEqual({ error: CLAIM_RECLAIM_USAGE });
+    expect(parseClaimReclaimArgs(["--max-age-ms", "soon"])).toEqual({ error: CLAIM_RECLAIM_USAGE });
+    expect(parseClaimReclaimArgs(["--max-age-ms"])).toEqual({ error: CLAIM_RECLAIM_USAGE });
+    expect(parseClaimReclaimArgs(["--nope"])).toEqual({ error: "Unknown option: --nope" });
+    expect(parseClaimReclaimArgs(["extra"])).toEqual({ error: CLAIM_RECLAIM_USAGE });
+  });
+
+  it("reclaims an over-age active claim, transitioning it to expired (default window, --max-age-ms omitted)", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const claimLedger = tempClaimLedger();
+    claimLedger.recordClaim({ repoFullName: "acme/widgets", issueNumber: 7 });
+    // Move the clock one hour past the default window so the claim is over-age.
+    vi.setSystemTime(new Date(Date.parse("2026-01-01T00:00:00.000Z") + DEFAULT_MAX_CLAIM_AGE_MS + 60 * 60 * 1000));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    expect(runClaimReclaim([], { openClaimLedger: () => claimLedger })).toBe(0);
+    expect(log).toHaveBeenCalledWith("acme/widgets#7 expired");
+    expect(log).toHaveBeenCalledWith("reclaimed 1");
+    expect(claimLedger.listClaims({ status: "expired" }).map((c) => c.issueNumber)).toEqual([7]);
+  });
+
+  it("prints 'none' and exits 0 when nothing is over-age", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const claimLedger = tempClaimLedger();
+    claimLedger.recordClaim({ repoFullName: "acme/widgets", issueNumber: 7 });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    // Still inside the default window -- reclaiming nothing is not a failure.
+    expect(runClaimReclaim([], { openClaimLedger: () => claimLedger })).toBe(0);
+    expect(log).toHaveBeenCalledWith("none");
+    expect(claimLedger.listClaims({ status: "expired" })).toEqual([]);
+  });
+
+  it("honours an explicit smaller --max-age-ms, reclaiming a claim inside the default window", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    const claimLedger = tempClaimLedger();
+    claimLedger.recordClaim({ repoFullName: "acme/widgets", issueNumber: 7 });
+    // Two hours later: well inside the 14-day default window, but past an explicit 1-hour window.
+    vi.setSystemTime(new Date(Date.parse("2026-01-01T00:00:00.000Z") + 2 * 60 * 60 * 1000));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    expect(runClaimReclaim(["--max-age-ms", String(60 * 60 * 1000), "--json"], { openClaimLedger: () => claimLedger })).toBe(0);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      reclaimed: [expect.objectContaining({ repoFullName: "acme/widgets", issueNumber: 7, status: "expired" })],
+    });
+  });
+
+  it("an invalid --max-age-ms returns the usage error without opening the ledger", () => {
+    const openClaimLedgerSpy = vi.fn();
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(runClaimReclaim(["--max-age-ms", "-5"], { openClaimLedger: openClaimLedgerSpy })).toBe(2);
+    expect(errorLog).toHaveBeenCalledWith(CLAIM_RECLAIM_USAGE);
+    expect(openClaimLedgerSpy).not.toHaveBeenCalled();
+  });
+
+  it("--dry-run returns 0 without opening the claim ledger (plain and --json)", () => {
+    const openClaimLedgerSpy = vi.fn();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    expect(runClaimReclaim(["--dry-run"], { openClaimLedger: openClaimLedgerSpy })).toBe(0);
+    expect(openClaimLedgerSpy).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("DRY RUN: would reclaim claims older than the default max age. No claim-ledger write was made.");
+
+    // Explicit --max-age-ms in the plain-text dry-run path names the exact window (the defined ternary arm).
+    log.mockClear();
+    expect(runClaimReclaim(["--dry-run", "--max-age-ms", "5000"], { openClaimLedger: openClaimLedgerSpy })).toBe(0);
+    expect(openClaimLedgerSpy).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("DRY RUN: would reclaim claims older than 5000ms. No claim-ledger write was made.");
+
+    log.mockClear();
+    expect(runClaimReclaim(["--dry-run", "--max-age-ms", "1000", "--json"], { openClaimLedger: openClaimLedgerSpy })).toBe(0);
+    expect(openClaimLedgerSpy).not.toHaveBeenCalled();
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ outcome: "dry_run", maxAgeMs: 1000 });
+  });
+
+  it("surfaces a ledger error through reportCliFailure (--json)", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const thrower = () => {
+      throw new Error("ledger boom");
+    };
+    expect(runClaimReclaim(["--json"], { openClaimLedger: thrower as never })).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toMatchObject({ ok: false });
+  });
+
+  it("runClaimCli dispatches the reclaim subcommand", () => {
+    const openClaimLedgerSpy = vi.fn();
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    // Reachable from the dispatcher: a dry-run proves the reclaim path ran (never opens the ledger).
+    expect(runClaimCli("reclaim", ["--dry-run"], { openClaimLedger: openClaimLedgerSpy })).toBe(0);
+    expect(openClaimLedgerSpy).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith("DRY RUN: would reclaim claims older than the default max age. No claim-ledger write was made.");
   });
 });

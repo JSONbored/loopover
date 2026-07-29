@@ -19,6 +19,7 @@
 //
 // Scope (#9277's own framing): optional, Gittensor/SN74-audience corroboration. Rekor + git remain the
 // default every verifier is told to check; nothing here is a required verification step.
+import { z } from "zod";
 import type { LedgerAnchorPayload, SignedLedgerAnchor } from "./ledger-anchor";
 import { anchorKeyById, parseAnchorPublicKeys, verifyLedgerAnchorSignature } from "./ledger-anchor";
 import { LEDGER_ANCHOR_LEDGER_ID, LEDGER_ANCHOR_PAYLOAD_VERSION } from "./ledger-anchor";
@@ -41,8 +42,70 @@ export type BittensorAnchorReport = {
   signed: SignedLedgerAnchor;
 } & ({ status: "ok"; backendRef: BittensorAnchorRef } | { status: "failed"; error: string });
 
-const HEX_32_BYTES = /^0x[0-9a-f]{64}$/i;
-const ROW_HASH = /^[0-9a-f]{64}$/i;
+// Case-insensitivity is spelled into the character class rather than carried as an `i` FLAG, because these
+// regexes are now published as JSON Schema `pattern`s (#9770) and JSON Schema has no flags concept: a
+// flagged regex serializes its source with the flag appended, so `^[0-9a-f]{64}$/i` reaches a generated
+// client as a pattern requiring a literal "/i" suffix -- rejecting every valid hash. Behaviourally identical
+// to the flagged form for these two inputs, and safe to publish.
+const HEX_32_BYTES = /^0x[0-9a-fA-F]{64}$/;
+const ROW_HASH = /^[0-9a-fA-F]{64}$/;
+
+/**
+ * The published request shape for `POST /v1/decision-ledger/anchor-attempts` (#9770).
+ *
+ * This endpoint exists to be called by a submitter this repo deliberately does NOT ship (see the module
+ * header): a process on the operator's own node infrastructure. Its only reference is the OpenAPI document,
+ * which registered responses and no body at all — so the contract's entire shape lived in the TypeScript of
+ * the thing rejecting it, and an implementer had to read source to discover the bounds.
+ *
+ * It lives HERE, immediately beside {@link parseBittensorAnchorReport}, rather than in the OpenAPI spec file,
+ * because the two are one contract described twice and must be edited together. `parseBittensorAnchorReport`
+ * stays the runtime authority — it is not replaced by this schema — because each of its arms returns a NAMED
+ * rejection naming the exact field it refused, which is what makes a submitter bug diagnosable from the 400
+ * body alone; a generic zod issue list would be a downgrade for the caller this is built for. The two are
+ * held together by a cross-check test that runs the same corpus of payloads through both and asserts they
+ * agree on accept/reject, so neither can drift without failing CI.
+ */
+export const BittensorAnchorReportRequestSchema = z
+  .object({
+    signed: z.object({
+      payload: z.object({
+        v: z.literal(LEDGER_ANCHOR_PAYLOAD_VERSION),
+        ledger: z.literal(LEDGER_ANCHOR_LEDGER_ID),
+        /** 1-based row number of the ledger tip being anchored. */
+        seq: z.number().int().positive(),
+        /** The tip row's hash — 64 hex chars, case-insensitive. */
+        rowHash: z.string().regex(ROW_HASH),
+        /** Total rows in the ledger at the time of signing. */
+        totalCount: z.number().int().positive(),
+        /** When the checkpoint was signed. Bounded rather than format-validated, matching the runtime check. */
+        at: z.string().min(1).max(40),
+      }),
+      /** Which published key signed this checkpoint; must appear in LOOPOVER_LEDGER_ANCHOR_KEYS. */
+      keyId: z.string().min(1).max(64),
+      /** base64 ECDSA P-256 signature over `anchorSigningInput(payload)`. */
+      signature: z.string().min(1).max(512),
+    }),
+    status: z.enum(["ok", "failed"]),
+    /** Required when `status` is "ok". The on-chain coordinates a verifier needs to retrieve the commitment
+     *  from archive state, since `CommitmentOf` is overwritten in place. */
+    backendRef: z
+      .object({
+        netuid: z.number().int().min(0).max(65535),
+        blockNumber: z.number().int().positive(),
+        /** 0x-prefixed 32-byte block hash, case-insensitive; normalized to lowercase on ingest. */
+        blockHash: z.string().regex(HEX_32_BYTES),
+        /** ss58 account of the anchor hotkey — a public on-chain identity, never key material. */
+        hotkey: z.string().trim().min(1).max(64),
+      })
+      .optional(),
+    /** Required when `status` is "failed". Recorded verbatim (trimmed, truncated to 500) so a submitter that
+     *  could not commit is still visible in the public attempt log rather than silently absent. */
+    error: z.string().trim().min(1).optional(),
+  })
+  .refine((body) => (body.status === "ok" ? body.backendRef !== undefined : body.error !== undefined), {
+    message: 'backendRef is required when status is "ok"; error is required when status is "failed"',
+  });
 
 /** Parse + bound one submitter report. Returns a typed report or a NAMED rejection reason — every arm names
  *  the exact field it refused so a submitter bug is diagnosable from the 400 body alone. PURE. */

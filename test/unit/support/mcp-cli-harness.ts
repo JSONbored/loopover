@@ -205,6 +205,9 @@ export async function startFixtureServer(
     onApiRequest?: (request: IncomingMessage) => void;
     /** #9300: captures DELETE /v1/repos/:owner/:repo/selftune/overrides body ({ confirm }). */
     onClearSelftuneOverride?: (body: { confirm?: boolean }) => void;
+    /** #9641: overrides the outcome-calibration route's `slop` band list -- lets a test drive a zero-sample
+     *  band (mergeRate: null) through the CLI's plain-text renderer without touching the other two bands. */
+    outcomeCalibrationBands?: unknown[] | undefined;
     validateConfigWarnings?: string[];
     openPrMonitor?: Record<string, unknown>;
     prOutcomes?: Record<string, unknown>;
@@ -842,7 +845,7 @@ export async function startFixtureServer(
           repoFullName: "owner/repo",
           generatedAt: "2026-05-30T00:00:00.000Z",
           windowDays: windowDays ? Number(windowDays) : null,
-          slop: [
+          slop: options.outcomeCalibrationBands ?? [
             { band: "clean", sampleSize: 12, merged: 9, closed: 3, mergeRate: 0.75 },
             { band: "high", sampleSize: 4, merged: 1, closed: 3, mergeRate: 0.25 },
           ],

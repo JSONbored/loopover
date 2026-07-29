@@ -3290,7 +3290,24 @@ export const OutcomeCalibrationResponseSchema = z
     repoFullName: z.string().optional(),
     generatedAt: z.string().optional(),
     windowDays: z.number().nullable().optional(),
-    slop: z.unknown().optional(),
+    // #9641: a band with sampleSize 0 (no resolved PRs) reports mergeRate null -- never a fabricated 0, which
+    // for a discrimination table would read as "every PR in this band was closed".
+    slop: z
+      .object({
+        totalResolved: z.number(),
+        bands: z.array(
+          z.object({
+            band: z.enum(["clean", "low", "elevated", "high"]),
+            sampleSize: z.number(),
+            merged: z.number(),
+            closed: z.number(),
+            mergeRate: z.number().nullable(),
+          }),
+        ),
+        overallMergeRate: z.number().nullable(),
+        discriminates: z.boolean().nullable(),
+      })
+      .optional(),
     recommendations: z.unknown().optional(),
     signals: z.array(z.string()).optional(),
     status: z.string().optional(),

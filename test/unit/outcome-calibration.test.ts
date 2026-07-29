@@ -55,6 +55,18 @@ describe("buildSlopOutcomeCalibration", () => {
     expect(result.totalResolved).toBe(4);
   });
 
+  // REGRESSION (#9641): a band with zero resolved PRs reports mergeRate null -- never a fabricated 0, which
+  // for a discrimination table would read as "every PR in this band was closed" -- and computeDiscriminates'
+  // verdict over the remaining sampled bands is unaffected by the null band.
+  it("reports a zero-sample band's mergeRate as null, leaving the verdict over the sampled bands unchanged", () => {
+    const result = buildSlopOutcomeCalibration([...band("clean", 6, 5, 0), ...band("low", 6, 4, 100), ...band("elevated", 6, 1, 200)]);
+    // "high" has no resolved PRs at all -- one zero-sample band alongside three sampled ones.
+    const high = result.bands.find((b) => b.band === "high")!;
+    expect(high.sampleSize).toBe(0);
+    expect(high.mergeRate).toBeNull();
+    expect(result.discriminates).toBe(true); // clean 0.833 > low 0.667 > elevated 0.167 -- non-increasing
+  });
+
   it("excludes open PRs and PRs with no slop assessment", () => {
     const open: PullRequestRecord = { repoFullName: "owner/repo", number: 9, title: "open", state: "open", labels: [], linkedIssues: [], slopRisk: 70, slopBand: "high" };
     const unassessed: PullRequestRecord = { repoFullName: "owner/repo", number: 10, title: "no slop", state: "closed", mergedAt: "2026-06-01T00:00:00.000Z", labels: [], linkedIssues: [] };

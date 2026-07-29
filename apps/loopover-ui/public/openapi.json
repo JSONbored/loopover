@@ -15272,7 +15272,63 @@
             "nullable": true
           },
           "slop": {
-            "nullable": true
+            "type": "object",
+            "properties": {
+              "totalResolved": {
+                "type": "number"
+              },
+              "bands": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "band": {
+                      "type": "string",
+                      "enum": [
+                        "clean",
+                        "low",
+                        "elevated",
+                        "high"
+                      ]
+                    },
+                    "sampleSize": {
+                      "type": "number"
+                    },
+                    "merged": {
+                      "type": "number"
+                    },
+                    "closed": {
+                      "type": "number"
+                    },
+                    "mergeRate": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "band",
+                    "sampleSize",
+                    "merged",
+                    "closed",
+                    "mergeRate"
+                  ]
+                }
+              },
+              "overallMergeRate": {
+                "type": "number",
+                "nullable": true
+              },
+              "discriminates": {
+                "type": "boolean",
+                "nullable": true
+              }
+            },
+            "required": [
+              "totalResolved",
+              "bands",
+              "overallMergeRate",
+              "discriminates"
+            ]
           },
           "recommendations": {
             "nullable": true

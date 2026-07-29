@@ -2897,6 +2897,9 @@ export async function maintainCli(args: readonly string[]) {
     const payload = await apiGet(`${repoBase}/outcome-calibration${query}`);
     const window = payload.windowDays ? `last ${payload.windowDays}d` : "all history";
     const recommendations = payload.recommendations ?? {};
+    // #9641: a zero-sample slop band reports mergeRate null server-side (never a fabricated 0, which for this
+    // discrimination table would read as "every PR in this band was closed") -- this shared null/undefined
+    // guard already renders that as "n/a (below sample)" rather than coercing it into "0%".
     const rate = (value: any) => (value === null || value === undefined ? "n/a (below sample)" : `${Math.round(value * 100)}%`);
     const lines = [
       `Outcome calibration for ${repoFullName} (${window}): recommendations ${recommendations.positive ?? 0} positive, ${recommendations.negative ?? 0} negative, ${recommendations.pending ?? 0} pending (positive rate ${rate(recommendations.positiveRate)}).`,

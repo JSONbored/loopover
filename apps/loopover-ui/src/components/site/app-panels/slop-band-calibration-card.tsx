@@ -12,7 +12,7 @@ export type SlopBandCalibration = {
   sampleSize: number;
   merged: number;
   closed: number;
-  mergeRate: number;
+  mergeRate: number | null;
 };
 
 export type SlopOutcomeCalibration = {
@@ -38,7 +38,9 @@ function discriminationPill(discriminates: boolean | null): { status: Status; la
 
 function BandRow({ row }: { row: SlopBandCalibration }) {
   const hasSamples = row.sampleSize > 0;
-  const pct = hasSamples ? Math.round(row.mergeRate * 100) : null;
+  // hasSamples (sampleSize > 0) already guarantees mergeRate is non-null server-side; the fallback here is
+  // unreachable and exists only to satisfy the wider (nullable) type.
+  const pct = hasSamples ? Math.round((row.mergeRate ?? 0) * 100) : null;
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between gap-3 text-token-sm">

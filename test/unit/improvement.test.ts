@@ -119,6 +119,17 @@ describe("buildStructuralImprovementAssessment", () => {
     expect(result.findings).toEqual([expect.objectContaining({ code: "added_test_evidence", severity: "info" })]);
   });
 
+  it("regression (#9696): a codegen-only diff (no tests) does NOT emit a false added_test_evidence signal", () => {
+    // api/service.pb.go passes bare isCodeFile (a `.go` extension) but is generated output nobody hand-tests.
+    // Before the fix, hasCodeFileToEvaluate used bare isCodeFile, so buildMissingTestEvidenceFinding's null
+    // (no testable code) was read as "test evidence present" and the band became `minor` for a zero-test PR.
+    const result = buildStructuralImprovementAssessment({
+      changedFiles: [{ path: "api/service.pb.go", additions: 500, deletions: 0 }],
+    });
+    expect(result.findings.map((finding) => finding.code)).not.toContain("added_test_evidence");
+    expect(result.band).toBe("insufficient-signal");
+  });
+
   it("stacks both corroborating signals (30) to a band that still sits below a single structural signal (35)", () => {
     const result = buildStructuralImprovementAssessment({
       patchCoverageDeltaPercent: 5,

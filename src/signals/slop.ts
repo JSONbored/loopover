@@ -21,6 +21,7 @@ export {
   buildTrivialWhitespaceChurnFinding,
   clamp,
   hasClearNoIssueRationale,
+  isTestableCodePath,
   slopBandFor,
   type SlopAssessment,
   type SlopAssessmentInput,

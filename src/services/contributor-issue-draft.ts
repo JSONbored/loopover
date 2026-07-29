@@ -124,8 +124,15 @@ const GENERIC_TESTING_REQUIREMENTS = [
   "Public GitHub output must stay advisory and must not imply guaranteed participation outcomes.",
 ];
 
+/** The manifest's testExpectations, filtered to public-safe entries and formatted for a contributor-facing
+ *  draft. The single source shared by both testingRequirements and implementationRequirements so a public-unsafe
+ *  expectation can never leak through one path while the other filters it, and neither re-diverges (#9704). */
+function publicSafeTestExpectations(manifest: FocusManifest): string[] {
+  return manifest.testExpectations.filter(isFocusManifestPublicSafe).map(formatContributorIssueDraftTestExpectation);
+}
+
 export function buildContributorIssueDraftTestingRequirements(manifest: FocusManifest): string[] {
-  const policyExpectations = manifest.testExpectations.filter(isFocusManifestPublicSafe).map(formatContributorIssueDraftTestExpectation);
+  const policyExpectations = publicSafeTestExpectations(manifest);
   if (policyExpectations.length === 0) return [...GENERIC_TESTING_REQUIREMENTS];
   return [
     ...policyExpectations,
@@ -483,7 +490,9 @@ function wantedPathCandidate(repoFullName: string, wantedPath: string, openIssue
       implementationRequirements: [
         `Stay within ${wantedPath} unless safety or release readiness requires adjacent files.`,
         "Avoid blocked manifest paths and keep PRs narrowly scoped.",
-        ...(manifest.testExpectations.length > 0 ? manifest.testExpectations.map((entry) => `Run ${entry} before requesting review.`) : []),
+        // Same public-safe-filtered, formatted expectations as testingRequirements -- an unfiltered raw
+        // `Run ${entry}` here would both double-format and leak a public-unsafe expectation the sibling drops (#9704).
+        ...publicSafeTestExpectations(manifest),
       ],
       publicPrivateBoundaries: [
         "Public issues must not promise compensation, sort contributors, or expose private maintainer-only claims.",

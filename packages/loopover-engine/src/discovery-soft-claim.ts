@@ -1,4 +1,5 @@
 import { DISCOVERY_INDEX_CONTRACT_VERSION } from "./discovery-index-contract.js";
+import { isValidRepoSegment } from "./repo-segment.js";
 
 // Soft-claim coordination request builder (#4302). The local soft-claim ledger (claim-ledger.js) is 100%
 // client-side — "never uploads, syncs, or phones home" — and duplicate-cluster adjudication
@@ -53,12 +54,14 @@ export function softClaimActionForStatus(status: SoftClaimStatus): SoftClaimActi
   return status === "active" ? "claim" : "release";
 }
 
-/** `owner/repo` with exactly one slash and non-empty halves; anything else → null (mirrors the discovery-index
- *  contract / claim-ledger repo validation). */
+/** `owner/repo` with exactly one slash and non-empty, path-safe halves; anything else → null (mirrors the
+ *  discovery-index contract / claim-ledger repo validation, including their shared "." / ".." traversal-
+ *  segment rejection). */
 function normalizeRepoFullName(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const [owner, repo, extra] = value.trim().split("/");
   if (!owner || !repo || extra !== undefined) return null;
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) return null;
   return `${owner}/${repo}`;
 }
 

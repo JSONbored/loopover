@@ -11,6 +11,7 @@ import {
 import { MAX_ISSUE_RAG_OWNER_LENGTH, MAX_ISSUE_RAG_REPO_LENGTH } from "../mcp/issue-rag";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
+import { PublicStatsSchema as PublicStatsShape } from "@loopover/contract/public-api";
 
 extendZodWithOpenApi(z);
 
@@ -101,110 +102,16 @@ export const PublicRepoStatsSchema = z
   })
   .openapi("PublicRepoStats");
 
-export const PublicStatsSchema = z
-  .object({
-    generatedAt: z.string(),
-    updatedAt: z.string(),
-    totals: z.object({
-      handled: z.number(),
-      reviewed: z.number(),
-      merged: z.number(),
-      closed: z.number(),
-      commented: z.number(),
-      ignored: z.number(),
-      manual: z.number(),
-      error: z.number(),
-      reversed: z.number(),
-      filteredPct: z.number().nullable(),
-      accuracyPct: z.number().nullable(),
-      minutesSaved: z.number(),
-    }),
-    weekly: z.object({ reviewed: z.number(), merged: z.number() }),
-    /** Measured per-rule precision over the trailing window (#8230): decided human verdicts per rule with
-     *  confirmed/decided precision, null below the public sample floor — plus all three reversal-shape
-     *  counts and the latest backtest run's corpus checksum (the independently-verifiable freeze point). */
-    rulePrecision: z.object({
-      windowDays: z.number(),
-      rules: z.array(z.object({ ruleId: z.string(), decided: z.number(), confirmed: z.number(), precision: z.number().nullable() })),
-      reversals: z.object({ reopened: z.number(), reverted: z.number(), superseded: z.number() }),
-      latestBacktestRun: z.object({ corpusChecksum: z.string(), at: z.string() }).nullable(),
-    }),
-    byProject: z.array(
-      z.object({
-        project: z.string(),
-        reviewed: z.number(),
-        merged: z.number(),
-        closed: z.number(),
-        accuracyPct: z.number().nullable(),
-      }),
-    ),
-    /** Live, fleet-wide reversal-grounded accuracy across REGISTERED self-hosted ORB instances -- unlike
-     *  totals.accuracyPct (own-ledger, frozen as of the self-host cutover), this keeps growing with the fleet.
-     *  accuracyPct is null until at least one registered instance clears the fleet's own minimum-volume bar. */
-    fleetAccuracy: z.object({
-      accuracyPct: z.number().nullable(),
-      accuracyCiPct: z.object({ lo: z.number(), hi: z.number() }).nullable(),
-      mergePrecisionPct: z.number().nullable(),
-      mergePrecisionCiPct: z.object({ lo: z.number(), hi: z.number() }).nullable(),
-      closePrecisionPct: z.number().nullable(),
-      closePrecisionCiPct: z.object({ lo: z.number(), hi: z.number() }).nullable(),
-      coveragePct: z.number().nullable(),
-      // #9168: nullable because the pooled COUNT is withheld at 1 < instanceCount < FLEET_FRAMING_MIN_INSTANCES
-      // — at exactly two instances it isolates the other participant's decision volume by subtraction, since
-      // this deployment's own volume is already public. Rates stay published at every n.
-      decidedCount: z.number().nullable(),
-      guaranteed: z.object({
-        close: z.object({ alpha: z.number(), lambda: z.number(), aiJudgedCoveragePct: z.number(), n: z.number(), backfilledPct: z.number().nullable() }).nullable(),
-        merge: z.object({ alpha: z.number(), lambda: z.number(), aiJudgedCoveragePct: z.number(), n: z.number(), backfilledPct: z.number().nullable() }).nullable(),
-      }),
-      instanceCount: z.number(),
-      // #9168: whether these figures are a fleet aggregate or one operator's self-report. Below
-      // FLEET_FRAMING_MIN_INSTANCES a median is not robust to a single bad contributor and the anti-farming
-      // detector cannot fire, so "fleet" would overclaim — the numbers are real either way, the label is what
-      // stops a reader treating one party's self-report as corroboration of that party's own guarantee.
-      basis: z.enum(["fleet", "single_instance_self_report"]),
-      windowDays: z.number(),
-      gamingFlagsCaught: z.number().nullable(),
-    }),
-    /** Trailing weekly history of totals.accuracyPct's SAME formula (#4447) -- null counts/accuracyPct on a week means
-     *  too few decided (merged+closed) PRs to publish meaningful or non-identifying details. */
-    accuracyTrend: z.array(
-      z.object({
-        weekStart: z.string(),
-        merged: z.number().nullable(),
-        closed: z.number().nullable(),
-        reversed: z.number().nullable(),
-        accuracyPct: z.number().nullable(),
-      }),
-    ),
-    /** Trailing weekly "how often we avoid redoing AI work" trend (#4448) -- a competence signal, not a cost
-     *  claim. Counts cache hits/misses across every instrumented AI-touching capability (grounding,
-     *  review-memory, impact-map, repo-culture-profile, ai_review, ai_slop, linked_issue_satisfaction,
-     *  miner_detection). null reuseRatePct on a week means too few total attempts to publish a meaningful
-     *  percentage, not zero reuse. */
-    reuseRateTrend: z.array(
-      z.object({
-        weekStart: z.string(),
-        hits: z.number(),
-        misses: z.number(),
-        reuseRatePct: z.number().nullable(),
-      }),
-    ),
-    /** Trailing weekly PR-review-volume/filtered-rate trend (#4445 follow-up) -- each week is the COHORT of PRs
-     *  first published that week, `merged` reflects their CURRENT disposition (not necessarily merged the same
-     *  week), and null filteredPct means too few reviewed PRs that week to publish a meaningful percentage. The
-     *  most recent 1-2 weeks can read a lower filteredPct than they'll eventually settle at, since some of that
-     *  cohort may still be in flight. */
-    reviewVolumeTrend: z.array(
-      z.object({
-        weekStart: z.string(),
-        reviewed: z.number(),
-        merged: z.number(),
-        filteredPct: z.number().nullable(),
-      }),
-    ),
-  })
-  .openapi("PublicStats");
+// #9282/#9521: the shape itself lives in @loopover/contract/public-api so apps/loopover-ui infers its
+// render types from this exact object instead of hand-authoring a parallel interface that silently drifts.
+// Only the OpenAPI decoration stays here -- zod-to-openapi's extension is Worker-side, and the contract
+// package must stay free of it.
+// Re-wrapped through the LOCAL `z.object`, not `PublicStatsShape.openapi(...)`: extendZodWithOpenApi
+// attaches `.openapi` when a schema is CONSTRUCTED, so an object built inside @loopover/contract (which
+// must not depend on zod-to-openapi) never has the method. Re-wrapping the same shape through the patched
+// factory produces an identical document -- only the top level carries a refId, exactly as before.
+export const PublicStatsSchema = z.object(PublicStatsShape.shape).openapi("PublicStats");
+export { PublicRulePrecisionSchema } from "@loopover/contract/public-api";
 
 export const PublicQualityMetricsSchema = z
   .object({

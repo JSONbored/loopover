@@ -38,6 +38,14 @@ function renderWithClient(ui: ReactNode) {
 }
 
 const FIXTURE: PublicStats = {
+  // The wire always carries rulePrecision (#8230/#8231). A fixture without it is not a payload the
+  // current backend can produce -- the one test that needs that shape strips it explicitly.
+  rulePrecision: {
+    windowDays: 90,
+    rules: [],
+    reversals: { reopened: 0, reverted: 0, superseded: 0 },
+    latestBacktestRun: null,
+  },
   generatedAt: "2026-07-20T00:00:00.000Z",
   updatedAt: "2026-07-20T00:00:00.000Z",
   totals: {
@@ -56,7 +64,23 @@ const FIXTURE: PublicStats = {
   },
   weekly: { reviewed: 10, merged: 6 },
   byProject: [{ project: "owner/repo", reviewed: 100, merged: 60, closed: 30, accuracyPct: 95.5 }],
-  fleetAccuracy: { accuracyPct: 92, instanceCount: 4, windowDays: 90, gamingFlagsCaught: 1 },
+  fleetAccuracy: {
+    accuracyPct: 92,
+    // Every #8829/#9168 field the wire always carries. The fixture used to omit them, which the
+    // hand-typed interface allowed and the real payload never does.
+    accuracyCiPct: null,
+    mergePrecisionPct: null,
+    mergePrecisionCiPct: null,
+    closePrecisionPct: null,
+    closePrecisionCiPct: null,
+    coveragePct: null,
+    decidedCount: null,
+    guaranteed: { close: null, merge: null },
+    instanceCount: 4,
+    basis: "fleet",
+    windowDays: 90,
+    gamingFlagsCaught: 1,
+  },
   accuracyTrend: [
     { weekStart: "2026-07-13", merged: 30, closed: 15, reversed: 1, accuracyPct: 97.8 },
   ],
@@ -77,8 +101,8 @@ describe("FairnessReportPage (#fairness-analytics)", () => {
         rulePrecision: {
           windowDays: 90,
           rules: [
-            { ruleId: "linked_issue_scope_mismatch", decided: 42, precision: 0.952 },
-            { ruleId: "slop_gate_score", decided: 3, precision: null },
+            { ruleId: "linked_issue_scope_mismatch", decided: 42, confirmed: 40, precision: 0.952 },
+            { ruleId: "slop_gate_score", decided: 3, confirmed: 3, precision: null },
           ],
           reversals: { reopened: 2, reverted: 1, superseded: 0 },
           latestBacktestRun: { corpusChecksum: "a".repeat(64), at: "2026-07-22T00:00:00.000Z" },
@@ -102,7 +126,10 @@ describe("FairnessReportPage (#fairness-analytics)", () => {
   });
 
   it("hides the per-rule section entirely when the API response predates rulePrecision (deployment skew) or has no rules (#8231)", async () => {
-    apiFetch.mockResolvedValue({ ok: true, data: FIXTURE, durationMs: 10 });
+    // Deliberately NOT a PublicStats: an older deployed Worker omits the field entirely, which the current
+    // schema no longer describes. The cast is the point of the test -- the UI must not throw on that payload.
+    const { rulePrecision: _omitted, ...withoutRulePrecision } = FIXTURE;
+    apiFetch.mockResolvedValue({ ok: true, data: withoutRulePrecision, durationMs: 10 });
     renderWithClient(<FairnessReportPage />);
     await waitFor(() =>
       expect(screen.getByText("Is ORB treating contributors fairly?")).toBeTruthy(),

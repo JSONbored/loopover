@@ -47,12 +47,15 @@ export interface SettlementBackendDriver {
   /** Read side of the balance contract: a pool's remaining allocation. A pool never funded reads as 0. */
   getPoolBalance(poolId: PoolId): Promise<number>;
   /** "Payout owed" intake: record a payout-eligible event and decrement its pool's balance by `event.amount`.
-   *  MUST be idempotent per event (same repo+PR+pool+contributor) — re-recording a settled event is a no-op, so
-   *  a redelivered webhook never double-pays. */
+   *  MUST be idempotent per event (same repo+PR+pool+contributor) for the event's whole lifetime: re-recording
+   *  an event that has EVER been recorded — including one that has since been reversed — is a no-op, so a
+   *  redelivered webhook never double-pays, even after a refund/dispute already reversed that payout. */
   recordPayoutEligibleEvent(event: PayoutEligibleEvent): Promise<void>;
-  /** Refund/dispute/partial-completion hook: reverse a previously-recorded payout, crediting `event.amount` back
-   *  to the pool. MUST be idempotent — reversing an unrecorded or already-reversed event is a no-op, never a
-   *  throw. The reason is threaded through for #4791's policy/audit; this contract does not interpret it. */
+  /** Refund/dispute/partial-completion hook: reverse a previously-recorded payout, crediting back the amount
+   *  that was actually recorded (decremented) for that event — the `event.amount` passed on the reversal call
+   *  is NOT trusted for the credit. MUST be idempotent — reversing an unrecorded or already-reversed event is a
+   *  no-op, never a throw. The reason is threaded through for #4791's policy/audit; this contract does not
+   *  interpret it. */
   reversePayout(event: PayoutEligibleEvent, reason: SettlementReversalReason): Promise<void>;
 }
 
@@ -81,23 +84,41 @@ function payoutEventKey(event: PayoutEligibleEvent): string {
   return `${event.poolId}|${event.repoFullName}|${event.prNumber}|${event.gittensorContributor}`;
 }
 
+/** What the fake remembers for every event it has ever recorded: the amount that was actually decremented and
+ *  whether the event is currently reversed. Entries are never deleted — a reversed event stays known, which is
+ *  what keeps a redelivered webhook from re-settling it after a refund/dispute. */
+type SettledEventRecord = { amount: number; reversed: boolean };
+
 /**
- * Minimal in-memory fake for contract/scenario tests — a balances map stands in for a real ledger, a set of
- * settled event keys enforces per-event idempotency, and an ordered call log records every step. NO real funds,
- * credentials, or IO. Mirrors `createFakeTenantProvisioningDriver`: implements the interface and exposes its
- * recorded state as extra introspection surface beyond the contract.
+ * Minimal in-memory fake for contract/scenario tests — a balances map stands in for a real ledger, a map of
+ * ever-recorded payout events (recorded amount + reversed flag) enforces lifetime per-event idempotency, and an
+ * ordered call log records every step. NO real funds, credentials, or IO. Mirrors
+ * `createFakeTenantProvisioningDriver`: implements the interface and exposes its recorded state as extra
+ * introspection surface beyond the contract.
  */
 export function createFakeSettlementBackendDriver(): FakeSettlementBackendDriver {
   const balances = new Map<PoolId, number>();
-  const settledEventKeys = new Set<string>();
+  const settledEvents = new Map<string, SettledEventRecord>();
   const calls: FakeSettlementCall[] = [];
+
+  /** Apply a settlement delta to a pool's balance (a pool never funded starts from 0). */
+  function addToPoolBalance(poolId: PoolId, delta: number): void {
+    balances.set(poolId, (balances.get(poolId) ?? 0) + delta);
+  }
 
   return {
     get balances() {
       return balances;
     },
     get settledEventKeys() {
-      return settledEventKeys;
+      // Derived view with the documented semantics preserved: the keys currently recorded-and-not-reversed.
+      const keys = new Set<string>();
+      for (const [key, record] of settledEvents) {
+        if (!record.reversed) {
+          keys.add(key);
+        }
+      }
+      return keys;
     },
     get calls() {
       return calls;
@@ -111,22 +132,24 @@ export function createFakeSettlementBackendDriver(): FakeSettlementBackendDriver
     },
     async recordPayoutEligibleEvent(event) {
       calls.push({ step: "recordPayoutEligibleEvent", poolId: event.poolId, amount: event.amount });
-      // Idempotent intake: a redelivered event (already settled) neither re-decrements the balance nor
-      // double-records — the else-path is the "already settled" no-op.
+      // Lifetime idempotency: an event that has EVER been recorded — currently settled OR since reversed — is a
+      // no-op, so a redelivered webhook never re-decrements the pool, even after a refund/dispute reversal.
       const key = payoutEventKey(event);
-      if (!settledEventKeys.has(key)) {
-        settledEventKeys.add(key);
-        balances.set(event.poolId, (balances.get(event.poolId) ?? 0) - event.amount);
+      if (!settledEvents.has(key)) {
+        settledEvents.set(key, { amount: event.amount, reversed: false });
+        addToPoolBalance(event.poolId, -event.amount);
       }
     },
     async reversePayout(event, _reason) {
       calls.push({ step: "reversePayout", poolId: event.poolId, amount: event.amount });
-      // Idempotent reversal: only a currently-settled event credits back; reversing an unrecorded or
+      // Idempotent reversal: only a currently-settled event credits back — and it credits the amount that was
+      // recorded for the event, ignoring the reversal caller's `event.amount`. Reversing an unrecorded or
       // already-reversed event is a no-op, never a throw.
       const key = payoutEventKey(event);
-      if (settledEventKeys.has(key)) {
-        settledEventKeys.delete(key);
-        balances.set(event.poolId, (balances.get(event.poolId) ?? 0) + event.amount);
+      const record = settledEvents.get(key);
+      if (record !== undefined && !record.reversed) {
+        record.reversed = true;
+        addToPoolBalance(event.poolId, record.amount);
       }
     },
   };

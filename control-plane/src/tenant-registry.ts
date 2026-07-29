@@ -78,14 +78,30 @@ function sortRecords(records: TenantRegistryRecord[]): TenantRegistryRecord[] {
 }
 
 /** In-memory fake for tests -- mirrors `createFakeTenantProvisioningDriver`'s own minimal-fake convention.
- *  `getByOrbInstallationId` is a plain linear scan -- fine for a fake with, at most, a handful of test
- *  records; the real KV-backed registry below needs an actual secondary index instead, since KV has no query
- *  capability at all. */
+ *  `getByOrbInstallationId` resolves through the same write-time installation -> primary-key secondary
+ *  index the real KV-backed registry below keeps (last writer wins, with #9143's compare-and-delete rule
+ *  on a cleared/changed claim), held as an in-memory Map -- NOT a scan of `records`, whose insertion order
+ *  would answer duplicated-installation scenarios first-inserted-wins, the opposite of KV. */
 export function createFakeTenantRegistry(): TenantRegistry {
   const records = new Map<string, TenantRegistryRecord>();
+  const installationIndex = new Map<number, string>();
   return {
     async upsert(record) {
-      records.set(instanceKeyFor(record.tenant.name, record.product), record);
+      const primaryKey = instanceKeyFor(record.tenant.name, record.product);
+      // Mirror createKvTenantRegistry's write-time index maintenance: when this update changes (or clears)
+      // the tenant's installation claim, drop the stale pointer -- but only if it still points at THIS
+      // tenant's own primary key (#9143's compare-and-delete: the ID may since have been legitimately
+      // taken over by another tenant, whose live pointer must survive this record's late upsert).
+      const previous = records.get(primaryKey);
+      if (previous?.orbInstallationId !== undefined && previous.orbInstallationId !== record.orbInstallationId) {
+        if (installationIndex.get(previous.orbInstallationId) === primaryKey) {
+          installationIndex.delete(previous.orbInstallationId);
+        }
+      }
+      records.set(primaryKey, record);
+      if (record.orbInstallationId !== undefined) {
+        installationIndex.set(record.orbInstallationId, primaryKey);
+      }
     },
     async get(name, product) {
       return records.get(instanceKeyFor(name, product));
@@ -94,7 +110,8 @@ export function createFakeTenantRegistry(): TenantRegistry {
       return sortRecords([...records.values()]);
     },
     async getByOrbInstallationId(installationId) {
-      return [...records.values()].find((record) => record.orbInstallationId === installationId);
+      const primaryKey = installationIndex.get(installationId);
+      return primaryKey === undefined ? undefined : records.get(primaryKey);
     },
   };
 }

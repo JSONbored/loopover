@@ -3,15 +3,23 @@
 // fetch a live token from the authenticated loopover-mcp session (POST /v1/auth/github/token, #6114/#6115),
 // so `loopover-mcp login` alone becomes sufficient to run AMS against a repo the user has access to.
 //
-// Deliberately reimplements loopover-mcp's own config-file read here rather than depending on @loopover/mcp
-// as a package: @loopover/miner and @loopover/mcp are separately-installable CLIs (the whole point of this
-// milestone is that installing the GitHub App doesn't require BOTH), and a hard runtime dependency between
-// them would mean installing one always pulls in the other just to read a config file format neither
-// package publishes as a stable API. This mirrors loopover-mcp/bin/loopover-mcp.js's own configPath/
-// selectProfileName/apiUrl resolution logic (kept in sync by hand -- there is no shared module to import).
+// The config/profile/apiUrl/session resolution this needs used to be hand-copied from loopover-mcp's own
+// bin, because @loopover/miner and @loopover/mcp are separately-installable CLIs and neither publishes the
+// config format as a stable API. It now imports @loopover/contract/cli-config (#9521), which both
+// packages already depend on -- so the hand-sync, and the drift it invited, are gone.
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import {
+  DEFAULT_PROFILE_NAME,
+  canonicalProfileName,
+  loopoverConfigPath,
+  parseLoopoverConfig,
+  profileSessionToken,
+  resolveLoopoverApiUrl,
+  type LoopoverConfig,
+  type LoopoverConfigProfile,
+} from "@loopover/contract/cli-config";
 
 // A narrower shape than `typeof fetch` on purpose: this module only ever calls it with a string URL and a
 // plain init object, and the ambient `fetch` type in this repo's TS program is Cloudflare-Workers-flavored
@@ -22,83 +30,40 @@ export type GitHubTokenResolutionFetch = (
   init?: { method?: string; headers?: Record<string, string>; signal?: AbortSignal },
 ) => Promise<Response>;
 
-type LoopoverConfigProfile = {
-  apiUrl?: unknown;
-  session?: { token?: unknown } | null | undefined;
-};
-
-type LoopoverConfig = {
-  activeProfile?: unknown;
-  profiles?: Record<string, LoopoverConfigProfile | undefined>;
-  // #8854: a top-level/global apiUrl, mirroring loopover-mcp's config shape — the fallback the miner's
-  // hand-copied resolver previously skipped (it read only the per-profile apiUrl).
-  apiUrl?: unknown;
-};
-
-const DEFAULT_API_URL = "https://api.loopover.ai";
-const LEGACY_DEFAULT_API_URLS = new Set([
-  "https://gittensory-api.zeronode.workers.dev",
-  "https://gittensory-api.aethereal.dev",
-]);
-const DEFAULT_PROFILE_NAME = "default";
 const GITHUB_TOKEN_FETCH_TIMEOUT_MS = 10_000;
 
-function loopoverConfigPath(env: NodeJS.ProcessEnv): string {
-  if (env.LOOPOVER_CONFIG_PATH) return env.LOOPOVER_CONFIG_PATH;
-  if (env.LOOPOVER_CONFIG_DIR) return join(env.LOOPOVER_CONFIG_DIR, "config.json");
-  return join(env.XDG_CONFIG_HOME || join(homedir(), ".config"), "loopover", "config.json");
-}
-
-function loadLoopoverConfig(env: NodeJS.ProcessEnv): LoopoverConfig {
-  const configPath = loopoverConfigPath(env);
+// The miner only READS the config, so an unusable profile name degrades to "default" here rather than
+// throwing the way loopover-mcp's own writer does -- `loopover-mcp login` is where a bad name gets
+// rejected, and refusing to start AMS over one would be a worse failure than falling back.
+function readLoopoverConfig(env: NodeJS.ProcessEnv): LoopoverConfig {
+  const configPath = loopoverConfigPath(env, { join, homeDir: homedir });
   if (!existsSync(configPath)) return {};
   try {
-    const parsed: unknown = JSON.parse(readFileSync(configPath, "utf8"));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as LoopoverConfig) : {};
+    return parseLoopoverConfig(readFileSync(configPath, "utf8"));
   } catch {
+    // An unreadable file (permissions, a directory in its place) is the same "no config" state as an
+    // absent one -- parseLoopoverConfig already absorbs malformed contents.
     return {};
   }
 }
 
-// Only ever called with an already-truthy candidate name (see selectProfileName below) -- no nullish
-// fallback needed here, since a nullish/empty `value` never reaches this function in the first place.
-function normalizeProfileName(value: unknown): string {
-  const name = String(value).trim().toLowerCase();
-  return /^[a-z0-9][a-z0-9._-]{0,63}$/.test(name) ? name : DEFAULT_PROFILE_NAME;
-}
-
-// Mirrors loopover-mcp's own selectProfileName: an explicit request wins, else the config's own
-// activeProfile (only if it names a real profile entry), else "default".
 function selectProfileName(config: LoopoverConfig, requestedName: string | undefined): string {
-  if (requestedName) return normalizeProfileName(requestedName);
-  const configured = config.activeProfile ? normalizeProfileName(config.activeProfile) : DEFAULT_PROFILE_NAME;
+  if (requestedName) return canonicalProfileName(requestedName) ?? DEFAULT_PROFILE_NAME;
+  const configured = config.activeProfile ? (canonicalProfileName(config.activeProfile) ?? DEFAULT_PROFILE_NAME) : DEFAULT_PROFILE_NAME;
   return config.profiles?.[configured] ? configured : DEFAULT_PROFILE_NAME;
 }
 
 function activeLoopoverProfile(env: NodeJS.ProcessEnv): LoopoverConfigProfile {
-  const config = loadLoopoverConfig(env);
-  const profileName = selectProfileName(config, env.LOOPOVER_PROFILE);
-  return config.profiles?.[profileName] ?? {};
+  const config = readLoopoverConfig(env);
+  return config.profiles?.[selectProfileName(config, env.LOOPOVER_PROFILE)] ?? {};
 }
 
 function loopoverSessionToken(env: NodeJS.ProcessEnv): string | null {
-  const token = activeLoopoverProfile(env).session?.token;
-  return typeof token === "string" && token ? token : null;
+  return profileSessionToken(activeLoopoverProfile(env));
 }
 
 function loopoverApiUrl(env: NodeJS.ProcessEnv): string {
-  if (env.LOOPOVER_API_URL) return env.LOOPOVER_API_URL.replace(/\/+$/, "");
-  // #8854: mirror loopover-mcp's `activeProfile.apiUrl ?? config.apiUrl ?? default` — try the active profile's
-  // apiUrl first, THEN the top-level/global config.apiUrl, before the hardcoded default. The miner previously
-  // read only the profile apiUrl, so a config that set apiUrl globally fell straight to the default. Reuses the
-  // existing activeLoopoverProfile()/loadLoopoverConfig() readers (no new profile-selection branch here).
-  for (const candidate of [activeLoopoverProfile(env).apiUrl, loadLoopoverConfig(env).apiUrl]) {
-    if (typeof candidate === "string" && candidate.trim()) {
-      const normalized = candidate.replace(/\/+$/, "");
-      if (!LEGACY_DEFAULT_API_URLS.has(normalized)) return normalized;
-    }
-  }
-  return DEFAULT_API_URL;
+  return resolveLoopoverApiUrl(env, readLoopoverConfig(env), activeLoopoverProfile(env));
 }
 
 /**

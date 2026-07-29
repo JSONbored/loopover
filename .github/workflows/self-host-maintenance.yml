@@ -1,6 +1,12 @@
 # Manual maintenance hook for externally reachable self-host stacks. This is deliberately not scheduled while
 # the review stack is running without colocated GitHub Actions runners.
 #
+# #9522: this workflow remains the SCHEDULED/batch path and gains no new duties. The interactive path for the
+# same jobs is now the MCP tool `loopover_fleet_run_job`, which takes a `job` and `mode: enqueue|run` and
+# drives the identical dispatcher (src/queue/job-dispatch.ts's processJob) -- so a job run from an agent and
+# a job run from this matrix cannot diverge. Use this workflow for fleet-wide sweeps; use the tool to run one
+# job against one instance while debugging.
+#
 # #4899: generalized from a single hardcoded instance to a fleet matrix. Each self-host instance is modeled
 # as its own GitHub Environment (Settings -> Environments), carrying that instance's own `SELF_HOST_URL`
 # environment variable and `INTERNAL_JOB_TOKEN` environment secret -- this is the supported way to give a

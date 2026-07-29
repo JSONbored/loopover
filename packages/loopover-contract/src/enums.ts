@@ -100,3 +100,76 @@ export type ConfigAdminWriteScope = (typeof CONFIG_ADMIN_WRITE_SCOPES)[number];
  */
 export const CONFIG_ADMIN_READ_SCOPES = ["effective", ...CONFIG_ADMIN_WRITE_SCOPES] as const;
 export type ConfigAdminReadScope = (typeof CONFIG_ADMIN_READ_SCOPES)[number];
+
+/**
+ * The secret files `loopover_admin_rotate_secret` may rotate (#9543). Closed on purpose: rotation writes to
+ * a host path through the redeploy companion, so an open string would let a caller name any file the
+ * companion can reach.
+ */
+export const ROTATABLE_SECRET_NAMES = [
+  "claude_code_oauth_token",
+  "github_webhook_secret",
+  "loopover_api_token",
+  "loopover_mcp_token",
+  "loopover_mcp_admin_token",
+  "pagerduty_routing_key",
+] as const;
+
+/**
+ * Every `/v1/internal/jobs/*` maintenance job -- the input surface of the one `loopover_fleet_run_job` tool
+ * that replaces ~30 bespoke per-job tools (#9522). All 20 of them, with nothing excluded.
+ *
+ * `messageType` exists because the route path is NOT always the queue message type, and assuming it was
+ * would have enqueued messages the dispatcher silently drops: `rag-index` sends `rag-index-repo` and
+ * `regate-pr` sends `agent-regate-pr`. `null` means the job has no queue message at all -- it is run-only,
+ * and src/mcp/server.ts dispatches it to the same function its `/run` route calls.
+ *
+ * `modes` is per job because most offer both but seven do not; an unsupported pairing is answered with the
+ * supported list rather than 404'ing against a route that was never there.
+ *
+ * Pinned in every direction by test/unit/mcp-fleet-job-parity.test.ts (route table vs this table, and each
+ * job's modes), and each non-null messageType is asserted to be a real JobMessage type at COMPILE time in
+ * src/mcp/server.ts -- the contract package cannot import src/, so a transcription is only honest if
+ * something on the src side checks it.
+ */
+export const INTERNAL_JOB_RUN_MODES = ["enqueue", "run"] as const;
+export type InternalJobRunMode = (typeof INTERNAL_JOB_RUN_MODES)[number];
+
+export const INTERNAL_JOB_SPEC = {
+  "backfill-contributor-gate-history": { messageType: null, modes: ["run"] },
+  "backfill-pr-details": { messageType: "backfill-pr-details", modes: ["enqueue", "run"] },
+  "backfill-registered-repos": { messageType: "backfill-registered-repos", modes: ["enqueue", "run"] },
+  "backfill-repo-segment": { messageType: "backfill-repo-segment", modes: ["enqueue", "run"] },
+  "build-burden-forecasts": { messageType: "build-burden-forecasts", modes: ["enqueue"] },
+  "build-contributor-decision-packs": { messageType: "build-contributor-decision-packs", modes: ["enqueue", "run"] },
+  "build-contributor-evidence": { messageType: "build-contributor-evidence", modes: ["enqueue"] },
+  "file-upstream-drift-issues": { messageType: "file-upstream-drift-issues", modes: ["enqueue", "run"] },
+  "generate-review-recap": { messageType: "generate-review-recap", modes: ["enqueue", "run"] },
+  "generate-signal-snapshots": { messageType: "generate-signal-snapshots", modes: ["enqueue", "run"] },
+  "generate-weekly-value-report": { messageType: "generate-weekly-value-report", modes: ["enqueue", "run"] },
+  "rag-index": { messageType: "rag-index-repo", modes: ["enqueue"] },
+  "refresh-contributor-activity": { messageType: "refresh-contributor-activity", modes: ["enqueue", "run"] },
+  "refresh-installation-health": { messageType: null, modes: ["run"] },
+  "refresh-registry": { messageType: "refresh-registry", modes: ["enqueue", "run"] },
+  "refresh-scoring-model": { messageType: "refresh-scoring-model", modes: ["enqueue", "run"] },
+  "refresh-upstream-drift": { messageType: "refresh-upstream-drift", modes: ["enqueue", "run"] },
+  "regate-pr": { messageType: "agent-regate-pr", modes: ["enqueue"] },
+  "repair-data-fidelity": { messageType: "repair-data-fidelity", modes: ["enqueue"] },
+  "rollup-product-usage": { messageType: "rollup-product-usage", modes: ["enqueue", "run"] },
+} as const satisfies Record<string, { messageType: string | null; modes: readonly InternalJobRunMode[] }>;
+
+export const INTERNAL_JOB_NAMES = Object.keys(INTERNAL_JOB_SPEC) as [InternalJobName, ...InternalJobName[]];
+
+export type InternalJobName = keyof typeof INTERNAL_JOB_SPEC;
+
+
+/**
+ * The hosted control plane's tenant products (#9522). The routes key their registry by `${product}:${name}`
+ * (#8024) and reject a product-specific field paired with the wrong product, so this stays closed.
+ */
+export const TENANT_PRODUCTS = ["ams", "orb"] as const;
+export type TenantProduct = (typeof TENANT_PRODUCTS)[number];
+
+/** One doctor check's verdict (#9522). `warn` exists so a degraded-but-working instance is not reported as broken. */
+export const INSTANCE_CHECK_STATUSES = ["pass", "warn", "fail"] as const;
+export type InstanceCheckStatus = (typeof INSTANCE_CHECK_STATUSES)[number];

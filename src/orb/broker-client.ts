@@ -7,44 +7,18 @@
 // The signal is the ENROLLMENT SECRET's presence: a brokered self-host sets ORB_ENROLLMENT_SECRET (issued by the
 // operator), cloud never does — so this path is inert on cloud and the deploy is byte-identical there.
 
+import { ORB_BROKER_TIMEOUT_MS, fetchBrokeredStoredSecret as fetchBrokeredStoredSecretShared, orbBrokerBaseUrl } from "@loopover/contract/orb-broker";
 import { recordClockSkewFromResponse } from "../selfhost/clock-skew";
 import { incr } from "../selfhost/metrics";
 
-/** The Orb's hosted broker base; override (ORB_BROKER_URL) only to point at a private loopover deployment. */
-const DEFAULT_BROKER_URL = "https://api.loopover.ai";
-// The broker's cold token mint can take many seconds when GitHub is throttling the App; allow headroom so the one
-// uncached mint completes and populates the broker-side cache (steady-state cache hits return in well under a second).
-const BROKER_TIMEOUT_MS = 25_000;
+// The base URL policy, its timeout, and the stored-secret exchange live in @loopover/contract/orb-broker
+// (#9521) so packages/loopover-miner's hosted-tenant path imports them instead of hand-copying -- its
+// copy had already drifted on the local-host list. BROKER_TIMEOUT_MS keeps its old name here because a
+// dozen call sites below read it.
+const BROKER_TIMEOUT_MS = ORB_BROKER_TIMEOUT_MS;
 // Relay registration hits the same broker under the same load conditions as token minting; mirror BROKER_TIMEOUT_MS
 // so a loaded broker (e.g. at boot time with concurrent token-mint demand) doesn't abort registration prematurely.
 const ORB_RELAY_REGISTER_TIMEOUT_MS = 25_000;
-
-function isLocalBrokerHost(hostname: string): boolean {
-  // `hostname` is always a WHATWG URL's `.hostname`, which brackets an IPv6 literal ([::1], never bare ::1),
-  // so only the bracketed form is a reachable input here (#8334).
-  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
-}
-
-function orbBrokerBaseUrl(env: { ORB_BROKER_URL?: string | undefined }): string {
-  const raw = env.ORB_BROKER_URL ?? DEFAULT_BROKER_URL;
-  let url: URL;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new Error("ORB_BROKER_URL must be a valid URL.");
-  }
-  if (url.username || url.password) {
-    throw new Error("ORB_BROKER_URL must not include userinfo.");
-  }
-  if (url.search || url.hash) {
-    throw new Error("ORB_BROKER_URL must not include a query string or fragment.");
-  }
-  if (url.protocol !== "https:" && !(url.protocol === "http:" && isLocalBrokerHost(url.hostname))) {
-    throw new Error("ORB_BROKER_URL must use https unless it targets localhost development.");
-  }
-  const path = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "");
-  return `${url.origin}${path}`;
-}
 
 /** True when GitHub tokens should be sourced from the central Orb broker (a brokered self-host) rather than minted
  *  locally from an App key — i.e. an enrollment secret is configured. Cloud never sets it ⇒ false there. */
@@ -95,7 +69,7 @@ export async function fetchBrokeredInstallationToken(
   return { token: payload.token, installationId: payload.installationId ?? 0, expiresAtMs, permissions: payload.permissions ?? {} };
 }
 
-export type BrokeredStoredSecret = { secretValue: string; secretType: string };
+export type { BrokeredStoredSecret } from "@loopover/contract/orb-broker";
 
 /** Exchange a tenant's one-time bootstrap credential (#8202, `LOOPOVER_TENANT_SECRET_TOKEN` -- delivered into a
  *  hosted tenant container's own process env at its cold boot, via `control-plane/src/container-driver.ts`'s
@@ -109,25 +83,7 @@ export type BrokeredStoredSecret = { secretValue: string; secretType: string };
  *  repeat network calls should cache the RESULT itself, not rely on this function to. Throws on a non-OK
  *  response or a body missing `secretValue` -- a container with no other way to reach its own secret has
  *  nothing safe to fall back to, exactly like the installation-token path's own fatal-on-failure posture. */
-export async function fetchBrokeredStoredSecret(
-  env: { LOOPOVER_TENANT_SECRET_TOKEN?: string | undefined; ORB_BROKER_URL?: string | undefined },
-  fetchImpl: typeof fetch = fetch,
-): Promise<BrokeredStoredSecret> {
-  const base = orbBrokerBaseUrl(env);
-  const response = await fetchImpl(`${base}/v1/orb/token`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${env.LOOPOVER_TENANT_SECRET_TOKEN ?? ""}` },
-    signal: AbortSignal.timeout(BROKER_TIMEOUT_MS),
-  });
-  if (!response.ok) {
-    throw new Error(`Orb broker stored-secret exchange failed (${response.status}).`);
-  }
-  const payload = (await response.json()) as { secretValue?: string; secretType?: string };
-  if (!payload.secretValue) {
-    throw new Error("Orb broker stored-secret response did not include a secretValue.");
-  }
-  return { secretValue: payload.secretValue, secretType: payload.secretType ?? "" };
-}
+export const fetchBrokeredStoredSecret = fetchBrokeredStoredSecretShared;
 
 // Diagnosing a broker register failure (#selfhost-runtime-drift) needs more than a bare status code, but the
 // response body is attacker/operator-adjacent (the broker, or anything on-path to it) and must never be logged

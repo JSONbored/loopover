@@ -86,14 +86,27 @@ export function findPublishableDepViolations(
   return violations;
 }
 
-/** Map `publish-<slug>.yml` to the package name it publishes, by reading the workflow's own filter. Derived
- *  rather than assumed from the filename: `publish-ui-kit.yml` publishes `@loopover/ui-kit`, and a future
- *  workflow could name its package anything. */
+/**
+ * Map `publish-<slug>.yml` to the package it actually publishes, read from its own `npm pack --workspace`
+ * line.
+ *
+ * Deliberately NOT "any `@loopover/*` mentioned in the file". A publish workflow legitimately references
+ * OTHER workspace packages in its build steps (`npx turbo run build --filter=@loopover/contract`,
+ * `npm run build --workspace @loopover/engine`), and treating those as published would silently mark a
+ * package releasable because something else happens to build it -- masking exactly the violation this
+ * check exists to catch. The pack line is the definitive signal: a publish workflow packs precisely the
+ * one package it publishes, and every workflow in this repo has exactly one.
+ *
+ * A publish workflow with no recognizable pack line contributes NOTHING rather than falling back to a
+ * looser match -- an unreadable workflow should make the check stricter, never quietly more permissive.
+ */
 export function publishedPackageNames(workflowFiles: ReadonlyArray<{ name: string; text: string }>): Set<string> {
   const names = new Set<string>();
   for (const file of workflowFiles) {
     if (!/^publish-.+\.ya?ml$/.test(file.name)) continue;
-    for (const match of file.text.matchAll(/@loopover\/[a-z0-9-]+/g)) names.add(match[0]);
+    for (const match of file.text.matchAll(/npm pack --workspace\s+(@[a-z0-9-]+\/[a-z0-9-]+)/g)) {
+      if (match[1]) names.add(match[1]);
+    }
   }
   return names;
 }

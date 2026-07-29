@@ -77,28 +77,68 @@ describe("findPublishableDepViolations (#9749)", () => {
 });
 
 describe("publishedPackageNames (#9749)", () => {
-  it("derives the published set from the workflows themselves, not from filenames or a hand-kept list", () => {
-    // `publish-ui-kit.yml` publishes `@loopover/ui-kit`; a future workflow could name its package anything,
-    // so the mapping is read from the file rather than inferred from the slug.
+  it("reads the package a workflow actually PACKS, not the filename slug", () => {
+    // `publish-ui-kit.yml` publishes `@loopover/ui-kit`; the mapping is read from the file so a future
+    // workflow can name its package anything.
     const names = publishedPackageNames([
-      { name: "publish-ui-kit.yml", text: "run: npm run test --workspace @loopover/ui-kit" },
-      { name: "publish-engine.yml", text: "npm pack --workspace @loopover/engine --json" },
+      { name: "publish-ui-kit.yml", text: 'PACK_JSON="$(npm pack --workspace @loopover/ui-kit --json)"' },
+      { name: "publish-engine.yml", text: 'npm pack --workspace @loopover/engine --pack-destination "$RUNNER_TEMP" --json' },
     ]);
     expect([...names].sort()).toEqual(["@loopover/engine", "@loopover/ui-kit"]);
   });
 
+  it("REGRESSION: a package merely BUILT by another workflow is not treated as published", () => {
+    // Review caught this: deriving from any `@loopover/*` mention meant a publish workflow's own build step
+    // could silently mark an unpublished package releasable, masking the exact violation this check exists
+    // to catch. publish-contract.yml really does contain such a line for itself, and publish workflows
+    // routinely build sibling packages.
+    const names = publishedPackageNames([
+      {
+        name: "publish-mcp.yml",
+        text: [
+          "npx turbo run build --filter=@loopover/contract",
+          "npm run build --workspace @loopover/engine",
+          "run: npm run test --workspace @loopover/ui-kit",
+          'PACK_JSON="$(npm pack --workspace @loopover/mcp --json)"',
+        ].join("\n"),
+      },
+    ]);
+    // ONLY the packed package. The three built/tested siblings are not published by this workflow.
+    expect([...names]).toEqual(["@loopover/mcp"]);
+  });
+
+  it("a publish workflow with no recognizable pack line contributes NOTHING, never a looser guess", () => {
+    // An unreadable workflow must make the check stricter, not quietly more permissive.
+    const names = publishedPackageNames([{ name: "publish-broken.yml", text: "echo @loopover/engine # no pack line" }]);
+    expect(names.size).toBe(0);
+  });
+
   it("ignores workflows that are not publish-*, so a CI file mentioning a package cannot fake it published", () => {
     const names = publishedPackageNames([
-      { name: "ci.yml", text: "npm run build --workspace @loopover/contract" },
-      { name: "release-selfhost.yml", text: "@loopover/engine" },
+      { name: "ci.yml", text: "npm pack --workspace @loopover/contract" },
+      { name: "release-selfhost.yml", text: "npm pack --workspace @loopover/engine" },
     ]);
     expect(names.size).toBe(0);
   });
 
-  it("accepts both .yml and .yaml, and dedupes repeated mentions within one workflow", () => {
+  it("accepts both .yml and .yaml, and dedupes a package packed more than once", () => {
     const names = publishedPackageNames([
-      { name: "publish-mcp.yaml", text: "@loopover/mcp ... @loopover/mcp ... @loopover/mcp" },
+      { name: "publish-mcp.yaml", text: "npm pack --workspace @loopover/mcp\nnpm pack --workspace @loopover/mcp" },
     ]);
     expect([...names]).toEqual(["@loopover/mcp"]);
+  });
+
+  it("INVARIANT: every real publish workflow in this repo yields exactly one package", async () => {
+    // Guards the assumption the hardening rests on. If a future workflow packs two packages, or none, this
+    // fails here rather than silently changing what the check considers published.
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const dir = ".github/workflows";
+    const files = readdirSync(dir)
+      .filter((name) => /^publish-.+\.ya?ml$/.test(name))
+      .map((name) => ({ name, text: readFileSync(`${dir}/${name}`, "utf8") }));
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      expect({ file: file.name, packed: publishedPackageNames([file]).size }).toEqual({ file: file.name, packed: 1 });
+    }
   });
 });

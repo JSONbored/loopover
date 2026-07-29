@@ -43,7 +43,7 @@ export function buildChangesRequestedNotification(event: DetectedNotificationEve
 
 // Post-merge self-attribution (#702): the miner's OWN outcome record for a merged PR. Public-safe — frames
 // what merged work does for the contributor's standing, never raw reward $/trust/score.
-export function buildMergedOutcomeNotification(event: DetectedNotificationEvent): { title: string; body: string } {
+function buildMergedOutcomeNotification(event: DetectedNotificationEvent): { title: string; body: string } {
   const ref = `${event.repoFullName}#${event.pullNumber}`;
   return {
     title: sanitizePublicComment(`Merged: ${ref}`),
@@ -62,7 +62,7 @@ export function buildIssueWatchNotification(event: DetectedNotificationEvent): {
 }
 
 // AMS (#7657): attempt lifecycle — `pullNumber` carries the ISSUE number. Public-safe; no reward/trust figures.
-export function buildAmsAttemptStartedNotification(event: DetectedNotificationEvent): { title: string; body: string } {
+function buildAmsAttemptStartedNotification(event: DetectedNotificationEvent): { title: string; body: string } {
   const ref = `${event.repoFullName}#${event.pullNumber}`;
   return {
     title: sanitizePublicComment(`Attempt started on ${ref}`),
@@ -70,7 +70,7 @@ export function buildAmsAttemptStartedNotification(event: DetectedNotificationEv
   };
 }
 
-export function buildAmsAttemptFailedNotification(event: DetectedNotificationEvent): { title: string; body: string } {
+function buildAmsAttemptFailedNotification(event: DetectedNotificationEvent): { title: string; body: string } {
   const ref = `${event.repoFullName}#${event.pullNumber}`;
   return {
     title: sanitizePublicComment(`Attempt failed on ${ref}`),
@@ -78,7 +78,7 @@ export function buildAmsAttemptFailedNotification(event: DetectedNotificationEve
   };
 }
 
-export function buildAmsGovernorPausedNotification(_event: DetectedNotificationEvent): { title: string; body: string } {
+function buildAmsGovernorPausedNotification(_event: DetectedNotificationEvent): { title: string; body: string } {
   return {
     title: sanitizePublicComment("AMS governor paused"),
     body: sanitizePublicComment(

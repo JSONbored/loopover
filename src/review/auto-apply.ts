@@ -143,7 +143,7 @@ export function isStrictlyTightening(o: TunableOverride, liveFloor?: number, liv
 export const SHADOW_PROMOTION_MIN_DECIDED = 10;
 
 /** How long a shadow override must SOAK before the cron may promote it to live (a transient-blip guard). (#276) */
-export const SHADOW_SOAK_MS = 24 * 60 * 60 * 1000;
+const SHADOW_SOAK_MS = 24 * 60 * 60 * 1000;
 
 /** PURE promotion gate: promote a SHADOW override → LIVE only when it is (1) strictly tightening vs the live
  *  config, (2) backed by >= SHADOW_PROMOTION_MIN_DECIDED decided samples, (3) SOAKED past validated_until, and

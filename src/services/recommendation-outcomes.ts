@@ -17,8 +17,8 @@ import type {
 } from "../types";
 import { nowIso } from "../utils/json";
 
-export const DEFAULT_RECOMMENDATION_OUTCOME_STALE_DAYS = 14;
-export const DEFAULT_RECOMMENDATION_OUTCOME_IGNORED_DAYS = 7;
+const DEFAULT_RECOMMENDATION_OUTCOME_STALE_DAYS = 14;
+const DEFAULT_RECOMMENDATION_OUTCOME_IGNORED_DAYS = 7;
 
 export type RecommendationOutcomeEvaluationResult = {
   login: string;

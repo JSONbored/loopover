@@ -19,7 +19,7 @@ export type ReviewEligibilityDecision =
       matchedPattern: string;
     };
 
-export const REVIEW_ELIGIBLE: ReviewEligibilityDecision = {
+const REVIEW_ELIGIBLE: ReviewEligibilityDecision = {
   eligible: true,
   skipReason: null,
   matchedPattern: null,

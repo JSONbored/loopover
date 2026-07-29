@@ -42,7 +42,7 @@ const DEFAULT_TIMEOUT_MS = 20_000;
 const API_VERSION = "2022-11-28";
 
 /** The workflow file this module dispatches and whose completions it listens for. */
-export const FALLBACK_WORKFLOW_FILE = "visual-capture-fallback.yml";
+const FALLBACK_WORKFLOW_FILE = "visual-capture-fallback.yml";
 /** The workflow's declared `name:` -- cross-checked against `workflow_run.name` before acting on a completion. */
 export const FALLBACK_WORKFLOW_NAME = "LoopOver Visual Capture Fallback";
 /** The artifact name the dispatched workflow uploads its captured PNGs under. */

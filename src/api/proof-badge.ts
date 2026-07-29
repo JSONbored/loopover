@@ -4,7 +4,7 @@
 import { escapeXml } from "./badge";
 import { buildProofBadgeColor, buildProofBadgeMessage, type ProofSummary } from "../review/proof-summary";
 
-export const PROOF_BADGE_LABEL = "loopover proof";
+const PROOF_BADGE_LABEL = "loopover proof";
 const UNAVAILABLE_COLOR = "#9e9e9e";
 
 /** `null` renders the neutral unavailable badge — used for both the flag-off 404 and the error 503, since

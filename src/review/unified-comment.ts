@@ -132,7 +132,7 @@ function dedupeConcerns(items: string[]): string[] {
   return out.slice(0, 20);
 }
 
-export function extractReviewSummary(reviews: DualReviewNote[]): ExtractedReviewSummary {
+function extractReviewSummary(reviews: DualReviewNote[]): ExtractedReviewSummary {
   const valid = reviews.filter((r) => r.notes);
   const failedCount = reviews.length - valid.length;
   const recommendations = valid.map((r) => (r.notes as ReviewNotes).recommendation);
@@ -515,7 +515,7 @@ function dedupeLines(items: string[], cap = Number.POSITIVE_INFINITY): string[] 
 // The human-scannable display cap applied when a repo's maxFindingsCaps supplies nothing. Moved here from
 // dedupeLines' old default so the cap is now disclosed truncation (with a "+N more" footer) rather than silent
 // data loss upstream of the AI-context block and the more-footer (#9670).
-export const DEFAULT_FINDINGS_DISPLAY_CAP = 12;
+const DEFAULT_FINDINGS_DISPLAY_CAP = 12;
 
 export function truncateFindingsForDisplay(
   items: string[],

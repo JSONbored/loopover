@@ -24,11 +24,11 @@ import { buildUnifiedCommentBody } from "../review/unified-comment-bridge";
 import { requiredAgentActionPermissions } from "../settings/agent-execution";
 import { isAgentConfigured } from "../settings/autonomy";
 
-export function hasVisiblePrSurface(settings: RepositorySettings): boolean {
+function hasVisiblePrSurface(settings: RepositorySettings): boolean {
   return settings.publicSurface !== "off" || settings.checkRunMode === "enabled" || shouldPublishReviewCheck(settings.reviewCheckMode);
 }
 
-export function shouldPublishPrComment(settings: RepositorySettings, minerStatus: PublicSurfaceMinerStatus = "not_checked"): boolean {
+function shouldPublishPrComment(settings: RepositorySettings, minerStatus: PublicSurfaceMinerStatus = "not_checked"): boolean {
   if (settings.commentMode === "off") return false;
   if (settings.publicSurface !== "comment_and_label" && settings.publicSurface !== "comment_only") return false;
   if (settings.commentMode === "detected_contributors_only") return minerStatus === "confirmed";

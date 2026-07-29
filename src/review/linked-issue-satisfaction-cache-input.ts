@@ -5,7 +5,7 @@ import { sha256Hex } from "../utils/crypto";
 // and primary linked issue number; this fingerprint handles reviewer configuration plus mutable GitHub text
 // (issue title/body and PR title/body) so edits cannot replay a verdict for an older prompt. Diff text is
 // included defensively too, keeping the cache tied to exactly the model prompt that produced the opinion.
-export const LINKED_ISSUE_SATISFACTION_CACHE_INPUT_VERSION = "linked-issue-satisfaction-input:v2";
+const LINKED_ISSUE_SATISFACTION_CACHE_INPUT_VERSION = "linked-issue-satisfaction-input:v2";
 
 export type LinkedIssueSatisfactionCacheInput = {
   byok: boolean;

@@ -28,7 +28,7 @@ export const AMS_TRACK_RECORD_TIMEOUT_MS = 400;
 export const AMS_BRIDGE_TRUSTED_MIN_MERGED = 3;
 
 /** …AND a merge rate at/above this share of that submitter's terminal AMS outcomes (0–1). */
-export const AMS_BRIDGE_TRUSTED_MIN_MERGE_RATE = 0.6;
+const AMS_BRIDGE_TRUSTED_MIN_MERGE_RATE = 0.6;
 
 export type AmsTrackRecordFetch = (url: string, init: RequestInit) => Promise<Response>;
 

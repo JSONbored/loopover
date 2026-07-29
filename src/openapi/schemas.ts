@@ -1404,7 +1404,7 @@ export const SignalFidelitySchema = z
   })
   .openapi("SignalFidelity");
 
-export const CoreSignalFidelitySchema = z
+const CoreSignalFidelitySchema = z
   .object({
     status: z.enum(["complete", "degraded", "blocked", "unknown"]),
     repoCount: z.number(),
@@ -1418,7 +1418,7 @@ export const CoreSignalFidelitySchema = z
   })
   .openapi("CoreSignalFidelity");
 
-export const RepoGithubTotalsSnapshotSchema = z
+const RepoGithubTotalsSnapshotSchema = z
   .object({
     id: z.string(),
     repoFullName: z.string(),
@@ -1550,7 +1550,7 @@ const RegistryHyperparameterDriftFieldSchema = z.enum([
 
 const RegistryDriftSurfaceSchema = z.enum(["allocation", "lane_fit", "scoreability_assumptions", "maintainer_economics", "issue_discovery_behavior", "label_policy"]);
 
-export const RegistryHyperparameterDriftSummarySchema = z
+const RegistryHyperparameterDriftSummarySchema = z
   .object({
     totalEvents: z.number(),
     omittedEvents: z.number(),

@@ -76,7 +76,7 @@ export type AprRepoTransferBindingRejection =
   | "installation_not_bound";
 
 /** #9490: pure tenant-binding check, separated from the completion gate so each is independently testable. */
-export function evaluateAprRepoTransferBinding(
+function evaluateAprRepoTransferBinding(
   input: Pick<RequestAprRepoTransferInput, "installationId" | "repoFullName" | "newOwner">,
   binding: AprRepoBinding | null,
 ): { allowed: true } | { allowed: false; reason: AprRepoTransferBindingRejection } {

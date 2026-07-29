@@ -79,7 +79,7 @@ export function evaluateScreenshotTableVisionGate(input: {
  *  deterministic screenshot-table gate with a duplicated/unrelated image — so skipping it with no trace at
  *  all reproduces #9015's "suspicion buys less scrutiny" shape. `severity: "warning"` (never a blocker — this
  *  module stays STRICTLY ADVISORY, see the file header) puts it in `gate.warnings`. */
-export const SCREENSHOT_TABLE_VISION_SKIPPED_LOW_REPUTATION_FINDING_CODE = "screenshot_table_vision_skipped_low_reputation";
+const SCREENSHOT_TABLE_VISION_SKIPPED_LOW_REPUTATION_FINDING_CODE = "screenshot_table_vision_skipped_low_reputation";
 
 /** Build the compensating advisory finding for a low-reputation gaming-check skip (#9136). `imagePairCount` is
  *  how many real (different-bytes) pairs survived the caller's byte pre-check — the pairs vision would have

@@ -24,7 +24,7 @@ export const DECISION_AUDIT_SAMPLE_SIZE = 30;
 /** Stratum quotas over the sample size: merges oversampled (a wrong merge is the costly error), a dedicated
  *  first-time-author slice (weakest priors), remainder to closes. Shortfalls in any stratum spill into the
  *  others rather than shrinking the week's sample. */
-export const DECISION_AUDIT_STRATA = { merge_arm: 0.5, close_arm: 0.3, first_time_author: 0.2 } as const;
+const DECISION_AUDIT_STRATA = { merge_arm: 0.5, close_arm: 0.3, first_time_author: 0.2 } as const;
 
 export type AuditStratum = keyof typeof DECISION_AUDIT_STRATA;
 

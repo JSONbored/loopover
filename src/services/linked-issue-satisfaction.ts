@@ -28,7 +28,7 @@
 import { toPublicSafe } from "./ai-review";
 
 /** The three verdicts this advisory can reach about a single linked issue. */
-export const LINKED_ISSUE_SATISFACTION_STATUSES = ["addressed", "partial", "unaddressed"] as const;
+const LINKED_ISSUE_SATISFACTION_STATUSES = ["addressed", "partial", "unaddressed"] as const;
 export type LinkedIssueSatisfactionStatus = (typeof LINKED_ISSUE_SATISFACTION_STATUSES)[number];
 
 /** Below this calibrated confidence, an "unaddressed" verdict is too uncertain to publish (see module doc) —

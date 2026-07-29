@@ -2,7 +2,7 @@ import type { JsonValue, RepoGithubTotalsSnapshotRecord, SignalSnapshotRecord } 
 import type { QueueHealth } from "../signals/engine";
 import { nowIso } from "../utils/json";
 
-export const QUEUE_TREND_WINDOWS_DAYS = [7, 14, 30] as const;
+const QUEUE_TREND_WINDOWS_DAYS = [7, 14, 30] as const;
 export const QUEUE_TREND_HISTORY_DAYS = 35;
 
 export type QueueTrendWindow = {

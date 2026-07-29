@@ -57,7 +57,7 @@ const OBSERVED_STATE_KEYS = new Set([
   "last_checked",
 ]);
 /** Base-layer chain endpoints (wss/ws JSON-RPC). One-shot: probed + dual-AI-verified like any other candidate. */
-export const REVIEWER_BASE_LAYER_KINDS = new Set(["archive", "subtensor-rpc", "subtensor-wss"]);
+const REVIEWER_BASE_LAYER_KINDS = new Set(["archive", "subtensor-rpc", "subtensor-wss"]);
 export function isBaseLayerKind(kind: unknown): boolean {
   return REVIEWER_BASE_LAYER_KINDS.has(String(kind));
 }
@@ -438,7 +438,7 @@ export function isNonEmptyStructuredBody(contentType: unknown, body: unknown): b
 
 // ── Repository freshness (hardening) ──────────────────────────────────────────────────────────
 /** A source repo untouched for longer than this (days), or archived, is not "live truth" → manual. */
-export const STALE_REPO_DAYS = 365;
+const STALE_REPO_DAYS = 365;
 export interface FreshnessSignals {
   known: boolean;
   archived: boolean;

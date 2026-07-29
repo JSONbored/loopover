@@ -123,7 +123,7 @@ export async function handleGitHubWebhook(c: Context<{ Bindings: Env }>): Promis
 /** Shared post-verification path: parse → dedup → record → enqueue to the WEBHOOKS lane → 202. Used by the GitHub
  *  webhook receiver above AND the Orb relay receiver below (they verify the body differently — GitHub's HMAC vs the
  *  Orb relay HMAC — then share everything after). */
-export async function enqueueVerifiedWebhook(c: Context<{ Bindings: Env }>, deliveryId: string, eventName: string, rawBody: string): Promise<Response> {
+async function enqueueVerifiedWebhook(c: Context<{ Bindings: Env }>, deliveryId: string, eventName: string, rawBody: string): Promise<Response> {
   const result = await enqueueWebhookByEnv(c.env, deliveryId, eventName, rawBody, getSelfHostRequestTraceParent(c.req.raw));
   switch (result) {
     case "review_unavailable":

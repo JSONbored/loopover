@@ -423,7 +423,7 @@ export type LedgerBreak =
  * minutes is orders of magnitude beyond any healthy insert-to-append latency while still bounding how long a
  * genuinely failed append (its own error-level alarm fires at the moment it happens) can hide from verify.
  */
-export const LEDGER_APPEND_GRACE_MS = 5 * 60 * 1000;
+const LEDGER_APPEND_GRACE_MS = 5 * 60 * 1000;
 
 /**
  * Verify a window of the chain, resumable via `afterSeq` (0 = genesis). Reports the FIRST break with its

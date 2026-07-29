@@ -6613,6 +6613,36 @@ export async function listStaleActiveReviewTracking(
  *
  * Returns the terminalized (repo, PR) pairs so the caller can log one line per healed row.
  */
+/**
+ * Everything an orphan re-queue needs that the active_review_tracking row does not carry (#9866): the
+ * installation the repo is registered under, and the PR's own GitHub creation time.
+ *
+ * `prCreatedAt` is not optional politeness -- omitting it INVERTS the queue order. jobClaimSortKey falls back
+ * to LEGACY_AGENT_REGATE_SORT_BASE_MS + prNumber (~9.5e11), which sorts ahead of every real 2026 PR (~1.78e12),
+ * so a re-queued job would jump the entire contributor backlog. A restart-orphaned review deserves to be
+ * re-driven, not prioritised over work that has been waiting longer.
+ *
+ * Returns null when the repo is not registered -- the caller logs a skip rather than enqueueing a job that
+ * cannot act.
+ */
+export async function loadOrphanRequeueContext(
+  env: Env,
+  repoFullName: string,
+  pullNumber: number,
+): Promise<{ installationId: number; prCreatedAt: string | null } | null> {
+  const db = getDb(env.DB);
+  const bounded = boundedString(repoFullName, 200);
+  const repoRow = await db.select({ installationId: repositories.installationId }).from(repositories).where(eq(repositories.fullName, bounded)).limit(1);
+  const installationId = repoRow[0]?.installationId ?? null;
+  if (typeof installationId !== "number" || !Number.isFinite(installationId)) return null;
+  const prRow = await db
+    .select({ createdAt: pullRequests.createdAt })
+    .from(pullRequests)
+    .where(and(eq(pullRequests.repoFullName, bounded), eq(pullRequests.number, pullNumber)))
+    .limit(1);
+  return { installationId, prCreatedAt: prRow[0]?.createdAt ?? null };
+}
+
 export async function terminalizeActiveReviewsFromBeforeBoot(
   env: Env,
   bootIso: string,

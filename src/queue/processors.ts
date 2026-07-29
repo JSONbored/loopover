@@ -676,7 +676,7 @@ import { isWithinFreshRebaseWindow, type DecisionClockCapture } from "../review/
 import { recordVerdictFlip } from "../review/verdict-flip-store";
 import { resolveAutomaticCloseConfidence } from "../review/risk-control-wire";
 import { maybeApplyCloseAuditHoldout } from "../review/close-audit-holdout";
-import { buildDecisionRecord, contentDigest, loadDecisionRecordCollapsible, persistDecisionRecord } from "../review/decision-record";
+import { buildDecisionRecord, contentDigest, deriveReevaluationReason, loadDecisionRecordCollapsible, persistDecisionRecord } from "../review/decision-record";
 import { neutralHoldReasonCode, nativeGateActionFromConclusion, recordNativeGateDecision } from "../review/parity-wire";
 import { recordContributorGateDecision } from "../review/contributor-calibration";
 import { recordGateBlockersAndCheckRepeatAlarm } from "../review/rule-repeat-alarm-wire";
@@ -703,6 +703,7 @@ import { sha256Hex } from "../utils/crypto";
 import { errorMessage, nowIso, repoParts } from "../utils/json";
 import { DISPOSITION_CONSIDERED_EVENT_TYPE } from "../review/surface-disposition-reconciler";
 import { maybeSuggestMilestoneMatchForPr } from "../integrations/project-tracker-adapter";
+import { deliveryIdFor } from "./delivery-id";
 
 const OFFICIAL_MINER_DETECTION_TTL_MS = 5 * 60 * 1000;
 const OFFICIAL_MINER_DETECTION_UNAVAILABLE_TTL_MS = 60 * 1000;
@@ -1660,8 +1661,8 @@ export async function sweepRepoRegate(
       const job: JobMessage = {
         type: "agent-regate-pr",
         deliveryId: isPriorityRepair
-          ? `regate-repair:${repoFullName}#${pr.number}`
-          : `regate-sweep:${repoFullName}#${pr.number}`,
+          ? deliveryIdFor("regateRepair", `${repoFullName}#${pr.number}`)
+          : deliveryIdFor("regateSweep", `${repoFullName}#${pr.number}`),
         repoFullName,
         prNumber: pr.number,
         installationId: sweepInstallationId,
@@ -1952,7 +1953,7 @@ export async function sweepRepoBacklogConvergence(
     candidates.map((pr, index) => {
       const job: JobMessage = {
         type: "agent-regate-pr",
-        deliveryId: `backlog-convergence:${repoFullName}#${pr.number}`,
+        deliveryId: deliveryIdFor("backlogConvergence", `${repoFullName}#${pr.number}`),
         repoFullName,
         prNumber: pr.number,
         installationId: sweepInstallationId,
@@ -3197,7 +3198,7 @@ async function maybeCloseForContributorCapOnOpen(
         // risk-control calibration set). The generic policy_close:contributor_cap reasonCode derivation
         // (agent-action-executor.ts's defaultDecisionRecordReasonCode) is exactly right here — this path has
         // no gate evaluation to derive a richer blockerClass-based code from.
-        decisionRecord: { configDigest: await contentDigest(settings) },
+        decisionRecord: { configDigest: await contentDigest(settings), reevaluation: { reason: deriveReevaluationReason(deliveryId) } },
       },
       planned,
     );
@@ -3835,7 +3836,13 @@ async function runAgentMaintenancePlanAndExecute(
       // #9135: legible on the record's own face — see maybeApplyCloseAuditHoldout's doc comment.
       divertedByHoldout: closeAuditHoldout?.diverted ?? false,
     });
-    const recordId = await persistDecisionRecord(env, record, recordDigest);
+    // #9742: a repeat verdict for the SAME head SHA must declare why. The cause is derived from this
+    // job's own delivery id -- the scheduled sweep, a repair fan-out, an operator's manual re-gate,
+    // or (no synthetic prefix) a real webhook event that moved something the verdict depends on. The
+    // writer ignores it entirely on a first evaluation, which is the overwhelming majority of writes.
+    const recordId = await persistDecisionRecord(env, record, recordDigest, 3, {
+      reason: deriveReevaluationReason(deliveryId),
+    });
     // #8838: persist the evaluation's own exact inputs beside the record (PRIVATE sibling, migration 0182)
     // so the replay harness can re-derive this decision bit-exactly. Best-effort, like the record itself;
     // the no-replay no-op (synthetic content-lane/bridge evaluations) lives inside the helper. Keyed to the
@@ -4472,7 +4479,7 @@ async function prReadyForReview(
         moderationSettings: null,
         // #9134: required on every ctx, though this path only ever plans `update_branch` (never merge/close),
         // so the decision-record path inside the executor is never actually exercised for it.
-        decisionRecord: { configDigest: await contentDigest(settings) },
+        decisionRecord: { configDigest: await contentDigest(settings), reevaluation: { reason: deriveReevaluationReason(deliveryId) } },
       },
       [
         {
@@ -4890,7 +4897,7 @@ async function maybeRecoverLostPanelRetrigger(
   await markPendingPrPanelRetrigger(env, args.repoFullName, args.prNumber, args.headSha);
   const job: JobMessage = {
     type: "agent-regate-pr",
-    deliveryId: `panel-retrigger-recovery:${args.repoFullName}#${args.prNumber}`,
+    deliveryId: deliveryIdFor("panelRetriggerRecovery", `${args.repoFullName}#${args.prNumber}`),
     repoFullName: args.repoFullName,
     prNumber: args.prNumber,
     installationId: args.installationId,
@@ -5094,7 +5101,7 @@ async function maybeForceFreshRebase(
       moderationSettings: null,
       // #9134: required on every ctx, though this path only ever plans `update_branch` (never merge/close), so
       // the decision-record path inside the executor is never actually exercised for it.
-      decisionRecord: { configDigest: await contentDigest(settings) },
+      decisionRecord: { configDigest: await contentDigest(settings), reevaluation: { reason: deriveReevaluationReason(deliveryId) } },
     },
     [
       {
@@ -15229,7 +15236,7 @@ async function maybeThrottleReviewNagPing(
       expectedBaseRef: null,
       // #9134: this review-nag close previously wrote NO decision record at all -- exactly the kind of
       // contributor-disputable close the issue flagged as biasing the risk-control calibration join.
-      decisionRecord: { configDigest: await contentDigest(settings) },
+      decisionRecord: { configDigest: await contentDigest(settings), reevaluation: { reason: deriveReevaluationReason(deliveryId) } },
     },
     finalPlanned,
   );
@@ -15441,7 +15448,7 @@ async function maybeThrottleMonitoredMentions(
       expectedBaseRef: null,
       // #9134: this review-nag close (the @loopover-mention variant) previously wrote NO decision record at
       // all -- the same gap as its comment-thread-cooldown sibling immediately above.
-      decisionRecord: { configDigest: await contentDigest(settings) },
+      decisionRecord: { configDigest: await contentDigest(settings), reevaluation: { reason: deriveReevaluationReason(deliveryId) } },
     },
     finalPlanned,
   );

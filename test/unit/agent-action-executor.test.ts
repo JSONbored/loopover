@@ -108,7 +108,7 @@ function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecut
     installationPermissions: { pull_requests: "write", contents: "write", issues: "write" },
     // #9134: required on every context — default keeps every pre-existing test byte-identical; tests that
     // care about the decision-record side effect itself override this explicitly.
-    decisionRecord: { configDigest: "test-config-digest" },
+    decisionRecord: { configDigest: "test-config-digest", reevaluation: { reason: "scheduled_recheck" } },
     ...over,
   };
 }
@@ -2669,7 +2669,7 @@ describe("decision record emission is structural, not per-call-site (#9134)", ()
       // "assign" has no entry in ctx()'s default autonomy map (unlike the other six classes) -- every OTHER
       // "LIVE assign" test in this file grants it explicitly the same way.
       const autonomyOverride = actionClass === "assign" ? { assign: "auto" as const } : undefined;
-      const outcomes = await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-digest" }, ...(autonomyOverride ? { autonomy: autonomyOverride } : {}) }), [action]);
+      const outcomes = await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-digest", reevaluation: { reason: "scheduled_recheck" } }, ...(autonomyOverride ? { autonomy: autonomyOverride } : {}) }), [action]);
       expect(outcomes[0]?.outcome).toBe("completed");
       const { records, ledgerRows } = await decisionRecordCount(env);
       const shouldRecord = actionClass === "merge" || actionClass === "close";
@@ -2680,7 +2680,7 @@ describe("decision record emission is structural, not per-call-site (#9134)", ()
 
   it("a completed merge persists a record whose action/configDigest/reasonCode reflect the ctx, chained into the ledger", async () => {
     const env = createTestEnv({});
-    await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-abc", gatePack: "oss-anti-slop", reasonCode: "custom_reason" } }), [merge]);
+    await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-abc", reevaluation: { reason: "scheduled_recheck" }, gatePack: "oss-anti-slop", reasonCode: "custom_reason" } }), [merge]);
     const row = await env.DB.prepare("select action, reason_code, record_json from decision_records").first<{ action: string; reason_code: string; record_json: string }>();
     expect(row).toMatchObject({ action: "merge", reason_code: "custom_reason" });
     const parsed = JSON.parse(row!.record_json) as { configDigest: string; gatePack: string | null };
@@ -2693,7 +2693,7 @@ describe("decision record emission is structural, not per-call-site (#9134)", ()
   it("afterPersist is called once with the persisted record's id + body — the hook a richer caller (e.g. a decision-replay input) uses to key its own sibling row", async () => {
     const env = createTestEnv({});
     const afterPersist = vi.fn(async (_recordId: string, _record: DecisionRecord) => undefined);
-    await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-digest", afterPersist } }), [close]);
+    await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-digest", reevaluation: { reason: "scheduled_recheck" }, afterPersist } }), [close]);
     expect(afterPersist).toHaveBeenCalledTimes(1);
     const [recordId, record] = afterPersist.mock.calls[0]!;
     expect(recordId).toMatch(/^record:owner\/repo#7@/);
@@ -2702,7 +2702,7 @@ describe("decision record emission is structural, not per-call-site (#9134)", ()
 
   it("a NON-completed merge/close (denied) emits NO decision record — only a real, completed mutation counts", async () => {
     const env = createTestEnv({});
-    const outcomes = await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-digest" }, agentPaused: true }), [merge]);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-digest", reevaluation: { reason: "scheduled_recheck" } }, agentPaused: true }), [merge]);
     expect(outcomes[0]?.outcome).toBe("denied");
     expect((await decisionRecordCount(env)).records).toBe(0);
   });
@@ -2722,7 +2722,7 @@ describe("decision record emission is structural, not per-call-site (#9134)", ()
       if (sql.includes("INSERT INTO decision_records")) throw new Error("db down");
       return realPrepare(sql);
     });
-    const outcomes = await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-digest" } }), [merge]);
+    const outcomes = await executeAgentMaintenanceActions(env, ctx({ decisionRecord: { configDigest: "cfg-digest", reevaluation: { reason: "scheduled_recheck" } } }), [merge]);
     expect(outcomes[0]?.outcome).toBe("completed");
     expect(mergePullRequest).toHaveBeenCalled();
     vi.restoreAllMocks();

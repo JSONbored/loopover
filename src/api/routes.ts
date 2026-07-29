@@ -12,6 +12,7 @@ import { verifyShotRenderToken } from "../review/visual/shot-render-token";
 import { isScreenshotsEnabled } from "../review/visual-wire";
 import { buildFindingTaxonomyDocument } from "../review/finding-taxonomy";
 import { buildEnrichmentAnalyzersTaxonomyDocument } from "../review/enrichment-analyzers-taxonomy";
+import { deliveryIdFor } from "../queue/delivery-id";
 import {
   GITHUB_OAUTH_STATE_COOKIE,
   authenticateInternalToken,
@@ -4423,7 +4424,7 @@ export function createApp() {
     if (typeof repo?.installationId !== "number") return c.json({ error: "repo not installed" }, 404);
     const message: JobMessage = {
       type: "agent-regate-pr",
-      deliveryId: `manual-regate:${crypto.randomUUID()}`,
+      deliveryId: deliveryIdFor("manualRegate", crypto.randomUUID()),
       repoFullName: repo.fullName,
       prNumber,
       installationId: repo.installationId,

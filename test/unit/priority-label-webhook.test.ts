@@ -240,6 +240,77 @@ describe("issues.labeled priority enforcement (#9737)", () => {
     expect(calls.some((call) => call.method === "DELETE"), "the real label is still found and removed").toBe(true);
   });
 
+  // Every I/O call on this path is wrapped in a `.catch` that degrades rather than failing the delivery.
+  // Those handlers are the whole reason a label-mutating rule is safe to run on a webhook -- an escaping
+  // throw would fail the delivery and take every handler after it on the same event down with it. They are
+  // tested by making the call actually THROW: a 404 response exercises the ordinary return, not the catch.
+  it("falls back to the DEFAULT label name when the settings resolver throws", async () => {
+    const env = await seed();
+    vi.spyOn(repositorySettingsModule, "resolveRepositorySettings").mockRejectedValue(new Error("D1 unavailable"));
+    const calls: Call[] = [];
+    stubGitHub("read", calls);
+
+    await run(env, labeledPayload(), "d-settings-throw");
+
+    const removed = calls.find((call) => call.method === "DELETE" && call.url.includes("/labels/"));
+    expect(decodeURIComponent(removed?.url ?? ""), "an unreadable config still enforces the built-in label").toContain("gittensor:priority");
+  });
+
+  it("FAILS OPEN when the permission read throws rather than answering", async () => {
+    const env = await seed();
+    const calls: Call[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      calls.push({ method: (init?.method ?? "GET").toUpperCase(), url });
+      if (url.includes("/access_tokens")) return Response.json({ token: "ghs_test", expires_at: "2099-01-01T00:00:00Z" });
+      if (url.includes("/permission")) throw new Error("socket hang up");
+      return new Response("not found", { status: 404 });
+    });
+
+    await run(env, labeledPayload(), "d-permission-throws");
+
+    expect(calls.some((call) => call.method === "DELETE"), "a thrown permission read is not evidence of ineligibility").toBe(false);
+  });
+
+  it("still records the enforcement when the label removal and the comment both throw", async () => {
+    // A GitHub outage mid-enforcement must not fail the whole delivery.
+    const env = await seed();
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const method = (init?.method ?? "GET").toUpperCase();
+      if (url.includes("/access_tokens")) return Response.json({ token: "ghs_test", expires_at: "2099-01-01T00:00:00Z" });
+      if (url.includes("/collaborators/") && url.endsWith("/permission")) return Response.json({ permission: "read" });
+      if (method === "DELETE" || url.includes("/comments")) throw new Error("GitHub 502");
+      if (url.includes("/installation")) return Response.json({ id: 123, account: { login: "JSONbored" } });
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(run(env, labeledPayload(), "d-mutations-throw")).resolves.not.toThrow();
+
+    const audit = await env.DB.prepare("select outcome from audit_events where event_type = ?")
+      .bind(PRIORITY_LABEL_ENFORCEMENT_EVENT)
+      .first<{ outcome: string }>();
+    expect(audit?.outcome, "the decision is still on the record even when the mutation failed").toBe("success");
+  });
+
+  it("does not fail the delivery when the ledger writes themselves throw", async () => {
+    const env = await seed();
+    const calls: Call[] = [];
+    stubGitHub("read", calls);
+    // The last two `.catch`es: the audit row and the webhook-event row. Both are recording, not acting --
+    // losing them must not undo an enforcement that already happened on GitHub.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    vi.spyOn(env.DB, "prepare").mockImplementation((sql: string) => {
+      // Drizzle quotes its table names, the raw-SQL writers do not -- match both.
+      if (/insert\s+(or\s+\w+\s+)?into\s+"?(audit_events|webhook_events)"?/i.test(sql)) throw new Error("D1 write failed");
+      return realPrepare(sql);
+    });
+
+    await expect(run(env, labeledPayload(), "d-ledger-throw")).resolves.not.toThrow();
+
+    expect(calls.some((call) => call.method === "DELETE"), "the label was still removed").toBe(true);
+  });
+
   it("tolerates an author object with no login", async () => {
     const env = await seed();
     const calls: Call[] = [];

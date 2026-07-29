@@ -21,6 +21,7 @@ import { incr } from "../selfhost/metrics";
 import type { JobMessage } from "../types";
 import { errorMessage } from "../utils/json";
 import { isConvergenceRepoAllowed, listConvergenceRepos } from "./cutover-gate";
+import { deliveryIdFor } from "../queue/delivery-id";
 
 /** A manifest-sourced enable override (#6558 / #6275) -- the top-level `prReconciliation` block of the
  *  loopover self-repo's `.loopover.yml` (see FocusManifestPrReconciliationConfig). Distinct from the
@@ -132,7 +133,7 @@ async function catchUpMissingPullRequest(env: Env, repoFullName: string, install
     // #9499: prCreatedAt is what jobClaimSortKey uses to drain contributor work oldest-first. Omitting it
     // falls back to LEGACY_AGENT_REGATE_SORT_BASE_MS + prNumber (~9.5e11), which sorts AHEAD of every real
     // 2026 PR (~1.78e12) -- so a reconciliation job silently jumped the whole queue.
-    const message: JobMessage = { type: "agent-regate-pr", deliveryId: `reconcile:${repoFullName}#${prNumber}`, repoFullName, prNumber, installationId, prCreatedAt: live.created_at };
+    const message: JobMessage = { type: "agent-regate-pr", deliveryId: deliveryIdFor("reconcile", `${repoFullName}#${prNumber}`), repoFullName, prNumber, installationId, prCreatedAt: live.created_at };
     await env.JOBS.send(message);
   } catch (error) {
     console.error(JSON.stringify({ level: "error", event: "open_pr_reconciliation_catch_up_failed", repository: repoFullName, prNumber, message: errorMessage(error).slice(0, 200) }));

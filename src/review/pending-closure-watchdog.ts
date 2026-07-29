@@ -1,5 +1,6 @@
 import { countRecentAuditEventsForActorAndTarget, getPullRequest, listAuditEventsByType, recordAuditEvent } from "../db/repositories";
 import { errorMessage } from "../utils/json";
+import { deliveryIdFor } from "../queue/delivery-id";
 
 /**
  * #9031 — rescue a PR stranded mid-way through the flag-then-close double-check.
@@ -95,7 +96,7 @@ export async function sweepStrandedPendingClosures(env: Env, nowMs: number = Dat
 
     const verifyJob = {
       type: "recapture-preview" as const,
-      deliveryId: `linked-issue-verify:${repoFullName}#${pullNumber}`,
+      deliveryId: deliveryIdFor("linkedIssueVerify", `${repoFullName}#${pullNumber}`),
       repoFullName,
       prNumber: pullNumber,
       installationId,

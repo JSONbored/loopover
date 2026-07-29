@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { StateBoundary } from "@/components/site/state-views";
 import { apiFetch } from "@/lib/api/request";
@@ -91,49 +92,33 @@ function CohortColumn({ title, metrics }: { title: string; metrics: AmsMinerCoho
 export function AmsMinerCohortCard({ reviewability }: { reviewability: Array<{ pr: string }> }) {
   const repoOptions = extractPreviewRepoOptions(reviewability);
   const [repoFullName, setRepoFullName] = useState(repoOptions[0] ?? "");
-  const [comparison, setComparison] = useState<AmsMinerCohortComparison | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
   const base = repoApiBase(repoFullName);
   const hasRepos = repoOptions.length > 0;
 
-  const load = useCallback(
-    async (opts?: { cancelled?: () => boolean }) => {
-      const isCancelled = opts?.cancelled ?? (() => false);
-      const apiBase = repoApiBase(repoFullName);
-      if (!apiBase) {
-        setComparison(null);
-        setLoadError(null);
-        return;
-      }
-      setLoadError(null);
-      setLoading(true);
-      const result = await apiFetch<AmsMinerCohortComparison>(`${apiBase}/ams-miner-cohort`, {
+  // react-query rather than a hand-rolled load effect (#9588): the query key drops a response a newer repo
+  // selection has already superseded, which the `cancelled` callback this replaces did by hand. Options are
+  // pinned to the previous behaviour -- one attempt, no focus refetch, nothing cached across mounts.
+  const query = useQuery({
+    queryKey: ["ams-miner-cohort", base],
+    enabled: base !== null && base !== "",
+    retry: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    queryFn: async () => {
+      const result = await apiFetch<AmsMinerCohortComparison>(`${base}/ams-miner-cohort`, {
         label: "AMS miner cohort comparison",
         credentials: "include",
         silentStatus: true,
       });
-      // Ignore responses after a newer repoFullName keyed a fresh load (#7784).
-      if (isCancelled()) return;
-      if (result.ok) {
-        setComparison(result.data);
-      } else {
-        setComparison(null);
-        setLoadError(result.message);
-      }
-      setLoading(false);
+      if (!result.ok) throw new Error(result.message);
+      return result.data;
     },
-    [repoFullName],
-  );
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    void load({ cancelled: () => cancelled });
-    return () => {
-      cancelled = true;
-    };
-  }, [load]);
+  const comparison = query.data ?? null;
+  const loading = query.isFetching;
+  const loadError = query.isError ? query.error.message : null;
+  const load = () => void query.refetch();
 
   return (
     <section

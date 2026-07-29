@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderWithQueryClient as render } from "@/lib/test-query-client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { apiFetch } = vi.hoisted(() => ({ apiFetch: vi.fn() }));

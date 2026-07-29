@@ -639,9 +639,10 @@ export async function getPublicStats(
       ...totals,
       reviewed,
       filteredPct: filteredPct(reviewed, totals.merged),
-      // Option 1 of #7449: compute the global accuracy from the OWN-LEDGER merged/closed snapshot (not the
-      // fleet-folded totals.merged/closed), so its numerator (own-ledger reversed) and denominator are drawn
-      // from the same population. See the ownLedgerMerged/ownLedgerClosed snapshot above the Orb fold for why.
+      // #7449 extended: compute the global accuracy from windowedMerged/windowedClosed (accumulated in the
+      // byProject fold above), never the fleet-folded lifetime totals.merged/closed, so the numerator
+      // (own-ledger `reversed`) and the denominator are drawn from the same population AND the same
+      // retention window. See the windowed disposition query's own comment for both halves of that pairing.
       accuracyPct: accuracyPct(windowedMerged, windowedClosed, totals.reversed, reversalObservable),
       minutesSaved,
     },

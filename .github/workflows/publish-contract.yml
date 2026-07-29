@@ -1,25 +1,21 @@
 name: Publish Contract Package
 
-# workflow_dispatch-only, mirroring publish-engine.yml's design exactly (see that file for the fuller
-# rationale): a GITHUB_TOKEN-created tag doesn't fire push-triggered workflows, so the release
-# automation must explicitly dispatch this after tagging.
+# workflow_dispatch-only, mirroring publish-engine.yml / publish-ui-kit.yml exactly (see publish-mcp.yml
+# for the fuller rationale): a GITHUB_TOKEN-created tag doesn't fire push-triggered workflows, so the
+# release automation must explicitly dispatch this after tagging. A bare manual dispatch (
+# released_by_release_please left false) is the human override path and self-tags HEAD from
+# packages/loopover-contract/package.json's version.
 #
-# WHY THIS EXISTS (#9749): @loopover/contract is a RUNTIME dependency of the two published CLIs
-# (@loopover/mcp and @loopover/miner both import it from code that ships, built with plain tsc so the
-# specifiers survive into the emitted JS) -- but it had no publish workflow, so it was never on npm. The
-# currently-published CLI versions predate the dependency and still install; the next release of either
-# would have shipped `"@loopover/contract": "^0.1.0"` and failed with E404 for every external user.
+# @loopover/contract was bootstrap-published to npm at 0.1.0 from a maintainer's own authenticated
+# `npm login` session (#9749) -- npm's trusted publishing/OIDC cannot create a brand-new package -- and
+# a Trusted Publisher is configured for it in npmjs.com's package settings against THIS filename
+# (GitHub Actions provider, JSONbored/loopover, environment `release`). Renaming this file breaks that
+# connection and every publish with it.
 #
-# RELEASE ORDERING IS A REAL CONSTRAINT: contract must be published BEFORE any mcp/miner release that
-# depends on a new version of it. scripts/check-publishable-deps.ts enforces the invariant that a
-# published package never depends on an unpublishable workspace package; it cannot enforce ordering
-# between two publishes, so that stays a release-runbook step.
-#
-# BOOTSTRAP: npm's trusted publishing/OIDC cannot CREATE a brand-new package, so the very first publish
-# must be done once by a maintainer from an authenticated `npm login` session. After that, configure a
-# Trusted Publisher for it in npmjs.com's package settings (GitHub Actions provider, org/repo/workflow
-# filename matching this file) -- a one-time dashboard step -- and this workflow takes over.
-
+# ORDERING: packages/loopover-mcp and packages/loopover-miner both carry a REAL runtime `dependencies`
+# entry on @loopover/contract, exactly as they do on @loopover/engine. mcp-release-please.yml's
+# reconciliation therefore dispatches this workflow alongside engine and BEFORE either dependent, for
+# the same ETARGET reason documented at length in that file.
 on:
   workflow_dispatch:
     inputs:
@@ -36,9 +32,8 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # Unprivileged: resolves the version, runs the package's own test suite, and packs the tarball --
-  # all with contents: read only. Same privilege-separation reasoning as publish-mcp.yml's validate
-  # job (Superagent P2 / mirrors metagraphed's publish-client.yml).
+  # Unprivileged: resolves the version, builds, and packs the tarball -- all with contents: read only.
+  # Same privilege-separation reasoning as publish-engine.yml's validate job.
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -81,14 +76,9 @@ jobs:
             exit 1
           fi
           TAG="contract-v${VERSION}"
-          # The RELEASE COMMIT is the newest main commit that introduced this exact version string
-          # into package.json (the release PR's merge commit) -- NOT whatever main head happens to
-          # be when this run was dispatched. A bare/reconcile dispatch used to tag-and-pack HEAD,
-          # which silently swept any commits that landed after the version bump into the tag and the
-          # published artifact (#8525: ui-kit-v1.1.2 got tagged two commits late during a runner
-          # backlog, absorbing the 1.1.3 fix and zombifying its release PR). Resolving the commit
-          # from the version string keeps the release-please-dispatched path a no-op (it dispatches
-          # against the tag, so HEAD already IS this commit) while making late dispatches correct.
+          # The RELEASE COMMIT is the newest main commit that introduced this exact version string into
+          # package.json (the release PR's merge commit) -- NOT whatever main head happens to be when
+          # this run was dispatched. See publish-engine.yml's identical block and #8525 for why.
           RELEASE_SHA="$(git log -n 1 --format=%H -S "\"version\": \"${VERSION}\"" refs/remotes/origin/main -- packages/loopover-contract/package.json)"
           if [ -z "$RELEASE_SHA" ]; then
             echo "::error::Could not resolve the commit that introduced version $VERSION into packages/loopover-contract/package.json -- refusing to guess (would tag main head). (#8525)"
@@ -108,7 +98,7 @@ jobs:
           else
             echo "Tag $TAG does not exist yet; the publish job will create it at $RELEASE_SHA."
           fi
-          # Build/typecheck/pack against the release commit's own tree, so the published artifact is
+          # Build/pack against the release commit's own tree, so the published artifact is
           # byte-for-byte the content the version number describes.
           git checkout --detach "$RELEASE_SHA"
           {
@@ -120,16 +110,13 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # The contract package's gate is its build + the repo typecheck that consumes it: every consumer
-      # resolves its types from dist/, so a broken emit is exactly what must not reach npm.
-      - name: Build contract package
-        run: npx turbo run build --filter=@loopover/contract
-
       # Build + pack happen in THIS unprivileged job (no id-token). The privileged publish job below
       # never runs npm install/build, so a compromised build dependency can't reach the OIDC token.
+      # There is no separate typecheck step because this package's `build` IS `tsc -p tsconfig.json`.
       - name: Pack and smoke-test the tarball
         run: |
           set -euo pipefail
+          npm run build --workspace @loopover/contract
           PACK_JSON="$(npm pack --workspace @loopover/contract --pack-destination "$RUNNER_TEMP" --json)"
           TARBALL="$(node -e 'const fs=require("fs"); const input=fs.readFileSync(0,"utf8"); process.stdout.write(JSON.parse(input)[0].filename)' <<< "$PACK_JSON")"
           TARBALL_PATH="$RUNNER_TEMP/$TARBALL"
@@ -139,18 +126,32 @@ jobs:
             echo "Unexpected file in package tarball"
             exit 1
           fi
-          if tar -xOf "$TARBALL_PATH" | grep -qE '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|github_pat_|gh[pousr]_|gts_[0-9a-f]{64}|[A-Z0-9_]*(TOKEN|SECRET|PRIVATE_KEY)=)'; then
+          # Secret scan over EVERY packed file, including dist/telemetry.js.
+          #
+          # This package is unusual: it SHIPS the redaction logic, so dist/telemetry.js contains
+          # SECRET_VALUE_PATTERN, whose source text carries a literal `-----BEGIN [A-Z ]*PRIVATE KEY-----`
+          # alternative. That form does NOT match the pattern below (`[A-Z ]*` sits where the pattern wants
+          # `(RSA |EC |OPENSSH )?`), so the module scans clean and needs no exclusion -- verified against the
+          # packed tarball. The module's doc comment DESCRIBES that header rather than quoting it, for
+          # exactly this reason (see the comment above SECRET_VALUE_PATTERN); scripts/check-contract-package.ts
+          # runs the same scan in test:ci, so a regression fails pre-merge rather than at release time.
+          SCAN_DIR="$(mktemp -d)"
+          tar -xzf "$TARBALL_PATH" -C "$SCAN_DIR"
+          if grep -rqE '(BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY|github_pat_|gh[pousr]_|gts_[0-9a-f]{64}|[A-Z0-9_]*(TOKEN|SECRET|PRIVATE_KEY)=)' \
+               "$SCAN_DIR/package"; then
             echo "Secret-like content found in package tarball"
             exit 1
           fi
           TMP="$(mktemp -d)"
           npm --prefix "$TMP" init -y >/dev/null
-          npm --prefix "$TMP" install "$TARBALL_PATH" >/dev/null
+          npm --prefix "$TMP" install "$TARBALL_PATH" --no-save >/dev/null
           node --input-type=module -e "
-            import { buildMcpToolCallProperties } from '$TMP/node_modules/@loopover/contract/dist/index.js';
+            import { TOOL_CATEGORIES } from '$TMP/node_modules/@loopover/contract/dist/index.js';
             import { PublicStatsSchema } from '$TMP/node_modules/@loopover/contract/dist/public-api.js';
-            if (typeof buildMcpToolCallProperties !== 'function') throw new Error('contract root export smoke test failed');
-            if (typeof PublicStatsSchema?.parse !== 'function') throw new Error('public-api subpath smoke test failed');
+            import { CLI_RESPONSE_SCHEMAS } from '$TMP/node_modules/@loopover/contract/dist/api-schemas.js';
+            if (!Array.isArray(TOOL_CATEGORIES) || TOOL_CATEGORIES.length === 0) throw new Error('TOOL_CATEGORIES smoke test failed');
+            if (typeof PublicStatsSchema?.parse !== 'function') throw new Error('PublicStatsSchema smoke test failed');
+            if (!CLI_RESPONSE_SCHEMAS) throw new Error('CLI_RESPONSE_SCHEMAS smoke test failed');
           "
 
       - name: Upload package tarball
@@ -162,8 +163,8 @@ jobs:
           retention-days: 7
 
   # Privileged: tags + publishes the EXACT tarball the unprivileged job already tested. environment:
-  # release requires reviewer approval per repo Settings > Environments, same gate publish-mcp.yml
-  # and release-selfhost.yml already use.
+  # release requires reviewer approval per repo Settings > Environments, and is the environment name
+  # the npmjs.com Trusted Publisher for @loopover/contract is configured against.
   publish:
     runs-on: ubuntu-latest
     needs: validate
@@ -239,9 +240,9 @@ jobs:
   github-release:
     runs-on: ubuntu-latest
     needs: [validate, publish]
-    # Skip when the release automation dispatched this run: it already created the GitHub release
-    # with its own generated changelog notes before dispatching, so running this unconditionally
-    # would overwrite those richer notes with the generic blurb below.
+    # Skip when the release automation dispatched this run: it already created the GitHub release with
+    # its own generated changelog notes before dispatching, so running this unconditionally would
+    # overwrite those richer notes with the generic blurb below.
     if: ${{ inputs.released_by_release_please != true }}
     timeout-minutes: 5
     permissions:

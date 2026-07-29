@@ -17,10 +17,11 @@ name: Package Release Please
 # targets/workflows, and bundling them would work against this repo's small-focused-PR convention.
 #
 # linked-versions plugin, group "engine-and-dependents" (release-please-config.json) -- the
-# exception to the above: packages/loopover-mcp and packages/loopover-miner both carry a REAL
-# runtime `dependencies` entry on packages/loopover-engine, so they are not actually independent of
-# it. The node-workspace plugin bumps a dependent's `@loopover/engine` version range the moment
-# engine's own version changes, but under plain separate-pull-requests: true that bump lands on the
+# exception to the above: packages/loopover-mcp and packages/loopover-miner both carry REAL runtime
+# `dependencies` entries on packages/loopover-engine AND (since #9749) packages/loopover-contract,
+# so they are not actually independent of either. The node-workspace plugin bumps a dependent's
+# `@loopover/engine` / `@loopover/contract` version range the moment that package's own version
+# changes, but under plain separate-pull-requests: true that bump lands on the
 # dependent's OWN separate branch/PR -- meaning the dependent's package.json ends up requiring an
 # engine version that exists NOWHERE (not locally on that branch, since engine's bump lives on a
 # different unmerged branch; not on npm either, since it hasn't published yet). `npm ci` then fails
@@ -30,12 +31,15 @@ name: Package Release Please
 # NOT override separate-pull-requests -- verified against release-please's manifest.ts and
 # docs/manifest-releaser.md: separate-pull-requests is enforced as the final PR-splitting decision
 # regardless of what plugins attempt internally). linked-versions is the mechanism that actually
-# overrides per-component isolation, but ONLY for the named `components` in its group: engine's new
-# version and its dependents' bumped ranges land together in ONE PR/commit, so npm workspaces
-# resolves the dependency from the LOCAL checkout (always satisfies the range, regardless of npm
-# registry publish timing or ordering) instead of hitting the ETARGET race. packages/loopover-ui-kit
-# has no dependency edge to any other package here and is not in the group, so it keeps its fully
-# independent release cadence untouched.
+# overrides per-component isolation, but ONLY for the named `components` in its group: the
+# prerequisite's new version and its dependents' bumped ranges land together in ONE PR/commit, so
+# npm workspaces resolves the dependency from the LOCAL checkout (always satisfies the range,
+# regardless of npm registry publish timing or ordering) instead of hitting the ETARGET race.
+# `contract` is in the group for exactly the same reason engine is, and NOT because it is
+# "published alongside" them: membership tracks the dependency EDGE, not release cadence.
+# packages/loopover-ui-kit has no dependency edge to any other package here and is not in the group,
+# so it keeps its fully independent release cadence untouched -- which is also why "publish it like
+# ui-kit" is the wrong instinct for any future package that something here actually depends on.
 #
 # Runs on every push to main, not just a schedule: release-please is idempotent (it recomputes
 # purely from conventional-commit history since each component's last release tag), so the extra
@@ -181,6 +185,12 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh workflow run publish-engine.yml --ref "${{ steps.release.outputs['packages/loopover-engine--tag_name'] }}" -f released_by_release_please=true
 
+      - name: Dispatch Contract publish
+        if: ${{ steps.release.outputs['packages/loopover-contract--release_created'] == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run publish-contract.yml --ref "${{ steps.release.outputs['packages/loopover-contract--tag_name'] }}" -f released_by_release_please=true
+
       - name: Dispatch Miner publish
         if: ${{ steps.release.outputs['packages/loopover-miner--release_created'] == 'true' }}
         env:
@@ -320,16 +330,24 @@ jobs:
             return 1
           }
 
-          engine_ok=true
+          # packages/loopover-mcp and packages/loopover-miner carry REAL runtime `dependencies` entries on
+          # BOTH @loopover/engine and @loopover/contract (#9749), so both prerequisites must be live on
+          # npm before either dependent publishes -- otherwise the dependent resolves a version that
+          # exists nowhere and fails ETARGET, the same race this whole block exists to avoid.
+          deps_ok=true
+          deps_published=false
+          if needs_publish packages/loopover-contract @loopover/contract; then
+            if dispatch_and_wait publish-contract.yml; then deps_published=true; else deps_ok=false; fi
+          fi
           if needs_publish packages/loopover-engine @loopover/engine; then
-            dispatch_and_wait publish-engine.yml || engine_ok=false
-            if [ "$engine_ok" = "true" ]; then
-              echo "Waiting for npm registry propagation before publishing engine's dependents..."
-              sleep 30
-            fi
+            if dispatch_and_wait publish-engine.yml; then deps_published=true; else deps_ok=false; fi
+          fi
+          if [ "$deps_ok" = "true" ] && [ "$deps_published" = "true" ]; then
+            echo "Waiting for npm registry propagation before publishing engine/contract dependents..."
+            sleep 30
           fi
 
-          if [ "$engine_ok" = "true" ]; then
+          if [ "$deps_ok" = "true" ]; then
             if needs_publish packages/loopover-mcp @loopover/mcp; then
               dispatch_and_wait_with_retry publish-mcp.yml || echo "::warning::publish-mcp.yml did not succeed after retries -- left for manual follow-up."
             fi
@@ -337,7 +355,7 @@ jobs:
               dispatch_and_wait_with_retry publish-miner.yml || echo "::warning::publish-miner.yml did not succeed after retries -- left for manual follow-up."
             fi
           else
-            echo "::warning::Skipping mcp/miner reconciliation -- publish-engine.yml did not succeed, and they depend on it."
+            echo "::warning::Skipping mcp/miner reconciliation -- publish-engine.yml and/or publish-contract.yml did not succeed, and they depend on both."
           fi
 
           if needs_publish packages/loopover-ui-kit @loopover/ui-kit; then
@@ -353,7 +371,7 @@ jobs:
           GH_TOKEN: ${{ secrets.RELEASE_PLEASE_TOKEN }}
         run: |
           set -euo pipefail
-          for dir_pkg in "packages/loopover-engine:@loopover/engine" "packages/loopover-mcp:@loopover/mcp" "packages/loopover-miner:@loopover/miner" "packages/loopover-ui-kit:@loopover/ui-kit"; do
+          for dir_pkg in "packages/loopover-contract:@loopover/contract" "packages/loopover-engine:@loopover/engine" "packages/loopover-mcp:@loopover/mcp" "packages/loopover-miner:@loopover/miner" "packages/loopover-ui-kit:@loopover/ui-kit"; do
             dir="${dir_pkg%%:*}"
             pkg="${dir_pkg##*:}"
             local_version="$(node -p "require('./$dir/package.json').version")"

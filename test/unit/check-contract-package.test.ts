@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content";
 import { validateContractPackFileList } from "../../scripts/check-contract-package";
 import { CONTRACT_PACKAGE_ALLOWED_FILE_PATTERNS } from "../../scripts/contract-package-allowlist";
 import { MCP_PACKAGE_ALLOWED_FILE_PATTERNS } from "../../scripts/mcp-package-allowlist";
@@ -51,5 +52,30 @@ describe("validateContractPackFileList (#9654)", () => {
     // ...and the contract's arbitrary dist modules are not allowlisted by MCP's.
     expect(MCP_PACKAGE_ALLOWED_FILE_PATTERNS.some((p) => p.test("dist/agent-specs.d.ts"))).toBe(false);
     expect(CONTRACT_PACKAGE_ALLOWED_FILE_PATTERNS.some((p) => p.test("dist/agent-specs.d.ts"))).toBe(true);
+  });
+});
+
+describe("the shipped redaction module scans clean (#9654)", () => {
+  it("REGRESSION: telemetry.ts DESCRIBES the PEM header rather than quoting it", async () => {
+    // This package ships its own redaction logic, so SECRET_VALUE_PATTERN's literal
+    // `BEGIN [A-Z ]*PRIVATE KEY` alternative rides into dist/. That form is harmless -- it does not match
+    // the scanners' `BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY`. A doc comment QUOTING a concrete header does
+    // match, and used to: it forced publish-contract.yml to exclude telemetry.js from its release scan,
+    // leaving the one module that handles secrets as the one module nobody scanned. The exclusion is gone
+    // and the release scan now covers all 97 packed files -- which holds only while this stays true.
+    const { readFileSync } = await import("node:fs");
+    const source = readFileSync("packages/loopover-contract/src/telemetry.ts", "utf8");
+    const scanner = /BEGIN (RSA |EC |OPENSSH )?PRIVATE KEY/;
+    expect(scanner.test(source)).toBe(false);
+    // ...while the alternative the pattern actually needs is still present and still unanchored.
+    expect(source).toContain("-----BEGIN [A-Z ]*PRIVATE KEY-----");
+  });
+
+  it("INVARIANT: FORBIDDEN_CONTENT does not match the regex-source form, only concrete headers", () => {
+    // Pins WHY the above is sufficient, so a future widening of the scanner fails here with an explanation
+    // instead of failing an irreversible release.
+    expect(FORBIDDEN_CONTENT.test("-----BEGIN [A-Z ]*PRIVATE KEY-----")).toBe(false);
+    expect(FORBIDDEN_CONTENT.test("-----BEGIN RSA PRIVATE KEY-----")).toBe(true);
+    expect(FORBIDDEN_CONTENT.test("-----BEGIN PRIVATE KEY-----")).toBe(true);
   });
 });

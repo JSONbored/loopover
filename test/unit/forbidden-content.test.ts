@@ -14,9 +14,13 @@ const PACKAGE_CHECKERS = ["scripts/check-miner-package.ts", "scripts/check-mcp-p
 
 // A minimal file list that passes each checker's path/allowlist/required-file guards, so the run reaches the
 // shared secret-content read. Mirrors the file lists each checker's own "rejects secret-like content" test uses.
+// LICENSE is in both lists because both checkers now REQUIRE it (#9787): a published package that declares
+// a license in package.json but ships no LICENSE file is the drift that change exists to catch. Without it
+// the MCP checker exits on "Missing required file" before it ever reads content, and this file's clean-content
+// case would be asserting the required-file guard rather than the shared detector.
 const REACHABLE_FILES: Record<string, string[]> = {
-  "scripts/check-miner-package.ts": ["package.json", "dist/bin/loopover-miner.js", "dist/lib/cli.js"],
-  "scripts/check-mcp-package.ts": ["package.json", "dist/bin/loopover-mcp.js"],
+  "scripts/check-miner-package.ts": ["package.json", "LICENSE", "dist/bin/loopover-miner.js", "dist/lib/cli.js"],
+  "scripts/check-mcp-package.ts": ["package.json", "LICENSE", "dist/bin/loopover-mcp.js"],
 };
 
 // Assembled from fragments so this file never itself contains a credential-shaped literal -- the same

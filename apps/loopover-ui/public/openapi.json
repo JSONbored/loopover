@@ -22079,6 +22079,9 @@
           "202": {
             "description": "Job queued"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -22102,6 +22105,9 @@
           "202": {
             "description": "Job queued"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -22124,6 +22130,9 @@
         "responses": {
           "202": {
             "description": "Job queued"
+          },
+          "400": {
+            "description": "Malformed job request"
           },
           "401": {
             "description": "Invalid internal token"
@@ -22212,7 +22221,7 @@
     },
     "/v1/internal/jobs/build-contributor-evidence": {
       "post": {
-        "summary": "Queue a contributor evidence build job",
+        "summary": "Queue a job to build contributor evidence",
         "responses": {
           "202": {
             "description": "Job queued"
@@ -22221,9 +22230,10 @@
             "description": "Invalid internal token"
           }
         },
-        "operationId": "postInternalJobsBuildContributorEvidence",
+        "operationId": "queueBuildContributorEvidenceJob",
         "tags": [
-          "Internal"
+          "Internal",
+          "Jobs"
         ],
         "security": [
           {
@@ -22257,7 +22267,7 @@
     },
     "/v1/internal/jobs/build-burden-forecasts": {
       "post": {
-        "summary": "Queue a burden forecast build job",
+        "summary": "Queue a job to build burden forecasts",
         "responses": {
           "202": {
             "description": "Job queued"
@@ -22266,9 +22276,10 @@
             "description": "Invalid internal token"
           }
         },
-        "operationId": "postInternalJobsBuildBurdenForecasts",
+        "operationId": "queueBuildBurdenForecastsJob",
         "tags": [
-          "Internal"
+          "Internal",
+          "Jobs"
         ],
         "security": [
           {
@@ -22325,7 +22336,7 @@
     },
     "/v1/internal/jobs/repair-data-fidelity": {
       "post": {
-        "summary": "Queue a data fidelity repair job",
+        "summary": "Queue a job to repair data fidelity",
         "responses": {
           "202": {
             "description": "Job queued"
@@ -22334,9 +22345,10 @@
             "description": "Invalid internal token"
           }
         },
-        "operationId": "postInternalJobsRepairDataFidelity",
+        "operationId": "queueRepairDataFidelityJob",
         "tags": [
-          "Internal"
+          "Internal",
+          "Jobs"
         ],
         "security": [
           {
@@ -25026,6 +25038,9 @@
           "200": {
             "description": "Job ran inline and returned its result"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -25049,6 +25064,9 @@
           "202": {
             "description": "Job queued"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -25071,6 +25089,9 @@
         "responses": {
           "200": {
             "description": "Job ran inline and returned its result"
+          },
+          "400": {
+            "description": "Malformed job request"
           },
           "401": {
             "description": "Invalid internal token"
@@ -25141,6 +25162,9 @@
           "200": {
             "description": "Job ran inline and returned its result"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -25187,6 +25211,9 @@
           "200": {
             "description": "Job ran inline and returned its result"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -25209,6 +25236,9 @@
         "responses": {
           "200": {
             "description": "Job ran inline and returned its result"
+          },
+          "400": {
+            "description": "Malformed job request"
           },
           "401": {
             "description": "Invalid internal token"
@@ -25315,21 +25345,21 @@
           "Internal",
           "Jobs"
         ],
-        "summary": "Run the job to index repository content for retrieval",
+        "summary": "Queue a job to index repository content for retrieval",
         "security": [
           {
             "LoopOverBearer": []
           }
         ],
         "responses": {
-          "200": {
-            "description": "Job ran inline and returned its result"
-          },
-          "400": {
-            "description": "Malformed job request"
+          "202": {
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
+          },
+          "404": {
+            "description": "Retrieval is not enabled on this deployment"
           }
         }
       }
@@ -25341,21 +25371,24 @@
           "Internal",
           "Jobs"
         ],
-        "summary": "Run the job to re-run the gate for one pull request",
+        "summary": "Queue a job to re-run the gate for one pull request",
         "security": [
           {
             "LoopOverBearer": []
           }
         ],
         "responses": {
-          "200": {
-            "description": "Job ran inline and returned its result"
+          "202": {
+            "description": "Job queued"
           },
           "400": {
             "description": "Malformed job request"
           },
           "401": {
             "description": "Invalid internal token"
+          },
+          "404": {
+            "description": "The repository is not installed"
           }
         }
       }

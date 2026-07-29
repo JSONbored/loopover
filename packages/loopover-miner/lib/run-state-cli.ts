@@ -1,6 +1,7 @@
 import { RUN_STATES, getRunState, setRunState } from "./run-state.js";
 import type { RunState } from "./run-state.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 
 const STATE_GET_USAGE = "Usage: loopover-miner state get <owner/repo> [--api-base-url <url>] [--json]";
 const STATE_SET_USAGE =
@@ -33,6 +34,9 @@ function parseRepoArg(value: string | undefined, usage: string): ParsedRepoArg {
   const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) {
+    return { error: "Repository must be in owner/repo form." };
+  }
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) {
     return { error: "Repository must be in owner/repo form." };
   }
   return { repoFullName: `${owner}/${repo}` };

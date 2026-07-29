@@ -1,5 +1,6 @@
 /** `discover` CLI command (#4247): wires the existing fanout -> rank -> enqueue pipeline together so a miner
  * can actually run it. Every piece already exists and is independently tested; this module only composes them. */
+import { existsSync } from "node:fs";
 import { resolveForgeConfig } from "./forge-config.js";
 import type { ForgeConfig } from "./forge-config.js";
 import {
@@ -22,6 +23,7 @@ import { initPolicyDocCacheStore } from "./policy-doc-cache.js";
 import type { PolicyDocCacheStore } from "./policy-doc-cache.js";
 import { initPolicyVerdictCacheStore } from "./policy-verdict-cache.js";
 import type { PolicyVerdictCacheStore } from "./policy-verdict-cache.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 import { enqueueRankedDiscovery } from "./portfolio-discovery.js";
 import { AMS_MIN_RANK_SHIPPED, readMinRankAutotuneEnabled, readMinRankOverride } from "./ams-calibration.js";
 import { initEventLedger, resolveEventLedgerDbPath } from "./event-ledger.js";
@@ -185,11 +187,19 @@ async function supplementWithDiscoveryIndex(
   if (!isDiscoveryPlaneEnabled(env)) return fanOut;
   const queryIndex = options.queryDiscoveryIndex ?? queryDiscoveryIndex;
   const response = await queryIndex(queryScope, { env });
-  recordDiscoveryTelemetry("discover_query", response.candidates.length > 0 ? "supplemented" : "empty", { env });
-  if (response.candidates.length === 0) return fanOut;
+  // #9680: the hosted index preserves a repo's AI-contribution ban (normalizeDiscoveryIndexCandidate keeps
+  // aiPolicyAllowed:false), but nothing downstream re-checks it -- the `as RawCandidateIssue` cast below would
+  // launder a `false` through a type declared as the literal `true`, so an AI-banned repo's issue would be ranked
+  // and enqueued. Enforce the ban here exactly as the local fetchTargetIssues does (`if (!verdict.allowed) return
+  // []`): drop it, not down-rank or warn. A candidate that omits the field is kept (`!== false`, matching
+  // normalizeDiscoveryIndexCandidate's own default).
+  const aiAllowed = response.candidates.filter((candidate) => candidate.aiPolicyAllowed !== false);
+  const droppedAiBanned = response.candidates.length - aiAllowed.length;
+  recordDiscoveryTelemetry("discover_query", response.candidates.length > 0 ? "supplemented" : "empty", { env, droppedAiBanned });
+  if (aiAllowed.length === 0) return fanOut;
 
   const seen = new Set(fanOut.issues.map((issue) => dedupeKey(issue.repoFullName, issue.issueNumber)));
-  const supplemented = response.candidates
+  const supplemented = aiAllowed
     .filter((candidate) => !seen.has(dedupeKey(candidate.repoFullName, candidate.issueNumber)))
     // DiscoveryIndexCandidate is a near-superset of RawCandidateIssue; copy the real assignees through when the
     // hosted contract carried them (#7442), falling back to [] only when the served response genuinely omitted the
@@ -203,6 +213,7 @@ function parseRepoTarget(value: string): FanoutTarget | null {
   const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) return null;
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) return null;
   return { owner, repo };
 }
 
@@ -516,8 +527,17 @@ export async function runDiscover(args: string[], options: RunDiscoverOptions = 
     let overrideLedger = null;
     try {
       const ledgerEnv = options.env ?? process.env;
-      overrideLedger = initEventLedger(resolveEventLedgerDbPath(ledgerEnv));
-      minRankScore = readMinRankOverride(overrideLedger, { enabled: readMinRankAutotuneEnabled(ledgerEnv) }) ?? AMS_MIN_RANK_SHIPPED;
+      const ledgerDbPath = resolveEventLedgerDbPath(ledgerEnv);
+      // #9679: --dry-run must make ZERO filesystem writes, but initEventLedger creates + migrates + prunes the
+      // ledger file. On the dry-run path only read the override when the ledger file ALREADY exists (opening a
+      // not-yet-existing SQLite file is itself a write, and retention pruning can delete rows) -- a missing file
+      // falls back to the shipped default, exactly the value an empty/new ledger would yield, so the preview is
+      // unchanged when it exists. Same "skip a file that doesn't exist yet" discipline as migrate-cli.ts /
+      // store-maintenance.ts. The real (non-dry-run) run is unchanged: it opens unconditionally.
+      if (!parsed.dryRun || existsSync(ledgerDbPath)) {
+        overrideLedger = initEventLedger(ledgerDbPath);
+        minRankScore = readMinRankOverride(overrideLedger, { enabled: readMinRankAutotuneEnabled(ledgerEnv) }) ?? AMS_MIN_RANK_SHIPPED;
+      }
     } catch {
       minRankScore = AMS_MIN_RANK_SHIPPED;
     } finally {

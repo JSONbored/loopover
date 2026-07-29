@@ -217,6 +217,7 @@ describe("reputation check threaded from caller to callee, not re-derived (#4507
     const before = spy.mock.calls.length;
 
     const willRun = await shouldStartAiReviewForAdvisory(env, {
+      mode: "live",
       settings: { aiReviewMode: "advisory" } as RepositorySettings,
       advisory: adv,
       repoFullName: "acme/widgets",

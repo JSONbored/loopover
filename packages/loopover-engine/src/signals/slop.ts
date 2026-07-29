@@ -110,6 +110,16 @@ const PADDING_DOMINANCE_SHARE = 0.5;
 // (where it exempts codegen-only diffs from the missing-test-evidence signal).
 const PADDING_CATEGORIES = new Set(["minified", "generated", "vendored"]);
 
+/** The canonical "this path is code that ought to carry tests" predicate: a source file that is NOT
+ *  mechanically-produced padding (generated/vendored/minified output carries source extensions — e.g.
+ *  protoc's `.pb.go` stubs — but nobody hand-writes tests for it). Exported as the single source of truth so
+ *  every test-evidence consumer (buildMissingTestEvidenceFinding here, plus the improvement and
+ *  contributor-open-pr-monitor signals in src/) applies the SAME rule instead of a hand-copied `isCodeFile`
+ *  that disagrees at exactly the codegen boundary (#9696). */
+export function isTestableCodePath(path: string): boolean {
+  return isCodeFile(path) && !PADDING_CATEGORIES.has(classifyChangedFile(path));
+}
+
 export function buildSlopAssessment(input: SlopAssessmentInput): SlopAssessment {
   const findings: AdvisoryFinding[] = [];
   const trivialChurnFinding = buildTrivialWhitespaceChurnFinding(input);
@@ -282,7 +292,7 @@ export function buildMissingTestEvidenceFinding(input: SlopAssessmentInput): Adv
   // so passes the plain isCodeFile check, but nobody hand-writes tests for mechanically regenerated code.
   // Mirror buildNonSubstantivePaddingFinding's classifyChangedFile-based exemption so this signal can't
   // fire on a codegen-only diff.
-  const codePaths = changedPaths.filter((path) => isCodeFile(path) && !PADDING_CATEGORIES.has(classifyChangedFile(path)));
+  const codePaths = changedPaths.filter(isTestableCodePath);
   if (codePaths.length === 0) return null;
 
   // A changed test FILE only counts as real test evidence when it carries substantive content. An empty or

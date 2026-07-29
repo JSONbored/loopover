@@ -208,12 +208,20 @@ function repoPath(forge: ForgeConfig, target: Target, suffix: string): string {
 }
 
 function recordRateLimit(summary: RateLimitSummary, response: Response): void {
-  const remaining = Number(response.headers.get("x-ratelimit-remaining"));
-  if (Number.isFinite(remaining)) {
-    summary.rateLimitRemaining =
-      summary.rateLimitRemaining === null
-        ? remaining
-        : Math.min(summary.rateLimitRemaining, remaining);
+  // #9678: Headers.get() returns null for an ABSENT header and Number(null) === 0 (which Number.isFinite
+  // accepts) -- so a forge/proxy that omits x-ratelimit-remaining used to record a budget of 0 and pin the
+  // whole fan-out to serial concurrency. Read the raw value and skip a null/blank header before converting,
+  // matching http-retry.ts's `remaining != null` guard; a genuinely-present "0" (or any finite number) is
+  // still recorded, and a present-but-non-numeric value is still skipped by Number.isFinite.
+  const rawRemaining = response.headers.get("x-ratelimit-remaining");
+  if (rawRemaining !== null && rawRemaining.trim() !== "") {
+    const remaining = Number(rawRemaining);
+    if (Number.isFinite(remaining)) {
+      summary.rateLimitRemaining =
+        summary.rateLimitRemaining === null
+          ? remaining
+          : Math.min(summary.rateLimitRemaining, remaining);
+    }
   }
   const resetSeconds = Number(response.headers.get("x-ratelimit-reset"));
   if (Number.isFinite(resetSeconds) && resetSeconds > 0) {

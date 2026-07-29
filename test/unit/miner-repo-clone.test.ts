@@ -185,6 +185,52 @@ describe("ensureRepoCloned (#5132)", () => {
     expect(result.error).toBe("git_clone_failed");
   });
 
+  it("REGRESSION (#9682): checks out baseBranch on the FIRST-USE clone path, after the clone (injected runGit)", async () => {
+    // Fresh cache dir + injected runGit -> existsSync(repoPath) is false -> the first-use clone branch runs.
+    const root = tempRoot("loopover-miner-repo-clone-freshcheckout-");
+    const cloneBaseDir = join(root, "cache");
+    const calls: string[][] = [];
+    const runGit = async (args: string[]) => {
+      calls.push(args);
+      return { ok: true, stdout: "", stderr: "" };
+    };
+    const result = await ensureRepoCloned("acme/widgets", { cloneBaseDir, remoteUrl: "unused", baseBranch: "develop", runGit });
+    expect(result.ok).toBe(true);
+    // Before the fix the first-use path returned right after `clone`, never checking out `develop`.
+    expect(calls[0]?.[0]).toBe("clone");
+    expect(calls.some((args) => args[0] === "checkout" && args[1] === "develop")).toBe(true);
+  });
+
+  it("REGRESSION (#9682): a failing checkout on the first-use clone path returns git_checkout_failed (injected runGit)", async () => {
+    const root = tempRoot("loopover-miner-repo-clone-freshcheckoutfail-");
+    const cloneBaseDir = join(root, "cache");
+    const runGit = async (args: string[]) => (args[0] === "checkout" ? { ok: false, stdout: "", stderr: "" } : { ok: true, stdout: "", stderr: "" });
+    const result = await ensureRepoCloned("acme/widgets", { cloneBaseDir, remoteUrl: "unused", baseBranch: "develop", runGit });
+    expect(result.ok).toBe(false);
+    expect(result.error).toBe("git_checkout_failed");
+
+    // And git's own stderr is surfaced verbatim when present, matching the existing-clone checkout branch.
+    const runGitWithStderr = async (args: string[]) => (args[0] === "checkout" ? { ok: false, stdout: "", stderr: "detached HEAD boom" } : { ok: true, stdout: "", stderr: "" });
+    const withStderr = await ensureRepoCloned("acme/widgets", { cloneBaseDir: join(tempRoot("loopover-miner-repo-clone-freshcheckoutfail2-"), "cache"), remoteUrl: "unused", baseBranch: "develop", runGit: runGitWithStderr });
+    expect(withStderr.error).toBe("detached HEAD boom");
+  });
+
+  it("REGRESSION (#9682): the first-use clone path does NOT fetch or hard-reset (a fresh clone is already at origin's tip)", async () => {
+    const root = tempRoot("loopover-miner-repo-clone-freshnofetch-");
+    const cloneBaseDir = join(root, "cache");
+    const calls: string[][] = [];
+    const runGit = async (args: string[]) => {
+      calls.push(args);
+      return { ok: true, stdout: "", stderr: "" };
+    };
+    const result = await ensureRepoCloned("acme/widgets", { cloneBaseDir, remoteUrl: "unused", baseBranch: "develop", runGit });
+    expect(result.ok).toBe(true);
+    expect(calls.some((args) => args[0] === "fetch")).toBe(false);
+    expect(calls.some((args) => args[0] === "reset")).toBe(false);
+    // Exactly the clone + checkout, in that order.
+    expect(calls.map((args) => args[0])).toEqual(["clone", "checkout"]);
+  });
+
   it("rejects a dash-prefixed baseBranch before invoking git (#5923)", async () => {
     // Real origin init + a real clone before the injected-runGit assertion. See the first test in this
     // block for why this needs an explicit timeout.
@@ -259,8 +305,12 @@ describe("ensureRepoCloned per-repo concurrency guard (#6762)", () => {
     const [firstResult, secondResult] = await Promise.all([first, second]);
     expect(firstResult.ok).toBe(true);
     expect(secondResult.ok).toBe(true);
-    // Strict, non-overlapping ordering: first runs start->end fully before second starts.
-    expect(events).toEqual(["start:clone", "end:clone", "start:clone", "end:clone"]);
+    // Strict, non-overlapping ordering: the first call runs its full fresh-clone git sequence (clone then the
+    // #9682 baseBranch checkout) start->end before the second call starts any git op of its own.
+    expect(events).toEqual([
+      "start:clone", "end:clone", "start:checkout", "end:checkout",
+      "start:clone", "end:clone", "start:checkout", "end:checkout",
+    ]);
   });
 
   it("does NOT serialize across DIFFERENT repos -- they run in parallel", async () => {

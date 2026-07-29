@@ -338,6 +338,15 @@ describe("loopover-miner manage poll (#2323/#2325)", () => {
     });
   });
 
+  it("REGRESSION (#9684): parseManagePollArgs rejects a path-traversal repo segment", () => {
+    expect(parseManagePollArgs(["../acme", "42"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseManagePollArgs(["acme/..", "42"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+  });
+
   it("parseManagePollArgs rejects a malformed --branch flag", () => {
     expect(parseManagePollArgs(["acme/widgets", "42", "--branch"])).toEqual({
       error: expect.stringContaining("Usage: loopover-miner manage poll"),

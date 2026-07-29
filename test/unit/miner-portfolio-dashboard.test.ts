@@ -184,3 +184,64 @@ describe("runPortfolioDashboard (#4287)", () => {
     expect(String(log.mock.calls[0]?.[0])).toContain("portfolio queue is empty");
   });
 });
+
+describe("runPortfolioDashboard store-failure handling (#9690)", () => {
+  it("REGRESSION: an opener failure returns 2 instead of escaping runQueueCli (was: threw)", () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const boom = () => {
+      throw new Error("invalid_portfolio_queue_db_path");
+    };
+    // Before the fix the store was opened OUTSIDE the try, so this threw straight out of runQueueCli.
+    expect(runPortfolioDashboard([], { initPortfolioQueue: boom })).toBe(2);
+    expect(error).toHaveBeenCalledWith("invalid_portfolio_queue_db_path");
+  });
+
+  it("REGRESSION: an opener failure under --json emits { ok: false, error } on stdout and returns 2", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const boom = () => {
+      throw new Error("invalid_portfolio_queue_db_path");
+    };
+    expect(runPortfolioDashboard(["--json"], { initPortfolioQueue: boom })).toBe(2);
+    expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({
+      ok: false,
+      error: "invalid_portfolio_queue_db_path",
+    });
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION: a store whose listQueue throws mid-run still closes the owned store and returns 2", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const store = {
+      listQueue: () => {
+        throw new Error("db_read_failed");
+      },
+      close: vi.fn(),
+    };
+    // No injected initPortfolioQueue → ownsQueue=true → the default factory is used and must be closed in `finally`.
+    const pqModule = await import("../../packages/loopover-miner/lib/portfolio-queue");
+    const initSpy = vi.spyOn(pqModule, "initPortfolioQueueStore").mockReturnValue(store as never);
+    try {
+      expect(runPortfolioDashboard([])).toBe(2);
+      expect(error).toHaveBeenCalledWith("db_read_failed");
+      expect(store.close).toHaveBeenCalledTimes(1);
+    } finally {
+      initSpy.mockRestore();
+    }
+  });
+
+  it("REGRESSION: an owned-store opener failure returns 2 with nothing to close (`?.` guard)", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    // ownsQueue=true AND the default factory throws before assigning → the `?.` in finally must short-circuit.
+    const pqModule = await import("../../packages/loopover-miner/lib/portfolio-queue");
+    const initSpy = vi.spyOn(pqModule, "initPortfolioQueueStore").mockImplementation(() => {
+      throw new Error("invalid_portfolio_queue_db_path");
+    });
+    try {
+      expect(runPortfolioDashboard([])).toBe(2);
+      expect(error).toHaveBeenCalledWith("invalid_portfolio_queue_db_path");
+    } finally {
+      initSpy.mockRestore();
+    }
+  });
+});

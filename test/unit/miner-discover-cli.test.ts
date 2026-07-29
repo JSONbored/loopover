@@ -171,6 +171,15 @@ describe("parseDiscoverArgs (#4247)", () => {
     });
   });
 
+  it("REGRESSION (#9684): rejects a path-traversal repo target segment", () => {
+    expect(parseDiscoverArgs(["../acme"])).toEqual({
+      error: "Repository must be in owner/repo form: ../acme",
+    });
+    expect(parseDiscoverArgs(["acme/.."])).toEqual({
+      error: "Repository must be in owner/repo form: acme/..",
+    });
+  });
+
   it("rejects mixing repo targets with --search", () => {
     expect(parseDiscoverArgs(["acme/widgets", "--search", "x"])).toEqual({
       error: "Pass either repository targets or --search, not both.",
@@ -2035,6 +2044,89 @@ describe("discovery-index supplementation (#7168)", () => {
     ]);
   });
 
+  it("REGRESSION (#9680): drops an index candidate whose repo bans AI contributions, keeps the allowed one, and reports the dropped count", async () => {
+    const clientModule = await import("../../packages/loopover-miner/lib/discovery-index-client");
+    const telemetrySpy = vi.spyOn(clientModule, "recordDiscoveryTelemetry");
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1, title: "Local candidate" })],
+      warnings: [],
+      rateLimitRemaining: 100,
+      rateLimitResetAt: null,
+    }));
+    const queryDiscoveryIndex = vi.fn(async () => ({
+      contractVersion: 1,
+      candidates: [
+        indexCandidate({ issueNumber: 2, title: "AI-banned repo issue", aiPolicyAllowed: false }),
+        indexCandidate({ issueNumber: 3, title: "Allowed index issue", aiPolicyAllowed: true }),
+      ],
+      nextCursor: null,
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      env: { LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      queryDiscoveryIndex: queryDiscoveryIndex as never,
+    });
+
+    expect(exitCode).toBe(0);
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    const issueNumbers = payload.ranked
+      .map((entry: { issueNumber: number }) => entry.issueNumber)
+      .sort((a: number, b: number) => a - b);
+    // #2 (aiPolicyAllowed:false) is dropped before ranking; the local #1 and the allowed index #3 remain.
+    // Before the fix #2 would also be ranked and enqueued into the miner's backlog.
+    expect(issueNumbers).toEqual([1, 3]);
+    expect(telemetrySpy).toHaveBeenCalledWith(
+      "discover_query",
+      "supplemented",
+      expect.objectContaining({ droppedAiBanned: 1 }),
+    );
+  });
+
+  it("REGRESSION (#9680): keeps an index candidate that OMITS aiPolicyAllowed (field-absent is not a ban)", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1, title: "Local candidate" })],
+      warnings: [],
+      rateLimitRemaining: 100,
+      rateLimitResetAt: null,
+    }));
+    const candidateNoField = indexCandidate({ issueNumber: 4, title: "Older-build candidate" });
+    delete (candidateNoField as { aiPolicyAllowed?: unknown }).aiPolicyAllowed;
+    const queryDiscoveryIndex = vi.fn(async () => ({
+      contractVersion: 1,
+      candidates: [candidateNoField],
+      nextCursor: null,
+    }));
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      env: { LOOPOVER_MINER_DISCOVERY_PLANE: "true" },
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      queryDiscoveryIndex: queryDiscoveryIndex as never,
+    });
+
+    expect(exitCode).toBe(0);
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    const issueNumbers = payload.ranked
+      .map((entry: { issueNumber: number }) => entry.issueNumber)
+      .sort((a: number, b: number) => a - b);
+    // A candidate that never carried aiPolicyAllowed must NOT become a fail-closed drop.
+    expect(issueNumbers).toEqual([1, 4]);
+  });
+
   it("uses the --search term as the discovery-index scope in search mode", async () => {
     const portfolioQueue = tempQueueStore();
     const searchCandidateIssuesWithSummary = vi.fn(async () => ({
@@ -2170,6 +2262,107 @@ describe("min-rank override consumption at discover's enqueue (#8187)", () => {
       expect(await minRankSeenBy(env)).toBe(0.2); // both present: the earned override is consumed
 
       expect(await minRankSeenBy({ ...env, LOOPOVER_MINER_EVENT_LEDGER_DB: "/dev/null/nope/ledger.sqlite" })).toBe(0); // fail open
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("#9679: --dry-run makes zero event-ledger writes", () => {
+  const fanOut = vi.fn(async () => ({
+    issues: [fanOutIssue({ issueNumber: 1, title: "candidate" })],
+    warnings: [],
+    rateLimitRemaining: 5000,
+    rateLimitResetAt: "2026-07-09T13:00:00.000Z",
+  }));
+  const enqueueOnce = () => vi.fn(() => ({ enqueued: 1, skippedBelowMinRank: 0, skippedInvalid: 0, eventsAppended: 0 }));
+
+  it("REGRESSION: --dry-run does NOT create the event-ledger file when it is absent", async () => {
+    const { mkdtempSync, rmSync, existsSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const dir = mkdtempSync(join(tmpdir(), "miner-discover-dryrun-noledger-"));
+    try {
+      const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+      const ledgerPath = resolveEventLedgerDbPath(env);
+      expect(existsSync(ledgerPath)).toBe(false);
+
+      const exitCode = await runDiscover(["acme/widgets", "--dry-run", "--json"], {
+        nowMs: NOW,
+        env,
+        fetchCandidateIssuesWithSummary: fanOut,
+        enqueueRankedDiscovery: enqueueOnce() as never,
+      });
+      expect(exitCode).toBe(0);
+      // Before the fix the unconditional initEventLedger created (and migrated/pruned) this file on a dry run.
+      expect(existsSync(ledgerPath)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("REGRESSION: --dry-run STILL applies the earned min-rank override when the event ledger already exists", async () => {
+    const { mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { initEventLedger, resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger");
+    const { resolveAmsPolicyConfigPath } = await import("../../packages/loopover-miner/lib/ams-policy");
+    const { MINER_AMS_MIN_RANK_APPLIED_EVENT } = await import("../../packages/loopover-miner/lib/ams-calibration");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const dir = mkdtempSync(join(tmpdir(), "miner-discover-dryrun-override-"));
+    try {
+      const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+      const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+      ledger.appendEvent({ type: MINER_AMS_MIN_RANK_APPLIED_EVENT, payload: { value: 0.2 } });
+      ledger.close();
+      writeFileSync(resolveAmsPolicyConfigPath(env), "minRankAutotuneEnabled: true\n");
+
+      // The ledger file now exists, so the guarded dry-run read still consumes the earned override (0.2), so the
+      // preview reports the exact below-min-rank skip set a real run would.
+      const enqueueSpy = enqueueOnce();
+      const exitCode = await runDiscover(["acme/widgets", "--dry-run", "--json"], {
+        nowMs: NOW,
+        env,
+        fetchCandidateIssuesWithSummary: fanOut,
+        enqueueRankedDiscovery: enqueueSpy as never,
+      });
+      expect(exitCode).toBe(0);
+      const minRankSeen = ((enqueueSpy.mock.calls[0] as unknown[] | undefined)?.[1] as { minRankScore?: number } | undefined)?.minRankScore;
+      expect(minRankSeen).toBe(0.2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the non-dry-run path is unchanged: it still opens (and creates) the event ledger", async () => {
+    const { mkdtempSync, rmSync, existsSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const dir = mkdtempSync(join(tmpdir(), "miner-discover-realrun-ledger-"));
+    try {
+      const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+      const ledgerPath = resolveEventLedgerDbPath(env);
+      expect(existsSync(ledgerPath)).toBe(false);
+
+      const exitCode = await runDiscover(["acme/widgets", "--json"], {
+        nowMs: NOW,
+        env,
+        fetchCandidateIssuesWithSummary: fanOut,
+        initPortfolioQueue: () => tempQueueStore(),
+        initPolicyDocCache: () => tempPolicyDocCacheStore(),
+        initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+        initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+        enqueueRankedDiscovery: enqueueOnce() as never,
+      });
+      expect(exitCode).toBe(0);
+      expect(existsSync(ledgerPath)).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

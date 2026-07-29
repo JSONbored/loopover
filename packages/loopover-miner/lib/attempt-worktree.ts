@@ -81,8 +81,10 @@ export async function prepareAttemptWorktree(
   });
   // ensureRepoCloned's own EnsureRepoClonedResult declares `error` optional, but every one of its real ok:false
   // return sites (repo-clone.ts) sets a real, non-empty error string -- a non-null assertion here rather than a
-  // fake fallback string, since that fallback would be genuinely unreachable dead code.
-  if (!cloneResult.ok) return { ok: false, error: cloneResult.error! };
+  // fake fallback string, since that fallback would be genuinely unreachable dead code. repoPath is always set on
+  // its failures too, so forward it (matching the worktree-add failure below) -- a clone/checkout failure and a
+  // worktree-add failure now surface the same {ok:false, repoPath, error} shape to callers.
+  if (!cloneResult.ok) return { ok: false, repoPath: cloneResult.repoPath, error: cloneResult.error! };
 
   const exec = options.exec ?? createRealWorktreeExec(options.timeoutMs);
   const baseBranch = typeof options.baseBranch === "string" && options.baseBranch.trim() ? options.baseBranch.trim() : "main";

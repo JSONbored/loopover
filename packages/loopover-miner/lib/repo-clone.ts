@@ -66,9 +66,8 @@ export function resolveRepoCloneBaseDir(env?: Record<string, string | undefined>
 // GitHub owner/repo names are restricted to alphanumerics, hyphens, underscores, and periods, and are never
 // exactly "." or ".." -- both are rejected here so a value like "../foo" can't make resolveRepoCloneDir's
 // join(cloneBaseDir, owner, repo) escape the intended clone directory (a real path-traversal finding).
-// Exported so every other owner/repo parser in this package (#5831) shares this one definition instead of
-// duplicating it (cross-repo-evaluation.js) or skipping it entirely (attempt-cli.js, claim-ledger-cli.js,
-// event-ledger-cli.js, claim-ledger.js).
+// Exported so every owner/repo parser in this package (#5831) shares this one definition instead of
+// duplicating it or skipping it entirely.
 export const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 export function isPathTraversalSegment(segment: string): boolean {
@@ -326,6 +325,13 @@ async function ensureRepoClonedUnlocked(
     }
     const cloned = await runGit(["clone", cloneUrl, repoPath], cloneBaseDir, timeoutMs);
     if (!cloned.ok) return { ok: false, repoPath, error: cloned.stderr || "git_clone_failed" };
+    // A plain `git clone` creates exactly one local branch (origin's default HEAD). When baseBranch is anything
+    // else, `git worktree add -b <attempt> <path> <baseBranch>` in the consumer can't rev-parse a bare
+    // `<baseBranch>` name, so the first attempt fails with `invalid reference` until a later run's fetch+reset
+    // path DWIM-creates it. Check it out now (same call + error shape as the existing-clone path below); a
+    // fresh clone is already at origin's tip, so no fetch/reset is needed here.
+    const checkedOut = await runGit(["checkout", baseBranch], repoPath, timeoutMs);
+    if (!checkedOut.ok) return { ok: false, repoPath, error: checkedOut.stderr || "git_checkout_failed" };
     return { ok: true, repoPath };
   }
 

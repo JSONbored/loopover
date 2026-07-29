@@ -8,7 +8,7 @@
 // any future consumer beyond this CLI's own text/JSON output.
 
 import { initPortfolioQueueStore } from "./portfolio-queue.js";
-import { argsWantJson, reportCliFailure } from "./cli-error.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const QUEUE_STATUS_KEYS = ["queued", "in_progress", "done"] as const;
 type QueueStatusKey = (typeof QUEUE_STATUS_KEYS)[number];
@@ -149,16 +149,23 @@ export function runPortfolioDashboard(
   if ("error" in parsed) {
     return reportCliFailure(argsWantJson(args), parsed.error);
   }
+  // Open the store INSIDE the try so an opener failure (a corrupt portfolio-queue.sqlite3, an unreadable state
+  // dir, an invalid LOOPOVER_MINER_PORTFOLIO_QUEUE_DB) returns 2 like every sibling `queue` subcommand instead of
+  // escaping runQueueCli with a raw stack trace; the finally guards the close with `?.` since the initializer may
+  // have thrown before assigning (mirrors runQueueClaimBatch, portfolio-queue-cli.ts:520-541).
   const ownsQueue = options.initPortfolioQueue === undefined;
-  const portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
+  let portfolioQueue: { listQueue(repoFullName: string | null): unknown[]; close(): void } | undefined;
   try {
+    portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
     const summary = collectPortfolioDashboard(
       { portfolioQueue },
       { nowMs: Number.isFinite(options.nowMs) ? (options.nowMs as number) : Date.now() },
     );
     console.log(parsed.json ? JSON.stringify(summary, null, 2) : renderPortfolioDashboardTable(summary));
     return 0;
+  } catch (error) {
+    return reportCliFailure(parsed.json, describeCliError(error));
   } finally {
-    if (ownsQueue) portfolioQueue.close();
+    if (ownsQueue) portfolioQueue?.close();
   }
 }

@@ -391,7 +391,10 @@ export function isConfigDriftSentinelEnabled(env: Env): boolean {
   return value === "1" || value === "true" || value === "on" || value === "yes";
 }
 
-const DRIFT_FINGERPRINT_FLAG_PREFIX = "config_drift_fingerprint:";
+/** `system_flags` key prefix for a knob's drift-episode fingerprint row (exported so the maintainer-recap
+ *  loader can read every fingerprint's `updated_at` in one bounded LIKE query rather than one query per
+ *  knob). */
+export const DRIFT_FINGERPRINT_FLAG_PREFIX = "config_drift_fingerprint:";
 
 export type ConfigDriftTickResult = { knobId: string; state: "alerted" | "standing" | "suppressed_looser" | "clean" };
 

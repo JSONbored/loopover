@@ -60,6 +60,7 @@ import {
 } from "./store-maintenance.js";
 import type { LedgerPurgeSpec } from "./store-maintenance.js";
 import { argsWantJson, reportCliFailure } from "./cli-error.js";
+import { isValidRepoSegment } from "./repo-clone.js";
 
 const PURGE_USAGE = "Usage: loopover-miner purge --repo <owner/repo> [--dry-run] [--json]";
 
@@ -144,6 +145,9 @@ function parseRepoArg(value: string | undefined, usage: string): ParsedRepoArg {
   const trimmed = value.trim();
   const [owner, repo, extra] = trimmed.split("/");
   if (!owner || !repo || extra !== undefined) {
+    return { error: "Repository must be in owner/repo form." };
+  }
+  if (!isValidRepoSegment(owner) || !isValidRepoSegment(repo)) {
     return { error: "Repository must be in owner/repo form." };
   }
   return { repoFullName: `${owner}/${repo}` };

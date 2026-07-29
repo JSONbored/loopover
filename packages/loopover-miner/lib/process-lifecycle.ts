@@ -23,8 +23,9 @@ export type InstallCliSignalHandlersOptions = {
   /** Called (in addition to `log`) for uncaughtException/unhandledRejection specifically -- not the clean
    *  SIGINT/SIGTERM exits, which are not errors. AWAITED before the process exits, so it should both capture
    *  AND flush (see captureMinerErrorAndFlush in bin/loopover-miner.js) -- a synchronous capture alone only
-   *  queues the event, which process.exit() would then likely never deliver. No-op default. Never expected to
-   *  throw/reject. */
+   *  queues the event, which process.exit() would then likely never deliver. No-op default. A synchronous throw
+   *  or a rejected promise from this hook is caught and logged (`error capture failed: ...`) so that the cleanup
+   *  sweep and the process exit always run -- a failing error sink can never leave the miner's stores open. */
   captureError?: (error: unknown, context?: Record<string, unknown>) => void | Promise<void>;
   /** Reinstall even if handlers were already installed (mainly for tests). */
   force?: boolean;
@@ -119,16 +120,28 @@ export function installCliSignalHandlers(options: InstallCliSignalHandlersOption
   // not require these handlers to be synchronous: nothing exits the process until this handler itself calls
   // `exit()`, so awaiting first is safe. captureError's own default is a synchronous no-op, so `await`-ing it
   // is a harmless no-op for every caller that doesn't pass one.
+  // captureError is a public injectable option whose "never throws/rejects" contract lived only in prose. Enforce
+  // it HERE, at the chokepoint: a synchronous throw or a rejected promise from the hook is caught and logged so
+  // runCleanup() + exit() always run -- otherwise a failing error sink would leave every registered store open and
+  // (on unhandledRejection) the async handler's own rejection would re-enter this same handler.
   proc.on("uncaughtException", async (error: unknown) => {
     log(`loopover-miner: uncaught exception: ${describeError(error)}`);
-    await captureError(error, { kind: "uncaughtException" });
+    try {
+      await captureError(error, { kind: "uncaughtException" });
+    } catch (captureFailure) {
+      log(`loopover-miner: error capture failed: ${describeError(captureFailure)}`);
+    }
     runCleanup();
     exit(1);
   });
 
   proc.on("unhandledRejection", async (reason: unknown) => {
     log(`loopover-miner: unhandled promise rejection: ${describeError(reason)}`);
-    await captureError(reason, { kind: "unhandledRejection" });
+    try {
+      await captureError(reason, { kind: "unhandledRejection" });
+    } catch (captureFailure) {
+      log(`loopover-miner: error capture failed: ${describeError(captureFailure)}`);
+    }
     runCleanup();
     exit(1);
   });

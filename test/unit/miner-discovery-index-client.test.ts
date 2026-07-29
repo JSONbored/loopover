@@ -225,6 +225,18 @@ describe("recordDiscoveryTelemetry (#7168)", () => {
     });
     expect(logSpy.info).toHaveBeenCalledWith("discovery_plane_telemetry", { event: "discover_query", outcome: "supplemented" });
   });
+
+  it("#9680: carries the droppedAiBanned count in the payload when the caller supplies it", () => {
+    recordDiscoveryTelemetry("discover_query", "supplemented", {
+      env: { [DISCOVERY_PLANE_FLAG]: "true", [DISCOVERY_TELEMETRY_FLAG]: "true" },
+      droppedAiBanned: 2,
+    });
+    expect(logSpy.info).toHaveBeenCalledWith("discovery_plane_telemetry", {
+      event: "discover_query",
+      outcome: "supplemented",
+      droppedAiBanned: 2,
+    });
+  });
 });
 
 describe("defaulted options (real process.env / real global fetch) (#7168)", () => {

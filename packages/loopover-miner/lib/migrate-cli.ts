@@ -3,8 +3,9 @@
 // whatever command happens to touch it first -- this command instead lets an operator PROACTIVELY bring every
 // known store's EXISTING on-disk file up to date in one pass (e.g. right after upgrading, or before starting a
 // fleet), without needing to guess which command happens to touch which store first. Mirrors status.js's
-// storeIntegrityChecks [name, resolve*DbPath(env)] store list exactly (same eleven stores `doctor` already
-// covers, #6768), but actually OPENS each store (rather than a read-only integrity probe) so its real open/init
+// storeIntegrityChecks [name, resolve*DbPath(env)] store list exactly (the same stores `doctor` already
+// covers, #6768 -- drift-guarded against STORE_INTEGRITY_NAMES in miner-migrate-cli.test.ts, #9689), but
+// actually OPENS each store (rather than a read-only integrity probe) so its real open/init
 // function's migration path runs for real. A store file that does not exist yet is skipped, not created --
 // "migrate" brings existing files up to date; it is not another way to bootstrap fresh state (that's `init`).
 import { existsSync } from "node:fs";
@@ -50,7 +51,7 @@ export type MigrateStoreDescriptor = {
   open: (dbPath: string) => { close: () => void };
 };
 
-const STORES: MigrateStoreDescriptor[] = [
+export const STORES: MigrateStoreDescriptor[] = [
   { name: "event-ledger", resolveDbPath: resolveEventLedgerDbPath, open: initEventLedger },
   { name: "governor-ledger", resolveDbPath: resolveGovernorLedgerDbPath, open: initGovernorLedger },
   { name: "prediction-ledger", resolveDbPath: resolvePredictionLedgerDbPath, open: initPredictionLedger },
@@ -156,7 +157,7 @@ function migrateStore({ name, resolveDbPath, open }: MigrateStoreDescriptor, env
 }
 
 /** `stores` is injectable so tests can exercise a store descriptor's failure paths (e.g. a non-Error throw)
- *  without depending on real node:sqlite error shapes; defaults to the real seven-store list. */
+ *  without depending on real node:sqlite error shapes; defaults to the real `STORES` list. */
 export function runMigrateChecks(
   env: Record<string, string | undefined> = process.env,
   stores: MigrateStoreDescriptor[] = STORES,

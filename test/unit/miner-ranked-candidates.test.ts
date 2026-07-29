@@ -197,6 +197,21 @@ describe("loopover-miner ranked-candidates store (#4859 prerequisite)", () => {
     }
   });
 
+  it("REGRESSION (#9684): rejects a candidate repoFullName with a path-traversal segment", () => {
+    const dbPath = join(tempRoot(), "ranked-candidates.sqlite3");
+    const store = initRankedCandidatesStore(dbPath);
+    try {
+      expect(() => store.saveRankedCandidates([{ ...fullCandidate, repoFullName: "../etc" }])).toThrow(
+        "invalid_ranked_candidate",
+      );
+      expect(() => store.saveRankedCandidates([{ ...fullCandidate, repoFullName: "acme/.." }])).toThrow(
+        "invalid_ranked_candidate",
+      );
+    } finally {
+      store.close();
+    }
+  });
+
   it("purgeByRepo deletes only the given repo's snapshot rows and returns the count (#8009)", () => {
     const dbPath = join(tempRoot(), "ranked-candidates.sqlite3");
     const store = initRankedCandidatesStore(dbPath);

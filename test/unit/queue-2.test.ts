@@ -1594,6 +1594,81 @@ describe("queue processors", () => {
     expect(audit?.n).toBe(0);
   });
 
+  it("REGRESSION (#9692): a paused repo never fires the ai_review_public_summary_missing alarm, records a single paused gate-skip, and starts no review-evasion tracking", async () => {
+    let aiCalls = 0;
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      AI: {
+        run: async () => {
+          aiCalls += 1;
+          return { response: JSON.stringify({ assessment: "Should never run.", blockers: [], nits: [], suggestions: [] }) };
+        },
+      } as unknown as Ai,
+      AI_SUMMARIES_ENABLED: "true",
+      AI_PUBLIC_COMMENTS_ENABLED: "true",
+      AI_DAILY_NEURON_BUDGET: "100000",
+    });
+    await persistRegistrySnapshot(
+      asCloudEnv(env),
+      normalizeRegistryPayload(
+        { "JSONbored/gittensory": { emission_share: 0.01, issue_discovery_share: 0 } },
+        { kind: "raw-github", url: "https://example.test" },
+        "2026-05-23T00:00:00.000Z",
+      ),
+    );
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }, 123);
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autoLabelEnabled: false,
+      gatePack: "oss-anti-slop",
+      agentPaused: true,
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", reviewCheckMode: "required", aiReviewMode: "block" } });
+    await upsertOfficialMinerDetection(env, "contributor", { status: "confirmed", snapshot: queueMinerSnapshot("contributor") }, 60_000);
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/11/files")) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const ok = true;" }]);
+      if (url.endsWith("/pulls/11")) return Response.json({ number: 11, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a11" }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+      if (url.includes("/commits/a11/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/a11/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/issues/11/comments") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+      if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+      return Response.json({});
+    });
+
+    await expect(
+      processJob(env, {
+        type: "github-webhook",
+        deliveryId: "paused-repo-ai-review-gate-skip",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 11, title: "Clean PR", state: "open", user: { login: "contributor" }, head: { sha: "a11" }, labels: [], body: "Closes #1" },
+        },
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(aiCalls).toBe(0); // the paused repo never spends the LLM call
+    const missingSummaryAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = ?")
+      .bind("github_app.ai_review_public_summary_missing")
+      .first<{ n: number }>();
+    expect(missingSummaryAudit?.n).toBe(0);
+    const gateSkipRows = await env.DB.prepare("select metadata_json from audit_events where event_type = ? and target_key = ?")
+      .bind("github_app.ai_review_public_gate_skipped", "JSONbored/gittensory#11")
+      .all<{ metadata_json: string }>();
+    expect(gateSkipRows.results).toHaveLength(1);
+    expect(JSON.parse(gateSkipRows.results[0]?.metadata_json ?? "{}")).toMatchObject({ reason: "paused" });
+    const trackingRow = await env.DB.prepare("select count(*) as n from active_review_tracking where repo_full_name = ? and pull_number = ?")
+      .bind("JSONbored/gittensory", 11)
+      .first<{ n: number }>();
+    expect(trackingRow?.n).toBe(0);
+  });
+
   it("publishes a non-cacheable AI-unavailable note when no reviewer returns usable output", async () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),

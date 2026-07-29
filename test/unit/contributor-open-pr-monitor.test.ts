@@ -7,7 +7,7 @@ import {
   mapPendingClassToWorkClassification,
 } from "../../src/signals/contributor-open-pr-monitor";
 import { classifyOpenPullRequest } from "../../src/scoring/pending-pr-scenarios";
-import type { PullRequestRecord, PullRequestReviewRecord } from "../../src/types";
+import type { PullRequestFileRecord, PullRequestRecord, PullRequestReviewRecord } from "../../src/types";
 import type { RoleContext } from "../../src/signals/engine";
 import { createTestEnv } from "../helpers/d1";
 
@@ -63,6 +63,23 @@ function approvedReview(pullNumber: number): PullRequestReviewRecord {
 }
 
 describe("contributor open PR monitor", () => {
+  it("regression (#9696): missingTestsFromFiles exempts a generated/vendored-only diff, matching the gate-side isTestableCodePath", () => {
+    const { missingTestsFromFiles } = __contributorOpenPrMonitorInternals;
+    // A vendored-only diff with no tests must NOT be flagged missing_tests — the gate-side signal deliberately
+    // exempts exactly this case, so telling the contributor to add tests for vendored code was a false negative.
+    expect(missingTestsFromFiles([{ path: "vendor/dep/util.go", additions: 200, deletions: 0 }] as PullRequestFileRecord[])).toBe(false);
+    expect(missingTestsFromFiles([{ path: "api/service.pb.go", additions: 500, deletions: 0 }] as PullRequestFileRecord[])).toBe(false);
+    // Real hand-authored code with no test file is still flagged.
+    expect(missingTestsFromFiles([{ path: "src/app/service.ts", additions: 50, deletions: 0 }] as PullRequestFileRecord[])).toBe(true);
+    // Real code WITH a substantive test file is not flagged.
+    expect(
+      missingTestsFromFiles([
+        { path: "src/app/service.ts", additions: 50, deletions: 0 },
+        { path: "test/unit/service.test.ts", additions: 30, deletions: 0 },
+      ] as PullRequestFileRecord[]),
+    ).toBe(false);
+  });
+
   it("maps issue #36 classifications from cached review/check metadata", () => {
     const approved = classifyOpenPullRequest({
       pr: pr({ number: 1 }),

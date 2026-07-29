@@ -172,6 +172,21 @@ describe("loopover-miner state CLI", () => {
     });
   });
 
+  it("REGRESSION (#9684): parseStateGetArgs and parseStateSetArgs reject a path-traversal repo segment", () => {
+    expect(parseStateGetArgs(["../acme"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseStateGetArgs(["acme/.."])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseStateSetArgs(["../acme", "idle"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+    expect(parseStateSetArgs(["acme/..", "idle"])).toEqual({
+      error: "Repository must be in owner/repo form.",
+    });
+  });
+
   it("runStateGet returns exit code 2 for malformed repositories", () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     expect(runStateGet(["not-a-repo"])).toBe(2);

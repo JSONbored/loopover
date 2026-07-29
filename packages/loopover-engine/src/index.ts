@@ -465,6 +465,7 @@ export {
   buildSlopAssessment,
   buildTrivialWhitespaceChurnFinding,
   hasClearNoIssueRationale,
+  isTestableCodePath,
   type SlopAssessment,
   type SlopAssessmentInput,
   type SlopBand,

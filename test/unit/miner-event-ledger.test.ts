@@ -149,6 +149,18 @@ describe("loopover-miner event ledger (#2290)", () => {
     );
   });
 
+  // #9684: a `.`/`..` segment must not persist into miner_event_ledger.repo_full_name -- both the owner and
+  // repo positions are checked, matching every other owner/repo parser in the package (#5831).
+  it("REGRESSION (#9684): rejects a repoFullName with a path-traversal segment", () => {
+    const ledger = tempLedger();
+    expect(() => ledger.appendEvent({ type: "x", repoFullName: "../etc", payload: {} })).toThrow(
+      "invalid_repo_full_name",
+    );
+    expect(() => ledger.appendEvent({ type: "x", repoFullName: "o/..", payload: {} })).toThrow(
+      "invalid_repo_full_name",
+    );
+  });
+
   it("rejects a payload JSON would not round-trip verbatim, and accepts a nested JSON-safe one", () => {
     const ledger = tempLedger();
     // Values JSON drops or coerces would make the audit entry differ from what was appended.

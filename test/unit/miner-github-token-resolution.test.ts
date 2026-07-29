@@ -301,6 +301,41 @@ describe("resolveGitHubToken (#6116)", () => {
     await resolveGitHubToken(configuredEnv(dir, { LOOPOVER_PROFILE: "Not A Valid Name!!" }), { fetchImpl });
     expect(capturedAuth).toBe("Bearer default-session");
   });
+
+  it("an invalid activeProfile IN THE CONFIG also falls back to default, not just an invalid env one", async () => {
+    dir = mkdtempSync(join(tmpdir(), "loopover-miner-github-token-badactive-"));
+    writeConfig(dir, { activeProfile: "Not A Valid Name!!", profiles: { default: { session: { token: "default-session" } } } });
+    let capturedAuth: string | undefined;
+    const fetchImpl = async (_url: string, init?: { headers?: Record<string, string> }) => {
+      capturedAuth = init?.headers?.authorization;
+      return Response.json({ token: "live-token" });
+    };
+    await resolveGitHubToken(configuredEnv(dir), { fetchImpl });
+    expect(capturedAuth).toBe("Bearer default-session");
+  });
+
+  it("an activeProfile naming a profile that does not exist falls back to default", async () => {
+    dir = mkdtempSync(join(tmpdir(), "loopover-miner-github-token-ghostprofile-"));
+    writeConfig(dir, { activeProfile: "ghost", profiles: { default: { session: { token: "default-session" } } } });
+    let capturedAuth: string | undefined;
+    const fetchImpl = async (_url: string, init?: { headers?: Record<string, string> }) => {
+      capturedAuth = init?.headers?.authorization;
+      return Response.json({ token: "live-token" });
+    };
+    await resolveGitHubToken(configuredEnv(dir), { fetchImpl });
+    expect(capturedAuth).toBe("Bearer default-session");
+  });
+
+  it("treats a config path that EXISTS but cannot be read as no config at all", async () => {
+    // A directory sitting where config.json should be: existsSync passes, readFileSync throws EISDIR.
+    // Same "no session on disk" outcome as an absent file — never a crash on a scheduled cycle.
+    dir = mkdtempSync(join(tmpdir(), "loopover-miner-github-token-unreadable-"));
+    mkdirSync(join(dir, "config.json"));
+    const fetchImpl = () => {
+      throw new Error("should never be called");
+    };
+    await expect(resolveGitHubToken(configuredEnv(dir), { fetchImpl })).resolves.toBeNull();
+  });
 });
 
 describe("resolveLoopoverBackendSession (#6487)", () => {

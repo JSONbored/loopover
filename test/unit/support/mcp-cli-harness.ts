@@ -169,6 +169,20 @@ export async function startFixtureServer(
     /** #6261: when set, the routes whose free text reaches plain-text terminal output return this string in
      *  those fields, standing in for a hostile API. Tests assert it can't reach the terminal un-neutered. */
     terminalInjection?: string;
+    /** #9521: these exact request paths answer 200 with `{}` — a body the published response schema
+     *  rejects, and one whose optional fields are all absent. Lets a test drive the boundary validator's
+     *  mismatch report, and the renderers' nullish arms, without a real contract break: every other
+     *  fixture response is deliberately well-formed. */
+    schemaViolationPaths?: readonly string[];
+    /** #9521: these paths answer 200 with a JSON ARRAY — valid JSON, but the wrong TOP-LEVEL type, so the
+     *  first validation issue has an empty `path` and the reporter falls back to "(root)". */
+    rootTypeViolationPaths?: readonly string[];
+    /** #9521: watch entries answer with no `labels` key at all, taking the renderer's nullish arm. */
+    labellessWatch?: boolean;
+    /** #9521: these paths answer 200 with a NON-JSON body, so a test can drive apiFetch's
+     *  "an OK response whose body will not parse is a real failure" branch (a non-OK one degrades into a
+     *  structured error instead). */
+    nonJsonOkPaths?: readonly string[];
     latestVersion?: string;
     latestRecommendedMcpVersion?: string;
     minMcpVersion?: string;
@@ -219,6 +233,21 @@ export async function startFixtureServer(
   server = createServer(async (request, response) => {
     options.onApiRequest?.(request);
     response.setHeader("content-type", "application/json");
+    // Checked FIRST, before any route: this deliberately answers `{}` for the named paths, and a route
+    // further down would otherwise serve its own well-formed fixture instead. Compared on the PATHNAME,
+    // since several callers append a query string.
+    if (options.schemaViolationPaths?.includes(new URL(request.url ?? "/", "http://localhost").pathname)) {
+      response.end("{}");
+      return;
+    }
+    if (options.rootTypeViolationPaths?.includes(new URL(request.url ?? "/", "http://localhost").pathname)) {
+      response.end("[]");
+      return;
+    }
+    if (options.nonJsonOkPaths?.includes(new URL(request.url ?? "/", "http://localhost").pathname)) {
+      response.end("<html>not json</html>");
+      return;
+    }
     if (request.url && request.url.includes("loopover%2Fmcp/latest")) {
       if (options.npmStatus && options.npmStatus >= 400) {
         response.statusCode = options.npmStatus;
@@ -339,7 +368,13 @@ export async function startFixtureServer(
     const watchesMatch = /^\/v1\/contributors\/([^/]+)\/watches$/.exec(new URL(request.url ?? "/", "http://localhost").pathname);
     if (watchesMatch && (request.method === "GET" || request.method === "POST" || request.method === "DELETE")) {
       if (request.method === "GET") {
-        response.end(JSON.stringify({ watching: [{ repoFullName: "acme/widgets", labels: ["bug"] }, { repoFullName: "acme/gadgets", labels: [] }] }));
+        response.end(
+          JSON.stringify({
+            watching: options.labellessWatch
+              ? [{ repoFullName: "acme/widgets" }, { repoFullName: "acme/gadgets", labels: [] }]
+              : [{ repoFullName: "acme/widgets", labels: ["bug"] }, { repoFullName: "acme/gadgets", labels: [] }],
+          }),
+        );
         return;
       }
       const requestBody = (await readJsonRequest(request)) as { repoFullName?: string; labels?: string[] };

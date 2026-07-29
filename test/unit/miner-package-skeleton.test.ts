@@ -48,7 +48,11 @@ describe("loopover-miner package skeleton (#2287)", () => {
     // build:verify (a glob-driven node --check pass over every bin/lib .js file, replacing a previously
     // hand-listed ~119-file chain here that had to be kept in sync by hand).
     expect(miner.scripts.build).toBe("npm run build:tsc && npm run build:verify");
-    expect(miner.scripts["build:tsc"]).toBe("tsc -p tsconfig.json");
+    // #9521: the stamp is cleared before tsc runs. `tsc -p` with `incremental` decides what to emit from
+    // .tsbuildinfo ALONE -- it never checks whether the outputs that stamp describes still exist -- so a
+    // turbo cache that restores the stamp without dist/ makes the build a silent no-op. Asserted as a
+    // suffix so the guard still pins the compile itself; the clear is covered by its own test.
+    expect(miner.scripts["build:tsc"]).toMatch(/^node -e .*\.tsbuildinfo.* && tsc -p tsconfig\.json$/);
     expect(miner.scripts["build:verify"]).toBe("node --experimental-strip-types scripts/check-syntax.ts");
   });
 

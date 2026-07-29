@@ -3,10 +3,13 @@
   "compilerOptions": {
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    // No "types" entry on purpose: this package must stay Workers-safe, so it never reaches for
-    // node builtins and has no need for @types/node. Adding it would let a node: import compile
-    // here and only fail later, in the Cloudflare bundle.
-    "types": [],
+    // Workers types ONLY -- never @types/node. The rule this enforces is unchanged: this package
+    // must stay Workers-safe, so a node: import must not compile here and then fail later in the
+    // Cloudflare bundle. It was previously spelled `"types": []`, which also withheld URL, fetch,
+    // and AbortSignal -- globals the Worker genuinely has, and which orb-broker.ts needs (#9521).
+    // Typing against the Workers runtime grants exactly those and still rejects every node builtin,
+    // which is the invariant stated more precisely rather than relaxed.
+    "types": ["@cloudflare/workers-types"],
     "declaration": true,
     "sourceMap": true,
     "rootDir": "src",

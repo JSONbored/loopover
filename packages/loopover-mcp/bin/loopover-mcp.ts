@@ -6,6 +6,7 @@ import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, 
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { CLI_RESPONSE_SCHEMAS, type ApiResponse, type ValidatedApiPath } from "@loopover/contract/api-schemas";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { buildFeasibilityVerdict, buildPrTextLint, buildGateDispositions, buildPublicPrBodyDraft } from "@loopover/engine";
@@ -211,42 +212,124 @@ function isProcessEntrypoint() {
 }
 const runAsCliEntrypoint = isProcessEntrypoint();
 const defaultProfileName = "default";
-// Single source of truth for shell-completion: top-level command -> its subcommands (if any).
+/**
+ * THE CLI surface, as one typed table (#9521).
+ *
+ * Everything a user can see about a command derives from this: `runCli` dispatch (the
+ * `cliCommandHandlers()` Record below is exhaustiveness-checked against these keys by tsc),
+ * `printHelp`, shell completion, and the README's command block (generated between markers by
+ * scripts/gen-mcp-tool-reference.ts). Before this there were FOUR hand-kept copies -- this table,
+ * a 34-branch if-chain, a hand-written help string, and the README -- and printHelp had already
+ * silently dropped commands.
+ *
+ * `usage` is the full argument syntax shown in help and the README; `subcommands` also drives
+ * completion. An entry with no usage lines still appears in help as its bare name.
+ */
 const CLI_COMMAND_SPEC = {
-  login: [],
-  logout: [],
-  whoami: [],
-  config: [],
-  status: [],
-  changelog: [],
-  completion: [],
-  version: [],
-  tools: ["search"],
-  doctor: [],
-  telemetry: ["enable", "disable", "status"],
-  "init-client": [],
-  "decision-pack": [],
-  "repo-decision": [],
-  "contributor-profile": [],
-  "monitor-open-prs": [],
-  "pr-outcomes": [],
-  "explain-review-risk": [],
-  notifications: [],
-  "notifications-read": [],
-  watch: ["list", "add", "remove"],
-  "analyze-branch": [],
-  preflight: [],
-  "review-pr": [],
-  "lint-pr-text": [],
-  "validate-config": [],
-  "slop-risk": [],
-  "improvement-potential": [],
-  "issue-slop": [],
-  profile: ["list", "create", "switch", "remove"],
-  cache: ["status", "clear", "list"],
-  agent: ["start", "plan", "status", "explain", "packet"],
-  maintain: ["status", "queue", "propose", "approve", "reject", "pause", "resume", "set-level", "precision", "selftune-audit", "outcome-calibration", "onboarding-pack", "audit-feed", "automation-state", "refresh-docs", "generate-issue-drafts", "plan-issues"],
-};
+  login: { subcommands: [], usage: ["login [--profile name] [--github-token <token>] [--json]"] },
+  logout: { subcommands: [], usage: ["logout [--profile name] [--all] [--json]"] },
+  whoami: { subcommands: [], usage: ["whoami [--profile name] [--json]"] },
+  config: { subcommands: [], usage: ["config [--profile name] [--json]"] },
+  status: { subcommands: [], usage: ["status [--profile name] [--json]"] },
+  changelog: { subcommands: [], usage: ["changelog [--json]"] },
+  completion: { subcommands: [], usage: ["completion bash|zsh|fish|powershell [--json]"] },
+  version: { subcommands: [], usage: ["version [--json]"] },
+  tools: { subcommands: ["search"], usage: ["tools [--json]", "tools search <query> [--json]"] },
+  doctor: { subcommands: [], usage: ["doctor [--profile name] [--cwd path] [--exit-code] [--json]"] },
+  telemetry: { subcommands: ["enable", "disable", "status"], usage: ["telemetry enable|disable|status [--json]"] },
+  "init-client": { subcommands: [], usage: ["init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]"] },
+  "decision-pack": { subcommands: [], usage: ["decision-pack --login <github-login> [--json]"] },
+  "repo-decision": { subcommands: [], usage: ["repo-decision --login <github-login> --repo owner/repo [--json]"] },
+  "contributor-profile": { subcommands: [], usage: ["contributor-profile [--login <github-login>] [--json]"] },
+  "monitor-open-prs": { subcommands: [], usage: ["monitor-open-prs --login <github-login> [--json]"] },
+  "pr-outcomes": { subcommands: [], usage: ["pr-outcomes --login <github-login> [--limit N] [--json]"] },
+  "explain-review-risk": { subcommands: [], usage: ["explain-review-risk --repo owner/repo --title <text> [--login <github-login>] [--body <text>] [--json]"] },
+  notifications: { subcommands: [], usage: ["notifications --login <github-login> [--json]"] },
+  "notifications-read": { subcommands: [], usage: ["notifications-read --login <github-login> [--id <delivery-id>]... [--json]"] },
+  watch: { subcommands: ["list", "add", "remove"], usage: ["watch <list|add|remove> [owner/repo] [--labels a,b] [--login <github-login>] [--json]"] },
+  "analyze-branch": {
+    subcommands: [],
+    usage: [
+      'analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--format table] [--json]',
+    ],
+  },
+  preflight: {
+    subcommands: [],
+    usage: [
+      'preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--format table] [--json]',
+    ],
+  },
+  "review-pr": {
+    subcommands: [],
+    usage: ["review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]"],
+  },
+  "lint-pr-text": { subcommands: [], usage: ["lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]"] },
+  "validate-config": { subcommands: [], usage: ["validate-config --file <path> [--source repo_file|api_record|none] [--json]"] },
+  "slop-risk": { subcommands: [], usage: ["slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]"] },
+  "improvement-potential": { subcommands: [], usage: ["improvement-potential [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--patch-coverage-delta <percent>] [--json]"] },
+  "issue-slop": { subcommands: [], usage: ["issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]"] },
+  profile: {
+    subcommands: ["list", "create", "switch", "remove"],
+    usage: ["profile list [--json | --format ndjson]", "profile create <name> [--json]", "profile switch <name> [--json]", "profile remove <name> [--json]"],
+    note: "Use --profile <name> or LOOPOVER_PROFILE to run login, logout, whoami, status, doctor, and MCP API calls with a named local session.",
+  },
+  cache: {
+    subcommands: ["status", "clear", "list"],
+    usage: ["cache status [--json]", "cache list [--json | --format ndjson]", "cache clear [--json]"],
+    note: "Decision-pack cache entries are local-only stale fallbacks for temporary API/network outages.\nSource upload remains disabled.",
+  },
+  agent: {
+    subcommands: ["start", "plan", "status", "explain", "packet"],
+    usage: [
+      'agent start --login <github-login> --objective "..." [--repo owner/repo] [--pull <n>] [--issue <n>] [--json]',
+      "agent plan --login <github-login> [--repo owner/repo] [--objective \"...\"] [--json]",
+      "agent status <run-id> [--json]",
+      "agent explain <run-id> [--json]",
+      'agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--validation "passed|command|summary"] [--json]',
+    ],
+    note: "The agent is copilot-only: it ranks, explains, and drafts public-safe packets. It does not edit code, open PRs, or post comments from the local MCP wrapper.\nSource upload remains disabled.",
+  },
+  maintain: {
+    subcommands: ["status", "queue", "propose", "approve", "reject", "pause", "resume", "set-level", "precision", "selftune-audit", "outcome-calibration", "onboarding-pack", "audit-feed", "automation-state", "refresh-docs", "generate-issue-drafts", "plan-issues"],
+    usage: [
+      "maintain status|queue|approve|reject|pause|resume|set-level|precision|selftune-audit|outcome-calibration|onboarding-pack|audit-feed|automation-state|refresh-docs|generate-issue-drafts --repo owner/repo [--json] (see `loopover-mcp maintain --help`)",
+    ],
+  },
+} as const satisfies Record<string, { subcommands: readonly string[]; usage: readonly string[]; note?: string }>;
+
+export type CliCommand = keyof typeof CLI_COMMAND_SPEC;
+export { CLI_COMMAND_SPEC };
+
+/**
+ * Every flag whose parsing is not "take the next argv token as a string" (#9521). parseOptions used
+ * to hand-list these as two bare Sets sitting next to each other, so adding a repeatable flag to a
+ * command meant remembering to also add it there -- a step nothing checked.
+ *
+ * `repeatable` accumulates into an array (`--commit a --commit b`); `boolean` parses its inline
+ * `--key=value` form to a REAL boolean (#8689) instead of the truthy string "false". Anything absent
+ * here is a plain single-value string flag.
+ */
+const CLI_FLAG_SPEC = {
+  label: "repeatable",
+  issue: "repeatable",
+  id: "repeatable",
+  commit: "repeatable",
+  changedFile: "repeatable",
+  test: "repeatable",
+  testFile: "repeatable",
+  validation: "repeatable",
+  validationCommand: "repeatable",
+  validationStatus: "repeatable",
+  validationSummary: "repeatable",
+  validationDuration: "repeatable",
+  scenarioNote: "repeatable",
+  json: "boolean",
+  exitCode: "boolean",
+} as const satisfies Record<string, "repeatable" | "boolean">;
+
+export { CLI_FLAG_SPEC };
+const REPEATABLE_FLAGS = new Set(Object.entries(CLI_FLAG_SPEC).filter(([, kind]) => kind === "repeatable").map(([flag]) => flag));
+const BOOLEAN_FLAGS = new Set(Object.entries(CLI_FLAG_SPEC).filter(([, kind]) => kind === "boolean").map(([flag]) => flag));
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
 const AGENT_PROFILE_IDS = ["miner-planner", "miner-auto-dev", "maintainer-triage", "repo-owner-intake"];
 // #784 maintain set-level — the autonomy dial's action classes + levels.
@@ -946,7 +1029,9 @@ registerStdioTool(
     if (since) query.set("since", since);
     if (limit != null) query.set("limit", String(limit));
     const qs = query.toString();
-    return toolResult("LoopOver skipped-PR audit trail.", await apiGet(`/v1/app/skipped-pr-audit${qs ? `?${qs}` : ""}`));
+    // Literal path + concatenated query, not one template: gen-contract-api-schemas's scanner collects the
+    // literal so this response stays in CLI_RESPONSE_SCHEMAS, and validatedPathOf strips the query anyway.
+    return toolResult("LoopOver skipped-PR audit trail.", await apiGet("/v1/app/skipped-pr-audit" + (qs ? `?${qs}` : "")));
   },
 );
 
@@ -1197,8 +1282,9 @@ registerStdioTool(
       ...(input.changedPaths !== undefined ? { changedFiles: input.changedPaths.map((path: any) => ({ path })) } : {}),
     };
     const result = await apiPost("/v1/local/branch-analysis", body);
+    // #9587 declared predictedGate with a real schema, so this is typed straight off the response now.
     const verdict = result.predictedGate;
-    const dispositions = buildGateDispositions(verdict ?? { blockers: [], warnings: [] });
+    const dispositions = buildGateDispositions(verdict);
     const blocking = dispositions.filter((disposition) => disposition.status === "block").length;
     return toolResult(
       `Gate disposition for ${input.owner}/${input.repo} under the ${verdict?.pack ?? "unknown"} pack: ${verdict?.conclusion ?? "unknown"} — ${blocking} blocking rule(s), ${dispositions.length - blocking} advisory.`,
@@ -2447,7 +2533,7 @@ export async function maintainCli(args: any) {
   const [owner, repo] = repoFullName.split("/", 2);
   const repoBase = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
   const queueBase = `${repoBase}/agent/pending-actions`;
-  const emit = (payload: any, line: any) => {
+  const emit = (payload: unknown, line: string) => {
     if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     else process.stdout.write(`${line}\n`);
   };
@@ -2711,45 +2797,77 @@ export async function maintainCli(args: any) {
   );
 }
 
+/**
+ * One handler per CLI_COMMAND_SPEC key, exhaustiveness-CHECKED by the Record type (#9521): a
+ * command added to the table without a handler -- or a handler for a command the table does not
+ * declare -- is a tsc error, not a silently unreachable branch. This replaces a 34-branch if-chain
+ * that tsc could not audit.
+ *
+ * Handlers receive the RAW argv tail; the ones that only need parsed options parse inline, matching
+ * what the old chain did for each command.
+ *
+ * This is a hoisted FUNCTION, not a `const` table, and must stay one: the entrypoint above awaits
+ * runCli() during module evaluation, long before a `const` down here would initialize -- so a table
+ * would throw "Cannot access it before initialization" for every CLI invocation.
+ * The old if-chain was accidentally safe because it called hoisted function declarations.
+ */
+function cliCommandHandlers(): Record<CliCommand, (args: string[]) => unknown> {
+  return {
+    version: (args) => printVersion(parseOptions(args)),
+    completion: (args) => completionCommand(args),
+    tools: (args) => toolsCommand(args),
+    agent: (args) => runAgentCli(args),
+    cache: (args) => runCacheCli(args),
+    maintain: (args) => maintainCli(args),
+    telemetry: (args) => telemetryCommand(args),
+    login: (args) => login(parseOptions(args)),
+    logout: (args) => logout(parseOptions(args)),
+    profile: (args) => profileCommand(args),
+    whoami: (args) => whoami(parseOptions(args)),
+    config: (args) => configCommand(parseOptions(args)),
+    status: (args) => status(parseOptions(args)),
+    changelog: (args) => changelog(parseOptions(args)),
+    doctor: (args) => doctor(parseOptions(args)),
+    "init-client": (args) => initClient(parseOptions(args)),
+    "lint-pr-text": (args) => lintPrTextCli(args),
+    "validate-config": (args) => validateConfigCli(args),
+    "slop-risk": (args) => slopRiskCli(args),
+    "improvement-potential": (args) => improvementPotentialCli(args),
+    "issue-slop": (args) => issueSlopCli(args),
+    "decision-pack": (args) => decisionPackCli(parseOptions(args)),
+    "repo-decision": (args) => repoDecisionCli(parseOptions(args)),
+    "contributor-profile": (args) => contributorProfileCli(parseOptions(args)),
+    "monitor-open-prs": (args) => monitorOpenPrsCli(parseOptions(args)),
+    "pr-outcomes": (args) => prOutcomesCli(parseOptions(args)),
+    "explain-review-risk": (args) => explainReviewRiskCli(parseOptions(args)),
+    notifications: (args) => notificationsCli(parseOptions(args)),
+    "notifications-read": (args) => notificationsReadCli(parseOptions(args)),
+    watch: (args) => watchCli(args),
+    "review-pr": (args) => reviewPrCli(parseOptions(args)),
+    "analyze-branch": (args) => analyzeOrPreflightCli("analyze-branch", args),
+    preflight: (args) => analyzeOrPreflightCli("preflight", args),
+  };
+}
+
 async function runCli(args: any) {
   const command = args[0];
   if (command === undefined || command === "--help" || command === "help") return printHelp();
-  if (command === "--version" || command === "-v" || command === "version") return printVersion(parseOptions(args.slice(1)));
-  if (command === "completion") return completionCommand(args.slice(1));
-  if (command === "tools") return toolsCommand(args.slice(1));
-  if (command === "agent") return runAgentCli(args.slice(1));
-  if (command === "cache") return runCacheCli(args.slice(1));
-  if (command === "maintain") return maintainCli(args.slice(1));
-  if (command === "telemetry") return telemetryCommand(args.slice(1));
-  const options = parseOptions(args.slice(1));
-  if (command === "login") return login(options);
-  if (command === "logout") return logout(options);
-  if (command === "profile" || command === "profiles") return profileCommand(args.slice(1));
-  if (command === "whoami") return whoami(options);
-  if (command === "config") return configCommand(options);
-  if (command === "status") return status(options);
-  if (command === "changelog") return changelog(options);
-  if (command === "doctor") return doctor(options);
-  if (command === "init-client") return initClient(options);
-  if (command === "lint-pr-text") return lintPrTextCli(args.slice(1));
-  if (command === "validate-config") return validateConfigCli(args.slice(1));
-  if (command === "slop-risk") return slopRiskCli(args.slice(1));
-  if (command === "improvement-potential") return improvementPotentialCli(args.slice(1));
-  if (command === "issue-slop") return issueSlopCli(args.slice(1));
-  if (command === "decision-pack") return decisionPackCli(options);
-  if (command === "repo-decision") return repoDecisionCli(options);
-  if (command === "contributor-profile") return contributorProfileCli(options);
-  if (command === "monitor-open-prs") return monitorOpenPrsCli(options);
-  if (command === "pr-outcomes") return prOutcomesCli(options);
-  if (command === "explain-review-risk") return explainReviewRiskCli(options);
-  if (command === "notifications") return notificationsCli(options);
-  if (command === "notifications-read") return notificationsReadCli(options);
-  if (command === "watch") return watchCli(args.slice(1));
-  if (command === "review-pr") return reviewPrCli(options);
-  if (command !== "analyze-branch" && command !== "preflight") {
-    const suggestion = suggestCommand(command);
-    throw new Error(`Unknown command: ${command}.${suggestion ? ` Did you mean \`${suggestion}\`?` : ""} Run \`loopover-mcp --help\` to list commands.`);
+  // Aliases kept from the old dispatch chain: they are spellings, not commands, so they live here
+  // rather than in the table (completion and help advertise the canonical form only).
+  if (command === "--version" || command === "-v") return printVersion(parseOptions(args.slice(1)));
+  if (command === "profiles") return profileCommand(args.slice(1));
+  const handlers = cliCommandHandlers();
+  if (Object.hasOwn(handlers, command)) {
+    return handlers[command as CliCommand](args.slice(1));
   }
+  const suggestion = suggestCommand(command);
+  throw new Error(`Unknown command: ${command}.${suggestion ? ` Did you mean \`${suggestion}\`?` : ""} Run \`loopover-mcp --help\` to list commands.`);
+}
+
+/** The shared analyze-branch/preflight body, verbatim from the old chain's tail. */
+async function analyzeOrPreflightCli(command: "analyze-branch" | "preflight", rest: string[]) {
+  const args = [command, ...rest];
+  const options = parseOptions(args.slice(1));
   // Match every other subcommand: honor --help before requiring --login / hitting git+network (#6256).
   if (options.help === true) return printHelp();
   const contributorLogin = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
@@ -2923,7 +3041,7 @@ async function lintPrTextCli(args: any) {
   }
   process.stdout.write(`PR text lint: ${payload.verdict} (score ${payload.score})\n`);
   process.stdout.write(`${payload.summary}\n`);
-  for (const fix of payload.fixes ?? []) process.stdout.write(`- ${fix}\n`);
+  for (const fix of unspeccedList(payload.fixes)) process.stdout.write(`- ${fix}\n`);
 }
 
 // Strip ANSI escapes + control characters from text this CLI prints as plain text. Rule (#6261): every value that
@@ -3038,7 +3156,7 @@ async function slopRiskCli(args: any) {
   // #6990: the route now returns band + findings only (no numeric score/rubric), matching the MCP tool's
   // blunting; print the band alone so the CLI can't leak the exact score the REST surface no longer sends.
   process.stdout.write(`Slop risk: ${sanitizePlainTextTerminalOutput(payload.band)}\n`);
-  for (const finding of payload.findings ?? [])
+  for (const finding of unspeccedList<{ title: unknown; detail: unknown }>(payload.findings))
     process.stdout.write(`- ${sanitizePlainTextTerminalOutput(finding.title)}: ${sanitizePlainTextTerminalOutput(finding.detail)}\n`);
 }
 
@@ -3083,7 +3201,7 @@ async function improvementPotentialCli(args: any) {
   process.stdout.write(
     `Improvement potential: ${sanitizePlainTextTerminalOutput(payload.improvementScore)} (${sanitizePlainTextTerminalOutput(payload.band)})\n`,
   );
-  for (const finding of payload.findings ?? [])
+  for (const finding of unspeccedList<{ title: unknown; detail: unknown }>(payload.findings))
     process.stdout.write(`- ${sanitizePlainTextTerminalOutput(finding.title)}: ${sanitizePlainTextTerminalOutput(finding.detail)}\n`);
 }
 
@@ -3118,7 +3236,7 @@ async function issueSlopCli(args: any) {
   }
   // #6990: band + findings only, matching the route's blunting (no numeric score/rubric leaked through the CLI).
   process.stdout.write(`Issue slop risk: ${sanitizePlainTextTerminalOutput(payload.band)}\n`);
-  for (const finding of payload.findings ?? [])
+  for (const finding of unspeccedList<{ title: unknown; detail: unknown }>(payload.findings))
     process.stdout.write(`- ${sanitizePlainTextTerminalOutput(finding.title)}: ${sanitizePlainTextTerminalOutput(finding.detail)}\n`);
 }
 
@@ -3369,15 +3487,21 @@ export async function watchCli(args: any) {
   if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
   // The API chooses `changed` / repo / label text, so the plain-text path is sanitized (#6261); `login` is the
   // user's own value.
-  const render = (payload: any) =>
+  // /v1/contributors/:login/watched-repos is not in the published document yet (#9531), so the shape
+  // here is the CLI's own read of it -- typed to exactly the fields rendered, no `any`.
+  type WatchPayload = { watching?: Array<{ repoFullName?: string; labels?: string[] }>; changed?: string };
+  const render = (payload: WatchPayload) =>
     [
       `Watching ${(payload.watching ?? []).length} repo(s) for ${login}${payload.changed ? ` (${sanitizePlainTextTerminalOutput(payload.changed)})` : ""}.`,
-      ...(payload.watching ?? []).map((watch: any) => {
-        const labels = (watch.labels ?? []).length > 0 ? ` [${watch.labels.map(sanitizePlainTextTerminalOutput).join(", ")}]` : "";
-        return `- ${sanitizePlainTextTerminalOutput(watch.repoFullName)}${labels}`;
+      ...(payload.watching ?? []).map((watch) => {
+        // Bound once: repeating `watch.labels ?? []` inside the true arm gave that second fallback no
+        // reachable case, since a nullish `labels` never gets past the length check.
+        const labels = watch.labels ?? [];
+        const rendered = labels.length > 0 ? ` [${labels.map(sanitizePlainTextTerminalOutput).join(", ")}]` : "";
+        return `- ${sanitizePlainTextTerminalOutput(watch.repoFullName)}${rendered}`;
       }),
     ].join("\n");
-  const emit = (payload: any) => {
+  const emit = (payload: WatchPayload) => {
     if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     else process.stdout.write(`${render(payload)}\n`);
   };
@@ -3586,12 +3710,33 @@ export { runAgentCli };
 // -- a bare (zero-arg) invocation is otherwise only reachable via subprocess spawn, which coverage can't see.
 export { runCli };
 
-function outputAgentPayload(payload: any, options: any, summary: any) {
+// The agent-run payload fields this printer reads. The /v1/agent/* runs endpoints' 200s are inline in the
+// document (#9531), so this is the CLI's own contract with what it prints -- structural, not `any`.
+type AgentRunOutputPayload = {
+  prPacket?: { markdown?: unknown } | null | undefined;
+  actions?: Array<AgentRunOutputAction> | undefined;
+  nextActions?: Array<AgentRunOutputAction> | undefined;
+  summary?: string | null | undefined;
+  recommendedRerunCondition?: string | null | undefined;
+  status?: string | null | undefined;
+  runId?: string | null | undefined;
+};
+type AgentRunOutputAction = {
+  actionType?: string | null | undefined;
+  actionKind?: string | null | undefined;
+  recommendation?: string | null | undefined;
+  summary?: string | null | undefined;
+  payload?: { prPacket?: { markdown?: unknown } | null | undefined } | null | undefined;
+  explanationCard?: { whyNow?: string; expectedImpact?: string; rerunWhen?: string } | null | undefined;
+  rerunWhen?: string | null | undefined;
+};
+
+function outputAgentPayload(payload: AgentRunOutputPayload, options: { json?: boolean }, summary: string) {
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
     return;
   }
-  const packetMarkdown = payload?.prPacket?.markdown ?? payload?.actions?.find((action: any) => action?.actionType === "prepare_pr_packet")?.payload?.prPacket?.markdown;
+  const packetMarkdown = payload?.prPacket?.markdown ?? payload?.actions?.find((action) => action?.actionType === "prepare_pr_packet")?.payload?.prPacket?.markdown;
   if (typeof packetMarkdown === "string" && packetMarkdown.trim()) {
     const safeMarkdown = requirePublicSafePacketMarkdown(packetMarkdown);
     return process.stdout.write(safeMarkdown.endsWith("\n") ? safeMarkdown : `${safeMarkdown}\n`);
@@ -3810,7 +3955,9 @@ function completionCommand(args: any) {
 
 function buildCompletionScript(shell: any) {
   const topLevel = [...Object.keys(CLI_COMMAND_SPEC), "help"];
-  const withSubcommands = Object.entries(CLI_COMMAND_SPEC).filter(([, subcommands]) => subcommands.length > 0);
+  const withSubcommands = Object.entries(CLI_COMMAND_SPEC)
+    .map(([command, entry]) => [command, entry.subcommands] as const)
+    .filter(([, subcommands]) => subcommands.length > 0);
   if (shell === "bash") return buildBashCompletion(topLevel, withSubcommands);
   if (shell === "zsh") return buildZshCompletion(topLevel, withSubcommands);
   if (shell === "fish") return buildFishCompletion(topLevel, withSubcommands);
@@ -3937,45 +4084,15 @@ ${subcommandEntries}
 }
 
 function printHelp() {
+  // Derived from CLI_COMMAND_SPEC (#9521): a command added to the table appears here by
+  // construction, which the old hand-written string provably did not guarantee -- it had already
+  // dropped commands. `--stdio` is the one non-command entry, listed first because it is the mode
+  // MCP clients launch.
+  const usageLines = ["--stdio", ...Object.values(CLI_COMMAND_SPEC).flatMap((entry) => entry.usage)]
+    .map((line) => `  loopover-mcp ${line}`.replace("loopover-mcp --stdio", "loopover-mcp --stdio"))
+    .join("\n");
   process.stdout.write(`Usage:
-  loopover-mcp --stdio
-  loopover-mcp version [--json]
-  loopover-mcp tools [--json]
-  loopover-mcp tools search <query> [--json]
-  loopover-mcp completion bash|zsh|fish|powershell [--json]
-  loopover-mcp login [--profile name] [--github-token <token>] [--json]
-  loopover-mcp logout [--profile name] [--all] [--json]
-  loopover-mcp whoami [--profile name] [--json]
-  loopover-mcp config [--profile name] [--json]
-  loopover-mcp status [--profile name] [--json]
-  loopover-mcp telemetry enable|disable|status [--json]
-  loopover-mcp profile list|create|switch|remove [name] [--json]
-  loopover-mcp changelog [--json]
-  loopover-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
-  loopover-mcp cache status|list|clear [--json]
-  loopover-mcp init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
-  loopover-mcp maintain status|queue|approve|reject|pause|resume|set-level|precision|selftune-audit|outcome-calibration|onboarding-pack|audit-feed|automation-state|refresh-docs|generate-issue-drafts --repo owner/repo [--json] (see \`loopover-mcp maintain --help\`)
-  loopover-mcp decision-pack --login <github-login> [--json]
-  loopover-mcp repo-decision --login <github-login> --repo owner/repo [--json]
-  loopover-mcp contributor-profile [--login <github-login>] [--json]
-  loopover-mcp monitor-open-prs --login <github-login> [--json]
-  loopover-mcp pr-outcomes --login <github-login> [--limit N] [--json]
-  loopover-mcp explain-review-risk --repo owner/repo --title <text> [--login <github-login>] [--body <text>] [--json]
-  loopover-mcp notifications --login <github-login> [--json]
-  loopover-mcp notifications-read --login <github-login> [--id <delivery-id>]... [--json]
-  loopover-mcp watch <list|add|remove> [owner/repo] [--labels a,b] [--login <github-login>] [--json]
-  loopover-mcp analyze-branch --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--scenario-note "..."] [--validation "passed|npm test|summary"] [--format table] [--json]
-  loopover-mcp preflight --login <github-login> [--repo owner/repo] [--base origin/main] [--branch-eligibility eligible|ineligible|unknown] [--pending-merged-prs 3] [--expected-open-prs 0] [--projected-credibility 0.8] [--validation "passed|npm test|summary"] [--format table] [--json]
-  loopover-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
-  loopover-mcp lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]
-  loopover-mcp validate-config --file <path> [--source repo_file|api_record|none] [--json]
-  loopover-mcp slop-risk [--description <text>] [--description-file <path>] [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--json]
-  loopover-mcp improvement-potential [--changed-file <path[:additions:deletions]>]... [--test <command>]... [--test-file <path>]... [--patch-coverage-delta <percent>] [--json]
-  loopover-mcp issue-slop [--title <text>] [--body <text>] [--body-file <path>] [--json]
-  loopover-mcp agent plan --login <github-login> [--repo owner/repo] [--json]
-  loopover-mcp agent status <run-id> [--json]
-  loopover-mcp agent explain <run-id> [--json]
-  loopover-mcp agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--json]
+${usageLines}
 
   Environment:
   LOOPOVER_API_URL
@@ -3991,50 +4108,40 @@ function printHelp() {
 `);
 }
 
-function printCacheHelp() {
-  process.stdout.write(`Usage:
-  loopover-mcp cache status [--json]
-  loopover-mcp cache list [--json | --format ndjson]
-  loopover-mcp cache clear [--json]
+/**
+ * The commands with their own `--help` body. Narrowed to the entries that declare a `note`, so the printer
+ * below is total without a fallback branch -- a command with no note has no dedicated printer to reach it.
+ */
+type CliCommandWithNote = {
+  [Name in CliCommand]: (typeof CLI_COMMAND_SPEC)[Name] extends { note: string } ? Name : never;
+}[CliCommand];
 
-Decision-pack cache entries are local-only stale fallbacks for temporary API/network outages.
-Source upload remains disabled.
-`);
+/** The `<command> --help` body: its usage lines plus its trailing note, both straight from CLI_COMMAND_SPEC (#9521). */
+function printableUsage(command: CliCommandWithNote) {
+  const entry = CLI_COMMAND_SPEC[command];
+  const lines = entry.usage.map((line) => `  loopover-mcp ${line}`).join("\n");
+  // Every command with its own --help body carries a note; a spec entry without one would not have a
+  // dedicated printer to reach this.
+  return `Usage:\n${lines}\n\n${entry.note}\n`;
+}
+
+function printCacheHelp() {
+  process.stdout.write(printableUsage("cache"));
 }
 
 function printAgentHelp() {
-  process.stdout.write(`Usage:
-  loopover-mcp agent start --login <github-login> --objective "..." [--repo owner/repo] [--pull <n>] [--issue <n>] [--json]
-  loopover-mcp agent plan --login <github-login> [--repo owner/repo] [--objective "..."] [--json]
-  loopover-mcp agent status <run-id> [--json]
-  loopover-mcp agent explain <run-id> [--json]
-  loopover-mcp agent packet --login <github-login> [--repo owner/repo] [--base origin/main] [--validation "passed|command|summary"] [--json]
-
-The agent is copilot-only: it ranks, explains, and drafts public-safe packets. It does not edit code, open PRs, or post comments from the local MCP wrapper.
-Source upload remains disabled.
-  `);
+  process.stdout.write(printableUsage("agent"));
 }
 
 function printProfileHelp() {
-  process.stdout.write(`Usage:
-  loopover-mcp profile list [--json | --format ndjson]
-  loopover-mcp profile create <name> [--json]
-  loopover-mcp profile switch <name> [--json]
-  loopover-mcp profile remove <name> [--json]
-
-Use --profile <name> or LOOPOVER_PROFILE to run login, logout, whoami, status, doctor, and MCP API calls with a named local session.
-`);
+  process.stdout.write(printableUsage("profile"));
 }
 
 function parseOptions(args: any) {
   const options: any = {};
-  const repeatable = new Set(["label", "issue", "id", "commit", "changedFile", "test", "testFile", "validation", "validationCommand", "validationStatus", "validationSummary", "validationDuration", "scenarioNote"]);
-  // Boolean flags that must parse their inline `--key=value` form to a REAL boolean (#8689): the
-  // generic inline-equals handler below stores the raw string, so `--json=false` became the truthy
-  // string "false" and ENABLED JSON output — the opposite of what the flag says. Parsing here keeps
-  // every consumer's check an explicit boolean comparison (the `--refresh`/`--help` `=== true`
-  // convention already established at every other boolean flag's consumer, e.g. line ~4033).
-  const booleanFlags = new Set(["json", "exitCode"]);
+  // Both sets come from CLI_FLAG_SPEC (#9521) -- see the kind meanings there.
+  const repeatable = REPEATABLE_FLAGS;
+  const booleanFlags = BOOLEAN_FLAGS;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--json") {
@@ -5104,13 +5211,16 @@ async function getRepoDecisionWithCache(login: any, owner: any, repo: any) {
   }
 }
 
-function decisionPackToolSummary(login: any, payload: any) {
+// /v1/contributors/:login/decision-pack and its repo sibling are unvalidated template paths (#9531);
+// these summaries read three fields, typed as such.
+type DecisionPackSummaryPayload = { source?: string; freshness?: string };
+function decisionPackToolSummary(login: string, payload: DecisionPackSummaryPayload | null | undefined) {
   if (payload?.source === "local_cache") return `LoopOver decision pack for ${login} (stale local cache).`;
   if (payload?.freshness === "stale" || payload?.freshness === "rebuilding") return `LoopOver decision pack for ${login} (${payload.freshness}).`;
   return `LoopOver decision pack for ${login}.`;
 }
 
-function repoDecisionToolSummary(login: any, repoFullName: any, payload: any) {
+function repoDecisionToolSummary(login: string, repoFullName: string, payload: DecisionPackSummaryPayload | null | undefined) {
   if (payload?.source === "local_cache") return `LoopOver repo decision for ${login} in ${repoFullName} (stale local cache).`;
   return `LoopOver repo decision for ${login} in ${repoFullName}.`;
 }
@@ -5143,19 +5253,19 @@ function postMarkNotificationsRead(login: any, ids: any) {
 
 // Mirror the API's own `summary` when it sends one, so the CLI and the loopover_monitor_open_prs MCP
 // tool (which returns monitor.summary verbatim) never drift into two different sentences for one payload.
-function openPrMonitorToolSummary(login: any, payload: any) {
+function openPrMonitorToolSummary(login: string, payload: { summary?: unknown } | null | undefined) {
   const summary = typeof payload?.summary === "string" ? payload.summary.trim() : "";
   if (summary) return summary;
   return `LoopOver open-PR monitor for ${login}.`;
 }
 
-function prOutcomesToolSummary(login: any, payload: any) {
+function prOutcomesToolSummary(login: string, payload: { summary?: unknown } | null | undefined) {
   const summary = typeof payload?.summary === "string" ? payload.summary.trim() : "";
   if (summary) return summary;
   return `LoopOver post-merge outcomes for ${login}.`;
 }
 
-function isCacheableDecisionPack(payload: any, login: any) {
+function isCacheableDecisionPack(payload: { status?: string; login?: unknown } | null | undefined, login: string) {
   return payload?.status === "ready" && typeof payload.login === "string" && payload.login.toLowerCase() === login.toLowerCase();
 }
 
@@ -5171,7 +5281,7 @@ function decisionPackCachePath(login: any, authCacheKey = decisionPackAuthCacheK
   return join(decisionPackCacheDir, `${key}.json`);
 }
 
-function writeDecisionPackCache(login: any, payload: any) {
+function writeDecisionPackCache(login: string, payload: { apiVersion?: unknown }) {
   const authCacheKey = decisionPackAuthCacheKey();
   if (!authCacheKey) return { status: "skipped", reason: "missing_auth" };
   const cachedAt = new Date().toISOString();
@@ -5489,19 +5599,45 @@ function sleep(ms: any) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function apiGet(path: any) {
+/**
+ * The API path with its query string removed, which is how CLI_RESPONSE_SCHEMAS keys it (#9521): call
+ * sites append `?refresh=true` and friends, and the document describes the path, not the query.
+ */
+function validatedPathOf(path: string): ValidatedApiPath | null {
+  // split always yields at least one element, so this is total without a fallback.
+  const [base] = path.split("?") as [string, ...string[]];
+  return Object.hasOwn(CLI_RESPONSE_SCHEMAS, base) ? (base as ValidatedApiPath) : null;
+}
+
+/**
+ * Every api* helper is overloaded on the path (#9521): a LITERAL path the document describes with a named
+ * 200 returns that schema's inferred type, so `payload.pendingActions` is checked against the shape the
+ * Worker documents rather than being an `any` nobody verified. Anything else keeps the old untyped return
+ * -- those are the paths the document does not describe yet (#9531), and narrowing them to `unknown` here
+ * would be a false claim about how much is actually validated.
+ */
+async function apiGet<Path extends ValidatedApiPath>(path: Path): Promise<ApiResponse<Path>>;
+async function apiGet(path: string): Promise<any>;
+async function apiGet(path: string) {
   return apiFetch(path, { method: "GET" });
 }
 
-async function apiPost(path: any, body: any) {
+async function apiPost<Path extends ValidatedApiPath>(path: Path, body: unknown): Promise<ApiResponse<Path>>;
+async function apiPost(path: string, body: unknown): Promise<any>;
+async function apiPost(path: string, body: unknown) {
   return apiFetch(path, { method: "POST", body: JSON.stringify(body) });
 }
 
-async function apiDelete(path: any, body: any) {
+async function apiDelete(path: string, body: unknown) {
   return apiFetch(path, { method: "DELETE", body: JSON.stringify(body) });
 }
 
-async function apiFetch(path: any, init: any, options: any = {}) {
+/**
+ * The raw primitive under apiGet/apiPost (#9521). Returns `any` on purpose: the TYPED surface is the
+ * overloads above, which narrow every path in CLI_RESPONSE_SCHEMAS; the direct apiFetch call sites are the
+ * auth/device endpoints whose 200s the document still describes inline (#9531).
+ */
+async function apiFetch(path: string, init: RequestInit, options: { token?: string; auth?: boolean; timeoutMs?: number } = {}): Promise<any> {
   const token = options.token ?? getApiToken();
   if (options.auth !== false && !token) {
     const error: any = new Error("Run `loopover-mcp login`, or set LOOPOVER_API_TOKEN, LOOPOVER_MCP_TOKEN, or LOOPOVER_TOKEN before starting the MCP wrapper.");
@@ -5525,7 +5661,10 @@ async function apiFetch(path: any, init: any, options: any = {}) {
     },
   }).finally(() => clearTimeout(timeout));
   const text = await response.text();
-  let payload: any = {};
+  // `unknown` at the boundary (#9521): the typed apiGet/apiPost overloads narrow the VALIDATED paths from
+  // CLI_RESPONSE_SCHEMAS, and everything else stays behind the untyped overload -- but this local must not
+  // be `any`, or the error-shaping below stops being checked.
+  let payload: unknown = {};
   if (text) {
     try {
       payload = JSON.parse(text);
@@ -5540,7 +5679,68 @@ async function apiFetch(path: any, init: any, options: any = {}) {
     error.status = response.status;
     throw error;
   }
+  // #9521: validate at the boundary, once, for every path the document describes with a named 200 --
+  // under #9519's recorded posture, which is deliberate about what validation may and may not do:
+  // "failures logged + captured as errors, never 500ing an otherwise-good response".
+  //
+  // So this REPORTS a mismatch and returns the payload untouched. It never returns `parsed.data`: zod
+  // strips unknown keys, and the document under-describes several of these responses today (#9531), so
+  // handing back the parse would silently delete real fields the CLI relies on -- exactly the failure
+  // this validation exists to prevent, introduced by the fix for it.
+  const validated = validatedPathOf(path);
+  if (validated) reportResponseSchemaMismatch(validated, CLI_RESPONSE_SCHEMAS[validated].safeParse(payload));
   return payload;
+}
+
+/**
+ * A response list field the published schema declares as `z.unknown()` (#9521 surfaced these; typing them
+ * properly is #9531's response-schema work). Until the document says what the elements are, treat anything
+ * that is not an array as empty rather than asserting an element type the contract never promised.
+ */
+function unspeccedList<Element = unknown>(value: unknown): Element[] {
+  return Array.isArray(value) ? (value as Element[]) : [];
+}
+
+/**
+ * Paths already reported this process, so a polling loop cannot flood stderr with the same mismatch.
+ * `var`, not `const`: the CLI entrypoint awaits runCli during module evaluation, before any const this
+ * far down initializes -- the same TDZ that forced cliCommandHandlers() to be a hoisted function. A
+ * hoisted `var` is undefined-but-accessible at that point, and the accessor below fills it on first use.
+ */
+var reportedSchemaMismatches: Set<string> | undefined;
+function reportedSchemaMismatchMemo(): Set<string> {
+  reportedSchemaMismatches ??= new Set<string>();
+  return reportedSchemaMismatches;
+}
+
+/**
+ * Surface a response that no longer matches the published contract (#9521/#9519).
+ *
+ * Default is a one-line stderr warning naming the endpoint and the first offending field -- stderr, never
+ * stdout, which carries both `--json` output and the stdio MCP protocol frames. `LOOPOVER_VALIDATE_RESPONSES`
+ * set to a truthy value makes it throw instead, which is what CI and the self-host container run with, per
+ * that posture's (a)/(b) split.
+ */
+function reportResponseSchemaMismatch(path: ValidatedApiPath, parsed: { success: boolean; error?: z.ZodError }): void {
+  if (parsed.success) return;
+  // A failed safeParse always carries at least one issue, so `issues[0]` is present here; only its `path`
+  // can be empty (a top-level type error), which is what "(root)" stands in for.
+  const issue = parsed.error!.issues[0]!;
+  const where = issue.path.length > 0 ? issue.path.join(".") : "(root)";
+  const message = `LoopOver API response did not match the published schema for ${path}: ${where} — ${issue.message}`;
+  if (/^(1|true|yes|strict)$/i.test(process.env.LOOPOVER_VALIDATE_RESPONSES ?? "")) {
+    const error: any = new Error(message);
+    error.code = "response_schema_mismatch";
+    throw error;
+  }
+  if (reportedSchemaMismatchMemo().has(path)) return;
+  reportedSchemaMismatchMemo().add(path);
+  process.stderr.write(`warning: ${message}\n`);
+}
+
+/** Test-only: clear the once-per-path warning memo so one test's mismatch cannot mask the next one's. */
+export function resetResponseSchemaReportingForTesting(): void {
+  reportedSchemaMismatchMemo().clear();
 }
 
 async function fetchLatestPackageVersion() {
@@ -5551,7 +5751,7 @@ async function fetchLatestPackageVersion() {
     signal: controller.signal,
     headers: { accept: "application/json" },
   }).finally(() => clearTimeout(timeout));
-  const payload: any = await response.json().catch(() => ({}));
+  const payload = (await response.json().catch(() => ({}))) as { version?: unknown };
   if (!response.ok || typeof payload.version !== "string") throw new Error("npm_latest_version_unavailable");
   return { status: "ok", version: payload.version };
 }

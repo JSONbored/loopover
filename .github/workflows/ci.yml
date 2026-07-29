@@ -352,6 +352,14 @@ jobs:
       # .loopover.yml.example, a dependency the other two generated-artifact-drift checks don't share, so
       # deliberately NOT kept uniform with them here (test/unit/ci-generated-artifact-drift-checks.test.ts
       # asserts backend||ui is a SUBSET of every condition, not that all three are byte-identical).
+      # HOISTED above the drift checks (#9521): docs:drift-check imports the tool registry from
+      # @loopover/contract, so it needs the contract's dist before line-~500 where this step used to sit.
+      # Unconditional rather than gated on a `contract` path filter: every consumer of it (backend, mcp,
+      # miner, ui, and now the drift checks) can pull it into scope, and building a zod-only leaf package
+      # with no dependencies of its own is cheap enough that gating it would buy nothing but a class of
+      # skipped-build failures.
+      - name: Build contract package
+        run: npx turbo run build --filter=@loopover/contract
       - name: Docs drift check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.engine == 'true' }}
         run: npm run docs:drift-check
@@ -494,14 +502,8 @@ jobs:
           key: turbo-code-${{ hashFiles('package-lock.json') }}-${{ github.run_id }}
           restore-keys: |
             turbo-code-${{ hashFiles('package-lock.json') }}-
-      # @loopover/contract's "types" resolve to packages/loopover-contract/dist/index.d.ts, and src/ +
-      # packages/loopover-mcp both import it -- so like the engine below, typecheck cannot run until it
-      # has been built. Unconditional rather than gated on a `contract` path filter: every consumer of it
-      # (backend, mcp, miner, ui) can pull it into the typecheck surface, and building a zod-only leaf
-      # package with no dependencies of its own is cheap enough that gating it would buy nothing but a
-      # class of skipped-build failures.
-      - name: Build contract package
-        run: npx turbo run build --filter=@loopover/contract
+      # ("Build contract package" now runs earlier in this job, above the drift checks -- see its own
+      # comment there. Typecheck below still depends on it, same as before, just built sooner.)
       # mcp/miner are in this gate because "Typecheck" below already runs for them, and typecheck's real
       # surface reaches @loopover/engine -- test/** imports it directly, and its "types" resolve to
       # packages/loopover-engine/dist/index.d.ts, which only exists once this step has run. An mcp-only or

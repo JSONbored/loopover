@@ -76,6 +76,10 @@ export function translateFunctions(sql: string): string {
       .replace(/datetime\(\s*'now'\s*\)/gi, `to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`)
       // CURRENT_TIMESTAMP → SQLite's TEXT format (the columns are TEXT)
       .replace(/CURRENT_TIMESTAMP/gi, `to_char(now(), 'YYYY-MM-DD HH24:MI:SS')`)
+      // julianday(<expr>) → the Julian Day NUMBER as a numeric, so `(julianday(a) - julianday(b)) * 86400000`
+      // still yields milliseconds (submitter-reputation.ts's avgMergeMs, #9648). ::timestamptz matches the
+      // date()/strftime() rules so the TEXT ISO timestamps the app writes are interpreted identically.
+      .replace(/julianday\(\s*([^)]+?)\s*\)/gi, `(EXTRACT(EPOCH FROM ($1)::timestamptz) / 86400.0 + 2440587.5)`)
       // date(<expr>) → TEXT 'YYYY-MM-DD' like SQLite's date(). Postgres would accept date(<text>) via an
       // implicit cast, but it returns a `date`-typed value that node-pg parses into a JS Date object — so
       // every day-bucketed trend read (rule-calibration-trend.ts, public-accuracy-trend.ts, stats.ts, ...)

@@ -63,26 +63,30 @@ export function AnimatedTerminal({
 }) {
   const reduce = useReducedMotion();
   const [sceneIdx, setSceneIdx] = useState(0);
-  const [typed, setTyped] = useState("");
-  const [showOutput, setShowOutput] = useState(false);
+  // The typing progress belongs to ONE scene, so it is stored under that scene's key (#9588). Advancing
+  // the scene therefore resets the animation by derivation -- progress recorded for a previous scene can
+  // never be read -- instead of two setState calls at the top of the effect. Reduced motion needs no
+  // state at all: the finished frame is the pure value.
+  const [progress, setProgress] = useState({ scene: 0, typed: "", showOutput: false });
 
   const scene = scenes[sceneIdx];
+  const current =
+    progress.scene === sceneIdx ? progress : { scene: sceneIdx, typed: "", showOutput: false };
+  const typed = reduce ? scene.prompt : current.typed;
+  const showOutput = reduce ? true : current.showOutput;
 
   useEffect(() => {
-    if (reduce) {
-      setTyped(scene.prompt);
-      setShowOutput(true);
-      return;
-    }
-    setTyped("");
-    setShowOutput(false);
+    if (reduce) return;
     let i = 0;
     const type = window.setInterval(() => {
       i += 1;
-      setTyped(scene.prompt.slice(0, i));
+      setProgress({ scene: sceneIdx, typed: scene.prompt.slice(0, i), showOutput: false });
       if (i >= scene.prompt.length) {
         window.clearInterval(type);
-        window.setTimeout(() => setShowOutput(true), 220);
+        window.setTimeout(
+          () => setProgress({ scene: sceneIdx, typed: scene.prompt, showOutput: true }),
+          220,
+        );
       }
     }, TYPE_SPEED);
     return () => window.clearInterval(type);

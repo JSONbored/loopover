@@ -930,7 +930,10 @@ export function checkContentLaneDeliverable(
   issueTitle?: string,
 ): ContentLaneDeliverableCheck {
   const matchesSpec = (candidate: string): boolean => spec.entryFilePattern.test(candidate) || (spec.providerFilePattern?.test(candidate) ?? false);
-  const mentionedPath = extractPathTokens(issueText).find(matchesSpec);
+  // globToRegExp compiles the spec patterns against a CANONICALIZED (lowercased) path, so test canonicalize(token)
+  // — exactly as the changedFiles side below and classifyRegistryPrScope's matchesPattern already do — while
+  // keeping the ORIGINAL token for mentionedPath, which is quoted verbatim into the public PR comment (#9667).
+  const mentionedPath = extractPathTokens(issueText).find((token) => matchesSpec(canonicalize(token)));
   const titleImplies = !mentionedPath && Boolean(issueTitle && spec.issueTitleImpliesEntryPattern?.test(issueTitle));
   if (!mentionedPath && !titleImplies) return { verdict: "not-applicable" };
   const delivered = changedFiles.some((file) => matchesSpec(canonicalize(file)));

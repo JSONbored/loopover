@@ -26440,6 +26440,457 @@
           }
         }
       }
+    },
+    "/.well-known/mcp.json": {
+      "get": {
+        "operationId": "getMcpServerCard",
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "MCP server card for this deployment",
+        "description": "Computed at request time from the tool contract registry, filtered to what this deployment serves. Carries a weak ETag; send `if-none-match` to get a 304 instead of the body.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "MCP server card for this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "deployment": {
+                      "type": "string",
+                      "enum": [
+                        "cloud",
+                        "selfhost"
+                      ]
+                    },
+                    "generated_at": {
+                      "type": "string"
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "properties": {
+                        "tools": {
+                          "type": "object",
+                          "properties": {
+                            "listChanged": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "listChanged"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "tools"
+                      ]
+                    },
+                    "remotes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "streamable-http"
+                            ]
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "url"
+                        ]
+                      }
+                    },
+                    "tools": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "category": {
+                            "type": "string"
+                          },
+                          "annotations": {
+                            "type": "object",
+                            "properties": {
+                              "readOnlyHint": {
+                                "type": "boolean"
+                              },
+                              "destructiveHint": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "readOnlyHint",
+                              "destructiveHint"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "title",
+                          "description",
+                          "category",
+                          "annotations"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "version",
+                    "description",
+                    "deployment",
+                    "generated_at",
+                    "capabilities",
+                    "remotes",
+                    "tools"
+                  ]
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The caller's `if-none-match` already names this document"
+          }
+        }
+      }
+    },
+    "/.well-known/agent-tools/index.json": {
+      "get": {
+        "operationId": "getAgentToolsIndex",
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Neutral agent-tools catalog with both schemas per tool",
+        "description": "Computed at request time from the tool contract registry, filtered to what this deployment serves. Carries a weak ETag; send `if-none-match` to get a 304 instead of the body.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Neutral agent-tools catalog with both schemas per tool",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generated_at": {
+                      "type": "string"
+                    },
+                    "executor": {
+                      "type": "object",
+                      "properties": {
+                        "transport": {
+                          "type": "string",
+                          "enum": [
+                            "streamable-http"
+                          ]
+                        },
+                        "url": {
+                          "type": "string"
+                        },
+                        "method": {
+                          "type": "string",
+                          "enum": [
+                            "tools/call"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "transport",
+                        "url",
+                        "method"
+                      ]
+                    },
+                    "tools": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "category": {
+                            "type": "string"
+                          },
+                          "annotations": {
+                            "type": "object",
+                            "properties": {
+                              "readOnlyHint": {
+                                "type": "boolean"
+                              },
+                              "destructiveHint": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "readOnlyHint",
+                              "destructiveHint"
+                            ]
+                          },
+                          "input_schema": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": {
+                              "nullable": true
+                            },
+                            "description": "JSON Schema (draft 2020-12) for a tool's arguments or result."
+                          },
+                          "output_schema": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": {
+                              "nullable": true
+                            },
+                            "description": "JSON Schema (draft 2020-12) for a tool's arguments or result."
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "title",
+                          "description",
+                          "category",
+                          "annotations",
+                          "input_schema",
+                          "output_schema"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "generated_at",
+                    "executor",
+                    "tools"
+                  ]
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The caller's `if-none-match` already names this document"
+          }
+        }
+      }
+    },
+    "/.well-known/agent-tools/openai.json": {
+      "get": {
+        "operationId": "getAgentToolsOpenAi",
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Agent-tools catalog in OpenAI's function-tool shape",
+        "description": "Computed at request time from the tool contract registry, filtered to what this deployment serves. Carries a weak ETag; send `if-none-match` to get a 304 instead of the body.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Agent-tools catalog in OpenAI's function-tool shape",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generated_at": {
+                      "type": "string"
+                    },
+                    "executor": {
+                      "type": "object",
+                      "properties": {
+                        "transport": {
+                          "type": "string",
+                          "enum": [
+                            "streamable-http"
+                          ]
+                        },
+                        "url": {
+                          "type": "string"
+                        },
+                        "method": {
+                          "type": "string",
+                          "enum": [
+                            "tools/call"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "transport",
+                        "url",
+                        "method"
+                      ]
+                    },
+                    "tools": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "function"
+                            ]
+                          },
+                          "function": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "parameters": {
+                                "type": "object",
+                                "properties": {},
+                                "additionalProperties": {
+                                  "nullable": true
+                                },
+                                "description": "JSON Schema (draft 2020-12) for a tool's arguments or result."
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "description",
+                              "parameters"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "function"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "generated_at",
+                    "executor",
+                    "tools"
+                  ]
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The caller's `if-none-match` already names this document"
+          }
+        }
+      }
+    },
+    "/.well-known/agent-tools/anthropic.json": {
+      "get": {
+        "operationId": "getAgentToolsAnthropic",
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Agent-tools catalog in Anthropic's tool shape",
+        "description": "Computed at request time from the tool contract registry, filtered to what this deployment serves. Carries a weak ETag; send `if-none-match` to get a 304 instead of the body.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Agent-tools catalog in Anthropic's tool shape",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generated_at": {
+                      "type": "string"
+                    },
+                    "executor": {
+                      "type": "object",
+                      "properties": {
+                        "transport": {
+                          "type": "string",
+                          "enum": [
+                            "streamable-http"
+                          ]
+                        },
+                        "url": {
+                          "type": "string"
+                        },
+                        "method": {
+                          "type": "string",
+                          "enum": [
+                            "tools/call"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "transport",
+                        "url",
+                        "method"
+                      ]
+                    },
+                    "tools": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "input_schema": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": {
+                              "nullable": true
+                            },
+                            "description": "JSON Schema (draft 2020-12) for a tool's arguments or result."
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "description",
+                          "input_schema"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "generated_at",
+                    "executor",
+                    "tools"
+                  ]
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The caller's `if-none-match` already names this document"
+          }
+        }
+      }
     }
   },
   "servers": [

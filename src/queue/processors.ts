@@ -3894,6 +3894,10 @@ async function runAgentMaintenancePlanAndExecute(
       salvageability,
       // #9135: legible on the record's own face — see maybeApplyCloseAuditHoldout's doc comment.
       divertedByHoldout: closeAuditHoldout?.diverted ?? false,
+      // #9743: what this evaluation actually raised, anchored on the record so "findings per PR" in the
+      // parity rollups is reproducible from the ledger rather than from the (unanchored, prunable) AI
+      // review cache. Blockers and warnings together -- both are findings a contributor had to read.
+      findingsCount: gate.blockers.length + gate.warnings.length,
     });
     // #9742: a repeat verdict for the SAME head SHA must declare why. The cause is derived from this
     // job's own delivery id -- the scheduled sweep, a repair fan-out, an operator's manual re-gate,

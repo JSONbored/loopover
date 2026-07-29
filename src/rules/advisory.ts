@@ -49,6 +49,7 @@ import { CLA_CHECK_UNRESOLVED_CODE, CLA_CONSENT_MISSING_CODE } from "../review/c
 import { REVIEW_THREAD_BLOCKER_CODE } from "../review/review-thread-findings";
 import { createSignalStore } from "../review/signal-tracking-wire";
 import { labelMatchesPattern } from "../scoring/preview";
+import { isMaintainerAuthorAssociation } from "../github/author-association";
 
 export type GateCheckConclusion = "success" | "failure" | "action_required" | "neutral" | "skipped";
 
@@ -1170,7 +1171,7 @@ function addPullRequestFindings(
       detail: `Matched configured labels: ${matchedLabels.join(", ")}.`,
     });
   }
-  if (pr.authorAssociation && ["OWNER", "MEMBER", "COLLABORATOR"].includes(pr.authorAssociation)) {
+  if (isMaintainerAuthorAssociation(pr.authorAssociation)) {
     findings.push({
       code: "maintainer_authored_pr",
       severity: "info",

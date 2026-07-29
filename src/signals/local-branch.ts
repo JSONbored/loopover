@@ -30,6 +30,7 @@ import { scenarioInputFromLocalBranchMetadata } from "../scenarios/input-model";
 import { renderPublicScenarioSummary, type PublicScenarioSummary, type ScenarioSummaryInput } from "../scenarios/scenario-summary";
 import { simulateOpenPrPressure } from "../services/open-pr-pressure-scenarios";
 import { isCodeFile, isTestFile } from "./path-matchers";
+import { isMaintainerAuthorAssociation } from "../github/author-association";
 
 export type LocalBranchChangedFile = {
   path: string;
@@ -768,8 +769,7 @@ function hasPendingCheck(checks: CheckSummaryRecord[]): boolean {
 }
 
 function isMaintainerAuthoredPr(pr: PullRequestRecord, repo: RepositoryRecord | undefined, login: string): boolean {
-  /* v8 ignore next -- Missing association is a defensive GitHub row fallback; observed association behavior is covered above. */
-  return sameLogin(repo?.owner, login) || ["owner", "member", "collaborator"].includes((pr.authorAssociation ?? "").toLowerCase());
+  return sameLogin(repo?.owner, login) || isMaintainerAuthorAssociation(pr.authorAssociation);
 }
 
 function isStaleOpenPr(pr: PullRequestRecord, nowMs: number | undefined): boolean {

@@ -102,6 +102,15 @@ describe("GET /v1/public/stats (#1059)", () => {
     expect(withPrecision.rulePrecision.reversals).toEqual({ reopened: 1, reverted: 0, superseded: 0 });
     expect(withPrecision.rulePrecision.latestBacktestRun).toBeNull();
 
+    // #9743: the re-evaluation counts + per-author-class parity rollups ride the same surface. An empty
+    // ledger publishes a MEASURED-ZERO window with its own bounds, never a missing key -- /fairness renders
+    // the difference, and a reader cannot tell "nothing happened" from "nothing was computed" without it.
+    const withParity = (await res.clone().json()) as {
+      reviewParity: { windowStart: string; windowEnd: string; verdicts: number; reevaluations: number; reevaluationRatePct: number | null; byReason: unknown[]; byAuthorClass: unknown[]; byProject: unknown[] };
+    };
+    expect(withParity.reviewParity).toMatchObject({ verdicts: 0, reevaluations: 0, reevaluationRatePct: null, byReason: [], byAuthorClass: [], byProject: [] });
+    expect(Date.parse(withParity.reviewParity.windowStart)).toBeLessThan(Date.parse(withParity.reviewParity.windowEnd));
+
     const body = (await res.json()) as {
       totals: Record<string, number | null>;
       weekly: { reviewed: number; merged: number };

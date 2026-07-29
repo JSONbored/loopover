@@ -72,6 +72,7 @@ function recordInput(over: Partial<DecisionRecord> = {}): Omit<DecisionRecord, "
     promptDigest: null,
     aiConfidence: null,
     divertedByHoldout: false,
+    findingsCount: null,
     ...over,
   };
 }

@@ -23,6 +23,7 @@ import { decideReviewEligibility } from "../review/review-eligibility";
 import { buildUnifiedCommentBody } from "../review/unified-comment-bridge";
 import { requiredAgentActionPermissions } from "../settings/agent-execution";
 import { isAgentConfigured } from "../settings/autonomy";
+import { isMaintainerAuthorAssociation } from "../github/author-association";
 
 function hasVisiblePrSurface(settings: RepositorySettings): boolean {
   return settings.publicSurface !== "off" || settings.checkRunMode === "enabled" || shouldPublishReviewCheck(settings.reviewCheckMode);
@@ -135,7 +136,7 @@ export function decidePublicSurface(input: PublicSurfaceDecisionInput): PublicSu
   if (!input.authorLogin) return skipDecision("missing_author");
   if (input.authorType === "Bot" || /\[bot\]$/i.test(input.authorLogin)) return skipDecision("bot_author");
   if (!decideReviewEligibility({ authorLogin: input.authorLogin, ignoreAuthors: input.ignoredAuthorPatterns }).eligible) return skipDecision("ignored_author");
-  if (!settings.includeMaintainerAuthors && input.authorAssociation && ["OWNER", "MEMBER", "COLLABORATOR"].includes(input.authorAssociation)) {
+  if (!settings.includeMaintainerAuthors && isMaintainerAuthorAssociation(input.authorAssociation)) {
     return skipDecision("maintainer_author");
   }
   if (settings.publicAudienceMode === "gittensor_only") {

@@ -422,6 +422,11 @@ export type AgentActionPlanInput = {
   // held-for-review state so a maintainer can act on the signal their installed app raised. Each entry names the
   // triggering check/app/conclusion so the hold reason (and the manual-review label's comment) is actionable.
   advisoryCheckHold?: ReadonlyArray<{ name: string; appSlug: string; conclusion: string }> | undefined;
+  // #9810 follow-up: non-passing check-runs the maintainer listed in `gate.ignoredCheckRuns`, as seen on this
+  // head. Used ONLY to decide whether a GitHub "unstable" mergeable_state is fully explained by them -- the
+  // CI aggregate already excludes these from pass/fail, but mergeable_state is GitHub's own computation and
+  // stays unstable while the check exists at all.
+  ignoredCheckNonPassing?: ReadonlyArray<{ name: string; appSlug: string; conclusion: string }> | undefined;
   // Non-required failing checks/statuses (#8758, the #8711 silent-stall fix). The CI aggregate's
   // nonRequiredFailingDetails: red checks that are neither branch-protection-required nor declared advisory —
   // they never feed ciState or a close, but GitHub folds them into mergeable_state "unstable", which suppresses
@@ -799,13 +804,23 @@ function mergeUnstableHoldReason(failures: ReadonlyArray<{ name: string }> | und
   const names = (failures ?? []).map((f) => `"${f.name}"`);
   return names.length > 0
     ? `mergeable_state is unstable — non-required check(s) not passing: ${names.join("; ")}`
-    : "mergeable_state is unstable — a non-required check or status is not passing";
+    // #9810 follow-up: the un-itemized case used to say only "a non-required check or status is not passing",
+    // which tells a maintainer nothing they can act on -- not which check, not where to look. GitHub computes
+    // mergeable_state itself and never says why, and our aggregate can legitimately fail to itemize it (a
+    // COMMIT STATUS rather than a check-run, a check from an app whose page we couldn't read, or a run that
+    // appeared after the aggregate was taken). Name that ambiguity and point at the one place the answer
+    // always exists, instead of restating the state.
+    : "mergeable_state is unstable — GitHub reports a non-required check or status as not passing, but this pass could not itemize which one (it may be a commit status rather than a check-run, or it appeared after CI was read). See the PR's own Checks tab for the current list";
 }
 
 function mergeUnstableHoldComment(failures: ReadonlyArray<{ name: string }> | undefined): string {
   const names = (failures ?? []).map((f) => `\`${f.name}\``);
   const culprit = names.length > 0 ? ` — ${names.join(", ")} —` : "";
-  return `Held for manual review: the gate and required CI are green, but GitHub reports this pull request's mergeable state as \`unstable\` because a non-required check or status${culprit} is not passing, so LoopOver will not auto-merge. A maintainer can resolve the failing check or review and merge manually. This is an automated maintenance action.`;
+  const whereToLook =
+    names.length > 0
+      ? ""
+      : " This pass could not identify which check (it may be a commit status rather than a check-run, or it appeared after CI was read) — the PR's own Checks tab has the current list.";
+  return `Held for manual review: the gate and required CI are green, but GitHub reports this pull request's mergeable state as \`unstable\` because a non-required check or status${culprit} is not passing, so LoopOver will not auto-merge.${whereToLook} A maintainer can resolve the failing check or review and merge manually. This is an automated maintenance action.`;
 }
 
 /**
@@ -1102,6 +1117,11 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     migrationCollisionHold: input.migrationCollisionHold !== undefined,
     unlinkedIssueMatchHold: input.unlinkedIssueMatchHold !== undefined,
     advisoryCheckHold: input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0,
+    // Deliberately conjoined with "nothing else adverse": an unstable state is only attributed to the ignore
+    // list when our own aggregate found NO failing check of any kind. If some other non-required check is
+    // also red, failingDetails is non-empty and the hold stands -- an ignore must never mask a real failure.
+    unstableExplainedByIgnoredChecks:
+      input.ignoredCheckNonPassing !== undefined && input.ignoredCheckNonPassing.length > 0 && (input.nonRequiredCheckFailures ?? []).length === 0 && input.ciState !== "failed",
     unlinkedIssueMatchCloseWithoutCloseActing: input.unlinkedIssueMatchClose !== undefined && !acting("close"),
   });
   const heldForManualReview = disposition.heldForManualReview;

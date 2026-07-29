@@ -2626,7 +2626,7 @@ async function fetchPullRequestChecks(
 // auto-approval). (#fork-action-required) — a THIRD-PARTY app's own COMPLETED action_required verdict (e.g. a
 // security/check tool) is handled separately below and fails closed as a manual-hold signal, not green CI.
 const CI_FAILING_CONCLUSIONS = new Set(["failure", "timed_out", "cancelled", "startup_failure"]);
-const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
+export const CI_PASSING_CONCLUSIONS = new Set(["success", "neutral", "skipped"]);
 // The bot's OWN check-runs — it posts these (in_progress, then concluded) as PART OF reviewing. They are NOT
 // "CI to wait on": counting them self-deadlocks (the review waits for all CI to finish; these only finish when
 // the very review they're blocking runs → the PR defers forever). Excluded from the CI aggregate entirely.

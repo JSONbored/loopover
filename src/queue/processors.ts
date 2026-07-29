@@ -122,6 +122,7 @@ import {
   isReviewsCacheUpToDate,
   primeDurablePrStateCache,
   refreshPullRequestDetails,
+  CI_PASSING_CONCLUSIONS,
 } from "../github/backfill";
 import {
   contributorRepoStatsFromGittensor,
@@ -2863,6 +2864,9 @@ function buildAgentMaintenancePlanInput(args: {
     // be silent (#8711). Threaded so the planner's unstable hold can NAME the culprit check(s) in its
     // reason/comment; the hold itself keys on pr.mergeableState, so an empty list still holds with generic wording.
     nonRequiredCheckFailures: ciAggregate.nonRequiredFailingDetails,
+    // #9810 follow-up: only the NON-PASSING ignored runs. A maintainer-ignored check that concluded fine is
+    // not an explanation for instability, so it must not license dismissing one.
+    ignoredCheckNonPassing: ciAggregate.ignoredCheckDetails.filter((run) => !CI_PASSING_CONCLUSIONS.has(run.conclusion)),
     ...(blacklistEntry !== null
       ? { blacklistMatch: { matched: true, reason: blacklistEntry.reason } }
       : {}),

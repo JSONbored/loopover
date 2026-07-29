@@ -1,6 +1,7 @@
 import { listAgentRecommendationOutcomes } from "../db/repositories";
 import type { AgentActionType, AgentRecommendationOutcomeRecord, AgentRecommendationOutcomeState, AgentSurface, JsonValue, ProductUsageRole } from "../types";
 import { nowIso } from "../utils/json";
+import { RECOMMENDATION_NEGATIVE_STATES, RECOMMENDATION_PENDING_STATES, RECOMMENDATION_POSITIVE_STATES } from "./outcome-calibration";
 
 export type RecommendationQualityRole = Extract<ProductUsageRole, "miner" | "maintainer" | "owner" | "operator">;
 export type RecommendationQualityLane = "contributor" | "maintainer";
@@ -10,7 +11,8 @@ export type RecommendationQualityTotals = {
   total: number;
   positive: number;
   negative: number;
-  positiveRate: number;
+  pending: number;
+  positiveRate: number | null;
   maintainerLaneTotal: number;
   highConfidence: number;
   mediumConfidence: number;
@@ -23,7 +25,7 @@ export type RecommendationQualityTrendBucket = RecommendationQualityTotals & {
 };
 
 export type RecommendationQualityFailureCategory = {
-  category: "closed_without_merge" | "rejected" | "stale" | "ignored" | "low_confidence" | "maintainer_lane";
+  category: "closed_without_merge" | "rejected" | "low_confidence" | "maintainer_lane";
   label: string;
   count: number;
   detail: string;
@@ -71,8 +73,6 @@ export type RecommendationQualityReport = {
 };
 
 const ROLE_ORDER: RecommendationQualityRole[] = ["miner", "maintainer", "owner", "operator"];
-const POSITIVE_STATES: AgentRecommendationOutcomeState[] = ["accepted", "merged", "improved"];
-const NEGATIVE_STATES: AgentRecommendationOutcomeState[] = ["closed", "rejected", "stale", "ignored"];
 
 export async function buildRecommendationQualityReport(
   env: Env,
@@ -159,14 +159,16 @@ function roleSurface(role: RecommendationQualityRole, outcomes: AgentRecommendat
 }
 
 function qualityTotals(outcomes: AgentRecommendationOutcomeRecord[]): RecommendationQualityTotals {
-  const positive = outcomes.filter((outcome) => POSITIVE_STATES.includes(outcome.outcomeState)).length;
-  const negative = outcomes.filter((outcome) => NEGATIVE_STATES.includes(outcome.outcomeState)).length;
+  const positive = outcomes.filter((outcome) => RECOMMENDATION_POSITIVE_STATES.includes(outcome.outcomeState)).length;
+  const negative = outcomes.filter((outcome) => RECOMMENDATION_NEGATIVE_STATES.includes(outcome.outcomeState)).length;
+  const pending = outcomes.filter((outcome) => RECOMMENDATION_PENDING_STATES.includes(outcome.outcomeState)).length;
   const total = positive + negative;
   return {
     total,
     positive,
     negative,
-    positiveRate: total > 0 ? roundRate(positive / total) : 0,
+    pending,
+    positiveRate: total > 0 ? roundRate(positive / total) : null,
     maintainerLaneTotal: outcomes.filter((outcome) => outcome.maintainerLane).length,
     highConfidence: outcomes.filter((outcome) => outcome.confidence === "high").length,
     mediumConfidence: outcomes.filter((outcome) => outcome.confidence === "medium").length,
@@ -187,18 +189,6 @@ function failureCategoryRows(outcomes: AgentRecommendationOutcomeRecord[]): Reco
       label: "Changes requested",
       count: outcomes.filter((outcome) => outcome.outcomeState === "rejected").length,
       detail: "Recommended PR work received a changes-requested review signal.",
-    },
-    {
-      category: "stale",
-      label: "Stale follow-through",
-      count: outcomes.filter((outcome) => outcome.outcomeState === "stale").length,
-      detail: "Recommended work remained open without fresh cached activity past the freshness window.",
-    },
-    {
-      category: "ignored",
-      label: "No matched activity",
-      count: outcomes.filter((outcome) => outcome.outcomeState === "ignored").length,
-      detail: "No cached PR or issue activity matched the recommendation after the action window.",
     },
     {
       category: "low_confidence",

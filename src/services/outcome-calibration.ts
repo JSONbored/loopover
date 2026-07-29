@@ -10,8 +10,16 @@
 // agent_recommendation_outcomes ledger (#543's recommendation half) is populated by evaluateRecommendationOutcomes.
 import { listAgentRecommendationOutcomes, listPullRequests } from "../db/repositories";
 import type { SlopBand } from "../signals/slop";
-import type { AgentRecommendationOutcomeRecord, PullRequestRecord } from "../types";
+import type { AgentRecommendationOutcomeRecord, AgentRecommendationOutcomeState, PullRequestRecord } from "../types";
 import { nowIso } from "../utils/json";
+
+// The single place the recommendation-outcome states are grouped into positive/negative/pending. Both
+// aggregators over the agent_recommendation_outcomes ledger — this module and recommendation-quality-report.ts,
+// which imports these — must classify identically, so a window of unactioned (stale/ignored) recommendations
+// can't read as a 100% success rate here and a 50% failure rate there (#9701).
+export const RECOMMENDATION_POSITIVE_STATES: readonly AgentRecommendationOutcomeState[] = ["accepted", "merged", "improved"];
+export const RECOMMENDATION_NEGATIVE_STATES: readonly AgentRecommendationOutcomeState[] = ["rejected", "closed"];
+export const RECOMMENDATION_PENDING_STATES: readonly AgentRecommendationOutcomeState[] = ["stale", "ignored"];
 
 // Severity order — calibration checks that merge rate is non-increasing along it.
 const SLOP_BAND_ORDER: readonly SlopBand[] = ["clean", "low", "elevated", "high"];
@@ -130,9 +138,9 @@ export function buildRecommendationOutcomeCalibration(
 ): RecommendationOutcomeCalibration {
   const repoScoped = repoFullName ? outcomes.filter((o) => sameRepo(o.outcomeRepoFullName ?? o.targetRepoFullName, repoFullName)) : outcomes;
   const scoped = options.maintainerOnly ? repoScoped.filter((o) => o.maintainerLane) : repoScoped;
-  const positive = scoped.filter((o) => o.outcomeState === "accepted" || o.outcomeState === "merged" || o.outcomeState === "improved").length;
-  const negative = scoped.filter((o) => o.outcomeState === "rejected" || o.outcomeState === "closed").length;
-  const pending = scoped.filter((o) => o.outcomeState === "stale" || o.outcomeState === "ignored").length;
+  const positive = scoped.filter((o) => RECOMMENDATION_POSITIVE_STATES.includes(o.outcomeState)).length;
+  const negative = scoped.filter((o) => RECOMMENDATION_NEGATIVE_STATES.includes(o.outcomeState)).length;
+  const pending = scoped.filter((o) => RECOMMENDATION_PENDING_STATES.includes(o.outcomeState)).length;
   const resolved = positive + negative;
   return { total: scoped.length, positive, negative, pending, positiveRate: resolved > 0 ? round(positive / resolved) : null };
 }

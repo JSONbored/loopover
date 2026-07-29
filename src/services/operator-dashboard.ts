@@ -259,7 +259,7 @@ export async function buildOperatorDashboardPayload(
       {
         label: "Recommendation quality",
         value: `${recommendationQuality.totals.positive}/${recommendationQuality.totals.total}`,
-        delta: recommendationQuality.empty ? "no evaluated outcomes" : `${Math.round(recommendationQuality.totals.positiveRate * 100)}% positive`,
+        delta: recommendationQuality.totals.positiveRate === null ? "no evaluated outcomes" : `${Math.round(recommendationQuality.totals.positiveRate * 100)}% positive`,
       },
       {
         label: "Install issues",

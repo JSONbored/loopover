@@ -6840,6 +6840,8 @@ async function maybeHandlePriorityLabelEligibility(
   if (issue.pull_request !== undefined && issue.pull_request !== null) return false;
 
   const settings = await resolveRepositorySettings(env, repoFullName).catch(() => undefined);
+  /* v8 ignore next 2 -- noUncheckedIndexedAccess fallback: PrTypeLabelSet is a Record<string, string>, so
+     DEFAULT_TYPE_LABELS.priority reads as possibly-undefined to the type system though it is always set. */
   const priorityLabel: string = settings?.typeLabels?.priority ?? DEFAULT_TYPE_LABELS.priority ?? "gittensor:priority";
   const labels = (issue.labels ?? []).map((label) => label?.name ?? "").filter((name) => name.length > 0);
   // Only the labelled event for THIS label matters; anything else is another label's business.

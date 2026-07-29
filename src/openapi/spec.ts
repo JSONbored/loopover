@@ -1906,7 +1906,7 @@ export function buildOpenApiSpec() {
     summary: "Every external anchoring attempt, success and failure, paginated newest-first — anchoring's own health as a public fact",
     request: { query: z.object({ backend: z.enum(["rekor", "git", "ots", "bittensor"]).optional(), before: z.string().optional(), limit: z.string().optional() }) },
     responses: {
-      200: { description: "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore } — a failed attempt is returned identically to a successful one, never filtered out or reshaped" },
+      200: { description: "{ anchors: [{ id, seq, rowHash, keyId, backend, backendRef, status, error, createdAt }], nextBefore, status } — a failed attempt is returned identically to a successful one, never filtered out or reshaped. The top-level `status` (anchored | empty_ledger | unconfigured | pending) says why the list looks as it does, so an empty list cannot be mistaken for a healthy one; it is omitted when a backend/before filter is applied, where empty just means none matched" },
     },
   });
   registry.registerPath({

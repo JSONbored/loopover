@@ -344,7 +344,14 @@ export const linkedIssueContextSchema = z
   })
   .strict();
 
-export const branchEligibilitySchema = z
+/**
+ * The FIELDS a caller may send, before the route's normalisation runs (#9773).
+ *
+ * Exported separately because `branchEligibilitySchema` is a pipe (it transforms), so its members are not
+ * reachable through it -- and the stdio CLI needs exactly those members to validate `--branch-eligibility`
+ * and `--branch-eligibility-source` against the route's own vocabulary instead of restating both lists.
+ */
+export const branchEligibilityFields = z
   .object({
     status: z.enum(["eligible", "ineligible", "unknown"]),
     source: z.enum(["github_metadata", "local_metadata", "registry", "user_supplied"]).optional(),
@@ -352,8 +359,13 @@ export const branchEligibilitySchema = z
     checkedAt: z.string().max(MAX_LOCAL_BRANCH_REF_CHARS).optional(),
     stale: z.boolean().optional(),
   })
-  .strict()
-  .transform((value) => ({ ...value, status: value.status === "eligible" ? ("unknown" as const) : value.status, source: "user_supplied" as const }));
+  .strict();
+
+export const branchEligibilitySchema = branchEligibilityFields.transform((value) => ({
+  ...value,
+  status: value.status === "eligible" ? ("unknown" as const) : value.status,
+  source: "user_supplied" as const,
+}));
 
 export const focusManifestInputSchema = z
   .record(z.string(), z.unknown())

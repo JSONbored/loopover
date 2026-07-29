@@ -15,7 +15,7 @@ import {
   type ValidatedApiPath,
 } from "@loopover/contract/api-schemas";
 import type { LoopoverConfig } from "@loopover/contract/cli-config";
-import { validateFocusManifestSchema } from "@loopover/contract/api-requests";
+import { branchEligibilityFields, validateFocusManifestSchema } from "@loopover/contract/api-requests";
 import {
   CLIENT_HOSTS,
   CLIENT_HOST_SPEC,
@@ -379,12 +379,16 @@ type BooleanFlag = { [K in keyof typeof CLI_FLAG_SPEC]: (typeof CLI_FLAG_SPEC)[K
  * lie. What it is NOT is `any`: an unlisted flag is `string | boolean`, which still has to be narrowed
  * before it can be used as either.
  */
+/** What any one option can hold: a value, a bare flag, or a repeated value. Named so the helpers that
+ *  narrow it (`optionText`, `optionalNumber`, `optionalInteger`, `asRepeated`) state their input once. */
+export type CliOptionValue = string | boolean | string[] | undefined;
+
 export type CliOptions = {
   [K in RepeatableFlag]?: string[];
 } & {
   [K in BooleanFlag]?: boolean;
 } & {
-  [flag: string]: string | boolean | string[] | undefined;
+  [flag: string]: CliOptionValue;
 };
 const REPEATABLE_FLAGS = new Set(Object.entries(CLI_FLAG_SPEC).filter(([, kind]) => kind === "repeatable").map(([flag]) => flag));
 const BOOLEAN_FLAGS = new Set(Object.entries(CLI_FLAG_SPEC).filter(([, kind]) => kind === "boolean").map(([flag]) => flag));
@@ -2838,8 +2842,8 @@ export async function maintainCli(args: readonly string[]) {
     // The API enforces maintainer authorization; the CLI never decides locally. Optional --window-days bounds
     // the block ledger the same way the route's ?windowDays query does (a non-positive value falls through to
     // full history server-side).
-    const windowDays = Number(options.windowDays);
-    const query = windowDays > 0 ? `?windowDays=${encodeURIComponent(windowDays)}` : "";
+    const windowDays = optionalNumber(options.windowDays);
+    const query = windowDays !== undefined && windowDays > 0 ? `?windowDays=${encodeURIComponent(windowDays)}` : "";
     const payload = await apiGet(`${repoBase}/gate-precision${query}`);
     const overall = payload.overall ?? {};
     const window = payload.windowDays ? `last ${payload.windowDays}d` : "all history";
@@ -2859,8 +2863,8 @@ export async function maintainCli(args: readonly string[]) {
     // trail the remote loopover_get_selftune_override_audit tool returns). The API enforces maintainer
     // authorization; the CLI never decides locally. Optional --limit caps the rows the same way the route's
     // ?limit query does (a non-positive value falls through to the server default).
-    const limit = Number(options.limit);
-    const query = limit > 0 ? `?limit=${encodeURIComponent(limit)}` : "";
+    const limit = optionalNumber(options.limit);
+    const query = limit !== undefined && limit > 0 ? `?limit=${encodeURIComponent(limit)}` : "";
     const payload = await apiGet(`${repoBase}/selftune/overrides/audit${query}`);
     const audit = payload.audit ?? [];
     const lines = [
@@ -2874,8 +2878,8 @@ export async function maintainCli(args: readonly string[]) {
     // #6735 outcome calibration: read-only measurement of whether higher-slop bands merge less often and how
     // agent recommendations panned out. Same --window-days handling the sibling precision command uses (a
     // non-positive value omits ?windowDays, so the server reports full history).
-    const windowDays = Number(options.windowDays);
-    const query = windowDays > 0 ? `?windowDays=${encodeURIComponent(windowDays)}` : "";
+    const windowDays = optionalNumber(options.windowDays);
+    const query = windowDays !== undefined && windowDays > 0 ? `?windowDays=${encodeURIComponent(windowDays)}` : "";
     const payload = await apiGet(`${repoBase}/outcome-calibration${query}`);
     const window = payload.windowDays ? `last ${payload.windowDays}d` : "all history";
     const recommendations = payload.recommendations ?? {};
@@ -2913,9 +2917,13 @@ export async function maintainCli(args: readonly string[]) {
     // forwards them verbatim rather than re-deciding locally, and a bad value surfaces as the API's own 400
     // detail. Omitted flags are omitted from the query entirely, so the route applies its own defaults.
     const query = new URLSearchParams();
-    if (options.since !== undefined) query.set("since", String(options.since));
-    if (options.limit !== undefined) query.set("limit", String(options.limit));
-    if (options.pull !== undefined) query.set("pull", String(options.pull));
+    // #9773: through optionText, so a bare `--since` is absent rather than the literal string "true".
+    const since = optionText(options.since);
+    const auditLimit = optionText(options.limit);
+    const pull = optionText(options.pull);
+    if (since !== undefined) query.set("since", since);
+    if (auditLimit !== undefined) query.set("limit", auditLimit);
+    if (pull !== undefined) query.set("pull", pull);
     const payload = await apiGet(`${repoBase}/agent/audit-feed${query.size > 0 ? `?${query}` : ""}`);
     const events = payload.events ?? [];
     // `pullNumber` is echoed by the route only on the ?pull= branch, so the scope line reports what was asked for.
@@ -2966,8 +2974,8 @@ export async function maintainCli(args: readonly string[]) {
     // the write path, and it is forwarded as {create:true, dryRun:false}, the exact shape the route's
     // explicit_create_requires_dry_run_false guard demands. A plain `generate-issue-drafts` can never create.
     const create = options.create === true;
-    const parsedLimit = Number(options.limit);
-    const body = { create, dryRun: !create, ...(Number.isFinite(parsedLimit) ? { limit: parsedLimit } : {}) };
+    const parsedLimit = optionalNumber(options.limit);
+    const body = { create, dryRun: !create, ...(parsedLimit !== undefined ? { limit: parsedLimit } : {}) };
     const payload = await apiPost(`${repoBase}/contributor-issue-drafts/generate`, body);
     const mode = payload.dryRun ? "dry-run" : "create";
     const lines = [
@@ -2990,8 +2998,8 @@ export async function maintainCli(args: readonly string[]) {
     const goal = typeof options.goal === "string" ? options.goal.trim() : "";
     if (!goal) throw new Error('Pass the planning goal: loopover-mcp maintain plan-issues --repo owner/repo --goal "...".');
     const create = options.create === true;
-    const parsedLimit = Number(options.limit);
-    const body = { goal, create, dryRun: !create, ...(Number.isFinite(parsedLimit) ? { limit: parsedLimit } : {}) };
+    const parsedLimit = optionalNumber(options.limit);
+    const body = { goal, create, dryRun: !create, ...(parsedLimit !== undefined ? { limit: parsedLimit } : {}) };
     const payload = await apiPost(`${repoBase}/issue-plan-drafts/generate`, body);
     const mode = payload.dryRun ? "dry-run" : "create";
     const lines = [
@@ -3083,7 +3091,7 @@ async function analyzeOrPreflightCli(command: "analyze-branch" | "preflight", re
   const options = parseOptions(args.slice(1));
   // Match every other subcommand: honor --help before requiring --login / hitting git+network (#6256).
   if (options.help === true) return printHelp();
-  const contributorLogin = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const contributorLogin = resolveLogin(options, { fromProfile: false });
   if (!contributorLogin) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   const result = await analyzeCurrentBranch({
     login: contributorLogin,
@@ -3093,7 +3101,7 @@ async function analyzeOrPreflightCli(command: "analyze-branch" | "preflight", re
     title: options.title,
     body: options.body,
     labels: options.label,
-    linkedIssues: options.issue?.map((value: any) => Number(value)).filter((value: any) => Number.isInteger(value) && value > 0),
+    linkedIssues: issueNumbersOption(options.issue),
     pendingMergedPrCount: optionalInteger(options.pendingMergedPrs),
     pendingClosedPrCount: optionalInteger(options.pendingClosedPrs),
     approvedPrCount: optionalInteger(options.approvedPrs),
@@ -3155,10 +3163,10 @@ function printReviewPrHelp() {
 
 async function reviewPrCli(options: CliOptions) {
   if (options.help === true) return printReviewPrHelp();
-  const contributorLogin = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const contributorLogin = resolveLogin(options, { fromProfile: false });
   if (!contributorLogin) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   let prBody = optionText(options.body);
-  if (options.bodyFile) prBody = readCliTextFile(optionText(options.bodyFile) ?? "", "Body");
+  prBody = readOptionalTextFile(options.bodyFile, "Body") ?? prBody;
   const commitMessages = Array.isArray(options.commit) ? options.commit : options.commit ? [options.commit] : undefined;
   const linkedIssue = parsePositiveIntegerOption(options.linkedIssue, "--linked-issue");
   const payload = await reviewLocalPr({
@@ -3170,7 +3178,7 @@ async function reviewPrCli(options: CliOptions) {
     body: prBody,
     labels: options.label,
     commitMessages,
-    linkedIssues: linkedIssue !== undefined ? [linkedIssue] : options.issue?.map((value: any) => Number(value)).filter((value: any) => Number.isInteger(value) && value > 0),
+    linkedIssues: linkedIssue !== undefined ? [linkedIssue] : issueNumbersOption(options.issue),
   });
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -3240,7 +3248,7 @@ async function lintPrTextCli(args: readonly string[]) {
   const commitMessages = Array.isArray(options.commit) ? options.commit : options.commit ? [options.commit] : undefined;
   let prBody = optionText(options.body);
   if (options.bodyFile) {
-    prBody = readCliTextFile(optionText(options.bodyFile) ?? "", "Body");
+    prBody = readOptionalTextFile(options.bodyFile, "Body") ?? prBody;
   }
   const linkedIssue = parsePositiveIntegerOption(options.linkedIssue, "--linked-issue");
   const payload = await apiPost("/v1/lint/pr-text", {
@@ -3291,8 +3299,11 @@ function printValidateConfigHelp() {
 async function validateConfigCli(args: readonly string[]) {
   if (!args.length || args[0] === "--help" || args[0] === "help") return printValidateConfigHelp();
   const options = parseOptions(args);
-  if (!options.file) throw new Error("Pass --file <path> to the manifest to validate.");
-  const content = readCliTextFile(optionText(options.file) ?? "", "Manifest");
+  // #9773: `!options.file` let a VALUELESS `--file` through -- it parses to `true`, which is truthy -- and
+  // the manifest was then read from the path "". Absent and valueless are the same thing to the user.
+  const manifestPath = optionText(options.file);
+  if (manifestPath === undefined) throw new Error("Pass --file <path> to the manifest to validate.");
+  const content = readCliTextFile(manifestPath, "Manifest");
   // #9773: parsed against the CONTRACT's own enum rather than a restated list, so the accepted values and
   // the error naming them both come from the schema the route validates with -- and the parsed result
   // narrows, which a `.includes()` guard never did. That is why the request body could carry a free string
@@ -3401,7 +3412,7 @@ async function improvementPotentialCli(args: readonly string[]) {
   const testFiles = stringArrayOption(options.testFile);
   let patchCoverageDeltaPercent;
   if (options.patchCoverageDelta !== undefined) {
-    patchCoverageDeltaPercent = Number(options.patchCoverageDelta);
+    patchCoverageDeltaPercent = Number(optionText(options.patchCoverageDelta));
     if (!Number.isFinite(patchCoverageDeltaPercent)) {
       throw new Error("--patch-coverage-delta must be a finite number");
     }
@@ -3441,7 +3452,7 @@ async function issueSlopCli(args: readonly string[]) {
   const options = parseOptions(args);
   let body = normalizeOptionalStringOption(options.body);
   if (options.bodyFile) {
-    body = readCliTextFile(optionText(options.bodyFile) ?? "", "Body");
+    body = readOptionalTextFile(options.bodyFile, "Body") ?? body;
   }
   const title = normalizeOptionalStringOption(options.title);
   const payload = await apiPost("/v1/lint/issue-slop", {
@@ -3494,7 +3505,7 @@ function printContributorProfileHelp() {
 // v8 can't instrument, so the shared getContributorProfile call below is graded through this in-process entry.
 export async function contributorProfileCli(options: CliOptions) {
   if (options.help === true) return printContributorProfileHelp();
-  const login = optionText(options.login) ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = resolveLogin(options);
   if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
   // #7760: shared with the loopover_get_contributor_profile stdio tool so the endpoint path lives in one place.
   const payload = await getContributorProfile(login);
@@ -3512,7 +3523,7 @@ export async function contributorProfileCli(options: CliOptions) {
 
 async function decisionPackCli(options: CliOptions) {
   if (options.help === true) return printDecisionPackHelp();
-  const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = resolveLogin(options, { fromProfile: false });
   if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   const payload = await getDecisionPackWithCache(login);
   if (options.json) {
@@ -3542,7 +3553,7 @@ function printMonitorOpenPrsHelp() {
 
 async function monitorOpenPrsCli(options: CliOptions) {
   if (options.help === true) return printMonitorOpenPrsHelp();
-  const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = resolveLogin(options, { fromProfile: false });
   if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   const payload = await getOpenPrMonitor(login);
   if (options.json) {
@@ -3576,7 +3587,7 @@ function printPrOutcomesHelp() {
 
 async function prOutcomesCli(options: CliOptions) {
   if (options.help === true) return printPrOutcomesHelp();
-  const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = resolveLogin(options, { fromProfile: false });
   if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   const limitRaw = options.limit;
   let limit;
@@ -3626,11 +3637,7 @@ async function explainReviewRiskCli(options: CliOptions) {
   const contributorLogin = optionText(options.login) ?? optionText(options.contributorLogin);
   const labels = Array.isArray(options.label) ? options.label : options.label ? [options.label] : undefined;
   const changedFiles = Array.isArray(options.changedFile) ? options.changedFile : options.changedFile ? [options.changedFile] : undefined;
-  const linkedIssues = Array.isArray(options.issue)
-    ? options.issue.map((value: any) => Number(value)).filter((value: any) => Number.isInteger(value) && value > 0)
-    : options.issue
-      ? [Number(options.issue)].filter((value) => Number.isInteger(value) && value > 0)
-      : undefined;
+  const linkedIssues = issueNumbersOption(options.issue);
   const tests = Array.isArray(options.test) ? options.test : options.test ? [options.test] : undefined;
   const payload = await apiPost(
     "/v1/preflight/review-risk",
@@ -3672,7 +3679,7 @@ function printNotificationsHelp() {
 // LOOPOVER_LOGIN / GITHUB_LOGIN, like the sibling contributor commands.
 async function notificationsCli(options: CliOptions) {
   if (options.help === true) return printNotificationsHelp();
-  const login = optionText(options.login) ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = resolveLogin(options);
   if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
   const payload = await getNotifications(login);
   if (options.json) {
@@ -3706,7 +3713,7 @@ export async function watchCli(args: readonly string[]) {
   if (!subcommand || subcommand === "--help" || subcommand === "help") return printWatchHelp();
   const positional = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
   const options = parseOptions(args.slice(1));
-  const login = optionText(options.login) ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = resolveLogin(options);
   if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
   // The API chooses `changed` / repo / label text, so the plain-text path is sanitized (#6261); `login` is the
   // user's own value.
@@ -3783,7 +3790,7 @@ function printNotificationsReadHelp() {
 // them marks every delivered notification read (mirrors the route's absent-body behavior).
 async function notificationsReadCli(options: CliOptions) {
   if (options.help === true) return printNotificationsReadHelp();
-  const login = optionText(options.login) ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = resolveLogin(options);
   if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
   const ids = Array.isArray(options.id) ? options.id : options.id ? [options.id] : undefined;
   const payload = await postMarkNotificationsRead(login, ids);
@@ -3809,7 +3816,7 @@ function printRepoDecisionHelp() {
 
 async function repoDecisionCli(options: CliOptions) {
   if (options.help === true) return printRepoDecisionHelp();
-  const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = resolveLogin(options, { fromProfile: false });
   if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   const repoFullName = options.repo;
   // #9773: `typeof`, not truthiness. A bare `--repo` with no value parses to `true`, which passed the old
@@ -3867,7 +3874,7 @@ async function runAgentCli(args: readonly string[]) {
     // /v1/agent/runs request shape. `objective` and `actorLogin` are non-optional in agentRunShape
     // (src/mcp/server.ts), so enforce both here, resolving --login exactly as plan/packet do. surface is "cli"
     // (not the stdio tool's "mcp") so the two entry points stay distinguishable server-side, per the issue.
-    const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+    const login = resolveLogin(options, { fromProfile: false });
     if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
     if (!options.objective || options.objective === true) throw new Error('Pass --objective "..." to describe the run.');
     const payload = await apiPost("/v1/agent/runs", {
@@ -3883,7 +3890,7 @@ async function runAgentCli(args: readonly string[]) {
     return outputAgentPayload(payload, options, `Queued LoopOver base-agent run for ${login}.`);
   }
   if (subcommand === "plan") {
-    const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+    const login = resolveLogin(options, { fromProfile: false });
     if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
     const payload = await apiPost("/v1/agent/plan-next-work", stripUndefined({ login, repoFullName: optionText(options.repo), objective: options.objective, surface: "mcp" }));
     return outputAgentPayload(payload, options, `LoopOver agent plan: ${payload.summary ?? payload.run?.status ?? "ready"}`);
@@ -3902,7 +3909,7 @@ async function runAgentCli(args: readonly string[]) {
     return outputAgentPayload({ ...payload, topAction }, options, topAction ? `Top action: ${topAction.recommendation}` : "No top action is available yet.");
   }
   if (subcommand === "packet") {
-    const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+    const login = resolveLogin(options, { fromProfile: false });
     if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
     const payload = await agentPreparePrPacket({
       login,
@@ -3912,7 +3919,7 @@ async function runAgentCli(args: readonly string[]) {
       title: options.title,
       body: options.body,
       labels: options.label,
-      linkedIssues: options.issue?.map((value: any) => Number(value)).filter((value: any) => Number.isInteger(value) && value > 0),
+      linkedIssues: issueNumbersOption(options.issue),
       pendingMergedPrCount: optionalInteger(options.pendingMergedPrs),
       pendingClosedPrCount: optionalInteger(options.pendingClosedPrs),
       approvedPrCount: optionalInteger(options.approvedPrs),
@@ -4369,6 +4376,34 @@ function printProfileHelp() {
 }
 
 /**
+ * The contributor login a command should act on (#9773).
+ *
+ * One chain, not eight copies. Every command that takes `--login` resolved it inline -- flag, then the
+ * active profile's session, then two env vars -- and each copy was its own chance to miss a step, which is
+ * exactly how two of them ended up reading a valueless `--login` as the string "true". The profile leg is
+ * skipped by the commands that never had it, so this is a superset of no call site's behaviour.
+ */
+function resolveLogin(options: CliOptions, { fromProfile = true }: { fromProfile?: boolean } = {}): string | undefined {
+  const fromFlag = optionText(options.login);
+  const fromSession = fromProfile ? activeProfile.session?.login : undefined;
+  return fromFlag ?? fromSession ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+}
+
+/** A `--body-file`/`--file` option read from disk, or undefined when the flag carries no value (#9773). */
+function readOptionalTextFile(value: CliOptionValue, label: string): string | undefined {
+  const path = optionText(value);
+  return path === undefined ? undefined : readCliTextFile(path, label);
+}
+
+/** `--issue` as positive integers, however it was supplied: repeated, once, or not at all (#9773). */
+function issueNumbersOption(value: CliOptionValue): number[] | undefined {
+  const numbers = asRepeated(value)
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isInteger(entry) && entry > 0);
+  return numbers.length > 0 ? numbers : undefined;
+}
+
+/**
  * Whether a user-supplied string is one of a closed set (#9773).
  *
  * A TYPE PREDICATE, so the value narrows for whatever it is passed to next. `list.includes(value)` returns
@@ -4387,7 +4422,7 @@ function isOneOf<const T extends readonly string[]>(list: T, value: string): val
  * NAMED "true" and report them not found, rather than telling the user they forgot the value. Absent is the
  * honest answer, and every caller here already handles absent.
  */
-function optionText(value: string | boolean | string[] | undefined): string | undefined {
+function optionText(value: CliOptionValue): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
@@ -4468,7 +4503,7 @@ function emitList(options: CliOptions, items: any, pretty: any) {
 
 async function login(options: CliOptions) {
   const profileName = selectedProfileName(options);
-  const githubToken = options.githubToken ?? process.env.GITHUB_TOKEN;
+  const githubToken = optionText(options.githubToken) ?? process.env.GITHUB_TOKEN;
   const session = githubToken ? await apiFetch("/v1/auth/github/session", { method: "POST", body: JSON.stringify({ githubToken }) }, { auth: false }) : await loginWithDeviceFlow();
   const nextConfig = upsertProfile(config, profileName, {
     apiUrl,
@@ -5231,7 +5266,7 @@ function upsertProfile(currentConfig: LoopoverConfig, profileName: string, patch
   return normalizeConfig({ ...currentConfig, apiUrl: patch.apiUrl ?? currentConfig.apiUrl, activeProfile: profileName, profiles });
 }
 
-function ensureProfile(currentConfig: LoopoverConfig, profileName: string, options: CliOptions = {}) {
+function ensureProfile(currentConfig: LoopoverConfig, profileName: string, options: CliOptions) {
   const existing = currentConfig.profiles?.[profileName];
   const nextConfig = existing ? currentConfig : upsertProfile(currentConfig, profileName, {});
   return options.activate ? setActiveProfile(nextConfig, profileName) : nextConfig;
@@ -5330,7 +5365,8 @@ function validationEntry({ command, statusText, summaryText, durationText, durat
   });
 }
 
-function optionalInteger(value: any) {
+/** A non-negative integer option, or undefined. `true` -- a flag with no value -- is absent, not a number. */
+function optionalInteger(value: CliOptionValue) {
   if (value === undefined || value === true) return undefined;
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
@@ -5350,7 +5386,8 @@ function normalizeOptionalStringOption(value: any) {
   throw new Error("Expected a string flag value.");
 }
 
-function optionalNumber(value: any) {
+/** A finite number option, or undefined. Same treatment of a valueless flag as `optionalInteger`. */
+function optionalNumber(value: CliOptionValue) {
   if (value === undefined || value === true) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
@@ -6342,17 +6379,21 @@ function localDiffTargetKey(branchPayload: any, baseRef: any) {
 }
 
 function branchEligibilityFromOptions(options: CliOptions) {
-  const status = optionText(options.branchEligibility) ?? optionText(options.branchEligibilityStatus);
-  if (!status || !["eligible", "ineligible", "unknown"].includes(status)) return undefined;
-  const source = ["github_metadata", "local_metadata", "registry", "user_supplied"].includes(optionText(options.branchEligibilitySource) ?? "") ? optionText(options.branchEligibilitySource)! : "user_supplied";
+  // #9773: parsed against the ROUTE'S OWN schema rather than two lists restated here. Both vocabularies
+  // were hand-copied from `branchEligibilitySchema`, so a status the route accepts could be dropped on the
+  // floor by the CLI -- silently, since an unrecognised value simply returned undefined.
+  const status = branchEligibilityFields.shape.status.safeParse(optionText(options.branchEligibility) ?? optionText(options.branchEligibilityStatus));
+  if (!status.success) return undefined;
+  const source = branchEligibilityFields.shape.source.unwrap().safeParse(optionText(options.branchEligibilitySource));
   return stripUndefined({
-    status,
-    source,
+    status: status.data,
+    source: source.success ? source.data : "user_supplied",
     reason: optionText(options.branchEligibilityReason),
     checkedAt: optionText(options.branchEligibilityCheckedAt),
     stale: optionalBoolean(options.branchEligibilityStale),
   });
 }
+
 
 function optionalBoolean(value: any) {
   if (value === undefined) return undefined;

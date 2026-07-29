@@ -41,22 +41,59 @@ export const EXCLUDED_TABLES: Set<string> = new Set([
 // committed credential never crosses the boundary (#selfhost-migration DO-NOT-MIGRATE list):
 //   • auth_sessions.token_hash                 — hashed browser session tokens, scoped to the cloud deploy.
 //   • webhook_events.payload_hash              — per-delivery dedup hash, scoped to the cloud deploy.
+//   • orb_webhook_events.payload_hash          — the Orb App's own per-delivery dedup hash; same purpose and
+//                                                cloud-scope as webhook_events.payload_hash, separate table.
 //   • repository_ai_keys.ciphertext            — maintainer BYOK provider keys, encrypted with the cloud key.
 //   • repository_linear_keys.ciphertext        — Linear API keys; same never-serialize envelope as AI keys (#6295).
+//   • provider_credentials.ciphertext / iv /   — the instance's own subscription-CLI credential envelope
+//     salt                                       (AES-256-GCM via TOKEN_ENCRYPTION_SECRET, same envelope as the
+//                                                BYOK key tables above); never serialized off the cloud (#9543).
 //   • auth_session_github_tokens.ciphertext /  — per-session GitHub OAuth envelopes; isolated so a full-row
 //     refresh_ciphertext                         serialize can't leak them (#6295 / #6114).
 //   • submission_user_tokens.encrypted_token   — short-lived GitHub OAuth token envelopes, cloud-scoped.
 //   • orb_enrollments.secret_hash              — one-time enrollment secret hashes.
 //   • orb_enrollments.relay_secret_*           — encrypted relay webhook signing secret material.
-//   • orb_enrollments.cached_token_json         — encrypted GitHub installation-token cache envelope.
+//   • orb_enrollments.cached_token_json        — encrypted GitHub installation-token cache envelope.
+//   • orb_enrollments.secret_value_ciphertext  — the STORED (not minted) secret-value envelope; the other half
+//     / secret_value_iv / secret_value_salt      of this table's encrypted-secret family (#8064).
+//   • orb_instances.ingest_secret_hash         — per-instance risk-control ingest secret hash; sibling of
+//                                                orb_enrollments.secret_hash (#9121).
 export const REDACTED_COLUMNS: Record<string, string[]> = {
   auth_sessions: ["token_hash"],
   webhook_events: ["payload_hash"],
+  orb_webhook_events: ["payload_hash"],
   repository_ai_keys: ["ciphertext"],
   repository_linear_keys: ["ciphertext"],
+  provider_credentials: ["ciphertext", "iv", "salt"],
   auth_session_github_tokens: ["ciphertext", "refresh_ciphertext"],
   submission_user_tokens: ["encrypted_token"],
-  orb_enrollments: ["secret_hash", "relay_secret_enc", "relay_secret_iv", "relay_secret_salt", "cached_token_json"],
+  orb_enrollments: [
+    "secret_hash",
+    "relay_secret_enc",
+    "relay_secret_iv",
+    "relay_secret_salt",
+    "cached_token_json",
+    "secret_value_ciphertext",
+    "secret_value_iv",
+    "secret_value_salt",
+  ],
+  orb_instances: ["ingest_secret_hash"],
+};
+
+// Columns whose name MATCHES the sensitive-name pattern the drift guard scans for
+// (/ciphertext|encrypted|secret|token/i across migrations/**) but which are deliberately EXPORTED because they
+// carry no credential — reviewed and stated here rather than silently omitted, the same "say why, don't just
+// leave it out" convention scripts/check-dead-source-files.ts's STAGED_AHEAD_OF_CONSUMERS uses. Every entry
+// must name a column that still exists in migrations/** (the drift guard fails on a dead entry) and must be a
+// genuine non-secret; do NOT add a real credential here to silence the guard — redact it above instead.
+export const EXPORT_REVIEWED_NON_SECRET_COLUMNS: Readonly<Record<string, readonly string[]>> = {
+  // LLM usage-metering token COUNTS (integers), not credentials — needed on self-host to render AI-spend.
+  ai_usage_events: ["input_tokens", "output_tokens", "total_tokens"],
+  orb_enrollments: [
+    "secret_type", // discriminator string ('github_token' | ...), selects which secret family a row holds.
+    "secret_value_version", // integer envelope-version for secret_value_*; the ciphertext itself is redacted.
+    "last_token_at", // timestamp of the last brokered-token mint; observability metadata, no secret material.
+  ],
 };
 
 // A table name is only ever interpolated into SQL (`SELECT * FROM "<name>"`) after passing this allowlist, so a

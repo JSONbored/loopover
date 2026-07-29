@@ -15,7 +15,7 @@ import {
   sha256Hex,
   type DecisionRecord,
 } from "../../src/review/decision-record";
-import { DELIVERY_ID_ORIGINS, deliveryIdFor, deliveryIdOrigin } from "../../src/queue/delivery-id";
+import { DELIVERY_ID_ORIGINS, DELIVERY_ID_PREFIXES, deliveryIdFor, deliveryIdOrigin } from "../../src/queue/delivery-id";
 import { appendDecisionLedger, LEDGER_GENESIS_HASH, loadDecisionLedgerTip, loadDecisionRecordCollapsible, loadPublicDecisionRecord, verifyDecisionLedger } from "../../src/review/decision-record";
 import { createTestEnv } from "../helpers/d1";
 
@@ -1015,9 +1015,16 @@ describe("deriveReevaluationReason", () => {
     expect(DELIVERY_ID_ORIGINS.length).toBeGreaterThan(0);
   });
 
-  it("resolves the LONGEST matching prefix, so one origin cannot shadow another", () => {
-    // `regate-sweep:` and `regate-repair:` share a stem; a first-match scan could mis-attribute a repair
-    // as routine maintenance, which is exactly the distinction the record exists to preserve.
+  it("keeps every origin distinguishable: no prefix may be a prefix of another", () => {
+    // This is what makes a first-match scan unambiguous. If it ever fails, two producers have become
+    // indistinguishable and one would silently inherit the other's reason -- `regate-sweep:` read as
+    // `regate-repair:` would file a repair as routine maintenance, the exact distinction this preserves.
+    for (const a of DELIVERY_ID_ORIGINS) {
+      for (const b of DELIVERY_ID_ORIGINS) {
+        if (a === b) continue;
+        expect(DELIVERY_ID_PREFIXES[a].startsWith(DELIVERY_ID_PREFIXES[b]), `${a} vs ${b}`).toBe(false);
+      }
+    }
     expect(deliveryIdOrigin(deliveryIdFor("regateRepair", "o/r#7"))).toBe("regateRepair");
     expect(deliveryIdOrigin(deliveryIdFor("regateSweep", "o/r#7"))).toBe("regateSweep");
     expect(deliveryIdOrigin("not-a-known-prefix:o/r#7")).toBeNull();

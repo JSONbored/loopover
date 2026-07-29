@@ -43,17 +43,12 @@ export function deliveryIdFor(origin: DeliveryIdOrigin, suffix: string): string 
 /**
  * Which producer minted this delivery id, or null for a raw GitHub webhook delivery id.
  *
- * Longest prefix wins, so an origin whose prefix is a prefix of another's still resolves to the more
- * specific one rather than to whichever happens to be declared first.
+ * First match wins, which is unambiguous ONLY because no prefix here is a prefix of another -- an
+ * invariant asserted directly in decision-record.test.ts rather than worked around with a
+ * longest-match scan. A tie-break that can never run is untestable defensive code; a failing
+ * invariant test names the real problem (two origins that cannot be told apart) to whoever adds one.
  */
 export function deliveryIdOrigin(deliveryId: string | null | undefined): DeliveryIdOrigin | null {
   if (typeof deliveryId !== "string") return null;
-  let match: DeliveryIdOrigin | null = null;
-  for (const origin of DELIVERY_ID_ORIGINS) {
-    if (!deliveryId.startsWith(DELIVERY_ID_PREFIXES[origin])) continue;
-    if (match === null || DELIVERY_ID_PREFIXES[origin].length > DELIVERY_ID_PREFIXES[match].length) {
-      match = origin;
-    }
-  }
-  return match;
+  return DELIVERY_ID_ORIGINS.find((origin) => deliveryId.startsWith(DELIVERY_ID_PREFIXES[origin])) ?? null;
 }

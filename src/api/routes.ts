@@ -305,7 +305,7 @@ import { isFairnessAnalyticsEnabled, resolveFairnessAnalyticsManifestOverride } 
 import { isRagEnabled } from "../review/rag-wire";
 import { loadDecisionLedgerTip, loadPublicDecisionRecord, loadPublicLedgerRow, verifyDecisionLedger } from "../review/decision-record";
 import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
-import { anchorSigningInput, buildLedgerAnchorPayload, currentAnchorKey, parseAnchorPublicKeys, signLedgerAnchorPayload } from "../review/ledger-anchor";
+import { anchorSigningInput, buildLedgerAnchorPayload, currentAnchorKey, parseAnchorPublicKeys, publicAnchorStatus, signLedgerAnchorPayload } from "../review/ledger-anchor";
 import { ingestBittensorAnchorReport, parseBittensorAnchorReport } from "../review/ledger-anchor-bittensor";
 import { loadPublicLedgerAnchors } from "../review/ledger-anchor-persistence";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
@@ -1346,8 +1346,24 @@ export function createApp() {
       ...(before !== undefined && { before }),
       ...(limit !== undefined && { limit }),
     });
+    // An empty list is ambiguous on its own -- say WHY, so "not configured" can never be mistaken for
+    // "healthy, nothing to report". Only computed for an unfiltered first page: with a backend/before filter an
+    // empty page means "none matched", which is a different question than "is anchoring running at all".
+    const unfiltered = backend === undefined && before === undefined;
+    const [tip, keys] = unfiltered
+      ? await Promise.all([loadDecisionLedgerTip(c.env), Promise.resolve(parseAnchorPublicKeys(c.env.LOOPOVER_LEDGER_ANCHOR_KEYS))])
+      : [null, []];
     c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-    return c.json(result);
+    return c.json({
+      ...result,
+      ...(tip !== null && {
+        status: publicAnchorStatus({
+          anchorCount: result.anchors.length,
+          tipSeq: tip.seq,
+          hasSigningKey: currentAnchorKey(keys) !== null && Boolean(c.env.LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY),
+        }),
+      }),
+    });
   });
 
   // #9277 (epic #9267): the current tip's SIGNED checkpoint, for the operator's off-Worker Bittensor

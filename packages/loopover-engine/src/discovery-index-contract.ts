@@ -174,6 +174,15 @@ export function normalizeDiscoveryIndexRequest(raw: unknown): ParsedDiscoveryInd
     warnings.push("DiscoveryIndexRequest must be a mapping; falling back to an empty query.");
   }
   const source = record ?? {};
+  // #9615: surface (never reject) a declared version skew through the existing warnings channel -- the
+  // same push-one-templated-string-and-continue style as clampLimit and the #6774 candidate cap. An
+  // absent or non-number declaration stays silent by the tolerant-parser convention: an older/looser
+  // sender is not an error.
+  if (typeof source.contractVersion === "number" && source.contractVersion !== DISCOVERY_INDEX_CONTRACT_VERSION) {
+    warnings.push(
+      `DiscoveryIndexRequest declared contractVersion ${source.contractVersion}; this build speaks ${DISCOVERY_INDEX_CONTRACT_VERSION}.`,
+    );
+  }
   const query: DiscoveryIndexQuery = {
     repos: normalizeStringList(source.repos, normalizeRepoFullName),
     orgs: normalizeStringList(source.orgs, normalizeOwner),
@@ -238,6 +247,15 @@ export function normalizeDiscoveryIndexResponse(raw: unknown): ParsedDiscoveryIn
   const record = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : null;
   if (!record) {
     warnings.push("DiscoveryIndexResponse must be a mapping; falling back to an empty candidate list.");
+  }
+  // #9615: same version-skew warning as the request side -- a server speaking another contract version is
+  // surfaced instead of being silently relabelled as this build's version. Warning only: nothing below is
+  // rejected, dropped, or changed by it.
+  const declaredVersion = record?.contractVersion;
+  if (typeof declaredVersion === "number" && declaredVersion !== DISCOVERY_INDEX_CONTRACT_VERSION) {
+    warnings.push(
+      `DiscoveryIndexResponse declared contractVersion ${declaredVersion}; this build speaks ${DISCOVERY_INDEX_CONTRACT_VERSION}.`,
+    );
   }
   const rawCandidates = record && Array.isArray(record.candidates) ? record.candidates : [];
   // #6774: the request side clamps page size to MAX_PAGE_LIMIT, but this response comes from the OPTIONAL,

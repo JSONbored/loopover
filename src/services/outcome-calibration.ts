@@ -26,7 +26,7 @@ const SLOP_BAND_ORDER: readonly SlopBand[] = ["clean", "low", "elevated", "high"
 // Below this per-band sample the merge rate is too noisy to judge discrimination.
 const MIN_BAND_SAMPLE = 5;
 
-export type SlopBandCalibration = { band: SlopBand; sampleSize: number; merged: number; closed: number; mergeRate: number };
+export type SlopBandCalibration = { band: SlopBand; sampleSize: number; merged: number; closed: number; mergeRate: number | null };
 
 export type SlopOutcomeCalibration = {
   totalResolved: number;
@@ -107,7 +107,9 @@ export function buildSlopOutcomeCalibration(pullRequests: PullRequestRecord[], o
   const bands: SlopBandCalibration[] = SLOP_BAND_ORDER.map((band) => {
     const { merged, closed } = counts.get(band) ?? { merged: 0, closed: 0 };
     const sampleSize = merged + closed;
-    return { band, sampleSize, merged, closed, mergeRate: sampleSize > 0 ? round(merged / sampleSize) : 0 };
+    // Mirrors overallMergeRate below: a band nobody has data for reports null ("unknown"), never a fabricated
+    // 0 ("every PR in this band was closed"), the strongest possible discrimination claim (#9641).
+    return { band, sampleSize, merged, closed, mergeRate: sampleSize > 0 ? round(merged / sampleSize) : null };
   });
   return {
     totalResolved,
@@ -117,8 +119,14 @@ export function buildSlopOutcomeCalibration(pullRequests: PullRequestRecord[], o
   };
 }
 
+// A sampled band's sampleSize (>= MIN_BAND_SAMPLE, so > 0) always yields a non-null mergeRate above; this
+// predicate narrows the type so the comparison below doesn't need a runtime null check on an unreachable case.
+function isSampledBand(band: SlopBandCalibration): band is SlopBandCalibration & { mergeRate: number } {
+  return band.sampleSize >= MIN_BAND_SAMPLE;
+}
+
 function computeDiscriminates(bands: SlopBandCalibration[]): boolean | null {
-  const sampled = bands.filter((band) => band.sampleSize >= MIN_BAND_SAMPLE); // already in severity order
+  const sampled = bands.filter(isSampledBand); // already in severity order
   if (sampled.length < 2) return null; // not enough signal to judge
   for (let index = 1; index < sampled.length; index += 1) {
     // A later (higher-severity) band merging MORE than an earlier one means the score is not discriminating.

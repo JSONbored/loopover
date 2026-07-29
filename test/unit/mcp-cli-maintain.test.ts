@@ -89,6 +89,7 @@ beforeEach(() => {
   planIssuesBodies.length = 0;
   apiRequests.length = 0;
   fixtureOptions.repoDocRefresh = undefined;
+  fixtureOptions.outcomeCalibrationBands = undefined;
 });
 
 async function captureStdout(fn: () => Promise<void>): Promise<string> {
@@ -394,6 +395,18 @@ describe("loopover-mcp CLI — maintain (#784)", () => {
       "30",
     ]);
     expect(scoped).toMatch(/Outcome calibration for owner\/repo \(last 30d\)/);
+  });
+
+  // REGRESSION (#9641): a zero-sample band's mergeRate is null (not a fabricated 0), and the plain-text
+  // renderer must show that as "n/a", matching the sampled bands' own "n/a (below sample)" wording.
+  it("outcome-calibration renders a zero-sample band's null mergeRate as n/a, not 0%", async () => {
+    fixtureOptions.outcomeCalibrationBands = [
+      { band: "clean", sampleSize: 12, merged: 9, closed: 3, mergeRate: 0.75 },
+      { band: "high", sampleSize: 0, merged: 0, closed: 0, mergeRate: null },
+    ];
+    const out = await cli(["maintain", "outcome-calibration", "--repo", "owner/repo"]);
+    expect(out).toMatch(/high: n\/a \(below sample\) merge rate over 0 PR\(s\)/);
+    expect(out).not.toMatch(/high: 0% merge rate/);
   });
 
   it("onboarding-pack mirrors the session-gated API payload and forwards refresh", async () => {

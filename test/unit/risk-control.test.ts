@@ -71,17 +71,17 @@ describe("calibrateActThreshold", () => {
   });
 
   it("REGRESSION (#9048): a repo with AMPLE labels that cannot certify reports its true total, not a residual stratum size", () => {
-    // 650 total labels (well over the 598-label floor for alpha=0.005) — but every candidate either has a
-    // ruinous error rate (the 600 pairs at 0.5, all wrong) or falls below the sample-size floor once that
-    // dirty stratum is dropped (only 50 remain at 0.99). Before #9048 this reported `have: 50` under
-    // `insufficient_labels` — exactly the "N usable labels of 59/598 needed" bug: a residual stratum size
-    // misreported as the repo's total label supply.
-    const pairs = [...Array.from({ length: 600 }, () => pair(0.5, false)), ...Array.from({ length: 50 }, () => pair(0.99, true))];
+    // 800 total labels (well over the 736-label split-delta floor for these 2 candidates at alpha=0.005,
+    // #9637) — but every candidate either has a ruinous error rate (the 700 pairs at 0.5, all wrong) or falls
+    // below the split-delta sample-size floor once that dirty stratum is dropped (only 100 remain at 0.99).
+    // Before #9048 this reported `have: 100` under `insufficient_labels` — exactly the "N usable labels of
+    // 59/598 needed" bug: a residual stratum size misreported as the repo's total label supply.
+    const pairs = [...Array.from({ length: 700 }, () => pair(0.5, false)), ...Array.from({ length: 100 }, () => pair(0.99, true))];
     const result = calibrateActThreshold(pairs, 0.005, 0.05);
     expect(result.status).toBe("no_certifiable_threshold");
     if (result.status === "no_certifiable_threshold") {
-      expect(result.totalPairs).toBe(650); // the TRUE total, never a residual stratum size
-      expect(result.bestN).toBe(650); // the only candidate that cleared the sample-size floor
+      expect(result.totalPairs).toBe(800); // the TRUE total, never a residual stratum size
+      expect(result.bestN).toBe(800); // the only candidate that cleared the split-delta sample-size floor
       expect(result.bestLambda).toBe(0.5);
       expect(result.bestUpperBound).toBeGreaterThan(0.005); // could not certify alpha
       expect(result.bestUpperBound).toBeLessThanOrEqual(1);
@@ -89,13 +89,49 @@ describe("calibrateActThreshold", () => {
   });
 
   it("REGRESSION (#9066): does not over-certify across many observed confidence candidates — Bonferroni-splits delta across the K distinct thresholds actually tested", () => {
-    // Same shape the pre-fix code certified at lambda=0.9 (700 clean pairs, 10 distinct confidences, zero
+    // Same shape the pre-#9066 code certified at lambda=0.9 (700 clean pairs, 10 distinct confidences, zero
     // errors, alpha=0.005): the RAW zero-error bound at n=700, delta=0.05 is ≈0.0043 (<=0.005, would certify),
-    // but split across K=10 candidates (delta/10=0.005) the bound is ≈0.0075 (>0.005) — correctly refuses,
-    // because reporting whichever of 10 tested candidates passes first is a selection, not a single test.
+    // but split across K=10 candidates (delta/10=0.005) the bound is ≈0.0075 (>0.005) — over-certification is
+    // refused. #9637: the label floor at that split delta (1058) is now also enforced up front, so 700 pairs —
+    // genuinely short of what 10 candidates need — refuses as `insufficient_labels`, not the pre-#9637
+    // `no_certifiable_threshold` (which would have wrongly implied the error rate, not the label count, was
+    // the shortfall). Either way `calibrated` must never be reached.
     const pairs = Array.from({ length: 700 }, (_, i) => pair(0.9 + (i % 10) / 100, true));
     const result = calibrateActThreshold(pairs, 0.005, 0.05);
+    expect(result.status).toBe("insufficient_labels");
+    expect(result.status).not.toBe("calibrated");
+    if (result.status === "insufficient_labels") {
+      expect(result.needed).toBe(1058);
+      expect(result.have).toBe(700);
+    }
+  });
+
+  it("REGRESSION (#9637): the split-delta floor, not the raw floor, gates a zero-error set — 59 clean labels across 59 distinct confidences is insufficient, not uncertifiable", () => {
+    // Exactly the raw floor (minimumCalibrationLabels(0.05, 0.05) = 59), so the pre-scan check alone would
+    // let this through — but every pair is a distinct confidence (K=59 candidates), so the scan actually
+    // tests each candidate at delta/59. The effective floor at that split delta is 138: below it, a
+    // ZERO-ERROR set must still refuse as insufficient_labels, not fall through the whole scan into a
+    // misleading no_certifiable_threshold (#9048's status split, reintroduced by #9066's Bonferroni
+    // correction and the reason this issue exists).
+    const pairs = Array.from({ length: 59 }, (_, i) => pair(0.4 + i / 1000, true));
+    const result = calibrateActThreshold(pairs, 0.05, 0.05);
+    expect(result).toMatchObject({ status: "insufficient_labels", needed: 138, have: 59 });
+  });
+
+  it("REGRESSION (#9637): no_certifiable_threshold remains reachable once labels clear the split-delta floor", () => {
+    // A single confidence bucket (K=1 candidate, so the split delta equals the raw delta — this is also the
+    // `candidates.length === 1` edge the fix must leave behaviorally identical to before #9637) isolates a
+    // genuine error-rate shortfall from the label-count shortfall the tests above exercise: 1000 pairs, 12%
+    // wrong — comfortably over alpha=0.05's own floor (59) but nowhere near a certifiable error rate.
+    const pairs = [...Array.from({ length: 880 }, () => pair(0.9, true)), ...Array.from({ length: 120 }, () => pair(0.9, false))];
+    const result = calibrateActThreshold(pairs, 0.05, 0.05);
     expect(result.status).toBe("no_certifiable_threshold");
+    if (result.status === "no_certifiable_threshold") {
+      expect(result.totalPairs).toBe(1000);
+      expect(result.bestN).toBe(1000);
+      expect(result.bestLambda).toBe(0.9);
+      expect(result.bestUpperBound).toBeGreaterThan(0.05);
+    }
   });
 
   it("is deterministic and input-order independent", () => {

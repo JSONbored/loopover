@@ -2694,7 +2694,7 @@ describe("queue processors", () => {
     });
 
     // A maintenance pass on the frozen row: no capture runs, so only the latch decides.
-    await processJob(env, { type: "agent-regate-pr", repoFullName: "JSONbored/gittensory", prNumber: 72, installationId: 123, force: true });
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "screenshot-latch-expired-regate", repoFullName: "JSONbored/gittensory", prNumber: 72, installationId: 123, force: true });
 
     // The gate reaches a decision instead of deferring for the 51st time.
     expect(seen.closed).toBe(true);

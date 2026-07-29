@@ -10,6 +10,7 @@ import { Sparkline } from "@/components/site/sparkline";
 import {
   formatStatsAgo,
   formatTimeSaved,
+  isFleetBasis,
   toTrendPoints,
   type PublicStats,
 } from "@/components/site/proof-of-power-stats-model";
@@ -148,6 +149,10 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
   const fleetEligible =
     (data.fleetAccuracy?.instanceCount ?? 0) > 0 && data.fleetAccuracy?.accuracyPct != null;
   const displayedAccuracyPct = fleetEligible ? data.fleetAccuracy!.accuracyPct : totals.accuracyPct;
+  // #9673: `fleetEligible` only gates volume (is there enough to show a number); `basis` says whether that
+  // number is corroborated across operators or one instance's own self-report -- the hint below must say
+  // which, without changing whether or what number is shown.
+  const accuracyIsFleetBasis = fleetEligible && isFleetBasis(data.fleetAccuracy);
   const latestReuseRatePct =
     data.reuseRateTrend.length > 0
       ? data.reuseRateTrend[data.reuseRateTrend.length - 1]!.reuseRatePct
@@ -207,7 +212,7 @@ export function ProofOfPowerStats({ className }: { className?: string }) {
                   // signals) -- plus the backfilled-vs-live split behind the evidence, when supplied.
                   // #9068: gamingFlagsCaught is null (not 0) below the fleet's own eligibility floor, so the
                   // suffix is omitted entirely rather than rendering a structural zero as "checked, found none".
-                  `merge/close calls confirmed by outcome${data.fleetAccuracy.coveragePct != null ? ` · at ${data.fleetAccuracy.coveragePct}% coverage` : ""}${data.fleetAccuracy.guaranteed?.close ? ` · closes ≥${Math.round((1 - data.fleetAccuracy.guaranteed.close.alpha) * 1000) / 10}% guaranteed at ${data.fleetAccuracy.guaranteed.close.aiJudgedCoveragePct}% coverage of AI-judged closes${data.fleetAccuracy.guaranteed.close.backfilledPct != null ? ` (${data.fleetAccuracy.guaranteed.close.backfilledPct}% backfilled)` : ""}` : ""} · ${intFmt.format(data.fleetAccuracy.instanceCount)} self-hosted instance${data.fleetAccuracy.instanceCount === 1 ? "" : "s"}${data.fleetAccuracy.gamingFlagsCaught != null && data.fleetAccuracy.gamingFlagsCaught > 0 ? ` · ${intFmt.format(data.fleetAccuracy.gamingFlagsCaught)} gaming pattern${data.fleetAccuracy.gamingFlagsCaught === 1 ? "" : "s"} flagged` : ""}`
+                  `merge/close calls confirmed by outcome${data.fleetAccuracy.coveragePct != null ? ` · at ${data.fleetAccuracy.coveragePct}% coverage` : ""}${data.fleetAccuracy.guaranteed?.close ? ` · closes ≥${Math.round((1 - data.fleetAccuracy.guaranteed.close.alpha) * 1000) / 10}% guaranteed at ${data.fleetAccuracy.guaranteed.close.aiJudgedCoveragePct}% coverage of AI-judged closes${data.fleetAccuracy.guaranteed.close.backfilledPct != null ? ` (${data.fleetAccuracy.guaranteed.close.backfilledPct}% backfilled)` : ""}` : ""}${accuracyIsFleetBasis ? ` · ${intFmt.format(data.fleetAccuracy.instanceCount)} self-hosted instance${data.fleetAccuracy.instanceCount === 1 ? "" : "s"}` : " · self-reported by one self-hosted instance, not corroborated across operators"}${data.fleetAccuracy.gamingFlagsCaught != null && data.fleetAccuracy.gamingFlagsCaught > 0 ? ` · ${intFmt.format(data.fleetAccuracy.gamingFlagsCaught)} gaming pattern${data.fleetAccuracy.gamingFlagsCaught === 1 ? "" : "s"} flagged` : ""}`
                 : totals.reversed > 0
                   ? `${intFmt.format(totals.reversed)} human-reversed`
                   : "reversal-grounded"

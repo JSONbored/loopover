@@ -12,6 +12,13 @@ import type { PublicStatsSchema } from "@loopover/contract/public-api";
 export type { PublicRulePrecision } from "@loopover/contract/public-api";
 export type PublicStats = z.infer<typeof PublicStatsSchema>;
 
+/** Whether `fleetAccuracy` is genuine cross-operator corroboration rather than one instance's own
+ *  self-report (#9673) -- the distinction `basis` exists to publish (src/orb/analytics.ts). Both public
+ *  surfaces that read `fleetAccuracy` call this rather than re-deriving the check inline. */
+export function isFleetBasis(fleetAccuracy: PublicStats["fleetAccuracy"] | undefined): boolean {
+  return fleetAccuracy?.basis === "fleet";
+}
+
 /** Relative "updated Ns ago" label from the payload's updatedAt (mirrors MetaStrip's freshness logic). */
 export function formatStatsAgo(updatedAt: string | null, nowMs: number): string {
   if (!updatedAt) return "just now";

@@ -31,6 +31,7 @@ import { ProofOfPowerStats } from "@/components/site/proof-of-power-stats";
 import {
   formatStatsAgo,
   formatTimeSaved,
+  isFleetBasis,
   type PublicStats,
 } from "@/components/site/proof-of-power-stats-model";
 
@@ -150,6 +151,24 @@ describe("formatStatsAgo", () => {
   });
 });
 
+describe("isFleetBasis", () => {
+  it('is true only for basis: "fleet"', () => {
+    expect(isFleetBasis({ ...PAYLOAD.fleetAccuracy, basis: "fleet" })).toBe(true);
+  });
+  it('is false for basis: "single_instance_self_report"', () => {
+    expect(isFleetBasis({ ...PAYLOAD.fleetAccuracy, basis: "single_instance_self_report" })).toBe(
+      false,
+    );
+  });
+  it("is false when fleetAccuracy has no basis field (deployment predating #9168)", () => {
+    const { basis: _omitted, ...withoutBasis } = PAYLOAD.fleetAccuracy;
+    expect(isFleetBasis(withoutBasis as PublicStats["fleetAccuracy"])).toBe(false);
+  });
+  it("is false when fleetAccuracy itself is undefined (deployment predating #9168 entirely)", () => {
+    expect(isFleetBasis(undefined)).toBe(false);
+  });
+});
+
 describe("formatTimeSaved", () => {
   it("uses days at scale, hours below 2 days, minutes below an hour", () => {
     expect(formatTimeSaved(54160)).toEqual({ value: 38, unit: "days" }); // 2708 × 20 min
@@ -237,6 +256,7 @@ describe("ProofOfPowerStats", () => {
           instanceCount: 3,
           windowDays: 90,
           gamingFlagsCaught: 2,
+          basis: "fleet",
         },
       },
     });
@@ -255,6 +275,35 @@ describe("ProofOfPowerStats", () => {
     expect(screen.getAllByRole("img", { name: "Trend over the last 8 weeks" })).toHaveLength(3);
   });
 
+  it("REGRESSION #9673: discloses a single-instance self-report rather than presenting it as fleet corroboration", async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      status: 200,
+      durationMs: 1,
+      data: {
+        ...PAYLOAD,
+        fleetAccuracy: {
+          ...PAYLOAD.fleetAccuracy,
+          accuracyPct: 92,
+          instanceCount: 1,
+          coveragePct: null,
+          basis: "single_instance_self_report",
+        },
+      },
+    });
+    renderWithClient(<ProofOfPowerStats />);
+    await screen.findByText("Decision accuracy");
+    // The number itself is still shown -- basis changes the label, never the figure.
+    expect(screen.getByText("92%")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "merge/close calls confirmed by outcome · self-reported by one self-hosted instance, not corroborated across operators",
+      ),
+    ).toBeTruthy();
+    // Never the fleet-count phrasing that would overclaim cross-operator corroboration.
+    expect(screen.queryByText(/1 self-hosted instance$/)).toBeNull();
+  });
+
   it("#9050: disambiguates the published guarantee's coverage as the AI-judged sub-population, with the backfilled-vs-live split", async () => {
     apiFetch.mockResolvedValue({
       ok: true,
@@ -268,6 +317,7 @@ describe("ProofOfPowerStats", () => {
           instanceCount: 3,
           windowDays: 90,
           gamingFlagsCaught: null, // #9068: below the fleet's own eligibility floor
+          basis: "fleet",
           guaranteed: {
             close: {
               alpha: 0.05,

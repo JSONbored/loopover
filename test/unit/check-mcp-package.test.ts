@@ -22,6 +22,7 @@ function runChecker(env: Record<string, string | undefined> = {}): { status: num
 // A complete, valid MCP tarball: a bin, shipped lib modules, the preview scripts, and the package metadata files.
 const FULL_PACKAGE = [
   "package.json",
+  "LICENSE",
   "README.md",
   "CHANGELOG.md",
   "LICENSE",
@@ -52,6 +53,15 @@ describe("check-mcp-package script", () => {
     expect(result.out).toContain("scripts/gittensor-score-preview.mjs");
   });
 
+  it("REGRESSION (#9786): rejects a package shipping no LICENSE", () => {
+    // Every checker ALLOWED this file and none asserted it, which is how @loopover/miner shipped
+    // AGPL-3.0-only with no license text at all. The absence of a license from a copyleft package is a
+    // licensing defect, not a packaging one, so it fails the pack check like any other missing artifact.
+    const result = runChecker({ CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "dist/bin/loopover-mcp.js"]) });
+    expect(result.status).toBe(1);
+    expect(result.out).toContain("Missing required file in MCP package: LICENSE");
+  });
+
   it("rejects a forbidden path", () => {
     const result = runChecker({ CHECK_MCP_PACK_TEST_FILES: JSON.stringify([".env"]) });
     expect(result.status).toBe(1);
@@ -66,7 +76,7 @@ describe("check-mcp-package script", () => {
 
   it("rejects an unexpected bin that matches the package name prefix", () => {
     const result = runChecker({
-      CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "dist/bin/loopover-mcp-backdoor.js"]),
+      CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "LICENSE", "dist/bin/loopover-mcp-backdoor.js"]),
       CHECK_MCP_PACK_TEST_CONTENT: "console.log('not secret');",
     });
     expect(result.status).toBe(1);
@@ -76,7 +86,7 @@ describe("check-mcp-package script", () => {
   it("rejects secret-like content", () => {
     const probe = ["PROBE", "_", "SECRET", "=", "value"].join("");
     const result = runChecker({
-      CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "dist/bin/loopover-mcp.js"]),
+      CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "LICENSE", "dist/bin/loopover-mcp.js"]),
       CHECK_MCP_PACK_TEST_CONTENT: probe,
     });
     expect(result.status).toBe(1);
@@ -85,7 +95,7 @@ describe("check-mcp-package script", () => {
 
   it("rejects stale public-package wording in README.md", () => {
     const result = runChecker({
-      CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "README.md"]),
+      CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "LICENSE", "README.md"]),
       CHECK_MCP_PACK_TEST_CONTENT: "Join the private beta today!",
     });
     expect(result.status).toBe(1);
@@ -95,7 +105,7 @@ describe("check-mcp-package script", () => {
   it("only scopes the stale-wording check to README.md, not other allowlisted files", () => {
     // The same stale phrase in a non-README file (here CHANGELOG.md) is accepted — the guard is README-only.
     const result = runChecker({
-      CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "CHANGELOG.md"]),
+      CHECK_MCP_PACK_TEST_FILES: JSON.stringify(["package.json", "LICENSE", "CHANGELOG.md"]),
       CHECK_MCP_PACK_TEST_CONTENT: "Historic note: was once a private beta.",
     });
     expect(result.status).toBe(0);

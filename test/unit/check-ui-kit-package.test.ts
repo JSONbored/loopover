@@ -38,6 +38,15 @@ describe("check-ui-kit-package script", () => {
     expect(result.out).toMatch(/^ui-kit package dry-run ok: 12 files\.\n$/);
   });
 
+  it("REGRESSION (#9786): rejects a package shipping no LICENSE", () => {
+    // Every checker ALLOWED this file and none asserted it, which is how @loopover/miner shipped
+    // AGPL-3.0-only with no license text at all. The absence of a license from a copyleft package is a
+    // licensing defect, not a packaging one, so it fails the pack check like any other missing artifact.
+    const result = runChecker({ CHECK_UI_KIT_PACK_TEST_FILES: JSON.stringify(["package.json", "README.md", "CHANGELOG.md", "src/theme.css", "dist/utils.js", "dist/utils.d.ts", "dist/components/button.js", "dist/components/button.d.ts"]) });
+    expect(result.status).toBe(1);
+    expect(result.out).toContain("ui-kit package is missing required file: LICENSE");
+  });
+
   it("rejects a forbidden path", () => {
     const result = runChecker({ CHECK_UI_KIT_PACK_TEST_FILES: JSON.stringify([".env"]) });
     expect(result.status).toBe(1);
@@ -67,7 +76,7 @@ describe("check-ui-kit-package script", () => {
 
   it("rejects a package with no dist/components/*.js artifacts at all", () => {
     const result = runChecker({
-      CHECK_UI_KIT_PACK_TEST_FILES: JSON.stringify(["package.json", "README.md", "CHANGELOG.md", "src/theme.css", "dist/utils.js", "dist/utils.d.ts"]),
+      CHECK_UI_KIT_PACK_TEST_FILES: JSON.stringify(["package.json", "README.md", "CHANGELOG.md", "LICENSE", "src/theme.css", "dist/utils.js", "dist/utils.d.ts"]),
       CHECK_UI_KIT_PACK_TEST_CONTENT: "public docs, nothing secret",
     });
     expect(result.status).toBe(1);

@@ -163,15 +163,16 @@ function parseSimpleFrontmatter(source: string): Record<string, string> {
       }
       fields[key] = block.join(inline.startsWith(">") ? " " : "\n").trim();
     } else if (inline === "") {
-      // Block/flow sequence (or nested map) on the following indented lines: gather each `- item` so a
-      // scalar-only field authored as a YAML sequence is still captured, matching duplicates.ts's parser
-      // (#8016; this branch existed only there, so such a field was invisible to the source-evidence gate).
+      // Block/flow sequence (or nested map) on the following lines: an INDENTED line, or a ZERO-INDENT
+      // block-sequence item (`- x`), which js-yaml/gray-matter accept and the old indent-only loop dropped
+      // (#9664). A blank line or the next top-level `key:` (neither indented nor `-`) ends the value. Kept
+      // byte-equivalent to duplicates.ts's parser (#8016; this branch existed only there originally).
       const items: string[] = [];
       // `lines[i]` is bounded by the `i < lines.length` loop guard; the `?? ""` is an unreachable
       // noUncheckedIndexedAccess fallback (same guard as the block-scalar loop above).
       /* v8 ignore next */
-      while (i < lines.length && /^\s/.test(lines[i] ?? "") && (lines[i] ?? "").trim() !== "") {
-        // `lines[i]` reuses the same in-bounds index already validated by `/^\s/.test` above; `?? ""`
+      while (i < lines.length && (lines[i] ?? "").trim() !== "" && (/^\s/.test(lines[i] ?? "") || /^-/.test(lines[i] ?? ""))) {
+        // `lines[i]` reuses the same in-bounds index already validated by the guard above; `?? ""`
         // cannot fire (unreachable noUncheckedIndexedAccess fallback).
         /* v8 ignore next */
         items.push((lines[i] ?? "").replace(/^\s*-\s*/, "").trim());

@@ -99,10 +99,12 @@ export function parseSimpleFrontmatter(source: string): Record<string, string> {
       }
       fields[key] = block.join(inline.startsWith(">") ? " " : "\n").trim();
     } else if (inline === "") {
-      // Block/flow sequence or nested map on the following indented lines.
+      // Block/flow sequence or nested map on the following lines: an INDENTED line, or a ZERO-INDENT
+      // block-sequence item (`- x`), which js-yaml/gray-matter accept and the old indent-only loop dropped
+      // (#9664). A blank line or the next top-level `key:` (neither indented nor `-`) ends the value.
       const items: string[] = [];
-      /* v8 ignore next -- noUncheckedIndexedAccess fallback: the second lines[i] reuses the same in-bounds index already validated by /^\s/.test above */
-      while (i < lines.length && /^\s/.test(lines[i] ?? "") && (lines[i] ?? "").trim() !== "") {
+      /* v8 ignore next -- noUncheckedIndexedAccess fallback: the second/third lines[i] reuse the same in-bounds index already validated by the guard above */
+      while (i < lines.length && (lines[i] ?? "").trim() !== "" && (/^\s/.test(lines[i] ?? "") || /^-/.test(lines[i] ?? ""))) {
         /* v8 ignore next -- noUncheckedIndexedAccess fallback: loop guard keeps i in bounds; split() elements are always strings */
         items.push((lines[i] ?? "").replace(/^\s*-\s*/, "").trim());
         i += 1;
@@ -147,8 +149,10 @@ export function findDuplicateFrontmatterKeys(source: string): string[] {
       /* v8 ignore next -- noUncheckedIndexedAccess fallback: i < lines.length guards the index; split() elements are always strings */
       while (i < lines.length && ((lines[i] ?? "").trim() === "" || /^\s/.test(lines[i] ?? ""))) i += 1;
     } else if (inline === "") {
-      /* v8 ignore next -- noUncheckedIndexedAccess fallback: the second lines[i] reuses the same in-bounds index already validated by /^\s/.test */
-      while (i < lines.length && /^\s/.test(lines[i] ?? "") && (lines[i] ?? "").trim() !== "") i += 1;
+      // Skip exactly what the parser's sequence branch consumes (indented lines OR a zero-indent `- item`),
+      // so a zero-indent sequence value is never mistaken for a duplicate top-level key (#9664).
+      /* v8 ignore next -- noUncheckedIndexedAccess fallback: the second/third lines[i] reuse the same in-bounds index already validated by the guard */
+      while (i < lines.length && (lines[i] ?? "").trim() !== "" && (/^\s/.test(lines[i] ?? "") || /^-/.test(lines[i] ?? ""))) i += 1;
     }
   }
   return [...dupes];

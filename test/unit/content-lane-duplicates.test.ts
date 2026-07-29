@@ -79,6 +79,20 @@ describe("parseSimpleFrontmatter", () => {
     expect(f.description).toBe("word one word two");
     expect(f.title).toBe("T");
   });
+
+  it("regression (#9664): captures a ZERO-INDENT block sequence, which js-yaml/gray-matter accept", () => {
+    const src = ["---", "author:", "- Alice", "downloadUrl:", "- https://good.example/x.zip", "---", "", "body"].join("\n");
+    expect(parseSimpleFrontmatter(src)).toEqual({ author: "Alice", downloadUrl: "https://good.example/x.zip" });
+  });
+
+  it("regression (#9664): a zero-indent sequence terminates at the next top-level key or a blank line, never swallowing them", () => {
+    const atKey = parseSimpleFrontmatter(["---", "tags:", "- one", "- two", "title: Real", "---", "", "b"].join("\n"));
+    expect(atKey.tags).toBe("one, two");
+    expect(atKey.title).toBe("Real"); // the following key is parsed, not absorbed into the sequence
+    const atBlank = parseSimpleFrontmatter(["---", "tags:", "- one", "", "title: Real2", "---", "", "b"].join("\n"));
+    expect(atBlank.tags).toBe("one"); // a blank line ends the sequence
+    expect(atBlank.title).toBe("Real2");
+  });
 });
 
 describe("findDuplicateFrontmatterKeys", () => {
@@ -97,6 +111,11 @@ describe("findDuplicateFrontmatterKeys", () => {
     expect(findDuplicateFrontmatterKeys(undefined as unknown as string)).toEqual([]);
     expect(findDuplicateFrontmatterKeys(0 as unknown as string)).toEqual([]);
   });
+
+  it("regression (#9664): a zero-indent sequence value is not mistaken for a duplicate top-level key", () => {
+    const src = ["---", "author:", "- Alice", "downloadUrl:", "- https://good.example/x.zip", "---", "", "body"].join("\n");
+    expect(findDuplicateFrontmatterKeys(src)).toEqual([]);
+  });
 });
 
 describe("protectedFrontmatterChanges", () => {
@@ -110,6 +129,14 @@ describe("protectedFrontmatterChanges", () => {
     const before = mdx({ title: "T", slug: "a", githubUrl: "https://github.com/old/x" });
     const after = mdx({ title: "T", slug: "a", githubUrl: "https://github.com/new/x" });
     expect(protectedFrontmatterChanges(before, after)).toEqual([]);
+  });
+
+  it("regression (#9664): flags a protected field whose value is authored as a zero-indent sequence", () => {
+    // Before the fix both sides parsed author to "" (the zero-indent item was dropped), so a real edit to a
+    // protected field written as a block sequence slipped past the protected-edit gate unnoticed.
+    const before = ["---", "title: T", "slug: a", "author:", "- Alice", "---", "", "b"].join("\n");
+    const after = ["---", "title: T", "slug: a", "author:", "- Eve", "---", "", "b"].join("\n");
+    expect(protectedFrontmatterChanges(before, after)).toEqual(["author"]);
   });
 
   it("is scalar-style insensitive (quoted vs unquoted same value → no change)", () => {

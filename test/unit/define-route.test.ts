@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { Hono } from "hono";
 import { OpenAPIRegistry, OpenApiGeneratorV3 } from "@asteasolutions/zod-to-openapi";
 import { z } from "zod";
-import { defineRoute, invalidRequestBody, registerRouteSpec } from "../../src/openapi/define-route";
+import { defineRoute, invalidRequestBody, registerRouteSpec, type RouteSpecOptions } from "../../src/openapi/define-route";
 
 type TestEnv = { Bindings: Record<string, unknown>; Variables: Record<string, unknown> };
 
@@ -172,6 +172,22 @@ describe("defineRoute", () => {
     }
   });
 
+  it("gives the ORB ingress its OWN schemes rather than the LoopOver pair", () => {
+    // The two auth levels that are not a LoopOver credential at all: an ORB-issued instance token, and a
+    // webhook that carries no bearer and is verified by a body signature. Publishing the generic pair for
+    // either would tell a client to send something the route does not accept.
+    const { app, registry } = build();
+    for (const [auth, path, id] of [
+      ["orb", "/v1/orb/relay", "orbOp"],
+      ["webhook", "/v1/orb/webhook", "webhookOp"],
+    ] as const) {
+      defineRoute(app, registry, { method: "post", path, operationId: id, tags: ["t"], summary: "s", auth, responses: { 200: { description: "ok" } } }, (c) => c.json({}));
+    }
+    const paths = generate(registry).paths ?? {};
+    expect(paths["/v1/orb/relay"]?.post?.security).toEqual([{ OrbBearer: [] }]);
+    expect(paths["/v1/orb/webhook"]?.post?.security).toEqual([{ OrbWebhookSignature: [] }]);
+  });
+
   it("emits responses with and without a schema", () => {
     const { app, registry } = build();
     defineRoute(app, registry, {
@@ -206,6 +222,58 @@ describe("registerRouteSpec", () => {
     const operation = generate(registry).paths?.["/v1/spec-only/{id}"]?.post;
     expect(operation?.operationId).toBe("specOnly");
     expect(operation?.requestBody).toBeDefined();
+    // #9705: and its path parameter, which the duplicate `request` key used to erase. This route declares
+    // both a templated segment and a body, so before the fix `parameters` was absent entirely.
+    expect(operation?.parameters).toContainEqual(expect.objectContaining({ in: "path", name: "id", required: true }));
+  });
+
+  // #9705 regression suite. The defect was that a route carrying a templated path AND any request
+  // declaration published no `parameters` array -- silently, because the duplicate key arrived via a
+  // spread and TypeScript does not flag that. Each case below fails on the pre-fix emitter.
+  function specOnlyOperation(request: RouteSpecOptions["request"]) {
+    const registry = new OpenAPIRegistry();
+    registerRouteSpec(registry, {
+      method: "post",
+      path: "/v1/repos/:owner/:repo/thing",
+      operationId: "repoThing",
+      tags: ["ops"],
+      summary: "Repo thing",
+      auth: "token",
+      ...(request ? { request } : {}),
+      responses: { 202: { description: "accepted" } },
+    });
+    return generate(registry).paths?.["/v1/repos/{owner}/{repo}/thing"]?.post;
+  }
+
+  function pathParameterNames(operation: ReturnType<typeof specOnlyOperation>): string[] {
+    return (operation?.parameters ?? []).filter((parameter) => "in" in parameter && parameter.in === "path").map((parameter) => ("name" in parameter ? parameter.name : ""));
+  }
+
+  it("keeps every path parameter alongside a request BODY", () => {
+    const operation = specOnlyOperation({ body: z.object({ a: z.string() }) });
+    expect(pathParameterNames(operation)).toEqual(["owner", "repo"]);
+    expect(operation?.requestBody).toBeDefined();
+  });
+
+  it("keeps every path parameter alongside a QUERY schema", () => {
+    const operation = specOnlyOperation({ query: z.object({ since: z.string() }) });
+    expect(pathParameterNames(operation)).toEqual(["owner", "repo"]);
+    expect(operation?.parameters).toContainEqual(expect.objectContaining({ in: "query", name: "since" }));
+  });
+
+  it("keeps path parameters, the body, and the query together in ONE operation", () => {
+    const operation = specOnlyOperation({ body: z.object({ a: z.string() }), query: z.object({ since: z.string() }) });
+    expect(pathParameterNames(operation)).toEqual(["owner", "repo"]);
+    expect(operation?.parameters).toContainEqual(expect.objectContaining({ in: "query", name: "since" }));
+    expect(operation?.requestBody).toBeDefined();
+  });
+
+  it("still emits path parameters for a route that declares no request at all", () => {
+    // The unchanged arm: every production entry today is response-only, and their operations must be
+    // byte-for-byte what they were.
+    const operation = specOnlyOperation(undefined);
+    expect(pathParameterNames(operation)).toEqual(["owner", "repo"]);
+    expect(operation?.requestBody).toBeUndefined();
   });
 });
 

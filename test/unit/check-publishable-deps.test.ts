@@ -128,17 +128,36 @@ describe("publishedPackageNames (#9749)", () => {
     expect([...names]).toEqual(["@loopover/mcp"]);
   });
 
-  it("INVARIANT: every real publish workflow in this repo yields exactly one package", async () => {
-    // Guards the assumption the hardening rests on. If a future workflow packs two packages, or none, this
-    // fails here rather than silently changing what the check considers published.
+  it("INVARIANT: every real publish workflow yields at most one package, and only the npm ones yield any", async () => {
+    // Guards the assumption the hardening rests on: a publish workflow packs precisely the one package it
+    // publishes. Two ways that can rot, both caught here rather than by silently changing what the check
+    // considers published:
+    //   - a workflow packing TWO packages (the pack line stops being a unique signal), or
+    //   - a workflow that SHOULD pack but no longer matches (a reformatted pack line), which would quietly
+    //     drop a real package out of the published set and take its dependency violations with it.
+    // publish-mcp-registry.yml legitimately yields zero: it publishes to the MCP *registry*, not to npm, so
+    // it packs no tarball. It is named explicitly so that a NEW zero-yield workflow fails instead of being
+    // waved through as "probably another registry one".
     const { readdirSync, readFileSync } = await import("node:fs");
     const dir = ".github/workflows";
     const files = readdirSync(dir)
       .filter((name) => /^publish-.+\.ya?ml$/.test(name))
       .map((name) => ({ name, text: readFileSync(`${dir}/${name}`, "utf8") }));
     expect(files.length).toBeGreaterThan(0);
-    for (const file of files) {
-      expect({ file: file.name, packed: publishedPackageNames([file]).size }).toEqual({ file: file.name, packed: 1 });
+
+    const packed = files.map((file) => ({ file: file.name, packages: [...publishedPackageNames([file])] }));
+    for (const entry of packed) {
+      expect({ file: entry.file, count: entry.packages.length }).toEqual({ file: entry.file, count: entry.packages.length > 0 ? 1 : 0 });
+      expect(entry.packages.length).toBeLessThanOrEqual(1);
     }
+    expect(packed.filter((entry) => entry.packages.length === 0).map((entry) => entry.file)).toEqual(["publish-mcp-registry.yml"]);
+    // And the npm-publishing set is exactly the workspace packages that are actually on npm.
+    expect(packed.flatMap((entry) => entry.packages).sort()).toEqual([
+      "@loopover/contract",
+      "@loopover/engine",
+      "@loopover/mcp",
+      "@loopover/miner",
+      "@loopover/ui-kit",
+    ]);
   });
 });

@@ -44,6 +44,18 @@ export const MCP_TELEMETRY_SURFACES = ["remote", "stdio", "miner"] as const;
 export type McpTelemetrySurface = (typeof MCP_TELEMETRY_SURFACES)[number];
 
 /**
+ * HOW the answering server executed the call (#9526).
+ *
+ * Orthogonal to `surface`, which says which server was asked. Since the stdio gateway mounts the remote
+ * tool set, one `surface: "stdio"` call may have run against the local checkout or been forwarded to the
+ * hosted server, and those are different products from an adoption standpoint: gateway uptake is exactly
+ * the count of `stdio` + `proxied`, and it is unmeasurable without this dimension because the tool name
+ * alone does not say which path a given release took.
+ */
+export const MCP_TELEMETRY_TRANSPORTS = ["local", "proxied"] as const;
+export type McpTelemetryTransport = (typeof MCP_TELEMETRY_TRANSPORTS)[number];
+
+/**
  * The COMPLETE set of property keys any MCP telemetry event may carry.
  *
  * Single-sourced so the meta-test can assert no payload key exists outside it. The check is worth
@@ -54,6 +66,7 @@ export const MCP_TELEMETRY_PROPERTY_KEYS = [
   "tool",
   "category",
   "surface",
+  "transport",
   "ok",
   "duration_ms",
   "error_code",
@@ -68,6 +81,10 @@ export const McpToolCallTelemetry = z.object({
   tool: z.string().min(1),
   category: z.string().min(1),
   surface: z.enum(MCP_TELEMETRY_SURFACES),
+  // Optional at the seam, never optional on the wire: a sink that has no notion of proxying (the Worker
+  // and the miner both execute everything themselves) should not have to say so, but a breakdown by
+  // transport still needs both buckets populated, so buildUsageEventProperties defaults it.
+  transport: z.enum(MCP_TELEMETRY_TRANSPORTS).optional(),
   ok: z.boolean(),
   durationMs: z.number().int().min(0),
   errorCode: z.enum(MCP_TELEMETRY_ERROR_CODES).optional(),
@@ -85,6 +102,7 @@ export function buildUsageEventProperties(call: McpToolCallTelemetry): Record<st
     tool: call.tool,
     category: call.category,
     surface: call.surface,
+    transport: call.transport ?? "local",
     ok: call.ok,
     duration_ms: call.durationMs,
     ...(call.errorCode ? { error_code: call.errorCode } : {}),
@@ -228,6 +246,7 @@ export function buildMcpToolSpanAttributes(call: McpToolCallTelemetry): Record<s
     tool: call.tool,
     category: call.category,
     surface: call.surface,
+    transport: call.transport ?? "local",
     ok: call.ok,
     duration_ms: call.durationMs,
     ...(call.errorCode ? { error_code: call.errorCode } : {}),

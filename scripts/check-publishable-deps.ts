@@ -95,7 +95,11 @@ export function findPublishableDepViolations(
  * `npm run build --workspace @loopover/engine`), and treating those as published would silently mark a
  * package releasable because something else happens to build it -- masking exactly the violation this
  * check exists to catch. The pack line is the definitive signal: a publish workflow packs precisely the
- * one package it publishes, and every workflow in this repo has exactly one.
+ * one package it publishes.
+ *
+ * A `publish-*.yml` that packs NOTHING contributes nothing, which is also correct rather than merely safe:
+ * publish-mcp-registry.yml publishes to the MCP registry, not to npm, so no npm package becomes installable
+ * because it ran.
  *
  * A publish workflow with no recognizable pack line contributes NOTHING rather than falling back to a
  * looser match -- an unreadable workflow should make the check stricter, never quietly more permissive.

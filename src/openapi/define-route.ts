@@ -149,7 +149,21 @@ export function defineRoute<
 /** Spec-side view of a route definition: the same fields, with the request schemas widened, since
  *  emitting the document never needs the parsed types the handler does. */
 export type RouteSpecOptions = Omit<DefineRouteOptions<z.ZodTypeAny | undefined, z.ZodObject | undefined>, "request"> & {
-  request?: { body?: z.ZodTypeAny | undefined; query?: z.ZodObject | undefined } | undefined;
+  request?:
+    | {
+        body?: z.ZodTypeAny | undefined;
+        query?: z.ZodObject | undefined;
+        /**
+         * Narrower path parameters than the derived `z.string()` ones (#9707).
+         *
+         * Spec-only, and rare on purpose: the whole point of deriving parameters from the path is that
+         * nobody has to declare them twice. This exists for the handful of routes whose segment is a
+         * closed set -- `/v1/internal/provider-credentials/:provider` is `claude-code | codex` -- where
+         * publishing a bare string would tell a generated client less than the route actually enforces.
+         */
+        params?: z.ZodObject | undefined;
+      }
+    | undefined;
 };
 
 /** The spec half, exported separately so a route that cannot yet move its handler through the seam
@@ -163,11 +177,20 @@ export function registerRouteSpec(registry: OpenAPIRegistry, options: RouteSpecO
   }
 
   const security = securityFor(options.auth);
+  // ONE `request` key, built once (#9705). This literal used to carry two: path parameters in the first,
+  // body and query in a conditional spread further down. A property arriving through a later spread
+  // replaces an earlier one of the same name -- and TypeScript does not flag it, because the duplicate is
+  // a spread rather than a literal duplicate key -- so any route with BOTH a templated segment and a body
+  // or query published no `parameters` at all. That is precisely what pathParameters() exists to prevent:
+  // a templated segment with no matching parameter is a schema-validation warning and leaves a generated
+  // client holding a URL it cannot fill. Latent only because no caller passed `request` yet; the first
+  // migrated POST /v1/repos/:owner/:repo/... would have lost owner and repo silently.
   registry.registerPath({
     method: options.method,
     path: toSpecPath(options.path),
     request: {
-      ...(pathParameters(options.path) ?? {}),
+      // A declared `params` wins over the derived one -- same parameters, a narrower schema.
+      ...(options.request?.params ? { params: options.request.params } : (pathParameters(options.path) ?? {})),
       ...(options.request?.body ? { body: { content: { "application/json": { schema: options.request.body } } } } : {}),
       ...(options.request?.query ? { query: options.request.query } : {}),
     },
@@ -176,14 +199,6 @@ export function registerRouteSpec(registry: OpenAPIRegistry, options: RouteSpecO
     summary: options.summary,
     ...(options.description ? { description: options.description } : {}),
     ...(security ? { security } : {}),
-    ...(options.request?.body || options.request?.query
-      ? {
-          request: {
-            ...(options.request.body ? { body: { content: { "application/json": { schema: options.request.body } } } } : {}),
-            ...(options.request.query ? { query: options.request.query } : {}),
-          },
-        }
-      : {}),
     responses,
   });
 }

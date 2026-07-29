@@ -240,6 +240,24 @@ describe("MCP contract validator (#9520)", () => {
     }
   }, 180_000);
 
+  it("REGRESSION: one tool name has ONE locality, which is what makes gateway collisions impossible", () => {
+    // #9526's gateway mounts every `remote` tool onto the stdio server, which serves the `local-git` ones.
+    // That is only safe because a NAME belongs to exactly one entry in the one registry — the same name
+    // registered at both localities would mean the gateway tries to register a tool the stdio server
+    // already has, and the SDK throws on a duplicate. The registry structurally prevents it (one entry per
+    // name); this asserts nothing has introduced a second.
+    const byName = new Map<string, string[]>();
+    for (const tool of listToolDefinitions()) {
+      byName.set(tool.name, [...(byName.get(tool.name) ?? []), tool.locality]);
+    }
+    const ambiguous = [...byName.entries()].filter(([, localities]) => new Set(localities).size > 1);
+    expect(ambiguous.map(([name]) => name)).toEqual([]);
+
+    // And no name is declared twice at all, whatever its locality.
+    const duplicated = [...byName.entries()].filter(([, localities]) => localities.length > 1);
+    expect(duplicated.map(([name]) => name)).toEqual([]);
+  });
+
   it("locks the published MCP version across the three places it appears", () => {
     const packageVersion = (JSON.parse(readFileSync(join(process.cwd(), "packages/loopover-mcp/package.json"), "utf8")) as { version: string }).version;
     expect(

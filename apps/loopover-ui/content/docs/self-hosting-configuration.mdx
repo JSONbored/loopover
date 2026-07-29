@@ -513,6 +513,68 @@ Lets LoopOver open a pull request that refreshes this repo's own `AGENTS.md`/`CL
   ]}
 />
 
+## Decision-ledger anchoring (optional)
+
+Your instance keeps a hash-chained ledger of every verdict it persists. That chain is **tamper-evident**
+on its own — anyone can walk it and locate an edit. Anchoring makes it **tamper-proof against you**: a
+scheduled job publishes a signed checkpoint of the chain's tip to places you do not control (a Sigstore
+Rekor transparency log, and a git commit that GH Archive and Software Heritage mirror), so rewriting
+history back past a published checkpoint would also require forging a signature or fabricating matching
+evidence at an external mirror.
+
+**This is a self-host capability, and only a self-host one.** Hosted review execution is retired, so
+`api.loopover.ai` never decides anything and has no chain of its own to anchor — its ledger endpoints
+answer for an empty chain and say so (`status: "empty_ledger"`). The chain that matters is the one *your*
+instance wrote, so anchoring runs where the decisions were made.
+
+Anchoring is **off until you provision a signing key**, and stays silent-but-visible until then: the public
+anchors endpoint reports `status: "unconfigured"` rather than an empty list that could be mistaken for a
+healthy idle instance.
+
+### 1. Generate the keypair
+
+```bash
+npm run ledger:anchor-keygen
+```
+
+Prints both halves already in the encodings the runtime expects, with the key id derived from the public
+half so the two cannot drift apart. It writes nothing to disk — the private key exists only in that output,
+so run it on a machine you trust and paste straight into your secret store.
+
+### 2. Provision both halves
+
+| Variable | Secret? | What it is |
+| --- | --- | --- |
+| `LOOPOVER_LEDGER_ANCHOR_KEYS` | No — publish it | The JSON array of published public keys. Served verbatim by `/v1/public/decision-ledger/anchor-key`, which is how a third party verifies your anchors. |
+| `LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY` | **Yes** | PKCS8 PEM. Treat it like any other credential: `wrangler secret put`, a compose secret, or a vault entry — never a committed file. |
+
+Optional, for the git-commit backend (Rekor needs no credentials and uses its public shard by default):
+
+| Variable | What it is |
+| --- | --- |
+| `LOOPOVER_LEDGER_ANCHOR_GIT_OWNER` / `_REPO` | The repo checkpoints are appended to. A dedicated, public, otherwise-empty repo is the intended shape. |
+| `LOOPOVER_LEDGER_ANCHOR_GIT_BRANCH` / `_PATH` | Default `main` / `anchors.jsonl`. |
+| `LOOPOVER_LEDGER_ANCHOR_GIT_INSTALLATION_ID` | The GitHub App installation used to commit. Unset means the git backend simply does not run; Rekor is unaffected. |
+
+### 3. Confirm it is live
+
+```bash
+curl -s "$ORB/v1/public/decision-ledger/anchors?limit=1" | jq '{status, anchor: .anchors[0]}'
+```
+
+`status` distinguishes the states that used to be indistinguishable:
+
+- `anchored` — checkpoints are publishing; the newest one is in `anchor`.
+- `pending` — key provisioned and a ledger exists; the first checkpoint is due (hourly, or every 256 rows).
+- `empty_ledger` — nothing has been decided yet. Expected on a fresh instance.
+- `unconfigured` — no signing key. Anchoring is not running.
+
+### Rotating the key
+
+Keep the retired entry in `LOOPOVER_LEDGER_ANCHOR_KEYS` with its `notAfter` set to the rotation instant,
+and append the new one. **A retired key is never removed, only closed** — anchors signed under it must stay
+verifiable forever, and a verifier checking a two-year-old checkpoint needs the key it was signed with.
+
 ## Next steps
 
 Configure the GitHub integration in [GitHub App and Orb](/docs/self-hosting-github-app), then add optional context through [AI providers](/docs/self-hosting-ai-providers), [REES](/docs/self-hosting-rees), or [RAG](/docs/self-hosting-rag). For the full gate-mode and per-repo settings reference — including the AI-review combine modes and a complete worked manifest — see [Tuning your reviews](/docs/tuning).

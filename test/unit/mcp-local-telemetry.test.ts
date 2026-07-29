@@ -361,6 +361,42 @@ describe("recordStdioToolTelemetry / wrapStdioToolHandler (#8690)", () => {
     expect(h.captureExceptionSpy).toHaveBeenCalledOnce();
   });
 
+  // #9526: gateway adoption is measurable only if a proxied call is distinguishable from a local one on the
+  // wire. `surface` says which server was asked; only `transport` says which path the call actually took.
+  it("wrapStdioToolHandler tags a PROXIED call so gateway adoption is measurable", async () => {
+    vi.stubEnv("LOOPOVER_MCP_POSTHOG_API_KEY", "phc_test");
+    const wrapped = wrapStdioToolHandler("loopover_lint_pr_text", () => true, async () => ({ structuredContent: { ok: true } }), "proxied");
+    await wrapped({});
+
+    const usage = h.captureSpy.mock.calls.map((entry) => entry[0] as CapturedMessage).find((message) => message.event === "usage_event")!;
+    expect(usage.properties).toMatchObject({ surface: "stdio", transport: "proxied" });
+  });
+
+  it("wrapStdioToolHandler tags a local call `local` without the caller saying so", async () => {
+    vi.stubEnv("LOOPOVER_MCP_POSTHOG_API_KEY", "phc_test");
+    const wrapped = wrapStdioToolHandler("loopover_lint_pr_text", () => true, async () => ({ structuredContent: { ok: true } }));
+    await wrapped({});
+
+    const usage = h.captureSpy.mock.calls.map((entry) => entry[0] as CapturedMessage).find((message) => message.event === "usage_event")!;
+    expect(usage.properties).toMatchObject({ transport: "local" });
+  });
+
+  it("carries the transport through the THROW path too — a failed proxy is still a proxied call", async () => {
+    vi.stubEnv("LOOPOVER_MCP_POSTHOG_API_KEY", "phc_test");
+    const wrapped = wrapStdioToolHandler(
+      "loopover_lint_pr_text",
+      () => true,
+      async () => {
+        throw new Error("the remote refused");
+      },
+      "proxied",
+    );
+    await expect(wrapped({})).rejects.toThrow("the remote refused");
+
+    const usage = h.captureSpy.mock.calls.map((entry) => entry[0] as CapturedMessage).find((message) => message.event === "usage_event")!;
+    expect(usage.properties).toMatchObject({ ok: false, transport: "proxied" });
+  });
+
   it("wrapStdioToolHandler is a no-op for PostHog when telemetry is disabled", async () => {
     vi.stubEnv("LOOPOVER_MCP_POSTHOG_API_KEY", "phc_test");
     const wrapped = wrapStdioToolHandler("loopover_demo", () => false, async () => ({ ok: true }));

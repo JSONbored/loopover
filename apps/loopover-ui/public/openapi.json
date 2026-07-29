@@ -16718,8 +16718,8 @@
       "OrbWebhookSignature": {
         "type": "apiKey",
         "in": "header",
-        "name": "x-loopover-signature",
-        "description": "HMAC signature over the raw request body, verified against the instance's shared secret. The webhook carries no bearer token."
+        "name": "x-hub-signature-256",
+        "description": "GitHub-style HMAC-SHA256 signature over the raw request body, verified against the receiving app's own webhook secret. A webhook delivery carries no bearer token."
       }
     }
   },
@@ -20701,6 +20701,11 @@
         "operationId": "postGithubWebhook",
         "tags": [
           "Webhooks"
+        ],
+        "security": [
+          {
+            "OrbWebhookSignature": []
+          }
         ]
       }
     },
@@ -20977,7 +20982,8 @@
         "operationId": "postAuthGithubDeviceStart",
         "tags": [
           "Auth"
-        ]
+        ],
+        "security": []
       }
     },
     "/v1/auth/github/device/poll": {
@@ -21003,7 +21009,8 @@
         "operationId": "postAuthGithubDevicePoll",
         "tags": [
           "Auth"
-        ]
+        ],
+        "security": []
       }
     },
     "/v1/auth/github/session": {
@@ -21029,7 +21036,8 @@
         "operationId": "postAuthGithubSession",
         "tags": [
           "Auth"
-        ]
+        ],
+        "security": []
       }
     },
     "/v1/auth/logout": {
@@ -21055,7 +21063,8 @@
         "operationId": "postAuthLogout",
         "tags": [
           "Auth"
-        ]
+        ],
+        "security": []
       }
     },
     "/v1/auth/session": {
@@ -22070,6 +22079,9 @@
           "202": {
             "description": "Job queued"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -22093,6 +22105,9 @@
           "202": {
             "description": "Job queued"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -22115,6 +22130,9 @@
         "responses": {
           "202": {
             "description": "Job queued"
+          },
+          "400": {
+            "description": "Malformed job request"
           },
           "401": {
             "description": "Invalid internal token"
@@ -22203,18 +22221,24 @@
     },
     "/v1/internal/jobs/build-contributor-evidence": {
       "post": {
-        "summary": "Queue a contributor evidence build job",
+        "summary": "Queue a job to build contributor evidence",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
           }
         },
-        "operationId": "postInternalJobsBuildContributorEvidence",
+        "operationId": "queueBuildContributorEvidenceJob",
         "tags": [
-          "Internal"
+          "Internal",
+          "Jobs"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -22243,18 +22267,24 @@
     },
     "/v1/internal/jobs/build-burden-forecasts": {
       "post": {
-        "summary": "Queue a burden forecast build job",
+        "summary": "Queue a job to build burden forecasts",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
           }
         },
-        "operationId": "postInternalJobsBuildBurdenForecasts",
+        "operationId": "queueBuildBurdenForecastsJob",
         "tags": [
-          "Internal"
+          "Internal",
+          "Jobs"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -22306,18 +22336,24 @@
     },
     "/v1/internal/jobs/repair-data-fidelity": {
       "post": {
-        "summary": "Queue a data fidelity repair job",
+        "summary": "Queue a job to repair data fidelity",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
           }
         },
-        "operationId": "postInternalJobsRepairDataFidelity",
+        "operationId": "queueRepairDataFidelityJob",
         "tags": [
-          "Internal"
+          "Internal",
+          "Jobs"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -22335,6 +22371,11 @@
         "operationId": "postInternalBountiesImport",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -23549,6 +23590,11 @@
         "operationId": "getInternalProviderCredentialsByProvider",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       },
       "post": {
@@ -23567,23 +23613,6 @@
             "in": "path"
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "credential": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "credential"
-                ]
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Credential stored. Returns the secret-free status.",
@@ -23611,6 +23640,11 @@
         "operationId": "postInternalProviderCredentialsByProvider",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       },
       "delete": {
@@ -23661,6 +23695,11 @@
         "operationId": "deleteInternalProviderCredentialsByProvider",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -24999,6 +25038,9 @@
           "200": {
             "description": "Job ran inline and returned its result"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -25022,6 +25064,9 @@
           "202": {
             "description": "Job queued"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -25044,6 +25089,9 @@
         "responses": {
           "200": {
             "description": "Job ran inline and returned its result"
+          },
+          "400": {
+            "description": "Malformed job request"
           },
           "401": {
             "description": "Invalid internal token"
@@ -25114,6 +25162,9 @@
           "200": {
             "description": "Job ran inline and returned its result"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -25160,6 +25211,9 @@
           "200": {
             "description": "Job ran inline and returned its result"
           },
+          "400": {
+            "description": "Malformed job request"
+          },
           "401": {
             "description": "Invalid internal token"
           }
@@ -25182,6 +25236,9 @@
         "responses": {
           "200": {
             "description": "Job ran inline and returned its result"
+          },
+          "400": {
+            "description": "Malformed job request"
           },
           "401": {
             "description": "Invalid internal token"
@@ -25288,21 +25345,21 @@
           "Internal",
           "Jobs"
         ],
-        "summary": "Run the job to index repository content for retrieval",
+        "summary": "Queue a job to index repository content for retrieval",
         "security": [
           {
             "LoopOverBearer": []
           }
         ],
         "responses": {
-          "200": {
-            "description": "Job ran inline and returned its result"
-          },
-          "400": {
-            "description": "Malformed job request"
+          "202": {
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
+          },
+          "404": {
+            "description": "Retrieval is not enabled on this deployment"
           }
         }
       }
@@ -25314,21 +25371,24 @@
           "Internal",
           "Jobs"
         ],
-        "summary": "Run the job to re-run the gate for one pull request",
+        "summary": "Queue a job to re-run the gate for one pull request",
         "security": [
           {
             "LoopOverBearer": []
           }
         ],
         "responses": {
-          "200": {
-            "description": "Job ran inline and returned its result"
+          "202": {
+            "description": "Job queued"
           },
           "400": {
             "description": "Malformed job request"
           },
           "401": {
             "description": "Invalid internal token"
+          },
+          "404": {
+            "description": "The repository is not installed"
           }
         }
       }
@@ -26297,7 +26357,12 @@
           "422": {
             "description": "Authenticated but unverifiable: unknown_key, bad_signature, row_not_found, or row_hash_mismatch — an `ok` report must verify against a published key AND match the live chain row"
           }
-        }
+        },
+        "security": [
+          {
+            "OrbBearer": []
+          }
+        ]
       }
     },
     "/v1/public/repos/{owner}/{repo}/proof": {
@@ -26372,6 +26437,457 @@
           },
           "503": {
             "description": "Same neutral SVG on an internal error"
+          }
+        }
+      }
+    },
+    "/.well-known/mcp.json": {
+      "get": {
+        "operationId": "getMcpServerCard",
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "MCP server card for this deployment",
+        "description": "Computed at request time from the tool contract registry, filtered to what this deployment serves. Carries a weak ETag; send `if-none-match` to get a 304 instead of the body.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "MCP server card for this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "deployment": {
+                      "type": "string",
+                      "enum": [
+                        "cloud",
+                        "selfhost"
+                      ]
+                    },
+                    "generated_at": {
+                      "type": "string"
+                    },
+                    "capabilities": {
+                      "type": "object",
+                      "properties": {
+                        "tools": {
+                          "type": "object",
+                          "properties": {
+                            "listChanged": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "listChanged"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "tools"
+                      ]
+                    },
+                    "remotes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "streamable-http"
+                            ]
+                          },
+                          "url": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "url"
+                        ]
+                      }
+                    },
+                    "tools": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "category": {
+                            "type": "string"
+                          },
+                          "annotations": {
+                            "type": "object",
+                            "properties": {
+                              "readOnlyHint": {
+                                "type": "boolean"
+                              },
+                              "destructiveHint": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "readOnlyHint",
+                              "destructiveHint"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "title",
+                          "description",
+                          "category",
+                          "annotations"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "version",
+                    "description",
+                    "deployment",
+                    "generated_at",
+                    "capabilities",
+                    "remotes",
+                    "tools"
+                  ]
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The caller's `if-none-match` already names this document"
+          }
+        }
+      }
+    },
+    "/.well-known/agent-tools/index.json": {
+      "get": {
+        "operationId": "getAgentToolsIndex",
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Neutral agent-tools catalog with both schemas per tool",
+        "description": "Computed at request time from the tool contract registry, filtered to what this deployment serves. Carries a weak ETag; send `if-none-match` to get a 304 instead of the body.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Neutral agent-tools catalog with both schemas per tool",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generated_at": {
+                      "type": "string"
+                    },
+                    "executor": {
+                      "type": "object",
+                      "properties": {
+                        "transport": {
+                          "type": "string",
+                          "enum": [
+                            "streamable-http"
+                          ]
+                        },
+                        "url": {
+                          "type": "string"
+                        },
+                        "method": {
+                          "type": "string",
+                          "enum": [
+                            "tools/call"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "transport",
+                        "url",
+                        "method"
+                      ]
+                    },
+                    "tools": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "category": {
+                            "type": "string"
+                          },
+                          "annotations": {
+                            "type": "object",
+                            "properties": {
+                              "readOnlyHint": {
+                                "type": "boolean"
+                              },
+                              "destructiveHint": {
+                                "type": "boolean"
+                              }
+                            },
+                            "required": [
+                              "readOnlyHint",
+                              "destructiveHint"
+                            ]
+                          },
+                          "input_schema": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": {
+                              "nullable": true
+                            },
+                            "description": "JSON Schema (draft 2020-12) for a tool's arguments or result."
+                          },
+                          "output_schema": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": {
+                              "nullable": true
+                            },
+                            "description": "JSON Schema (draft 2020-12) for a tool's arguments or result."
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "title",
+                          "description",
+                          "category",
+                          "annotations",
+                          "input_schema",
+                          "output_schema"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "generated_at",
+                    "executor",
+                    "tools"
+                  ]
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The caller's `if-none-match` already names this document"
+          }
+        }
+      }
+    },
+    "/.well-known/agent-tools/openai.json": {
+      "get": {
+        "operationId": "getAgentToolsOpenAi",
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Agent-tools catalog in OpenAI's function-tool shape",
+        "description": "Computed at request time from the tool contract registry, filtered to what this deployment serves. Carries a weak ETag; send `if-none-match` to get a 304 instead of the body.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Agent-tools catalog in OpenAI's function-tool shape",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generated_at": {
+                      "type": "string"
+                    },
+                    "executor": {
+                      "type": "object",
+                      "properties": {
+                        "transport": {
+                          "type": "string",
+                          "enum": [
+                            "streamable-http"
+                          ]
+                        },
+                        "url": {
+                          "type": "string"
+                        },
+                        "method": {
+                          "type": "string",
+                          "enum": [
+                            "tools/call"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "transport",
+                        "url",
+                        "method"
+                      ]
+                    },
+                    "tools": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "function"
+                            ]
+                          },
+                          "function": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "description": {
+                                "type": "string"
+                              },
+                              "parameters": {
+                                "type": "object",
+                                "properties": {},
+                                "additionalProperties": {
+                                  "nullable": true
+                                },
+                                "description": "JSON Schema (draft 2020-12) for a tool's arguments or result."
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "description",
+                              "parameters"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "type",
+                          "function"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "generated_at",
+                    "executor",
+                    "tools"
+                  ]
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The caller's `if-none-match` already names this document"
+          }
+        }
+      }
+    },
+    "/.well-known/agent-tools/anthropic.json": {
+      "get": {
+        "operationId": "getAgentToolsAnthropic",
+        "tags": [
+          "Discovery"
+        ],
+        "summary": "Agent-tools catalog in Anthropic's tool shape",
+        "description": "Computed at request time from the tool contract registry, filtered to what this deployment serves. Carries a weak ETag; send `if-none-match` to get a 304 instead of the body.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Agent-tools catalog in Anthropic's tool shape",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "generated_at": {
+                      "type": "string"
+                    },
+                    "executor": {
+                      "type": "object",
+                      "properties": {
+                        "transport": {
+                          "type": "string",
+                          "enum": [
+                            "streamable-http"
+                          ]
+                        },
+                        "url": {
+                          "type": "string"
+                        },
+                        "method": {
+                          "type": "string",
+                          "enum": [
+                            "tools/call"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "transport",
+                        "url",
+                        "method"
+                      ]
+                    },
+                    "tools": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "input_schema": {
+                            "type": "object",
+                            "properties": {},
+                            "additionalProperties": {
+                              "nullable": true
+                            },
+                            "description": "JSON Schema (draft 2020-12) for a tool's arguments or result."
+                          }
+                        },
+                        "required": [
+                          "name",
+                          "description",
+                          "input_schema"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "generated_at",
+                    "executor",
+                    "tools"
+                  ]
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "The caller's `if-none-match` already names this document"
           }
         }
       }

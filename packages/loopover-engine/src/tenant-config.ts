@@ -42,6 +42,13 @@ export const DEFAULT_TENANT_CONFIG: TenantConfig = {
  * is copied on every call — so mutating one tenant's config can never affect another's. An override with an
  * unrecognized autonomy level falls back to the default level rather than trusting arbitrary input.
  */
+// #9614: normalize any numeric input to a non-negative integer (a non-finite or negative value becomes 0) --
+// the exact body used in tenant-quota.ts:45-47 / loop-consumption.ts / worktree-pool.ts (the #5828
+// finiteNonNegativeInt discipline), so maxConcurrentLoops can never resolve NaN, fractional, negative, or Infinity.
+function finiteNonNegativeInt(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
 export function resolveTenantConfig(overrides: TenantConfigOverrides = {}): TenantConfig {
   const base = DEFAULT_TENANT_CONFIG;
   const autonomyLevel =
@@ -52,9 +59,17 @@ export function resolveTenantConfig(overrides: TenantConfigOverrides = {}): Tena
   return {
     autonomyLevel,
     preferences: {
-      maxConcurrentLoops: prefs.maxConcurrentLoops ?? base.preferences.maxConcurrentLoops,
+      // #9614: normalize an EXPLICITLY-supplied override (finiteNonNegativeInt); an absent override still
+      // inherits DEFAULT_TENANT_CONFIG's 1, since `??` alone let -5/0.5/NaN/Infinity pass through verbatim.
+      maxConcurrentLoops:
+        prefs.maxConcurrentLoops !== undefined ? finiteNonNegativeInt(prefs.maxConcurrentLoops) : base.preferences.maxConcurrentLoops,
       pauseOnFailure: prefs.pauseOnFailure ?? base.preferences.pauseOnFailure,
-      allowedActionClasses: [...(prefs.allowedActionClasses ?? base.preferences.allowedActionClasses)],
+      // #9614: drop non-string entries from an override rather than copying them through, mirroring how an
+      // unrecognized autonomyLevel is refused above -- untrusted input must not smuggle a non-string action class in.
+      allowedActionClasses:
+        prefs.allowedActionClasses !== undefined
+          ? prefs.allowedActionClasses.filter((entry): entry is string => typeof entry === "string")
+          : [...base.preferences.allowedActionClasses],
     },
   };
 }
@@ -74,10 +89,33 @@ export function setTenantConfig(
   tenantId: string,
   overrides: TenantConfigOverrides = {},
 ): TenantConfigStore {
-  return Object.freeze({ ...store, [tenantId]: resolveTenantConfig(overrides) });
+  // #9614: deep-freeze the written entry. Object.freeze is shallow, so freeze each level (the config, its
+  // preferences, and the allowedActionClasses array) -- otherwise a caller holding a reference to a nested
+  // value could still mutate the stored config.
+  const config = resolveTenantConfig(overrides);
+  Object.freeze(config.preferences.allowedActionClasses);
+  Object.freeze(config.preferences);
+  Object.freeze(config);
+  return Object.freeze({ ...store, [tenantId]: config });
 }
 
-/** Read a tenant's effective config, falling back to a fresh copy of the defaults when they've set none. */
+// #9614: a fresh deep copy sharing no mutable reference with the stored (frozen-but-shallow) config, so a
+// caller that mutates the result can never rewrite the tenant's stored preferences/allowedActionClasses.
+function cloneTenantConfig(config: TenantConfig): TenantConfig {
+  return {
+    autonomyLevel: config.autonomyLevel,
+    preferences: {
+      maxConcurrentLoops: config.preferences.maxConcurrentLoops,
+      pauseOnFailure: config.preferences.pauseOnFailure,
+      allowedActionClasses: [...config.preferences.allowedActionClasses],
+    },
+  };
+}
+
+/** Read a tenant's effective config as a fresh, caller-owned copy. The returned config -- and its nested
+ *  `preferences` and `allowedActionClasses` -- shares no reference with the store on EITHER path, so mutating
+ *  it never affects the stored config; a tenant with none set gets a fresh copy of the defaults. */
 export function getTenantConfig(store: TenantConfigStore, tenantId: string): TenantConfig {
-  return store[tenantId] ?? resolveTenantConfig();
+  const stored = store[tenantId];
+  return stored !== undefined ? cloneTenantConfig(stored) : resolveTenantConfig();
 }

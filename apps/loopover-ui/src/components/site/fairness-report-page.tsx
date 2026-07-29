@@ -300,6 +300,57 @@ export function FairnessReportPage() {
               ) : null}
             </div>
 
+            {/* #9676: the fleet-population sibling of the table above. Rendered as its own section, never
+                merged into it: the two measure different populations on different estimands, and blending
+                them into one column is the bug this whole surface is being corrected for. */}
+            {data.fleetAccuracyTrend &&
+            data.fleetAccuracyTrend.some((week) => week.verdicts != null) ? (
+              <div className="mt-10">
+                <h2 className="text-token-lg font-medium">Weekly trend — self-hosted fleet</h2>
+                <p className="mt-2 text-token-sm text-muted-foreground">
+                  The same weeks, measured over the live self-hosted fleet instead of this
+                  site&apos;s own frozen review history. This scores the gate&apos;s merge/close{" "}
+                  <em>decisions</em> — the share the realized outcome confirmed — so it matches the
+                  headline above rather than the reversal-grounded table beside it. Holds are
+                  excluded: a deferral to a human is not a decision that can be right or wrong. Only
+                  registered instances count.
+                </p>
+                <TableScroll className="mt-4" label="Weekly fleet accuracy trend">
+                  <table className="w-full min-w-[36rem] text-left text-token-sm">
+                    <caption className="sr-only">
+                      Weekly scored fleet verdicts and the share the realized outcome confirmed.
+                    </caption>
+                    <thead className="text-token-xs text-muted-foreground">
+                      <tr>
+                        <th scope="col" className="pb-2 pr-4 font-medium">
+                          Week
+                        </th>
+                        <th scope="col" className="pb-2 pr-4 font-medium">
+                          Decisions scored
+                        </th>
+                        <th scope="col" className="pb-2 font-medium">
+                          Accuracy
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.fleetAccuracyTrend.map((week) => (
+                        <tr key={week.weekStart} className="border-t border-hairline">
+                          <td className="py-2 pr-4 font-mono text-token-xs">{week.weekStart}</td>
+                          <td className="py-2 pr-4">
+                            {week.verdicts != null ? intFmt.format(week.verdicts) : "—"}
+                          </td>
+                          <td className="py-2">
+                            {week.accuracyPct != null ? `${pctFmt.format(week.accuracyPct)}%` : "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </TableScroll>
+              </div>
+            ) : null}
+
             {data.rulePrecision && data.rulePrecision.rules.length > 0 ? (
               <div className="mt-10">
                 <h2 className="text-token-lg font-medium">Measured accuracy per rule</h2>

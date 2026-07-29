@@ -800,6 +800,30 @@
                 "filteredPct"
               ]
             }
+          },
+          "fleetAccuracyTrend": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "weekStart": {
+                  "type": "string"
+                },
+                "verdicts": {
+                  "type": "number",
+                  "nullable": true
+                },
+                "accuracyPct": {
+                  "type": "number",
+                  "nullable": true
+                }
+              },
+              "required": [
+                "weekStart",
+                "verdicts",
+                "accuracyPct"
+              ]
+            }
           }
         },
         "required": [
@@ -811,6 +835,7 @@
           "byProject",
           "fleetAccuracy",
           "accuracyTrend",
+          "fleetAccuracyTrend",
           "reuseRateTrend",
           "reviewVolumeTrend"
         ]

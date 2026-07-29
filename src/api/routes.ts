@@ -313,6 +313,7 @@ import { ingestBittensorAnchorReport, parseBittensorAnchorReport } from "../revi
 import { loadPublicLedgerAnchors } from "../review/ledger-anchor-persistence";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
+import { loadPublicFleetAccuracyTrend } from "../services/public-fleet-accuracy-trend";
 import { loadPublicRulePrecision } from "../review/public-rule-precision";
 import { loadCalibrationTrend } from "../services/rule-calibration-trend";
 import { isSatisfactionFloorAutotuneEnabled, loadSatisfactionFloorStatus, runSatisfactionFloorLoosening } from "../services/satisfaction-floor-loosening-run";
@@ -1272,9 +1273,13 @@ export function createApp() {
     const publicStatsManifestOverride = await resolvePublicStatsManifestOverride(c.env);
     if (!isPublicStatsEnabled(c.env, publicStatsManifestOverride)) return c.json({ error: "not_found" }, 404);
     try {
-      const [stats, accuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision] = await Promise.all([
+      const [stats, accuracyTrend, fleetAccuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision] = await Promise.all([
         getPublicStats(c.env),
         loadPublicAccuracyTrend(c.env),
+        // #9676: the fleet-population sibling of the series above. Deliberately a SECOND series rather than a
+        // merged one -- see public-fleet-accuracy-trend.ts's header for why the two populations cannot be
+        // joined, and why this one matches the headline's estimand instead of the table's.
+        loadPublicFleetAccuracyTrend(c.env),
         loadPublicReuseRateTrend(c.env),
         loadPublicReviewVolumeTrend(c.env),
         // #8230: measured per-rule precision + the reproducibility freeze point. Same flag, same cache,
@@ -1282,7 +1287,7 @@ export function createApp() {
         loadPublicRulePrecision(c.env),
       ]);
       c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-      return c.json({ ...stats, accuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision });
+      return c.json({ ...stats, accuracyTrend, fleetAccuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision });
     } catch {
       return c.json({ error: "public_stats_unavailable" }, 503);
     }

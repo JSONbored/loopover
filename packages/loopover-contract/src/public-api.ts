@@ -95,6 +95,20 @@ export const PublicStatsSchema = z.object({
       accuracyPct: z.number().nullable(),
     }),
   ),
+  /** Trailing weekly FLEET accuracy (#9676). A SEPARATE series from `accuracyTrend`, never blended with it:
+   *  that one is reversal-grounded over the own-ledger population (raw `owner/repo#number` keys), this one is
+   *  `decisionAccuracy` over registered self-host instances' `orb_signals` (per-instance HMAC'd keys). The two
+   *  populations cannot be joined, and #8820 established `decisionAccuracy` -- not `1 - reversalRate` -- as the
+   *  fleet estimand, so this matches the headline it sits under rather than the table beside it. `verdicts`
+   *  counts scored merge/close decisions only; holds and policy actions are excluded. Null on a week means too
+   *  few scored verdicts to publish. */
+  fleetAccuracyTrend: z.array(
+    z.object({
+      weekStart: z.string(),
+      verdicts: z.number().nullable(),
+      accuracyPct: z.number().nullable(),
+    }),
+  ),
   /** Trailing weekly "how often we avoid redoing AI work" trend (#4448) -- a competence signal, not a cost
    *  claim. Counts cache hits/misses across every instrumented AI-touching capability (grounding,
    *  review-memory, impact-map, repo-culture-profile, ai_review, ai_slop, linked_issue_satisfaction,

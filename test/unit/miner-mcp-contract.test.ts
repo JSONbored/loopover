@@ -9,7 +9,8 @@ import {
   type MinerMcpServerOptions,
 } from "../../packages/loopover-miner/bin/loopover-miner-mcp";
 import { initGovernorLedger } from "../../packages/loopover-miner/lib/governor-ledger";
-import { getToolDefinition } from "@loopover/contract/tools";
+import { getToolContract, getToolDefinition, listToolDefinitions } from "@loopover/contract/tools";
+import { MCP_TELEMETRY_ERROR_CODES } from "@loopover/contract";
 // The SAME secret-shape matcher the miner pack validator uses — imported from its single source of truth (rather
 // than hand-duplicated here) so the two stay byte-for-byte in sync instead of relying on manual vigilance.
 import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content";
@@ -333,5 +334,32 @@ describe("the miner server advertises the registry's projection (#9655)", () => 
     } finally {
       await client.close().catch(() => undefined);
     }
+  });
+});
+
+// #9659: `toolErrorFields` declared an envelope with zero consumers -- no output schema spread it -- while
+// every miner tool answered a store failure with exactly that shape. So the advertised schema described only
+// the success arm, and the field a caller has to read to know WHY a call failed appeared in no artifact.
+describe("every miner output declares the shared error envelope (#9659)", () => {
+  const miner = listToolDefinitions({ locality: ["miner"] });
+
+  it("advertises `error` with the closed code set, on every tool", () => {
+    expect(miner.length).toBeGreaterThan(15);
+    for (const tool of miner) {
+      const error = (tool.outputSchema.properties as Record<string, { properties?: Record<string, { enum?: string[] }> }> | undefined)?.error;
+      expect(error, `${tool.name} advertises no error envelope`).toBeTruthy();
+      // The code is the closed telemetry set rather than free text, which is what lets the code the caller
+      // is told and the code telemetry records be the same one.
+      expect(error!.properties?.code?.enum, `${tool.name}'s error code is not the closed set`).toEqual([...MCP_TELEMETRY_ERROR_CODES]);
+    }
+  });
+
+  it("accepts a payload carrying the envelope", () => {
+    // The envelope rides ALONGSIDE the success fields rather than replacing them: the MCP SDK exempts an
+    // `isError` result from output validation (mcp.js `validateToolOutput`), so making every success field
+    // optional to let a bare `{ error }` validate would weaken the success contract for no gain.
+    const ping = getToolContract("loopover_miner_ping")!;
+    expect(ping.output.safeParse({ status: "ok", tool: "loopover_miner_ping", error: { code: "store_unavailable", message: "queue.db is not a database" } }).success).toBe(true);
+    expect(ping.output.safeParse({ status: "ok", tool: "loopover_miner_ping", error: { code: "invented", message: "x" } }).success, "an invented code is refused").toBe(false);
   });
 });

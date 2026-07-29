@@ -35,6 +35,10 @@ export const MCP_TELEMETRY_ERROR_CODES = [
   "upstream_error",
   "timeout",
   "elicitation_declined",
+  // #9659: the miner's own envelope has always returned this to callers -- a local SQLite store that
+  // will not open. It belongs in the closed set so ONE code can serve both the envelope and the
+  // telemetry event, rather than the event re-deriving a different one from the message.
+  "store_unavailable",
   "unknown_error",
 ] as const;
 export type McpTelemetryErrorCode = (typeof MCP_TELEMETRY_ERROR_CODES)[number];
@@ -264,6 +268,22 @@ export function mcpToolSpanName(tool: string): string {
  * Matches on shape and on the small set of messages the servers actually produce; everything else
  * is `unknown_error` rather than a guess. Never reads a caller-supplied string into the code.
  */
+/**
+ * The error envelope a tool's `structuredContent` carries, if it carries one (#9659).
+ *
+ * Every server reports failure the same way -- `isError: true` plus `{ error: { code, message } }` -- but
+ * each was reading that result differently, or not at all: the remote emitted a hardcoded
+ * `"unknown_error"`, the stdio one passed nothing to the classifier, and the miner passed the raw thrown
+ * error so the code was re-derived from message regexes and disagreed with the code the caller was given.
+ * Feed the result of this straight to `resolveErrorCode`, which validates the declared code against the
+ * closed set and falls back for anything else.
+ */
+export function toolErrorEnvelope(structuredContent: unknown): { code?: unknown; message?: unknown } | undefined {
+  if (typeof structuredContent !== "object" || structuredContent === null) return undefined;
+  const envelope = (structuredContent as { error?: unknown }).error;
+  return typeof envelope === "object" && envelope !== null ? (envelope as { code?: unknown; message?: unknown }) : undefined;
+}
+
 export function resolveErrorCode(error: unknown): McpTelemetryErrorCode {
   const envelope = error as { code?: unknown } | null | undefined;
   if (envelope && typeof envelope.code === "string") {

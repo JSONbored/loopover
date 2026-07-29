@@ -27,7 +27,11 @@ export type MinerDispatchCall = {
   durationMs: number;
   args?: unknown;
   result?: unknown;
+  /** The raw thrown value, kept for the exception capture -- an envelope has no stack. */
   error?: unknown;
+  /** The envelope the tool returned to its caller (#9659). Preferred for classification, so the code the
+   *  caller was told and the code recorded here are the same one rather than two guesses at one failure. */
+  errorEnvelope?: { code: string; message: string };
 };
 
 /** Emit both usage events, plus an exception capture on the failure path. Never throws. */
@@ -40,7 +44,7 @@ export function recordMinerDispatchTelemetry(call: MinerDispatchCall): void {
       surface: "miner",
       ok: call.ok,
       durationMs: call.durationMs,
-      ...(call.ok ? {} : { errorCode: resolveErrorCode(call.error) }),
+      ...(call.ok ? {} : { errorCode: resolveErrorCode(call.errorEnvelope ?? call.error) }),
     };
     captureMinerPostHogEvent(MCP_USAGE_EVENT, buildUsageEventProperties(telemetry));
     captureMinerPostHogEvent(

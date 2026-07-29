@@ -372,6 +372,29 @@ describe("recordStdioToolTelemetry / wrapStdioToolHandler (#8690)", () => {
     expect(usage.properties).toMatchObject({ surface: "stdio", transport: "proxied" });
   });
 
+  // #9659: the stdio wrapper passed NO error on the returned-failure path, so `resolveErrorCode(undefined)`
+  // classified every one of them as `unknown_error` no matter what the tool told its caller.
+  it("wrapStdioToolHandler resolves the error code from the result's own envelope", async () => {
+    vi.stubEnv("LOOPOVER_MCP_POSTHOG_API_KEY", "phc_test");
+    const wrapped = wrapStdioToolHandler("loopover_lint_pr_text", () => true, async () => ({
+      isError: true,
+      structuredContent: { error: { code: "rate_limited", message: "slow down" } },
+    }));
+    await wrapped({});
+
+    const usage = h.captureSpy.mock.calls.map((entry) => entry[0] as CapturedMessage).find((message) => message.event === "usage_event")!;
+    expect(usage.properties).toMatchObject({ ok: false, error_code: "rate_limited" });
+  });
+
+  it("wrapStdioToolHandler keeps unknown_error for a failure carrying no envelope", async () => {
+    vi.stubEnv("LOOPOVER_MCP_POSTHOG_API_KEY", "phc_test");
+    const wrapped = wrapStdioToolHandler("loopover_lint_pr_text", () => true, async () => ({ isError: true, structuredContent: { ok: false } }));
+    await wrapped({});
+
+    const usage = h.captureSpy.mock.calls.map((entry) => entry[0] as CapturedMessage).find((message) => message.event === "usage_event")!;
+    expect(usage.properties).toMatchObject({ ok: false, error_code: "unknown_error" });
+  });
+
   it("wrapStdioToolHandler tags a local call `local` without the caller saying so", async () => {
     vi.stubEnv("LOOPOVER_MCP_POSTHOG_API_KEY", "phc_test");
     const wrapped = wrapStdioToolHandler("loopover_lint_pr_text", () => true, async () => ({ structuredContent: { ok: true } }));

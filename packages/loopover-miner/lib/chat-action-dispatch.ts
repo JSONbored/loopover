@@ -30,12 +30,26 @@ export function isChatActionDispatchEnabled(env: Record<string, string | undefin
   return typeof raw === "string" && raw.trim() === CHAT_ACTION_DISPATCH_ENABLE_VALUE;
 }
 
-export type ChatActionDispatchResult = {
-  ok: boolean;
-  status: string;
-  action: string | null;
-  [key: string]: unknown;
-};
+/**
+ * Every outcome `dispatchChatAction` can return. Closed (#9659), because consumers map it: the miner MCP
+ * server turns a refusal into the shared error envelope's `code`, and a `string` status made that mapping
+ * a guess. A handler's own status lives inside `result`, not here.
+ */
+export const CHAT_ACTION_DISPATCH_STATUSES = ["dispatched", "disabled", "unknown_action", "invalid_params", "handler_error"] as const;
+export type ChatActionDispatchStatus = (typeof CHAT_ACTION_DISPATCH_STATUSES)[number];
+
+/** Every refusal. `dispatched` is the one success, which is what makes the union below discriminate. */
+export type ChatActionRefusalStatus = Exclude<ChatActionDispatchStatus, "dispatched">;
+
+/**
+ * DISCRIMINATED on `ok` (#9659), so a consumer that has ruled out success knows which statuses remain.
+ * The previous `{ ok: boolean; status: string }` told a caller nothing: the miner MCP server maps a
+ * refusal onto the shared error envelope's closed code set, and with a bare `string` that mapping could
+ * not be checked by anything.
+ */
+export type ChatActionDispatchResult =
+  | ({ ok: true; status: "dispatched"; action: string | null } & Record<string, unknown>)
+  | ({ ok: false; status: ChatActionRefusalStatus; action: string | null } & Record<string, unknown>);
 
 /**
  * The single entry point every chat-issued action goes through. In order:

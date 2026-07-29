@@ -142,6 +142,7 @@ import {
   LocalStatusInput,
   LocalStatusStructuredInput,
   MarkNotificationsReadInput,
+  StdioMarkNotificationsReadInput,
   MonitorOpenPrsInput,
   OpenPrInput,
   PlanRepoIssuesInput,
@@ -164,6 +165,7 @@ import {
   ValidateConfigInput,
   ValidateLinkedIssueInput,
   WatchIssuesInput,
+  StdioWatchIssuesInput,
   getToolContract,
   projectToolDefinition,
   ListPendingActionsStdioInput,
@@ -1597,6 +1599,9 @@ registerStdioTool(
     if (!contributorLogin) throw new Error("No GitHub login: pass `login`, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
     return toolResult(`Marked LoopOver notifications read for ${contributorLogin}.`, await postMarkNotificationsRead(contributorLogin, ids));
   },
+  // #9662: this server resolves the login from the active session, so it accepts a call without one --
+  // stated as a declared narrowing rather than left as a difference nothing could see.
+  { input: StdioMarkNotificationsReadInput },
 );
 
 // #7763: stdio mirror of the remote loopover_watch_issues + the `watch` CLI. Reuses the shared
@@ -1610,6 +1615,7 @@ registerStdioTool(
     if ((action === "watch" || action === "unwatch") && !repoFullName) throw new Error(`action "${action}" requires repoFullName.`);
     return toolResult(`Issue-watch subscriptions for ${contributorLogin}.`, await watchIssuesRequest(contributorLogin, action, repoFullName, labels));
   },
+  { input: StdioWatchIssuesInput },
 );
 
 registerStdioTool(

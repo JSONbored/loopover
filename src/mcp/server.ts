@@ -23,6 +23,10 @@ import {
   AdminListConfigBackupsInput,
   AdminListConfigBackupsOutput,
   AdminTriggerRedeployInput,
+  LocalBranchAnalysisInput,
+  RemoteLocalScorePreviewInput,
+  MarkNotificationsReadInput,
+  WatchIssuesInput,
   AdminRotateSecretInput,
   AdminRotateSecretOutput,
   AdminTriggerRedeployOutput,
@@ -335,8 +339,6 @@ import {
   listRepoSyncSegments,
   listRepoSyncStates,
   listRepositories,
-  MAX_NOTIFICATION_DELIVERY_ID_LENGTH,
-  MAX_NOTIFICATION_MARK_READ_IDS,
   markNotificationDeliveriesRead,
   recordAuditEvent,
   recordPostMergeIncidentReport,
@@ -466,7 +468,7 @@ import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePl
 import { buildFocusManifestValidation } from "../services/focus-manifest-validation";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
-import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
+import { compileFocusManifestPolicy } from "../signals/focus-manifest";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict, buildGateDispositions, type PredictedGateVerdict } from "../rules/predicted-gate";
 export { buildGateDispositions, type GateDisposition } from "../rules/predicted-gate";
@@ -480,7 +482,7 @@ import { buildStructuralImprovementAssessment } from "../signals/improvement";
 import { buildBoundaryTestGenerationFinding, buildBoundaryTestGenerationSpec } from "../signals/boundary-test-generation";
 import { attachDataQuality, buildRepoDataQuality } from "../signals/data-quality";
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
-import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
+import { SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
 import { loadUpstreamStatus } from "../upstream/ruleset";
 import {
   authoritativeGateOverride,
@@ -601,18 +603,7 @@ const localDiffPreflightShape = {
   commitMessage: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
 };
 
-const branchEligibilityShape = {
-  status: z.enum(["eligible", "ineligible", "unknown"]),
-  source: z.enum(["github_metadata", "local_metadata", "registry", "user_supplied"]).optional(),
-  reason: z.string().optional(),
-  checkedAt: z.string().optional(),
-  stale: z.boolean().optional(),
-};
 
-const callerBranchEligibilitySchema = z
-  .object(branchEligibilityShape)
-  .strict()
-  .transform((value) => ({ ...value, status: value.status === "eligible" ? ("unknown" as const) : value.status, source: "user_supplied" as const }));
 
 // Changed-file metadata + local validation results — shared by the local-branch analysis and the #782 local
 // scorer. METADATA ONLY (paths + line counts), never source content, so the no-upload boundary holds.
@@ -697,62 +688,11 @@ const planRepoIssuesShape = {
 // #784 (MCP slice) — the agent audit feed: executed actions + approval decisions for a repo.
 
 
-const focusManifestInputSchema = z
-  .record(z.string(), z.unknown())
-  .refine((manifest) => isJsonByteLengthWithinLimit(manifest, MAX_FOCUS_MANIFEST_BYTES), {
-    message: `focusManifest must serialize to ${MAX_FOCUS_MANIFEST_BYTES} bytes or fewer`,
-  });
 
-function isJsonByteLengthWithinLimit(value: unknown, maxBytes: number): boolean {
-  try {
-    return new TextEncoder().encode(JSON.stringify(value)).byteLength <= maxBytes;
-  } catch {
-    return false;
-  }
-}
 
-const localBranchAnalysisShape = {
-  login: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS),
-  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
-  baseRef: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
-  headRef: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
-  branchName: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
-  baseSha: z.string().min(1).optional(),
-  headSha: z.string().min(1).optional(),
-  mergeBaseSha: z.string().min(1).optional(),
-  remoteTrackingSha: z.string().min(1).optional(),
-  commitMessages: z.array(z.string()).max(30).optional(),
-  changedFiles: z.array(changedFileSchema).max(500).optional(),
-  validation: z.array(validationEntrySchema).max(50).optional(),
-  linkedIssues: z.array(z.number().int().positive()).max(SCENARIO_MAX_LINKED_ISSUE_NUMBERS).optional(),
-  labels: z.array(z.string()).optional(),
-  title: z.string().min(1).optional(),
-  body: z.string().optional(),
-  pendingMergedPrCount: z.number().int().min(0).optional(),
-  pendingClosedPrCount: z.number().int().min(0).optional(),
-  approvedPrCount: z.number().int().min(0).optional(),
-  expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
-  projectedCredibility: z.number().min(0).max(1).optional(),
-  scenarioNotes: z.array(z.string()).max(20).optional(),
-  focusManifest: focusManifestInputSchema.optional(),
-  branchEligibility: callerBranchEligibilitySchema.optional(),
-  localScorer: z
-    .object({
-      mode: z.enum(["metadata_only", "external_command", "gittensor_root"]),
-      activeModel: z.string().optional(),
-      sourceTokenScore: z.number().min(0).optional(),
-      totalTokenScore: z.number().min(0).optional(),
-      sourceLines: z.number().min(0).optional(),
-      testTokenScore: z.number().min(0).optional(),
-      nonCodeTokenScore: z.number().min(0).optional(),
-      warnings: z.array(z.string()).optional(),
-    })
-    .strict()
-    .optional(),
-};
 
 const localBranchVariantsShape = {
-  variants: z.array(z.object(localBranchAnalysisShape).strict()).min(1).max(10),
+  variants: z.array(LocalBranchAnalysisInput.strict()).min(1).max(10),
 };
 
 
@@ -761,46 +701,10 @@ function contributorOpenIssueCount(issues: Array<{ repoFullName: string; state: 
   return issues.filter((issue) => issue.repoFullName.toLowerCase() === targetRepo && issue.state === "open").length;
 }
 
-const linkedIssueContextShape = {
-  status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]).optional(),
-  source: z.enum(["user_supplied", "official_mirror", "github_cache", "issue_quality", "missing"]).optional(),
-  issueNumbers: z.array(z.number().int().positive()).max(50).optional(),
-  solvedByPullRequests: z.array(z.number().int().positive()).max(50).optional(),
-  reason: z.string().optional(),
-  warnings: z.array(z.string()).max(20).optional(),
-};
 
-const scorePreviewShape = {
-  repoFullName: z.string().min(3),
-  targetType: z.enum(["planned_pr", "pull_request", "local_diff", "variant"]).default("local_diff"),
-  targetKey: z.string().optional(),
-  contributorLogin: z.string().min(1).optional(),
-  labels: z.array(z.string()).optional(),
-  linkedIssueMode: z.enum(["none", "standard", "maintainer"]).default("none"),
-  linkedIssueContext: z.object(linkedIssueContextShape).strict().optional(),
-  sourceTokenScore: z.number().min(0).optional(),
-  totalTokenScore: z.number().min(0).optional(),
-  sourceLines: z.number().min(0).optional(),
-  testTokenScore: z.number().min(0).optional(),
-  nonCodeTokenScore: z.number().min(0).optional(),
-  existingContributorTokenScore: z.number().min(0).optional(),
-  prAgeHours: z.number().min(0).optional(),
-  openPrCount: z.number().int().min(0).optional(),
-  credibility: z.number().min(0).max(1).optional(),
-  changesRequestedCount: z.number().int().min(0).optional(),
-  duplicateRiskCount: z.number().int().min(0).optional(),
-  metadataOnly: z.boolean().default(true),
-  pendingMergedPrCount: z.number().int().min(0).optional(),
-  pendingClosedPrCount: z.number().int().min(0).optional(),
-  approvedPrCount: z.number().int().min(0).optional(),
-  expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
-  projectedCredibility: z.number().min(0).max(1).optional(),
-  scenarioNotes: z.array(z.string()).max(20).optional(),
-  branchEligibility: callerBranchEligibilitySchema.optional(),
-};
 
 const variantsShape = {
-  variants: z.array(z.object(scorePreviewShape)).min(1).max(10),
+  variants: z.array(RemoteLocalScorePreviewInput).min(1).max(10),
 };
 
 
@@ -963,22 +867,9 @@ const suggestBoundaryTestsShape = {
 
 
 
-const markNotificationsReadShape = {
-  login: z.string().min(1),
-  ids: z
-    .array(z.string().min(1).max(MAX_NOTIFICATION_DELIVERY_ID_LENGTH))
-    .max(MAX_NOTIFICATION_MARK_READ_IDS)
-    .optional(),
-};
 
 // #699 path B: a miner's self-scoped issue-watch subscriptions. `action` defaults to `list`; `watch`/`unwatch`
 // require repoFullName. `labels` ([]/omitted = any) filters which new issues notify.
-const watchIssuesShape = {
-  login: z.string().min(1),
-  action: z.enum(["watch", "unwatch", "list"]).default("list"),
-  repoFullName: z.string().min(3).max(200).optional(),
-  labels: z.array(z.string().min(1).max(100)).max(50).optional(),
-};
 
 
 
@@ -1589,7 +1480,7 @@ export class LoopoverMcp {
     register(
       "loopover_mark_notifications_read",
       {
-        inputSchema: markNotificationsReadShape,
+        inputSchema: MarkNotificationsReadInput,
         outputSchema: MarkNotificationsReadOutput,
       },
       async (input) => this.toolResult(await this.markNotificationsRead(input.login, input.ids)),
@@ -1598,7 +1489,7 @@ export class LoopoverMcp {
     register(
       "loopover_watch_issues",
       {
-        inputSchema: watchIssuesShape,
+        inputSchema: WatchIssuesInput,
         outputSchema: WatchIssuesOutput,
       },
       async (input) => this.toolResult(await this.watchIssues(input)),
@@ -1809,7 +1700,7 @@ export class LoopoverMcp {
     register(
       "loopover_preview_local_pr_score",
       {
-        inputSchema: scorePreviewShape,
+        inputSchema: RemoteLocalScorePreviewInput,
         outputSchema: PreviewLocalPrScoreOutput,
       },
       async (input) => this.toolResult(await this.previewScore(input)),
@@ -1818,7 +1709,7 @@ export class LoopoverMcp {
     register(
       "loopover_get_eligibility_plan",
       {
-        inputSchema: scorePreviewShape,
+        inputSchema: RemoteLocalScorePreviewInput,
         outputSchema: GetEligibilityPlanOutput,
       },
       async (input) => this.toolResult(await this.getEligibilityPlan(input)),
@@ -2019,7 +1910,7 @@ export class LoopoverMcp {
         // may send; relocating the input would have silently dropped that downgrade. The contract's
         // ExplainScoreBreakdownInput documents the pre-transform wire shape, which is what the
         // advertised inputSchema should say.
-        inputSchema: scorePreviewShape,
+        inputSchema: RemoteLocalScorePreviewInput,
         outputSchema: ExplainScoreBreakdownOutput,
       },
       async (input) => this.toolResult(await this.explainScoreBreakdown(input)),
@@ -2074,7 +1965,7 @@ export class LoopoverMcp {
     register(
       "loopover_preflight_current_branch",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: PreflightCurrentBranchOutput,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "preflight")),
@@ -2083,7 +1974,7 @@ export class LoopoverMcp {
     register(
       "loopover_preview_current_branch_score",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: PreviewCurrentBranchScoreOutput,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "scorePreview")),
@@ -2092,7 +1983,7 @@ export class LoopoverMcp {
     register(
       "loopover_rank_local_next_actions",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: RankLocalNextActionsOutput,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "nextActions")),
@@ -2101,7 +1992,7 @@ export class LoopoverMcp {
     register(
       "loopover_explain_local_blockers",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: ExplainLocalBlockersOutput,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "scoreBlockers")),
@@ -2110,7 +2001,7 @@ export class LoopoverMcp {
     register(
       "loopover_remediation_plan",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: RemediationPlanOutput,
       },
       async (input) => this.toolResult(await this.remediationPlan(input)),
@@ -2119,7 +2010,7 @@ export class LoopoverMcp {
     register(
       "loopover_prepare_pr_packet",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: PrepareLocalPrPacketOutput,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "prPacket")),
@@ -2128,7 +2019,7 @@ export class LoopoverMcp {
     register(
       "loopover_draft_pr_body",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: DraftPrBodyOutput,
       },
       async (input) => this.toolResult(await this.draftPrBody(input)),
@@ -2182,7 +2073,7 @@ export class LoopoverMcp {
     register(
       "loopover_agent_prepare_pr_packet",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: AgentRunBundleOutput,
       },
       async (input) => this.toolResult(await this.agentPreparePrPacket(input)),
@@ -4528,7 +4419,7 @@ export class LoopoverMcp {
   }
 
   // #699 path B: manage a miner's issue-watch subscriptions. Self-scoped; watch/unwatch need repoFullName.
-  private async watchIssues(input: z.infer<z.ZodObject<typeof watchIssuesShape>>): Promise<ToolPayload> {
+  private async watchIssues(input: z.infer<typeof WatchIssuesInput>): Promise<ToolPayload> {
     this.requireContributorAccess(input.login);
     let changed: string | undefined;
     if (input.action === "watch" || input.action === "unwatch") {
@@ -4673,7 +4564,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async previewScore(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
+  private async previewScore(input: z.infer<typeof RemoteLocalScorePreviewInput>): Promise<ToolPayload> {
     if (input.contributorLogin) this.requireContributorAccess(input.contributorLogin);
     await this.requireRepoAccess(input.repoFullName);
     const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
@@ -4692,7 +4583,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async getEligibilityPlan(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
+  private async getEligibilityPlan(input: z.infer<typeof RemoteLocalScorePreviewInput>): Promise<ToolPayload> {
     if (input.contributorLogin) this.requireContributorAccess(input.contributorLogin);
     await this.requireRepoAccess(input.repoFullName);
     const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
@@ -5047,7 +4938,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async explainScoreBreakdown(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
+  private async explainScoreBreakdown(input: z.infer<typeof RemoteLocalScorePreviewInput>): Promise<ToolPayload> {
     if (!input.contributorLogin) throw new Error("contributorLogin is required for score breakdown.");
     this.requireContributorAccess(input.contributorLogin);
     await this.requireRepoAccess(input.repoFullName);
@@ -5088,7 +4979,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async comparePrVariants(variants: Array<z.infer<z.ZodObject<typeof scorePreviewShape>>>): Promise<ToolPayload> {
+  private async comparePrVariants(variants: Array<z.infer<typeof RemoteLocalScorePreviewInput>>): Promise<ToolPayload> {
     const previews = [];
     for (const variant of variants) previews.push((await this.previewScore({ ...variant, targetType: "variant" })).data);
     previews.sort((left, right) => {
@@ -5102,7 +4993,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async localBranchSlice(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>, slice: "preflight" | "scorePreview" | "nextActions" | "scoreBlockers" | "prPacket"): Promise<ToolPayload> {
+  private async localBranchSlice(input: z.infer<typeof LocalBranchAnalysisInput>, slice: "preflight" | "scorePreview" | "nextActions" | "scoreBlockers" | "prPacket"): Promise<ToolPayload> {
     const analysis = await this.analyzeLocalBranch(input);
     return {
       summary: `${analysis.summary} (${slice}).`,
@@ -5120,7 +5011,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async compareLocalVariants(variants: Array<z.infer<z.ZodObject<typeof localBranchAnalysisShape>>>): Promise<ToolPayload> {
+  private async compareLocalVariants(variants: Array<z.infer<typeof LocalBranchAnalysisInput>>): Promise<ToolPayload> {
     const analyses = [];
     for (const variant of variants) analyses.push(await this.analyzeLocalBranch(variant));
     analyses.sort(
@@ -5227,7 +5118,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async agentPreparePrPacket(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
+  private async agentPreparePrPacket(input: z.infer<typeof LocalBranchAnalysisInput>): Promise<ToolPayload> {
     this.requireContributorAccess(input.login);
     const bundle = await preparePrPacketWithAgent(this.env, input, "mcp");
     return {
@@ -5236,7 +5127,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async remediationPlan(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
+  private async remediationPlan(input: z.infer<typeof LocalBranchAnalysisInput>): Promise<ToolPayload> {
     const analysis = await this.analyzeLocalBranch(input);
     const plan = buildRemediationPlan({
       login: analysis.login,
@@ -5253,7 +5144,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async draftPrBody(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
+  private async draftPrBody(input: z.infer<typeof LocalBranchAnalysisInput>): Promise<ToolPayload> {
     const analysis = await this.analyzeLocalBranch(input);
     const draft = buildPublicPrBodyDraft(analysis);
     // Human-readable summary carries the rendered markdown body; structured draft is returned as JSON.
@@ -5263,7 +5154,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async analyzeLocalBranch(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>) {
+  private async analyzeLocalBranch(input: z.infer<typeof LocalBranchAnalysisInput>) {
     this.requireContributorAccess(input.login);
     await this.requireRepoAccess(input.repoFullName);
     const [context, repo, issues, pullRequests, recentMergedPullRequests, bounties, snapshot, issueQuality, repoManifest] = await Promise.all([

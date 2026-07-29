@@ -23,7 +23,7 @@
 // constructed with, so requiring the caller to restate it was always redundant.
 import { z } from "zod";
 import { defineTool } from "../tool-definition.js";
-import { PREFLIGHT_LIMITS, SCENARIO_LIMITS } from "../limits.js";
+import { PREFLIGHT_LIMITS, SCENARIO_LIMITS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS } from "../limits.js";
 import { FEASIBILITY_VERDICTS } from "../enums.js";
 import {
   AgentRunBundleOutput,
@@ -46,6 +46,8 @@ import {
   WatchIssuesOutput,
 } from "./discovery-utility.js";
 import { callerBranchEligibilitySchema } from "./review.js";
+import { changedFileSchema, validationEntrySchema } from "./branch.js";
+import { focusManifestInputSchema } from "../api-requests.js";
 
 /** One locally-executed validation command and its result, as the local-branch surfaces accept it. */
 const localValidationEntry = z.object({
@@ -87,6 +89,47 @@ export const CurrentBranchInput = z.object({
   scorePreviewCommand: z.string().optional(),
 });
 
+/**
+ * The FULL current-branch vocabulary: everything a caller may supply about a branch (#9662).
+ *
+ * Previously this lived as a 40-line `localBranchAnalysisShape` literal inside `src/mcp/server.ts` -- the
+ * hand-written kind of declaration this package exists to remove -- and the ten tools below advertised a
+ * strictly NARROWER `CurrentBranchInput` in the registry. So `listToolDefinitions()`, and with it the
+ * OpenAI/Anthropic spec builders and the `.well-known` catalogs, described a tool that rejected eight
+ * fields the remote server accepts, and nothing could see the gap.
+ *
+ * The contract is the wider surface, per the rule a server narrows FROM: the remote accepts this whole
+ * shape because a caller may supply the metadata itself, and the stdio server narrows to `CurrentBranchInput`
+ * because it reads the shas, the diff and the scorer probe off the local checkout instead of taking them
+ * from the caller -- serving less, and saying so, rather than advertising a field it ignores.
+ */
+export const LocalBranchAnalysisInput = CurrentBranchInput.extend({
+  login: z.string().min(1).max(SCENARIO_LIMITS.branchRefChars),
+  repoFullName: z.string().min(3).max(SCENARIO_LIMITS.repoFullNameChars),
+  baseSha: z.string().min(1).optional(),
+  headSha: z.string().min(1).optional(),
+  mergeBaseSha: z.string().min(1).optional(),
+  remoteTrackingSha: z.string().min(1).optional(),
+  commitMessages: z.array(z.string()).max(30).optional(),
+  changedFiles: z.array(changedFileSchema).max(500).optional(),
+  validation: z.array(validationEntrySchema).max(50).optional(),
+  linkedIssues: z.array(z.number().int().positive()).max(SCENARIO_MAX_LINKED_ISSUE_NUMBERS).optional(),
+  focusManifest: focusManifestInputSchema.optional(),
+  /** What a local scoring run reported, when the caller ran one. */
+  localScorer: z
+    .object({
+      mode: z.enum(["metadata_only", "external_command", "gittensor_root"]),
+      activeModel: z.string().optional(),
+      sourceTokenScore: z.number().min(0).optional(),
+      totalTokenScore: z.number().min(0).optional(),
+      sourceLines: z.number().min(0).optional(),
+      testTokenScore: z.number().min(0).optional(),
+      nonCodeTokenScore: z.number().min(0).optional(),
+      warnings: z.array(z.string()).optional(),
+    })
+    .optional(),
+});
+
 export const preflightCurrentBranchTool = defineTool({
   name: "loopover_preflight_current_branch",
   title: "Preflight current branch",
@@ -96,7 +139,7 @@ export const preflightCurrentBranchTool = defineTool({
   auth: "token",
   locality: "local-git",
   availability: "both",
-  input: CurrentBranchInput,
+  input: LocalBranchAnalysisInput,
   output: PreflightCurrentBranchOutput,
 });
 
@@ -109,7 +152,7 @@ export const previewCurrentBranchScoreTool = defineTool({
   auth: "token",
   locality: "local-git",
   availability: "both",
-  input: CurrentBranchInput,
+  input: LocalBranchAnalysisInput,
   output: PreviewCurrentBranchScoreOutput,
 });
 
@@ -122,7 +165,7 @@ export const rankLocalNextActionsTool = defineTool({
   auth: "token",
   locality: "local-git",
   availability: "both",
-  input: CurrentBranchInput,
+  input: LocalBranchAnalysisInput,
   output: RankLocalNextActionsOutput,
 });
 
@@ -135,7 +178,7 @@ export const explainLocalBlockersTool = defineTool({
   auth: "token",
   locality: "local-git",
   availability: "both",
-  input: CurrentBranchInput,
+  input: LocalBranchAnalysisInput,
   output: ExplainLocalBlockersOutput,
 });
 
@@ -148,7 +191,7 @@ export const remediationPlanTool = defineTool({
   auth: "token",
   locality: "local-git",
   availability: "both",
-  input: CurrentBranchInput,
+  input: LocalBranchAnalysisInput,
   output: RemediationPlanOutput,
 });
 
@@ -161,7 +204,7 @@ export const preparePrPacketTool = defineTool({
   auth: "token",
   locality: "local-git",
   availability: "both",
-  input: CurrentBranchInput,
+  input: LocalBranchAnalysisInput,
   output: PrepareLocalPrPacketOutput,
 });
 
@@ -176,7 +219,7 @@ export const agentPreparePrPacketTool = defineTool({
   auth: "token",
   locality: "local-git",
   availability: "both",
-  input: CurrentBranchInput,
+  input: LocalBranchAnalysisInput,
   output: AgentRunBundleOutput,
 });
 
@@ -193,7 +236,7 @@ export const reviewPrBeforePushTool = defineTool({
   output: PreflightCurrentBranchOutput,
 });
 
-export const DraftPrBodyInput = CurrentBranchInput.extend({
+export const DraftPrBodyInput = LocalBranchAnalysisInput.extend({
   format: z.enum(["json", "markdown"]).optional(),
 });
 export const draftPrBodyTool = defineTool({
@@ -265,6 +308,52 @@ export const LocalScoreInput = z.object({
   scorePreviewCommand: z.string().optional(),
 });
 
+/**
+ * The score-preview family's full vocabulary (#9662), and each server's declared narrowing of it.
+ *
+ * Same story as `LocalBranchAnalysisInput` above: the remote registered from a hand-written
+ * `scorePreviewShape` in `src/mcp/server.ts` carrying eight scenario knobs the registry never described,
+ * while `LocalScoreInput` carries nine fields only a server with a checkout can honour. Neither is the
+ * contract on its own -- the union is, and each server states which part of it it serves rather than
+ * advertising a field it silently overrides.
+ */
+/** The linked-issue provenance a caller may supply, as the remote has always accepted it. */
+const linkedIssueContextSchema = z.strictObject({
+  status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]).optional(),
+  source: z.enum(["user_supplied", "official_mirror", "github_cache", "issue_quality", "missing"]).optional(),
+  issueNumbers: z.array(z.number().int().positive()).max(50).optional(),
+  solvedByPullRequests: z.array(z.number().int().positive()).max(50).optional(),
+  reason: z.string().optional(),
+  warnings: z.array(z.string()).max(20).optional(),
+});
+
+export const LocalScorePreviewInput = LocalScoreInput.extend({
+  targetType: z.enum(["planned_pr", "pull_request", "local_diff", "variant"]).default("local_diff"),
+  linkedIssueContext: linkedIssueContextSchema.optional(),
+  testTokenScore: z.number().min(0).optional(),
+  nonCodeTokenScore: z.number().min(0).optional(),
+  existingContributorTokenScore: z.number().min(0).optional(),
+  prAgeHours: z.number().min(0).optional(),
+  duplicateRiskCount: z.number().int().min(0).optional(),
+  metadataOnly: z.boolean().default(true),
+});
+
+/**
+ * What the REMOTE serves: everything except the fields that only mean something to a server holding the
+ * checkout. It cannot read a working directory, run a scorer command, or diff a branch, so it says so.
+ */
+export const RemoteLocalScorePreviewInput = LocalScorePreviewInput.omit({
+  cwd: true,
+  baseRef: true,
+  title: true,
+  body: true,
+  linkedIssues: true,
+  tests: true,
+  authorAssociation: true,
+  commitMessage: true,
+  scorePreviewCommand: true,
+});
+
 export const previewLocalPrScoreTool = defineTool({
   name: "loopover_preview_local_pr_score",
   title: "Preview local PR score",
@@ -274,7 +363,7 @@ export const previewLocalPrScoreTool = defineTool({
   auth: "token",
   locality: "local-git",
   availability: "both",
-  input: LocalScoreInput,
+  input: LocalScorePreviewInput,
   output: PreviewLocalPrScoreOutput,
 });
 
@@ -287,7 +376,7 @@ export const getEligibilityPlanTool = defineTool({
   auth: "token",
   locality: "local-git",
   availability: "both",
-  input: LocalScoreInput,
+  input: LocalScorePreviewInput,
   output: GetEligibilityPlanOutput,
 });
 
@@ -342,9 +431,15 @@ export const feasibilityGateTool = defineTool({
 // ── remote-proxying tools whose inputs converge here ────────────────────────────────────────────
 
 export const MarkNotificationsReadInput = z.object({
-  login: z.string().min(1).optional(),
+  // REQUIRED (#9662): the notifications are per-contributor, and a server with no session cannot infer
+  // whose they are. The stdio server, which does have one, narrows it away below -- the catalog told a
+  // caller this was optional while the remote rejected the call, which is the drift that check exists for.
+  login: z.string().min(1),
   ids: z.array(z.string().min(1).max(128)).max(100).optional(),
 });
+
+/** What the STDIO server serves: it resolves the login from the active profile's session. */
+export const StdioMarkNotificationsReadInput = MarkNotificationsReadInput.partial({ login: true });
 export const markNotificationsReadTool = defineTool({
   name: "loopover_mark_notifications_read",
   title: "Mark notifications read",
@@ -360,7 +455,8 @@ export const markNotificationsReadTool = defineTool({
 });
 
 export const WatchIssuesInput = z.object({
-  login: z.string().min(1).optional(),
+  /** REQUIRED for the same reason as `MarkNotificationsReadInput.login`; the stdio server narrows it. */
+  login: z.string().min(1),
   // `.default("list")` is a runtime coercion the emitted JSON Schema cannot round-trip, so it is
   // expressed as an optional field with the default stated in the description instead. Both servers
   // already treat an omitted action as "list".
@@ -368,6 +464,9 @@ export const WatchIssuesInput = z.object({
   repoFullName: z.string().min(3).max(SCENARIO_LIMITS.repoFullNameChars).optional(),
   labels: z.array(z.string().min(1).max(100)).max(50).optional(),
 });
+/** What the STDIO server serves: same session-filled `login` narrowing as its notifications sibling. */
+export const StdioWatchIssuesInput = WatchIssuesInput.partial({ login: true });
+
 export const watchIssuesTool = defineTool({
   name: "loopover_watch_issues",
   title: "Watch issues",

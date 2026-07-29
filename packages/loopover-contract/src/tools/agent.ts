@@ -16,7 +16,7 @@
 // Descriptions are relocated verbatim, same discipline as the other batches.
 import { z } from "zod";
 import { defineTool } from "../tool-definition.js";
-import { AUTONOMY_LEVELS, MAINTAIN_ACTION_CLASSES, PLAN_STEP_STATUSES, PROPOSE_ACTION_CLASSES, TEST_FRAMEWORKS } from "../enums.js";
+import { AUTONOMY_LEVELS, FEASIBILITY_VERDICTS, MAINTAIN_ACTION_CLASSES, PLAN_STEP_STATUSES, PROPOSE_ACTION_CLASSES, TEST_FRAMEWORKS } from "../enums.js";
 import { SCENARIO_LIMITS, WRITE_TOOL_LIMITS } from "../limits.js";
 import { AgentRunBundleOutput } from "./branch.js";
 import { ownerRepoInput } from "../shared.js";
@@ -45,7 +45,7 @@ export const IntakeIdeaInput = z.object({
  *  a zod message the caller cannot act on. */
 export const IntakeIdeaOutput = z.looseObject({
   ok: z.boolean(),
-  verdict: z.enum(["go", "raise", "avoid"]).optional(),
+  verdict: z.enum(FEASIBILITY_VERDICTS).optional(),
   taskGraph: z.unknown().optional(),
   errors: z.array(z.string()).optional(),
 });
@@ -64,7 +64,7 @@ export const intakeIdeaTool = defineTool({
 
 export const PlanIdeaClaimsOutput = z.looseObject({
   ok: z.boolean(),
-  verdict: z.enum(["go", "raise", "avoid"]).optional(),
+  verdict: z.enum(FEASIBILITY_VERDICTS).optional(),
   claimPlan: z.unknown().optional(),
   errors: z.array(z.string()).optional(),
 });

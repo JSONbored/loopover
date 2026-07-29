@@ -5,7 +5,7 @@ import { isValidRepoSegment } from "./repo-clone.js";
 import { applySchemaMigrations } from "./schema-version.js";
 import { RUN_STATE_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
 
-export type RunState = "idle" | "discovering" | "planning" | "preparing";
+export type RunState = (typeof RUN_STATES)[number];
 
 export type RunStateWrite = {
   apiBaseUrl: string;
@@ -30,12 +30,14 @@ export type RunStateStore = {
   close(): void;
 };
 
-export const RUN_STATES = Object.freeze([
-  "idle",
-  "discovering",
-  "planning",
-  "preparing",
-]) as readonly RunState[];
+/**
+ * Every state a run can be in, and the source of the `RunState` type above (#9660).
+ *
+ * The list and the union used to be written out separately, so adding a state to one and not the other
+ * compiled fine. @loopover/contract restates this vocabulary too and is pinned against THIS list, which is
+ * only meaningful while the list is what the type is made of.
+ */
+export const RUN_STATES = Object.freeze(["idle", "discovering", "planning", "preparing"] as const);
 
 const runStateSet = new Set<string>(RUN_STATES);
 const defaultDbFileName = "run-state.sqlite3";

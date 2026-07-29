@@ -24,6 +24,7 @@ import { LOOPOVER_GATE_CHECK_NAME } from "../review/check-names.js";
 import { CLA_CHECK_UNRESOLVED_CODE, CLA_CONSENT_MISSING_CODE } from "../review/cla-check.js";
 import { REVIEW_THREAD_BLOCKER_CODE } from "../review/review-thread-findings.js";
 import { labelMatchesPattern } from "../scoring/label-match.js";
+import { isMaintainerAuthorAssociation } from "../settings/author-association.js";
 
 // Kept byte-identical with the GATE_DECISION_TWIN_PAIR copy in src/rules/advisory.ts
 // (checkGateDecisionForbiddenTermsParity now diffs the two regex bodies byte-for-byte, #8697). The
@@ -394,7 +395,7 @@ function addPullRequestFindings(
       detail: `Matched configured labels: ${matchedLabels.join(", ")}.`,
     });
   }
-  if (pr.authorAssociation && ["OWNER", "MEMBER", "COLLABORATOR"].includes(pr.authorAssociation)) {
+  if (isMaintainerAuthorAssociation(pr.authorAssociation)) {
     findings.push({
       code: "maintainer_authored_pr",
       severity: "info",

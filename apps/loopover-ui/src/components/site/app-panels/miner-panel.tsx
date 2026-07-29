@@ -7,7 +7,7 @@ import { TableScroll } from "@/components/site/data-table";
 import { McpVersionBadge } from "@/components/site/mcp-version-badge";
 import { StatCard } from "@/components/site/primitives";
 import { RefreshMeta } from "@/components/site/refresh-meta";
-import { StateBoundary } from "@/components/site/state-views";
+import { EmptyState, StateBoundary } from "@/components/site/state-views";
 import {
   Dialog,
   DialogContent,
@@ -18,7 +18,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { apiFetch } from "@/lib/api/request";
 import { getApiOrigin } from "@/lib/api/origin";
-import { useApiResource } from "@/lib/api/use-api-resource";
+import { API_RESOURCE_DISABLED, useApiResource } from "@/lib/api/use-api-resource";
 import { useSession } from "@/lib/api/session";
 import {
   buildMinerCommandActions,
@@ -115,7 +115,7 @@ function MinerDashboardSkeleton() {
 }
 
 export function MinerPanel() {
-  const { session } = useSession();
+  const { session, hydrated } = useSession();
   const login = session?.login ?? "";
   const dashboard = useApiResource<MinerDashboard>(
     `/v1/app/miner-dashboard?login=${encodeURIComponent(login)}`,
@@ -124,6 +124,15 @@ export function MinerPanel() {
     { enabled: Boolean(login) },
   );
   const data = dashboard.status === "ready" ? dashboard.data : null;
+  // Gated on `hydrated` (#9672): before the session hook resolves, `login` reads as "" the same way it
+  // does for a genuinely signed-out visitor, which would otherwise flash the sign-in prompt at every
+  // authenticated visitor on first paint.
+  const isSignedOut = hydrated && !login;
+  // `useApiResource` reuses `status: "error"` for both the synthetic "disabled" sentinel (this resource
+  // was never enabled) and a real `apiFetch` failure -- only the latter is a dashboard failure worth
+  // reporting here.
+  const isDashboardError =
+    dashboard.status === "error" && dashboard.error !== API_RESOURCE_DISABLED;
   const blockerCount = data?.blockers.reduce((count, group) => count + group.items.length, 0) ?? 0;
   const isEmpty =
     data !== null &&
@@ -189,7 +198,7 @@ export function MinerPanel() {
       />
       <MinerCommandActions commands={commandActions} />
       <StateBoundary
-        isLoading={dashboard.status === "loading"}
+        isLoading={!hydrated || dashboard.status === "loading"}
         isEmpty={isEmpty}
         onRetry={dashboard.reload}
         onRefresh={dashboard.reload}
@@ -198,7 +207,12 @@ export function MinerPanel() {
         emptyTitle="No miner actions yet"
         emptyDescription="Once a decision pack or branch analysis exists, ranked next actions and blockers will appear here."
       >
-        {dashboard.status === "error" ? (
+        {isSignedOut ? (
+          <EmptyState
+            title="Sign in to see your miner dashboard"
+            description="Ranked next actions, blockers, and repo fit appear here once you sign in with the GitHub account you mine under."
+          />
+        ) : isDashboardError ? (
           <div className="rounded-token border border-warning/30 bg-warning/[0.04] p-4 text-token-sm text-warning">
             Miner dashboard is unavailable right now ({dashboard.error}).
           </div>

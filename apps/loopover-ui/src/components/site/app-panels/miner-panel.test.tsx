@@ -9,6 +9,7 @@ const { useApiResource, useSession } = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/api/use-api-resource", () => ({
   useApiResource: (...args: unknown[]) => useApiResource(...args),
+  API_RESOURCE_DISABLED: "disabled",
 }));
 vi.mock("@/lib/api/session", () => ({ useSession: () => useSession() }));
 vi.mock("@/components/site/mcp-version-badge", () => ({
@@ -43,5 +44,65 @@ describe("MinerPanel loading skeleton (#793)", () => {
     expect(container.querySelector(".animate-spin")).toBeNull();
     // The placeholder renders animate-pulse blocks approximating the dashboard's metric + card grid.
     expect(container.querySelectorAll(".animate-pulse").length).toBeGreaterThan(1);
+  });
+});
+
+// #9672: `useApiResource` writes the literal "disabled" into `error` as a synthetic sentinel for "this
+// resource is switched off" (see `enabled: Boolean(login)` above) -- MinerPanel used to render that
+// sentinel through the same warning box as a real `apiFetch` failure, so a signed-out visitor saw
+// "Miner dashboard is unavailable right now (disabled)" instead of a sign-in prompt.
+describe("MinerPanel signed-out sentinel (#9672)", () => {
+  it("renders a sign-in prompt, not the disabled sentinel, when signed out", () => {
+    useSession.mockReturnValue({ session: null, hydrated: true });
+    useApiResource.mockReturnValue({
+      status: "error",
+      data: null,
+      error: "disabled",
+      loadedAt: null,
+      reload: () => {},
+    });
+
+    render(<MinerPanel />);
+
+    expect(screen.getByText("Sign in to see your miner dashboard")).toBeTruthy();
+    expect(document.body.textContent).not.toContain("disabled");
+  });
+
+  it("renders the loading skeleton, not the signed-out state, before the session hydrates", () => {
+    useSession.mockReturnValue({ session: null, hydrated: false });
+    useApiResource.mockReturnValue({
+      status: "error",
+      data: null,
+      error: "disabled",
+      loadedAt: null,
+      reload: () => {},
+    });
+
+    const { container } = render(<MinerPanel />);
+
+    expect(screen.queryByText("Sign in to see your miner dashboard")).toBeNull();
+    expect(document.body.textContent).not.toContain("disabled");
+    expect(container.querySelectorAll(".animate-pulse").length).toBeGreaterThan(1);
+  });
+
+  it("still renders the unavailable-now warning box for a real, signed-in dashboard failure", () => {
+    useSession.mockReturnValue({
+      session: { login: "miner", roles: ["miner"] },
+      hydrated: true,
+    });
+    useApiResource.mockReturnValue({
+      status: "error",
+      data: null,
+      error: "500 Internal Server Error",
+      loadedAt: null,
+      reload: () => {},
+    });
+
+    render(<MinerPanel />);
+
+    expect(
+      screen.getByText("Miner dashboard is unavailable right now (500 Internal Server Error)."),
+    ).toBeTruthy();
+    expect(screen.queryByText("Sign in to see your miner dashboard")).toBeNull();
   });
 });

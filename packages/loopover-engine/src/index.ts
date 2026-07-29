@@ -183,6 +183,7 @@ export * from "./calibration/provider-track-record.js";
 export * from "./calibration/reliability-curve.js";
 export * from "./calibration/attestation-envelope.js";
 export * from "./calibration/attester.js";
+export * from "./calibration/candidate-sandbox.js";
 export * from "./calibration/benchmark-proposal.js";
 export * from "./calibration/benchmark-ground-truth.js";
 export * from "./calibration/benchmark-score.js";

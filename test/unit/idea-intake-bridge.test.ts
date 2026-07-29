@@ -82,6 +82,23 @@ describe("validateIdeaSubmission", () => {
     }
   });
 
+  it("accepts the canonical { kind: 'existing', repo } object it returns — round-trips — and still validates the slug (#9609)", () => {
+    const r = validateIdeaSubmission(rawIdea({ targetRepo: { kind: "existing", repo: "acme/widgets" } }));
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.idea.targetRepo).toEqual({ kind: "existing", repo: "acme/widgets" });
+    // A malformed slug inside the object shape is rejected the same as the bare-string wire form.
+    expect(validateIdeaSubmission(rawIdea({ targetRepo: { kind: "existing", repo: "no-slash" } })).ok).toBe(false);
+    expect(validateIdeaSubmission(rawIdea({ targetRepo: { kind: "existing", repo: "a/b/c" } })).ok).toBe(false);
+  });
+
+  it("still requires a target for null, a non-object, a non-string repo, and an unknown kind (#9609)", () => {
+    for (const bad of [null, 42, { kind: "existing", repo: 5 }, { kind: "banana" }]) {
+      const r = validateIdeaSubmission(rawIdea({ targetRepo: bad as unknown as string }));
+      expect(r.ok).toBe(false);
+      if (!r.ok) expect(r.errors).toContain("target_repo_required");
+    }
+  });
+
   it("flags invalid constraints (non-array, non-string element, over-length entry)", () => {
     expect((validateIdeaSubmission(rawIdea({ constraints: "x" as unknown as string[] }))).ok).toBe(false);
     expect((validateIdeaSubmission(rawIdea({ constraints: [1] as unknown as string[] }))).ok).toBe(false);

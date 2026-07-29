@@ -7,6 +7,13 @@ import { FORBIDDEN_CONTENT } from "./forbidden-content";
 import { MCP_PACKAGE_ALLOWED_FILE_PATTERNS } from "./mcp-package-allowlist";
 
 const FORBIDDEN_PATH = /(^|\/)(\.dev\.vars|\.env|\.npmrc|.*\.pem|.*private.*key.*|.*secret.*)$/i;
+// #9786: this checker validated only that nothing UNEXPECTED ships -- it had no notion of a file that MUST.
+// @loopover/miner shipped AGPL-3.0-only with no LICENSE and nothing caught it, because every published
+// package's checker allowed the file without ever asserting it. LICENSE is the entry that matters: its
+// absence from a copyleft package is a licensing defect, not a packaging one. package.json is asserted
+// alongside it because a pack result missing it is not a package at all, and would otherwise let a
+// pathologically empty file list pass every check above by vacuous truth.
+const REQUIRED = ["package.json", "LICENSE"];
 const STALE_PACKAGE_TEXT = /(private beta|zeronode\.workers\.dev|preview URL)/i;
 
 type PackedFile = string | { path: string };
@@ -20,6 +27,9 @@ export function validateMcpPackFileList(files: readonly PackedFile[], readConten
     const content = readContent(file);
     if (FORBIDDEN_CONTENT.test(content)) throw new Error(`Secret-like content found in MCP package file: ${file}`);
     if (file === "README.md" && STALE_PACKAGE_TEXT.test(content)) throw new Error(`Stale public-package wording found in MCP package file: ${file}`);
+  }
+  for (const required of REQUIRED) {
+    if (!paths.includes(required)) throw new Error(`Missing required file in MCP package: ${required}`);
   }
   return paths;
 }

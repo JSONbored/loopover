@@ -2253,8 +2253,26 @@ export function composeAdvisoryNotes(reviews: ModelReview[], options?: { allowBa
   const safeNits = nits
     .map((s) => toPublicSafe(s, options))
     .filter((s): s is string => Boolean(s));
-  const publicAssessment =
+  let publicAssessment =
     assessment || fallbackPublicAssessment(safeBlockers, safeNits);
+  // The model DID review and found nothing blocking, but its entire narrative was withheld by the
+  // public-safety sanitizer (every sentence referenced non-public vocabulary -- routine for a PR that
+  // touches this project's own scoring/gate code, where "score"/"ranking" appear in any honest sentence
+  // about it). Returning null here misreported that as a PROVIDER failure: the caller published "AI review
+  // is unavailable for this PR head" and held the PR for manual review, permanently, on every re-run --
+  // observed live on JSONbored/loopover#9794, which re-ran cleanly (diagnostics `claude-code#0:parsed`)
+  // and was re-held every time. Publish a fixed, honest sentence instead: it is public-safe by
+  // construction (no model text), tells the reader what actually happened, and lets the gate act on the
+  // review's real verdict. The genuinely-empty case (no parsed review content at all) still returns null
+  // below, so a true provider failure keeps its accurate "unavailable" report.
+  if (!publicAssessment && assessments.length > 0) {
+    // Wording must track the review's REAL verdict: with raw blockers present (all withheld above), claiming
+    // "no blocking issues" would be false and could green-light a PR the model actually flagged.
+    publicAssessment =
+      blockers.length > 0
+        ? "The AI review completed and raised blocking findings, but they were withheld from this public surface because they referenced non-public project internals. A maintainer should read the private review record before deciding this PR."
+        : "The AI review completed and found no blocking issues. Its narrative summary was withheld from this public surface because it referenced non-public project internals.";
+  }
   if (!publicAssessment) return null;
   const lines: string[] = [];
   lines.push(publicAssessment, "");

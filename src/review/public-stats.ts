@@ -165,47 +165,19 @@ function filteredPct(reviewed: number, merged: number): number | null {
   return Math.round(((reviewed - merged) / reviewed) * 1000) / 10;
 }
 
-/** The auto-actions a reversal is recorded against. `recordReversalSignals` only ever fires for a PR this
- *  deployment itself auto-merged or auto-closed, so with zero of these rows in the retained window a
- *  `reversal_*` event cannot exist — and `1 - 0/N` is then a structural zero, not a measurement. */
-export const AUTO_ACTION_EVENT_TYPES = ["agent.action.close", "agent.action.merge"] as const;
-
-/**
- * Whether a reversal is OBSERVABLE on this deployment: did it record any terminal auto-action in the window a
- * reversal could still be attributed to? Reversal signals are written only by the review-execution pipeline
- * (`recordReversalSignals`, reached via the `github-webhook` job), which a runtime that does not execute
- * reviews acks-and-drops — so on such a runtime `reversed` is pinned at 0 forever while the merged/closed
- * denominator keeps growing, and every reversal-grounded percentage converges on a fake 100%.
+/** Reversal-grounded accuracy over the AUTO-ACTIONED merged + closed; null until there is signal.
  *
- * Publishing that as accuracy is the exact failure #8820 called out for the fleet number ("the old formula
- * overstated accuracy") and #7449 fixed for the global one. This is the same discipline the rest of this
- * surface already applies — a sparse rule's precision is null, `gamingFlagsCaught` is null below three
- * instances — extended to the case where the numerator's WRITER, not just its sample, is absent.
- */
-export async function loadReversalObservability(env: Env, knownReversals = 0): Promise<boolean> {
-  // A recorded reversal is itself proof the pipeline that records them runs here -- no probe needed, and no
-  // query on the hot path for any deployment that has ever overturned an auto-action.
-  if (knownReversals > 0) return true;
-  const rows = await safeAll<{ n: number }>(
-    env,
-    `SELECT COUNT(*) AS n FROM audit_events
-      WHERE event_type IN (${AUTO_ACTION_EVENT_TYPES.map((type) => `'${type}'`).join(", ")})
-        AND created_at >= ?`,
-    retentionCutoffIsoForTable("audit_events"),
-  );
-  return (rows[0]?.n ?? 0) > 0;
-}
-
-/** Reversal-grounded accuracy over the irreversible auto-actions (merged + closed); null until there is signal,
- *  and null when a reversal is not observable at all on this deployment (see {@link loadReversalObservability}) —
- *  an unmeasurable quantity stays unknown rather than rendering as a perfect score. */
+ *  `merged`/`closed` must come from the auto-action denominator (#9792), never the published-surface counts:
+ *  a reversal only ever exists for a PR the engine itself merged or closed, so a wider denominator counts PRs
+ *  whose reversal was never possible and drifts the ratio toward 100%. That also makes the separate
+ *  observability probe #9718 added redundant and it has been removed — no auto-actions means `decided` is 0
+ *  and the answer is null by construction, which is a structural guarantee rather than a heuristic that
+ *  could disagree with the denominator beside it. */
 function accuracyPct(
   merged: number,
   closed: number,
   reversed: number,
-  reversalObservable: boolean,
 ): number | null {
-  if (!reversalObservable) return null;
   const decided = merged + closed;
   if (decided <= 0) return null;
   // `reversed` counts engine auto-actions regardless of a PR's CURRENT disposition, so a reopened
@@ -378,22 +350,39 @@ export async function getPublicStats(
         GROUP BY ev.repo`,
       ...projects,
     ),
-    // The ACCURACY denominator, bounded to the same window its numerator can survive in. `reviewed`/
-    // `merged`/`closed` above are lifetime: `github_app.pr_public_surface_published` is the single
-    // retention-EXEMPT audit event type (src/db/retention.ts's DURABLE_AUDIT_EVENT_TYPES), so those
-    // counts never shrink. `reversal_*` rows are pruned with the rest of audit_events at 90 days. Pairing
-    // an immortal denominator with a 90-day numerator makes `1 - reversed/decided` drift toward 100% as
-    // the ledger ages, independent of real reversal behavior -- the same shape #7449 fixed for the
-    // Orb-folded denominator, and confirmed live (2377/602/508 reviewed, 0 reversals, 100% each).
+    // The ACCURACY denominator: the PRs this deployment AUTO-ACTIONED in the window, not the PRs it
+    // published a surface for.
+    //
+    // A reversal is by definition a human overturning an engine auto-action -- outcomes-wire.ts only records
+    // one against a PR the engine merged or closed. So the population the numerator can draw from is
+    // auto-actions, and any denominator wider than that counts PRs whose reversal was never possible.
+    // `github_app.pr_public_surface_published` is wider in two independent ways: it is the single
+    // retention-EXEMPT event type (retention.ts's DURABLE_AUDIT_EVENT_TYPES) so it never shrinks, and it
+    // covers every reviewed PR including the ones the engine only commented on. #9768 fixed the first by
+    // windowing it; this fixes the second, which was why the published figure was STILL 100% for all three
+    // repos on 2377/602/508 reviewed with 0 reversals after that shipped.
+    //
+    // This is the pairing public-accuracy-trend.ts's loadReversalDayRows already uses for the weekly series
+    // -- it anchors reversals on `agent.action.*` rows, dry-runs excluded -- so the two surfaces now agree on
+    // what "decided" means instead of each choosing its own denominator.
     safeAll<{ project: string; merged: number; closed: number }>(
       env,
-      `SELECT ev.repo AS project,
+      `SELECT act.project AS project,
               SUM(CASE WHEN pr.merged_at IS NOT NULL THEN 1 ELSE 0 END) AS merged,
               SUM(CASE WHEN pr.state = 'closed' AND pr.merged_at IS NULL THEN 1 ELSE 0 END) AS closed
-         FROM (SELECT DISTINCT repo, number FROM (${PUBLISHED_PR_KEYS}) WHERE created_at >= ?) ev
-         LEFT JOIN pull_requests pr ON pr.repo_full_name = ev.repo AND pr.number = ev.number
-        WHERE LOWER(ev.repo) IN (${inList})
-        GROUP BY ev.repo`,
+         FROM (
+           SELECT DISTINCT substr(target_key, 1, instr(target_key, '#') - 1) AS project,
+                  CAST(substr(target_key, instr(target_key, '#') + 1) AS INTEGER) AS pr_number
+             FROM audit_events
+            WHERE event_type IN ('agent.action.close', 'agent.action.merge')
+              AND outcome = 'completed' AND instr(target_key, '#') > 0
+              AND length(target_key) - length(replace(target_key, '#', '')) = 1
+              AND COALESCE(json_extract(metadata_json, '$.mode'), 'live') <> 'dry_run'
+              AND created_at >= ?
+         ) act
+         LEFT JOIN pull_requests pr ON pr.repo_full_name = act.project AND pr.number = act.pr_number
+        WHERE LOWER(act.project) IN (${inList})
+        GROUP BY act.project`,
       retentionCutoffIsoForTable("audit_events"),
       ...projects,
     ),
@@ -484,9 +473,7 @@ export async function getPublicStats(
   };
   // Resolved before byProject so every published accuracy figure -- per repo and global -- answers the same
   // question about the same deployment, rather than one of them silently disagreeing with the others.
-  const totalReversals = [...reversedByProject.values()].reduce((sum, n) => sum + n, 0);
-  const reversalObservable = await loadReversalObservability(env, totalReversals);
-  // project -> the retention-windowed merged/closed pairing for `reversed`. See the query's own comment.
+  // project -> the auto-actioned merged/closed pairing for `reversed`. See the query's own comment.
   const windowedByProject = new Map(windowedDispositions.map((row) => [String(row.project).toLowerCase(), row]));
   let windowedMerged = 0;
   let windowedClosed = 0;
@@ -514,7 +501,7 @@ export async function getPublicStats(
         reviewed,
         merged,
         closed,
-        accuracyPct: accuracyPct(windowedRepoMerged, windowedRepoClosed, reversed, reversalObservable),
+        accuracyPct: accuracyPct(windowedRepoMerged, windowedRepoClosed, reversed),
       };
     })
     .filter((r) => r.reviewed > 0)
@@ -643,7 +630,7 @@ export async function getPublicStats(
       // byProject fold above), never the fleet-folded lifetime totals.merged/closed, so the numerator
       // (own-ledger `reversed`) and the denominator are drawn from the same population AND the same
       // retention window. See the windowed disposition query's own comment for both halves of that pairing.
-      accuracyPct: accuracyPct(windowedMerged, windowedClosed, totals.reversed, reversalObservable),
+      accuracyPct: accuracyPct(windowedMerged, windowedClosed, totals.reversed),
       minutesSaved,
     },
     weekly: { reviewed: w.reviewed ?? 0, merged: w.merged ?? 0 },

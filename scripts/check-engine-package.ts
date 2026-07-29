@@ -11,7 +11,9 @@ import { FORBIDDEN_CONTENT } from "./forbidden-content";
 // editing on every such PR and would silently rot. Pattern-match the dist/ shape itself instead; the
 // forbidden-path/forbidden-content/stale-text checks below still catch anything that doesn't belong.
 const ALLOWED = [/^dist\/.*\.(js|d\.ts)$/, /^package\.json$/, /^README\.md$/, /^CHANGELOG\.md$/, /^LICENSE$/];
-const REQUIRED = ["package.json", "README.md", "CHANGELOG.md", "dist/index.js", "dist/index.d.ts"];
+const REQUIRED = ["package.json", "README.md", "CHANGELOG.md", "dist/index.js", "dist/index.d.ts", "LICENSE"];
+// #9786: LICENSE was allowed but never required here, which is how @loopover/miner shipped AGPL with no
+// license text and nothing caught it. Asserted so the same omission cannot recur in this package.
 const FORBIDDEN_PATH = /(^|\/)(\.dev\.vars|\.env|\.npmrc|.*\.pem|.*private.*key.*|.*secret.*)$/i;
 const STALE_PACKAGE_TEXT = /(private beta|zeronode\.workers\.dev|preview URL)/i;
 

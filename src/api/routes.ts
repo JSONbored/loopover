@@ -313,13 +313,14 @@ import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverrid
 import { loadPublicAccuracyTrend } from "../services/public-accuracy-trend";
 import { loadPublicFleetAccuracyTrend } from "../services/public-fleet-accuracy-trend";
 import { loadPublicRulePrecision } from "../review/public-rule-precision";
+import { loadPublicEvalCorpus } from "../review/public-eval-corpus";
 import { loadCalibrationTrend } from "../services/rule-calibration-trend";
 import { isSatisfactionFloorAutotuneEnabled, loadSatisfactionFloorStatus, runSatisfactionFloorLoosening } from "../services/satisfaction-floor-loosening-run";
 import { loadAllKnobStatuses } from "../services/knob-loosening-run";
 import { loadPublicReuseRateTrend } from "../services/public-reuse-rate-trend";
 import { loadPublicReviewVolumeTrend } from "../services/public-review-volume-trend";
 import { buildMaintainerQualityDashboard, isMaintainerQualityDataStale } from "../services/maintainer-quality-dashboard";
-import { buildMaintainerSlopDuplicateTrend, SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT } from "../services/maintainer-slop-duplicate-trend";
+import { buildMaintainerSlopDuplicateTrend, SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT, SLOP_DUPLICATE_TREND_WEEKS } from "../services/maintainer-slop-duplicate-trend";
 import { buildFederatedBenchmark } from "../orb/federated-benchmark";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import { buildGateOutcomeBreakdown, GATE_OUTCOME_BREAKDOWN_WINDOW_DAYS } from "../services/gate-outcome-breakdown";
@@ -874,6 +875,23 @@ export function createApp() {
   // per-record, digest-committed form; it is not a new scoring surface). Wired for the
   // outcome_confirmed_precision source only today -- a future benchmark_run source (#9265) feeds the same
   // endpoint, never a second response format.
+  // #9636: the corpus behind the published per-rule precision, redacted and downloadable WITHOUT
+  // credentials -- the read path that makes the verifiability walkthrough's step 1 true for a stranger
+  // instead of only for an operator holding this deployment's Cloudflare keys. See
+  // public-eval-corpus.ts's header for why `targetKey` is dropped rather than hashed, and why
+  // `metadata.confidence` stays nested exactly where the shipped classifier reads it.
+  app.get("/v1/public/eval-corpus", async (c) => {
+    const publicStatsManifestOverride = await resolvePublicStatsManifestOverride(c.env);
+    if (!isPublicStatsEnabled(c.env, publicStatsManifestOverride)) return c.json({ error: "not_found" }, 404);
+    const ruleId = c.req.query("ruleId");
+    // Required, not defaulted: a corpus is only meaningful for one rule, and silently picking one would
+    // publish a checksum for a rule the caller never asked about.
+    if (!ruleId) return c.json({ error: "rule_id_required" }, 400);
+    const corpus = await loadPublicEvalCorpus(c.env, ruleId);
+    c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return c.json(corpus);
+  });
+
   app.get("/v1/public/eval-scores", async (c) => {
     const publicStatsManifestOverride = await resolvePublicStatsManifestOverride(c.env);
     if (!isPublicStatsEnabled(c.env, publicStatsManifestOverride)) return c.json({ error: "not_found" }, 404);
@@ -1329,11 +1347,15 @@ export function createApp() {
     const scopedSyncCompletions = allSyncStates.filter((state) => qualityRepoNames.has(state.repoFullName.toLowerCase())).map((state) => state.lastCompletedAt);
     const generatedAt = nowIso();
     const qualityStale = isMaintainerQualityDataStale({ lastCompletedAts: scopedSyncCompletions, repoCount: qualityRepos.length, nowMs: Date.parse(generatedAt) });
+    // Bound the read to the trend card's own 8-week window (#9699) so the row-count cap is a backstop, not the
+    // primary limit — otherwise the ranking kept only the most recent few days and the card covered ~4 days.
+    const slopTrendSinceIso = new Date(Date.parse(generatedAt) - SLOP_DUPLICATE_TREND_WEEKS * 7 * 86_400_000).toISOString();
     const queueHealthHistoriesByRepo = await listRecentSignalSnapshotsForTargets(
       c.env,
       "queue-health",
       qualityRepos.map((repo) => repo.fullName),
       SLOP_DUPLICATE_TREND_SNAPSHOT_LIMIT,
+      slopTrendSinceIso,
     );
     const slopDuplicateTrend = buildMaintainerSlopDuplicateTrend({
       repos: qualityRepoInputs.map((input) => {

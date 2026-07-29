@@ -1,4 +1,5 @@
 import { OpenApiGeneratorV3, OpenAPIRegistry } from "@asteasolutions/zod-to-openapi";
+import { PUBLIC_SURFACE_SKIP_REASONS } from "@loopover/contract";
 import { requiresApiToken } from "../auth/route-auth";
 import { registerDiscoveryRouteSpecs } from "./discovery-route-specs";
 import { registerOrbAndControlRouteSpecs } from "./orb-and-control-route-specs";
@@ -1971,6 +1972,22 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/public/eval-corpus",
+    operationId: "getPublicEvalCorpus",
+    tags: ["Public"],
+    summary: "The redacted, checksummed corpus behind one rule's published precision — downloadable without credentials",
+    request: { query: z.object({ ruleId: z.string() }) },
+    responses: {
+      200: {
+        description:
+          "{ ruleId, windowDays, caseCount, truncated, checksum, cases: [{ ruleId, outcome, label, firedAt, decidedAt, metadata?: { confidence } }] } — `targetKey` and every other metadata key are DROPPED, not hashed, so no repo or PR identity is published; `metadata.confidence` stays nested where buildConfidenceThresholdClassifier reads it. Timestamps are truncated to the UTC day. `checksum` is sha256 over canonicalJson(cases), i.e. it commits to the artifact you can actually download",
+      },
+      400: { description: "`ruleId` is required — a corpus is only meaningful for one rule" },
+      404: { description: "Public stats are disabled for this deployment" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/public/eval-scores",
     operationId: "listPublicEvalScores",
     tags: ["Public"],
@@ -2206,7 +2223,7 @@ export function buildOpenApiSpec() {
           param: { description: "Optional repository filter. Browser sessions must have control-panel access to this repo." },
           example: "JSONbored/loopover",
         }),
-        reason: z.enum(["surface_off", "missing_author", "bot_author", "ignored_author", "maintainer_author", "miner_detection_unavailable", "not_official_gittensor_miner"]).optional().openapi({
+        reason: z.enum(PUBLIC_SURFACE_SKIP_REASONS).optional().openapi({
           param: { description: "Optional PR skip reason filter." },
           example: "not_official_gittensor_miner",
         }),

@@ -16,6 +16,7 @@ import {
   persistRepoGithubTotalsSnapshot,
   persistSignalSnapshot,
   startActiveReviewTracking,
+  terminalizeActiveReviewsFromBeforeBoot,
   terminalizeActiveReviewTracking,
   updateUpstreamDriftReportIssue,
   upsertBounty,
@@ -598,5 +599,40 @@ describe("active-review tracking (#review-evasion-protection)", () => {
       const rows = await listSignalSnapshots(env, "debug-signal", "repo-d");
       expect(rows[0]?.id).toBe("new-row");
     });
+  });
+});
+
+describe("terminalizeActiveReviewsFromBeforeBoot (#deploy-orphaned-reviews)", () => {
+  it("REGRESSION: terminalizes a row orphaned by a restart, so the head is not wedged for 15-25 minutes", async () => {
+    // Observed live on the ORB (2026-07-29): a container recreation 3 seconds after a review pass started
+    // left its tracking row 'active'; every later pass for that head -- including the maintainer's forced
+    // re-runs -- skipped with "AI review already in progress" until the 10-minute sweep's 15-minute age
+    // floor finally cleared it. At boot, started_at < boot time is exact: no review survives a restart.
+    const env = createTestEnv();
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 7, headSha: "sha7", authorLogin: "alice", deliveryId: "d-7" });
+    // The process "boots" strictly after the row was written.
+    const bootIso = new Date(Date.now() + 1000).toISOString();
+    const healed = await terminalizeActiveReviewsFromBeforeBoot(env, bootIso);
+    expect(healed).toEqual([{ repoFullName: "owner/repo", pullNumber: 7 }]);
+    const row = await env.DB.prepare("select status from active_review_tracking where repo_full_name = ? and pull_number = ?").bind("owner/repo", 7).first<{ status: string }>();
+    expect(row?.status).toBe("terminal");
+  });
+
+  it("INVARIANT: never touches a review that started AFTER boot — a live pass is not an orphan", async () => {
+    const env = createTestEnv();
+    const bootIso = new Date(Date.now() - 60_000).toISOString();
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 8, headSha: "sha8", authorLogin: "bob", deliveryId: "d-8" });
+    expect(await terminalizeActiveReviewsFromBeforeBoot(env, bootIso)).toEqual([]);
+    const row = await env.DB.prepare("select status from active_review_tracking where repo_full_name = ? and pull_number = ?").bind("owner/repo", 8).first<{ status: string }>();
+    expect(row?.status).toBe("active");
+  });
+
+  it("INVARIANT: already-terminal rows are untouched (no resurrect, no double-report)", async () => {
+    const env = createTestEnv();
+    await startActiveReviewTracking(env, { repoFullName: "owner/repo", pullNumber: 9, headSha: "sha9", authorLogin: "carol", deliveryId: "d-9" });
+    const boot = new Date(Date.now() + 1000).toISOString();
+    expect(await terminalizeActiveReviewsFromBeforeBoot(env, boot)).toHaveLength(1);
+    // Second boot sweep: nothing left to heal, and nothing re-reported.
+    expect(await terminalizeActiveReviewsFromBeforeBoot(env, boot)).toEqual([]);
   });
 });

@@ -9,7 +9,9 @@ import { FORBIDDEN_CONTENT } from "./forbidden-content";
 // output shape, plus .d.ts.map declaration sourcemaps), and grows with every new component -- pattern-match
 // the shape instead of enumerating each component file.
 const ALLOWED = [/^dist\/.*\.(js|d\.ts|d\.ts\.map)$/, /^src\/theme\.css$/, /^package\.json$/, /^README\.md$/, /^CHANGELOG\.md$/, /^LICENSE$/];
-const REQUIRED = ["package.json", "README.md", "CHANGELOG.md", "src/theme.css", "dist/utils.js", "dist/utils.d.ts"];
+const REQUIRED = ["package.json", "README.md", "CHANGELOG.md", "src/theme.css", "dist/utils.js", "dist/utils.d.ts", "LICENSE"];
+// #9786: LICENSE was allowed but never required here, which is how @loopover/miner shipped AGPL with no
+// license text and nothing caught it. Asserted so the same omission cannot recur in this package.
 const FORBIDDEN_PATH = /(^|\/)(\.dev\.vars|\.env|\.npmrc|.*\.pem|.*private.*key.*|.*secret.*)$/i;
 const STALE_PACKAGE_TEXT = /(private beta|zeronode\.workers\.dev|preview URL)/i;
 

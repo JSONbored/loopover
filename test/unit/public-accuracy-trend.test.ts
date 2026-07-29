@@ -11,11 +11,12 @@ import { createTestEnv } from "../helpers/d1";
 
 const NOW = Date.parse("2026-06-22T12:00:00.000Z");
 
-/** A day row whose volume is entirely own-ledger (no registered-Orb fold), which is what every case below
- *  models -- so `ownMerged`/`ownClosed` mirror `merged`/`closed` and the accuracy denominator is unchanged.
- *  The Orb-fold asymmetry gets its own explicit cases further down. */
+/** A day row whose volume was entirely auto-actioned by this deployment (no registered-Orb fold, nothing
+ *  merely commented on), which is what most cases below model -- so `autoActioned` equals the decided volume
+ *  and the accuracy denominator is the whole of it. The cases where the denominator is deliberately NARROWER
+ *  than the displayed volume set `autoActioned` explicitly. */
 function row(day: string, merged: number, closed: number, reversed: number) {
-  return { day, merged, closed, ownMerged: merged, ownClosed: closed, reversed };
+  return { day, merged, closed, autoActioned: merged + closed, reversed };
 }
 
 describe("buildPublicAccuracyTrend", () => {
@@ -99,7 +100,7 @@ describe("buildPublicAccuracyTrend", () => {
     // stays own-ledger-only trends every week toward 100% as more installs register.
     const week = isoWeekStart(NOW);
     const trend = buildPublicAccuracyTrend(
-      [{ day: week, merged: 100, closed: 0, ownMerged: 4, ownClosed: 0, reversed: 1 }],
+      [{ day: week, merged: 100, closed: 0, autoActioned: 4, reversed: 1 }],
       NOW,
       1,
     );
@@ -107,18 +108,29 @@ describe("buildPublicAccuracyTrend", () => {
     expect(trend[0]).toEqual({ weekStart: week, merged: 100, closed: 0, reversed: 1, accuracyPct: 75 });
   });
 
-  it("reports null accuracy — never 100% — when a reversal is not observable on this deployment", () => {
-    // Regression: on a runtime that does not execute reviews, `reversed` is pinned at 0 forever, so every week
-    // rendered as a perfect 100% over rising volume. The volume itself IS measured and still publishes.
+  it("REGRESSION: reports null accuracy — never 100% — for a week with volume but no auto-actions", () => {
+    // On a runtime that does not execute reviews, `reversed` is pinned at 0 forever, so every week rendered
+    // as a perfect 100% over rising volume. This is now structural rather than a separate observability
+    // probe (#9792): no auto-action means no PR a reversal could attach to, so the denominator is 0 and the
+    // ratio is unknown. The volume itself IS measured and still publishes.
     const week = isoWeekStart(NOW);
-    const trend = buildPublicAccuracyTrend([row(week, 40, 10, 0)], NOW, 1, false);
+    const trend = buildPublicAccuracyTrend([{ day: week, merged: 40, closed: 10, autoActioned: 0, reversed: 0 }], NOW, 1);
     expect(trend[0]).toEqual({ weekStart: week, merged: 40, closed: 10, reversed: 0, accuracyPct: null });
+  });
+
+  it("REGRESSION: divides by AUTO-ACTIONS, not by every reviewed PR", () => {
+    // A week where the engine published a surface for 100 PRs but only auto-actioned 4 of them, one of which
+    // was reversed. 1 - 1/4 = 75%, not the 1 - 1/100 = 99% a published-PR denominator would have reported --
+    // the defect that kept byProject at 100% across 2377/602/508 reviewed PRs with zero reversals.
+    const week = isoWeekStart(NOW);
+    const trend = buildPublicAccuracyTrend([{ day: week, merged: 100, closed: 0, autoActioned: 4, reversed: 1 }], NOW, 1);
+    expect(trend[0]?.accuracyPct).toBe(75);
   });
 
   it("reports null accuracy when a week's volume is entirely Orb-folded (no own-ledger PRs to attribute a reversal to)", () => {
     const week = isoWeekStart(NOW);
     const trend = buildPublicAccuracyTrend(
-      [{ day: week, merged: 50, closed: 10, ownMerged: 0, ownClosed: 0, reversed: 0 }],
+      [{ day: week, merged: 50, closed: 10, autoActioned: 0, reversed: 0 }],
       NOW,
       1,
     );

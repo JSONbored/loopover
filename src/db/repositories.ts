@@ -6060,10 +6060,15 @@ export async function listRecentSignalSnapshotsForTargets(
   signalType: string,
   targetKeys: readonly string[],
   maxPerTarget = 16,
+  sinceIso?: string,
 ): Promise<Map<string, SignalSnapshotRecord[]>> {
   const result = new Map<string, SignalSnapshotRecord[]>();
   if (targetKeys.length === 0) return result;
   const perTargetLimit = Math.max(1, Math.min(maxPerTarget, 100));
+  // The time bound (#9699) is applied INSIDE the windowed subquery so row_number() ranks over the in-window
+  // set, not the whole table — otherwise a repo with many recent snapshots could rank its cap entirely within
+  // the last few days and never surface the older weeks the trend card needs. maxPerTarget stays the backstop.
+  const sinceClause = sinceIso ? " AND generated_at >= ?" : "";
   for (let i = 0; i < targetKeys.length; i += SIGNAL_SNAPSHOT_TARGET_KEY_SQL_BATCH) {
     const batch = targetKeys.slice(i, i + SIGNAL_SNAPSHOT_TARGET_KEY_SQL_BATCH);
     const placeholders = batch.map(() => "?").join(", ");
@@ -6080,13 +6085,13 @@ export async function listRecentSignalSnapshotsForTargets(
             payload_json,
             row_number() OVER (PARTITION BY target_key ORDER BY generated_at DESC, rowid DESC) AS snapshot_rank
           FROM signal_snapshots
-          WHERE signal_type = ? AND target_key IN (${placeholders})
+          WHERE signal_type = ? AND target_key IN (${placeholders})${sinceClause}
         )
         WHERE snapshot_rank <= ?
         ORDER BY target_key, generated_at DESC
       `,
     )
-      .bind(signalType, ...batch, perTargetLimit)
+      .bind(signalType, ...batch, ...(sinceIso ? [sinceIso] : []), perTargetLimit)
       .all<{
         id: string;
         signal_type: string;
@@ -6558,6 +6563,32 @@ export async function listStaleActiveReviewTracking(
     })
     .from(activeReviewTracking)
     .where(and(eq(activeReviewTracking.status, "active"), lt(activeReviewTracking.startedAt, olderThanIso)));
+}
+
+/**
+ * Boot-time orphan sweep (#deploy-orphaned-reviews): terminalize every 'active' row whose review started
+ * BEFORE this process booted. No in-flight review survives a restart -- the pass, its provider subprocess,
+ * and its locks all died with the old process -- so any such row is definitionally an orphan, and while it
+ * exists every new pass for that head skips with "AI review already in progress" (aiReviewLockContendedResult).
+ *
+ * WHY NOT LEAVE IT TO runActiveReviewReconciliation: that sweep only touches rows older than
+ * STALE_ACTIVE_REVIEW_MIN_AGE_MS (15 min) and runs on a 10-minute cron, so a container recreation wedged
+ * every mid-review PR head for 15-25 minutes -- observed live on the ORB (2026-07-29): five deploys in one
+ * day each orphaned the in-flight review, and even the maintainer's forced re-runs bounced off the stale
+ * row. At boot the age heuristic is unnecessary: started_at < process boot time is EXACT, not a guess, so
+ * this neither waits nor risks killing a genuinely live pass (there are none yet).
+ *
+ * Returns the terminalized (repo, PR) pairs so the caller can log one line per healed row.
+ */
+export async function terminalizeActiveReviewsFromBeforeBoot(
+  env: Env,
+  bootIso: string,
+): Promise<Array<{ repoFullName: string; pullNumber: number }>> {
+  return getDb(env.DB)
+    .update(activeReviewTracking)
+    .set({ status: "terminal", updatedAt: nowIso() })
+    .where(and(eq(activeReviewTracking.status, "active"), lt(activeReviewTracking.startedAt, bootIso)))
+    .returning({ repoFullName: activeReviewTracking.repoFullName, pullNumber: activeReviewTracking.pullNumber });
 }
 
 // Review memory (#2178, data-model slice of #1964). Hard per-repo cap on stored suppression signals — mirrors

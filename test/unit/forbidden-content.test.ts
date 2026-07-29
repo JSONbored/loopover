@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content";
+import { ADVISORY_ONLY_SECRET_KINDS, HARD_SECRET_KINDS, SECRET_PATTERNS } from "../../src/review/secret-patterns";
 
 // forbidden-content.ts calls itself the single source of truth for the packaged secret-shape detector, but
 // nothing enforced it: check-mcp-package.ts re-declared the regex as its own local constant and the two could
@@ -13,9 +14,13 @@ const PACKAGE_CHECKERS = ["scripts/check-miner-package.ts", "scripts/check-mcp-p
 
 // A minimal file list that passes each checker's path/allowlist/required-file guards, so the run reaches the
 // shared secret-content read. Mirrors the file lists each checker's own "rejects secret-like content" test uses.
+// LICENSE is in both lists because both checkers now REQUIRE it (#9787): a published package that declares
+// a license in package.json but ships no LICENSE file is the drift that change exists to catch. Without it
+// the MCP checker exits on "Missing required file" before it ever reads content, and this file's clean-content
+// case would be asserting the required-file guard rather than the shared detector.
 const REACHABLE_FILES: Record<string, string[]> = {
-  "scripts/check-miner-package.ts": ["package.json", "dist/bin/loopover-miner.js", "dist/lib/cli.js"],
-  "scripts/check-mcp-package.ts": ["package.json", "dist/bin/loopover-mcp.js"],
+  "scripts/check-miner-package.ts": ["package.json", "LICENSE", "dist/bin/loopover-miner.js", "dist/lib/cli.js"],
+  "scripts/check-mcp-package.ts": ["package.json", "LICENSE", "dist/bin/loopover-mcp.js"],
 };
 
 // Assembled from fragments so this file never itself contains a credential-shaped literal -- the same
@@ -111,17 +116,44 @@ describe("FORBIDDEN_CONTENT covers the concrete provider-key formats (#7433)", (
     expect(FORBIDDEN_CONTENT.test(probe)).toBe(true);
   });
 
-  it("still matches the pre-existing shapes (private-key block, github_pat, gh*, gts, generic assignment)", () => {
-    expect(FORBIDDEN_CONTENT.test("BEGIN RSA PRIVATE KEY")).toBe(true);
-    expect(FORBIDDEN_CONTENT.test("github_pat_" + a(20))).toBe(true);
-    expect(FORBIDDEN_CONTENT.test("ghp_" + a(30))).toBe(true);
-    expect(FORBIDDEN_CONTENT.test("gts_" + "0".repeat(64))).toBe(true);
-    expect(FORBIDDEN_CONTENT.test("MY" + "_TOKEN=" + "x")).toBe(true);
+  // Every remaining HARD_SECRET_KIND, so the probe set below can be checked for COMPLETENESS rather than
+  // trusted. These four predate #7433 and were previously asserted in prose-y one-off tests.
+  const LEGACY_PROBES: Array<[string, string]> = [
+    ["private_key_block", "-----BEGIN" + " RSA PRIVATE KEY" + "-----"],
+    ["github_pat", "github_pat_" + a(22)],
+    ["github_token", "ghp_" + a(30)],
+    ["jwt", "eyJ" + A(20) + "." + a(20) + "." + a(20)],
+  ];
+  const ALL_PROBES = [...NEW_FORMAT_PROBES, ...LEGACY_PROBES];
+
+  it("COMPLETENESS: every HARD_SECRET_KIND has a probe here — adding a 17th kind fails until it is mirrored", () => {
+    // THE GAP THIS CLOSES: FORBIDDEN_CONTENT hand-copies its provider-key bodies out of SECRET_PATTERNS
+    // (see the header of scripts/forbidden-content.ts for why the copy still exists). Nothing forced the
+    // copy to keep up. A 17th entry added to HARD_SECRET_KINDS and forgotten here would leave every
+    // PUBLISHED TARBALL unscanned for that shape while this whole file still passed green -- the exact
+    // silent-rot failure mode validate-no-hand-written-js guards against with its stale-entry check.
+    expect(new Set(ALL_PROBES.map(([kind]) => kind))).toEqual(HARD_SECRET_KINDS);
   });
 
-  it("matches a jwt-shaped value (#8396)", () => {
-    // jwt is in HARD_SECRET_KINDS; packaged tarballs must catch the same shape.
-    expect(FORBIDDEN_CONTENT.test("eyJ" + A(20) + "." + a(20) + "." + a(20))).toBe(true);
+  it.each(ALL_PROBES)("EQUIVALENCE: the canonical %s pattern and FORBIDDEN_CONTENT agree on the same value", (kind, probe) => {
+    // The copy is allowed to be WIDER than canonical (it is, deliberately, for gh*/github_pat/private-key
+    // blocks -- a tarball scanner should not require a 20-char floor or the `-----` delimiters). It must
+    // never be NARROWER: a value the review lane hard-blocks must never sail into a published tarball.
+    const canonical = SECRET_PATTERNS.find((pattern) => pattern.name === kind);
+    expect(canonical, `no SECRET_PATTERNS entry named ${kind}`).toBeDefined();
+    expect(canonical?.re.test(probe), `probe for ${kind} does not match its own canonical pattern`).toBe(true);
+    expect(FORBIDDEN_CONTENT.test(probe), `FORBIDDEN_CONTENT is NARROWER than canonical for ${kind}`).toBe(true);
+  });
+
+  it("INVARIANT: the two shapes with no canonical home stay covered", () => {
+    // `gts_*` (a loopover-issued token) and the `*_TOKEN=` env-assignment shape are intentionally NOT in
+    // SECRET_PATTERNS -- the review lane treats generic assignments as advisory-only (see
+    // ADVISORY_ONLY_SECRET_KINDS), but a tarball has no human to advise, so here they are hard blocks. This
+    // pins that asymmetry as deliberate rather than leftover.
+    expect(FORBIDDEN_CONTENT.test("gts_" + "0".repeat(64))).toBe(true);
+    expect(FORBIDDEN_CONTENT.test("MY" + "_TOKEN=" + "x")).toBe(true);
+    expect(SECRET_PATTERNS.some((pattern) => pattern.name === "gts_token")).toBe(false);
+    expect(ADVISORY_ONLY_SECRET_KINDS.has("generic_secret_assignment")).toBe(true);
   });
 
   it("does NOT hard-block the deliberately-excluded weak heuristics (seed / bittensor key shapes)", () => {

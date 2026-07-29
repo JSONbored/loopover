@@ -39,6 +39,8 @@ describe("check-miner-package script", () => {
       const result = runChecker({
         CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
           "package.json",
+          "LICENSE",
+        "LICENSE",
           "dist/bin/loopover-miner.js",
           "dist/lib/secret-helper.js",
           "dist/lib/secret-helper.d.ts",
@@ -79,6 +81,7 @@ describe("check-miner-package script", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
+        "LICENSE",
         "dist/bin/loopover-miner.js",
         "README.md",
         "DEPLOYMENT.md",
@@ -103,6 +106,7 @@ describe("check-miner-package script", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
+        "LICENSE",
         "dist/bin/loopover-miner.js",
         "dist/bin/loopover-miner-backdoor.js",
         "dist/lib/cli.js",
@@ -117,6 +121,7 @@ describe("check-miner-package script", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
+        "LICENSE",
         "dist/bin/loopover-miner.js",
         "dist/lib/cli.js",
         "dist/lib/calibration/index.js",
@@ -130,6 +135,7 @@ describe("check-miner-package script", () => {
     const result = runChecker({
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
+        "LICENSE",
         "dist/bin/loopover-miner.js",
         "dist/lib/cli.js",
         "dist/lib/calibration/nested/index.js",
@@ -152,6 +158,7 @@ describe("check-miner-package script", () => {
       // Every REQUIRED file present so the check reaches (and fails on) the lib-artifacts guard specifically.
       CHECK_MINER_PACK_TEST_FILES: JSON.stringify([
         "package.json",
+        "LICENSE",
         "dist/bin/loopover-miner.js",
         "DEPLOYMENT.md",
         "Dockerfile",
@@ -178,6 +185,7 @@ describe("check-miner-package script", () => {
     // and the schema — is accepted.
     const FULL_PACKAGE = [
       "package.json",
+      "LICENSE",
       "dist/bin/loopover-miner.js",
       "dist/lib/cli.js",
       "DEPLOYMENT.md",
@@ -205,6 +213,17 @@ describe("check-miner-package script", () => {
       });
       expect(result.status).toBe(1);
       expect(result.out).toContain("Miner package is missing required file: DEPLOYMENT.md");
+    });
+
+    it("REGRESSION (#9786): requires LICENSE — this package shipped AGPL-3.0-only without one", () => {
+      // It could not have been added before: LICENSE was absent from the ALLOWED list too, so the file
+      // would have failed this very check as an unexpected artifact.
+      const result = runChecker({
+        CHECK_MINER_PACK_TEST_FILES: JSON.stringify(FULL_PACKAGE.filter((f) => f !== "LICENSE")),
+        CHECK_MINER_PACK_TEST_CONTENT: "ok",
+      });
+      expect(result.status).toBe(1);
+      expect(result.out).toContain("Miner package is missing required file: LICENSE");
     });
 
     it("requires at least one docs/*.md file to be published", () => {

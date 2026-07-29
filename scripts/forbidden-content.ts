@@ -5,12 +5,22 @@
 // the SAME pattern to assert no MCP tool response ever leaks one — importing it here rather than hand-duplicating
 // the regex keeps every consumer byte-for-byte in sync instead of relying on manual vigilance.
 //
-// The concrete provider-key shapes below are hand-copied (#7433) from the exact regex bodies of the entries in
+// The concrete provider-key shapes below are hand-copied (#7433) from the entries in
 // src/review/secret-patterns.ts's SECRET_PATTERNS that are in its HARD_SECRET_KINDS set (the "near-zero
-// false-positive" subset). They are NOT imported directly: this file is a plain `.mjs` run via `node`
-// (test:miner-pack / test:mcp-pack), and secret-patterns.ts is TypeScript with no runtime `.js` sibling on this
-// path — a runtime `import` of it from node would fail, so the exact bodies are copied per the issue's stated
-// fallback. `seed_or_mnemonic` and `bittensor_key` are deliberately NOT included: they are documented in
+// false-positive" subset).
+//
+// WHY STILL A COPY, now that this is a `.ts` file run via `tsx` and could simply import them: the copy is
+// deliberately WIDER than canonical on three shapes, and importing would silently NARROW a scanner that
+// guards immutable published tarballs. Canonical `github_token`/`github_pat` carry a 20-char floor and
+// `private_key_block` requires the `-----` delimiters — sensible for a review lane weighing false positives
+// against a human's attention, wrong for a tarball, where a short `ghp_`-shaped fixture or a bare
+// `BEGIN RSA PRIVATE KEY` should still stop the release. Two shapes here have no canonical home at all
+// (`gts_*`, and the `*_TOKEN=` assignment the review lane treats as advisory-only).
+//
+// What keeps a copy from rotting is test/unit/forbidden-content.test.ts: it asserts a probe exists for
+// EVERY member of HARD_SECRET_KINDS, and that each probe matched by the canonical pattern is matched here
+// too. Adding a kind there without mirroring it here fails CI. `seed_or_mnemonic` and `bittensor_key` are
+// deliberately NOT included: they are documented in
 // secret-patterns.ts as weak, false-positive-prone heuristics intentionally excluded from HARD_SECRET_KINDS
 // (an ordinary `coldkey:` / `hotkey =` line or the word "mnemonic" in Bittensor docs is not a leaked
 // credential). `jwt` IS in HARD_SECRET_KINDS today and is included here so packaged tarballs get the same

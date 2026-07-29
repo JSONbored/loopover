@@ -38,6 +38,15 @@ describe("check-engine-package script", () => {
     expect(result.out).toMatch(/^Engine package dry-run ok: 8 files\.\n$/);
   });
 
+  it("REGRESSION (#9786): rejects a package shipping no LICENSE", () => {
+    // Every checker ALLOWED this file and none asserted it, which is how @loopover/miner shipped
+    // AGPL-3.0-only with no license text at all. The absence of a license from a copyleft package is a
+    // licensing defect, not a packaging one, so it fails the pack check like any other missing artifact.
+    const result = runChecker({ CHECK_ENGINE_PACK_TEST_FILES: JSON.stringify(["package.json", "README.md", "CHANGELOG.md", "dist/index.js", "dist/index.d.ts"]) });
+    expect(result.status).toBe(1);
+    expect(result.out).toContain("Engine package is missing required file: LICENSE");
+  });
+
   it("rejects a forbidden path", () => {
     const result = runChecker({ CHECK_ENGINE_PACK_TEST_FILES: JSON.stringify([".env"]) });
     expect(result.status).toBe(1);

@@ -21,6 +21,7 @@ const ALLOWED = [
   /^dist\/package\.json$/,
   /^package\.json$/,
   /^README\.md$/,
+  /^LICENSE$/,
   /^expected-engine\.version$/,
   // Operational material shipped for `npm install -g` users so the quickstart doesn't require a repo visit (#4874):
   /^DEPLOYMENT\.md$/,
@@ -35,6 +36,11 @@ const REQUIRED = [
   "DEPLOYMENT.md",
   "Dockerfile",
   "schema/miner-goal-spec.schema.json",
+  // #9786: this package declares AGPL-3.0-only and shipped no LICENSE at all. It could not have: LICENSE was
+  // absent from ALLOWED above, so adding the file would have failed this very check. Required, not merely
+  // allowed, for the same reason DEPLOYMENT.md and Dockerfile are -- a license that can silently drop out of
+  // a copyleft package is the one file whose absence is a licensing problem, not a packaging one.
+  "LICENSE",
 ];
 // Exact-name dotfiles that are inherently credential-shaped regardless of extension.
 const FORBIDDEN_DOTFILE = /(^|\/)(\.dev\.vars|\.env|\.npmrc)$/i;

@@ -127,6 +127,15 @@ export async function shouldSkipAiForReputation(
   // upgrade-only AMS bridge inside getEffectiveSubmitterReputation, then cadence (#4514) independently.
   const stats = await getEffectiveSubmitterReputation(env, { repoFullName: args.project, submitter: args.submitter });
   if (shouldDowngradeToDeterministic(stats)) return true;
+  // A TRUSTED submitter is never cadence-downgraded. The machine-paced leg is a spend control against
+  // UNPROVEN accounts flooding paid review; "trusted" is this same module's own definition of proven (5+
+  // recent merged successes at a low fail rate, recency-windowed -- see signalFromCounts). Without this, a
+  // maintainer running a legitimate high-velocity campaign (observed live: the repo OWNER, 50 submissions in
+  // 24h at a 7.2-minute median gap, 145 recent merges) had EVERY PR downgraded to deterministic-only and
+  // held for manual review -- the gate taxing exactly the contributor with the strongest earned record. An
+  // abuser cannot reach "trusted" cheaply: it requires real merged PRs on this repo inside the window, and
+  // any prompt-injection row hard-locks the signal to "low" regardless.
+  if (stats.signal === "trusted") return false;
   const cadence = await getSubmitterCadence(env, args.project, args.submitter ?? undefined);
   return isMachinePacedCadence(cadence);
 }

@@ -77,6 +77,14 @@ function isConvergenceForbiddenMessage(message: string): boolean {
   return /resource not accessible by integration|secondary rate limit|api rate limit|abuse detection/i.test(message);
 }
 
+/** A GitHub rate-limit signal — the message GitHub attaches to a secondary/abuse or primary rate-limit
+ *  response. A merge failing on this is an infra-scoped, self-healing window, whether GitHub spelled it 403 or
+ *  429 (src/github/client.ts treats both the same). Exported so the 403 and 429 branches share one definition
+ *  (#9693). */
+export function isRateLimitMessage(message: string): boolean {
+  return /secondary rate limit|abuse|api rate limit exceeded/i.test(message);
+}
+
 /** Read the HTTP status off an Octokit RequestError (it sets `.status`); undefined for non-HTTP errors. */
 function httpStatus(error: unknown): number | undefined {
   const status = (error as { status?: unknown } | null | undefined)?.status;
@@ -119,6 +127,13 @@ export function classifyMergeFailure(error: unknown): { terminal: boolean; reaso
   const message = errorMessage(error);
   const status = httpStatus(error);
   if (status === 401) return { terminal: true, scope: "infra", reason: `installation token rejected: App suspended or key rotated (401): ${message}` };
+  // A secondary rate-limit window surfaces as 403 OR 429 (src/github/client.ts:422) and is fleet-wide + self-
+  // healing — infra-scoped so it lapses on the TTL re-probe instead of stranding every in-flight merge on a
+  // head-scoped block until an unrelated commit lands (#9693). The 429 arm sits with the other status branches;
+  // the rate-limited-403 arm must precede the terminal `403` below so it is not swallowed by it.
+  if (status === 429) return { terminal: false, scope: "infra", reason: `merge rate-limited (429 — secondary rate limit, self-healing window): ${message}` };
+  if (status === 403 && isRateLimitMessage(message))
+    return { terminal: false, scope: "infra", reason: `merge rate-limited (403 — secondary rate limit, self-healing window): ${message}` };
   if (status === 403 && isConvergenceForbiddenMessage(message))
     return { terminal: false, scope: "infra", reason: `merge forbidden for now (403 — branch protection or GitHub permission visibility may still be converging): ${message}` };
   if (status === 403) return { terminal: true, scope: "commit", reason: `merge forbidden (403): ${message}` };

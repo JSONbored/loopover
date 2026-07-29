@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyMergeFailure, isMergeConflictMessage, isNoNewBaseCommitsMessage, isWorkflowScopeRefusalMessage, MERGE_RETRY_CAP } from "../../src/services/merge-failure";
+import { classifyMergeFailure, isMergeConflictMessage, isNoNewBaseCommitsMessage, isRateLimitMessage, isWorkflowScopeRefusalMessage, MERGE_RETRY_CAP } from "../../src/services/merge-failure";
 
 /** Build an Octokit-style RequestError: an Error carrying an HTTP `.status`. */
 function httpError(status: number, message: string): Error {
@@ -36,11 +36,31 @@ describe("classifyMergeFailure", () => {
   });
 
   it("retries GitHub's generic 403 merge rejection because branch protection can still converge", () => {
-    for (const message of ["Resource not accessible by integration", "secondary rate limit", "API rate limit exceeded", "abuse detection mechanism triggered"]) {
+    // A non-rate-limit convergence 403 (permission visibility still settling) — the converging arm.
+    const result = classifyMergeFailure(httpError(403, "Resource not accessible by integration"));
+    expect(result.terminal).toBe(false);
+    expect(result.scope).toBe("infra");
+    expect(result.reason).toMatch(/converging/i);
+  });
+
+  it("classifies a 429 and a rate-limited 403 as an infra-scoped, self-healing window (#9693)", () => {
+    // 429: no branch matched this before, so it fell through to a commit-scoped block that stranded the PR.
+    const rateLimited429 = classifyMergeFailure(httpError(429, "You have exceeded a secondary rate limit"));
+    expect(rateLimited429).toMatchObject({ terminal: false, scope: "infra" });
+    expect(rateLimited429.reason).toMatch(/rate-limited/i);
+    // 403 spellings of the same window are treated identically, before the terminal 403 branch.
+    for (const message of ["secondary rate limit", "API rate limit exceeded", "abuse detection mechanism triggered"]) {
       const result = classifyMergeFailure(httpError(403, message));
-      expect(result.terminal).toBe(false);
-      expect(result.reason).toMatch(/converging/i);
+      expect(result).toMatchObject({ terminal: false, scope: "infra" });
+      expect(result.reason).toMatch(/rate-limited/i);
     }
+  });
+
+  it("exposes isRateLimitMessage matching only rate-limit text (#9693)", () => {
+    expect(isRateLimitMessage("You have exceeded a secondary rate limit")).toBe(true);
+    expect(isRateLimitMessage("abuse detection mechanism triggered")).toBe(true);
+    expect(isRateLimitMessage("API rate limit exceeded")).toBe(true);
+    expect(isRateLimitMessage("Repository does not allow squash merges")).toBe(false);
   });
 
   it("treats non-convergence 403s, 409, and real merge-conflict text as terminal", () => {

@@ -8284,9 +8284,18 @@ export function maybeAddReputationSkipHold(
     confirmedContributor: boolean;
     skipAiReview?: boolean | undefined;
     reputationSkipped: boolean;
+    /** True when this pass is a forced re-run, which bypasses the reputation skip -- see body. */
+    forceAiReview?: boolean | undefined;
   },
 ): boolean {
   if (!args.reputationSkipped || !shouldRequirePublicAiReviewForAdvisory(env, args)) return false;
+  // The hold must describe what HAPPENED, not what the heuristic wanted: aiReviewAllAuthors and a forced
+  // re-run (the panel checkbox / `@loopover review`) both bypass the reputation skip in
+  // shouldStartAiReviewForAdvisory, so on those passes the AI review genuinely runs. Pushing the "was
+  // skipped" finding anyway produced a published surface that asserted the review was skipped DIRECTLY
+  // ABOVE the review's own summary (observed live on JSONbored/loopover#9764) -- and, worse, held the gate
+  // for a review that succeeded.
+  if (args.settings.aiReviewAllAuthors || args.forceAiReview) return false;
   args.advisory.findings.push({
     code: "ai_review_inconclusive",
     severity: "warning",
@@ -11042,6 +11051,7 @@ async function maybePublishPrPublicSurface(
       confirmedContributor,
       skipAiReview: webhook.skipAiReview,
       reputationSkipped: preComputedReputationSkip === true,
+      forceAiReview: webhook.forceAiReview,
     });
     // #9035: a caught reviewer-manipulation attempt is evidence of intent, not a code-quality observation, and
     // must not buy an automated decision. Same fail-closed shape as the two holds above.

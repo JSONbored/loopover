@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getPullRequest, markPullRequestMergeBlocked, bumpPullRequestMergeAttempt, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub, upsertInstallation } from "../../src/db/repositories";
-import { activeMergeBlockedSha, classifyMergeFailure, INFRA_MERGE_BLOCK_TTL_MS, isMergeBlockInEffect } from "../../src/services/merge-failure";
+import { activeMergeBlockedSha, classifyMergeFailure, INFRA_MERGE_BLOCK_TTL_MS, isMergeBlockInEffect, MERGE_RETRY_CAP } from "../../src/services/merge-failure";
 import { AGENT_LABEL_NEEDS_REVIEW, AGENT_LABEL_READY, planAgentMaintenanceActions } from "../../src/settings/agent-actions";
 import { createTestEnv } from "../helpers/d1";
 
@@ -112,6 +112,47 @@ describe("markPullRequestMergeBlocked persists the scope (#9012)", () => {
     await seedPr(env, "sha-1");
     await markPullRequestMergeBlocked(env, "alice/repo", 5, "sha-1", "x".repeat(400));
     expect((await getPullRequest(env, "alice/repo", 5))?.mergeBlockedReason).toHaveLength(280);
+  });
+});
+
+// #9693: a 429 secondary-rate-limit window that burns MERGE_RETRY_CAP must persist an INFRA-scoped (expiring)
+// block, not a commit-scoped one that strands the PR until an unrelated commit lands. handleMergeFailure derives
+// the expiry from classifyMergeFailure(...).scope, so we drive that composition exactly as the executor does.
+describe("a rate-limit-exhausted merge persists a self-healing infra block (#9693)", () => {
+  const NOW = Date.parse("2026-07-26T12:00:00.000Z");
+  const blockFor = (error: unknown) => {
+    // Mirror handleMergeFailure's retry-cap path: on exhaustion the classified scope decides the expiry.
+    const { scope, terminal } = classifyMergeFailure(error);
+    // A 429/rate-limited failure is non-terminal, so it reaches the cap path and escalates there.
+    expect(terminal).toBe(false);
+    return scope === "infra" ? new Date(NOW + INFRA_MERGE_BLOCK_TTL_MS).toISOString() : undefined;
+  };
+
+  it("persists a non-null, lapsing mergeBlockedUntil after MERGE_RETRY_CAP 429 failures", async () => {
+    const env = createTestEnv();
+    await seedPr(env, "sha-1");
+    // Exhaust the retry budget on the same head, exactly as repeated 429 attempts would.
+    for (let i = 0; i < MERGE_RETRY_CAP; i += 1) await bumpPullRequestMergeAttempt(env, "alice/repo", 5, "sha-1");
+    const expiresAt = blockFor(httpError(429, "You have exceeded a secondary rate limit"));
+    expect(expiresAt).not.toBeUndefined();
+    await markPullRequestMergeBlocked(env, "alice/repo", 5, "sha-1", "merge could not complete after 5 attempt(s)", expiresAt);
+
+    const stored = await getPullRequest(env, "alice/repo", 5);
+    expect(stored?.mergeBlockedUntil).not.toBeNull();
+    // The block genuinely lapses on the TTL — no new commit required.
+    expect(isMergeBlockInEffect(stored!, "sha-1", NOW + INFRA_MERGE_BLOCK_TTL_MS + 1)).toBe(false);
+  });
+
+  it("keeps a 409 merge-conflict block commit-scoped (mergeBlockedUntil null), unchanged", async () => {
+    const env = createTestEnv();
+    await seedPr(env, "sha-1");
+    // A 409 is terminal on the first failure — commit-scoped, no expiry.
+    const { scope, terminal } = classifyMergeFailure(httpError(409, "Required status check is expected."));
+    expect(terminal).toBe(true);
+    const expiresAt = scope === "infra" ? new Date(NOW + INFRA_MERGE_BLOCK_TTL_MS).toISOString() : undefined;
+    await markPullRequestMergeBlocked(env, "alice/repo", 5, "sha-1", "merge conflict (409)", expiresAt);
+
+    expect((await getPullRequest(env, "alice/repo", 5))?.mergeBlockedUntil ?? null).toBeNull();
   });
 });
 

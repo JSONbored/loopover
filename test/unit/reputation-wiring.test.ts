@@ -339,6 +339,36 @@ describe("shouldSkipAiForReputation (helper)", () => {
       expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "speedster" })).toBe(true);
     });
 
+    it("REGRESSION: a TRUSTED submitter is never cadence-downgraded, no matter how fast they pace", async () => {
+      // Observed live on the ORB: the repo OWNER, mid remediation campaign (50 PRs in 24h, 7.2-minute median
+      // gap, 145 recent merges), had EVERY PR downgraded to deterministic-only and held for manual review.
+      // The machine-paced leg is a spend control against UNPROVEN accounts; "trusted" is this module's own
+      // definition of proven (5+ recent merged successes, low fail rate), so it must short-circuit cadence.
+      const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
+      // 6 merged outcomes in the window -> signal "trusted" (trustedMinSuccess=5, failRate 0).
+      for (let i = 0; i < 6; i++) {
+        await seedReviewTarget(env, { project: "acme/widgets", repo: "acme/widgets", number: 700 + i, installationId: 1, submitter: "the-maintainer", status: "merged", reasonCode: "success" });
+      }
+      // ...and a blatantly machine-paced burst: 8 PRs at a 4-minute gap, all inside the cadence window.
+      const t0 = Date.now() - 60 * 60_000;
+      for (let i = 0; i < 8; i++) {
+        await seedCadencePullRequest(env, { number: 800 + i, submitter: "the-maintainer", createdAt: new Date(t0 + i * 4 * 60_000).toISOString() });
+      }
+      expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "the-maintainer" })).toBe(false);
+    });
+
+    it("INVARIANT: the trusted exemption cannot mask genuine abuse — a prompt-injection row still downgrades", async () => {
+      // "trusted" is unreachable with a prompt-injection row in the window: signalFromCounts hard-locks the
+      // signal to "low" before any success counting. This pins that ordering, so the exemption above can
+      // never become a loophole where an abuser banks merges and then injects at machine pace.
+      const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
+      for (let i = 0; i < 6; i++) {
+        await seedReviewTarget(env, { project: "acme/widgets", repo: "acme/widgets", number: 900 + i, installationId: 1, submitter: "sleeper", status: "merged", reasonCode: "success" });
+      }
+      await seedReviewTarget(env, { project: "acme/widgets", repo: "acme/widgets", number: 990, installationId: 1, submitter: "sleeper", status: "closed", reasonCode: "source_prompt_injection" });
+      expect(await shouldSkipAiForReputation(env, { project: "acme/widgets", submitter: "sleeper" })).toBe(true);
+    });
+
     it("FLAG-ON: false for the same number of submissions spread naturally over hours (comfortably human pace)", async () => {
       const env = createTestEnv({ LOOPOVER_REVIEW_REPUTATION: "true" });
       const t0 = Date.now() - 20 * 60 * 60_000;

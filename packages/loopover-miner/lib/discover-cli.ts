@@ -186,11 +186,19 @@ async function supplementWithDiscoveryIndex(
   if (!isDiscoveryPlaneEnabled(env)) return fanOut;
   const queryIndex = options.queryDiscoveryIndex ?? queryDiscoveryIndex;
   const response = await queryIndex(queryScope, { env });
-  recordDiscoveryTelemetry("discover_query", response.candidates.length > 0 ? "supplemented" : "empty", { env });
-  if (response.candidates.length === 0) return fanOut;
+  // #9680: the hosted index preserves a repo's AI-contribution ban (normalizeDiscoveryIndexCandidate keeps
+  // aiPolicyAllowed:false), but nothing downstream re-checks it -- the `as RawCandidateIssue` cast below would
+  // launder a `false` through a type declared as the literal `true`, so an AI-banned repo's issue would be ranked
+  // and enqueued. Enforce the ban here exactly as the local fetchTargetIssues does (`if (!verdict.allowed) return
+  // []`): drop it, not down-rank or warn. A candidate that omits the field is kept (`!== false`, matching
+  // normalizeDiscoveryIndexCandidate's own default).
+  const aiAllowed = response.candidates.filter((candidate) => candidate.aiPolicyAllowed !== false);
+  const droppedAiBanned = response.candidates.length - aiAllowed.length;
+  recordDiscoveryTelemetry("discover_query", response.candidates.length > 0 ? "supplemented" : "empty", { env, droppedAiBanned });
+  if (aiAllowed.length === 0) return fanOut;
 
   const seen = new Set(fanOut.issues.map((issue) => dedupeKey(issue.repoFullName, issue.issueNumber)));
-  const supplemented = response.candidates
+  const supplemented = aiAllowed
     .filter((candidate) => !seen.has(dedupeKey(candidate.repoFullName, candidate.issueNumber)))
     // DiscoveryIndexCandidate is a near-superset of RawCandidateIssue; copy the real assignees through when the
     // hosted contract carried them (#7442), falling back to [] only when the served response genuinely omitted the

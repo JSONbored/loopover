@@ -171,9 +171,16 @@ export async function submitSoftClaim(
 export function recordDiscoveryTelemetry(
   event: string,
   outcome: string,
-  options: { env?: Record<string, string | undefined> } = {},
+  options: { env?: Record<string, string | undefined>; droppedAiBanned?: number } = {},
 ): void {
   const env = options.env ?? process.env;
   if (!isDiscoveryPlaneEnabled(env) || !isDiscoveryTelemetryEnabled(env)) return;
-  getLogger().info("discovery_plane_telemetry", { event, outcome });
+  // #9680: low-cardinality count of index candidates dropped for an AI-contribution ban this query, when the
+  // caller supplies it. Spread conditionally so callers that don't pass it keep the exact { event, outcome }
+  // shape (and payload) they emitted before.
+  getLogger().info("discovery_plane_telemetry", {
+    event,
+    outcome,
+    ...(options.droppedAiBanned !== undefined ? { droppedAiBanned: options.droppedAiBanned } : {}),
+  });
 }

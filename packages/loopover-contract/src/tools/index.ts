@@ -3,7 +3,7 @@
 // Every MCP tool LoopOver serves, from any of its three servers, has exactly one entry here. A
 // runtime registers the slice it can actually serve by filtering on locality/availability -- it
 // does not keep its own list.
-import { projectToolDefinitions, type McpToolDefinition, type ToolContract, type ToolFilter } from "../tool-definition.js";
+import { projectToolDefinition, projectToolDefinitions, type McpToolDefinition, type ToolContract, type ToolFilter } from "../tool-definition.js";
 import { getRepoContextTool } from "./repo-context.js";
 import { getPrReviewabilityTool } from "./pr-reviewability.js";
 import { predictGateTool } from "./predict-gate.js";
@@ -302,6 +302,24 @@ export function listToolDefinitions(filter: ToolFilter = {}): McpToolDefinition[
 export function getToolContract(name: string): ToolContract | undefined {
   return CONTRACTS_BY_NAME.get(name);
 }
+
+/**
+ * One tool's PROJECTED definition -- what a server must advertise for it (#9655).
+ *
+ * The raw contract is not what goes on the wire: `annotations` there is a `Partial` stating only what
+ * differs from the default posture, so a server reading it directly advertises `{ readOnlyHint: false }`
+ * with no `destructiveHint` for a tool that declares one field, and nothing at all for a tool that
+ * declares none. Three servers each doing that produced three different advertised tools from one entry.
+ * This is `listToolDefinitions()` for a single name, so the defaults are applied in exactly one place.
+ */
+export function getToolDefinition(name: string): McpToolDefinition | undefined {
+  const contract = CONTRACTS_BY_NAME.get(name);
+  return contract ? projectToolDefinition(contract) : undefined;
+}
+
+// The projection helpers, re-exported so a server registering from this entry point does not have to
+// import the root one as well just to apply the annotation defaults.
+export { projectToolDefinition, projectToolDefinitions, type McpToolDefinition, type ToolContract } from "../tool-definition.js";
 
 // Re-export each family wholesale so consumers can reach the individual input/output schemas (and
 // the shared sub-shapes like laneAdviceSchema) without importing deep paths.

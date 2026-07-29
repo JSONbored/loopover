@@ -32,7 +32,13 @@ function sourceFiles(root: string): string[] {
   return found;
 }
 
-const SERVER_ROOTS = ["src/mcp", "packages/loopover-mcp/bin", "packages/loopover-mcp/lib", "packages/loopover-miner/lib"];
+// #9655: `packages/loopover-miner/bin` was missing here, and that is where the miner MCP server lives --
+// so all 21 of its registrations kept passing `.shape` while this guard reported none. A guard whose roots
+// do not cover a server is worse than no guard: it reads as proof the defect is gone.
+const SERVER_ROOTS = ["src/mcp", "packages/loopover-mcp/bin", "packages/loopover-mcp/lib", "packages/loopover-miner/bin", "packages/loopover-miner/lib"];
+
+/** Where a registerTool call could plausibly live, so the roots above can be checked for gaps. */
+const SEARCH_ROOTS = ["src", "packages/loopover-mcp", "packages/loopover-miner"];
 
 describe("no registerTool call hands the SDK a raw shape (#9762)", () => {
   const offenders = SERVER_ROOTS.flatMap((root) =>
@@ -48,6 +54,14 @@ describe("no registerTool call hands the SDK a raw shape (#9762)", () => {
 
   it("finds none", () => {
     expect(offenders).toEqual([]);
+  });
+
+  it("covers every directory that registers MCP tools", () => {
+    // The guard is only as good as its roots. Every file that calls registerTool must live under one of
+    // them, or the pattern above searches somewhere the defect cannot be.
+    const registering = SEARCH_ROOTS.flatMap(sourceFiles).filter((file) => /\bregisterTool\b/.test(readFileSync(file, "utf8")));
+    const uncovered = registering.filter((file) => !SERVER_ROOTS.some((root) => file.startsWith(root)));
+    expect(uncovered).toEqual([]);
   });
 
   it("would catch one if it came back", () => {

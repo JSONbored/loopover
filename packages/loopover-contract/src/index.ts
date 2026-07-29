@@ -9,6 +9,7 @@ export {
   TOOL_LOCALITIES,
   TOOL_AVAILABILITIES,
   defineTool,
+  projectToolDefinition,
   projectToolDefinitions,
   toJsonSchema,
   type ToolCategory,

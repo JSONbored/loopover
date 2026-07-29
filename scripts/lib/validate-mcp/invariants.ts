@@ -10,7 +10,7 @@ export type ListedTool = {
   title?: string | undefined;
   description?: string | undefined;
   annotations?: { readOnlyHint?: boolean | undefined; destructiveHint?: boolean | undefined } | undefined;
-  inputSchema?: { type?: string } | undefined;
+  inputSchema?: { type?: string; properties?: Record<string, unknown>; required?: string[] } | undefined;
   outputSchema?: { type?: string } | undefined;
 };
 
@@ -79,6 +79,40 @@ export function checkAdvertisedMetadata(expected: readonly McpToolDefinition[], 
 }
 
 /**
+ * An advertised input may only NARROW the contract's, never widen it (#9662).
+ *
+ * `registerStdioTool`'s override is documented as one-way -- "a server may serve LESS than the contract
+ * when its own route cannot honour a field... never used to widen" -- and nothing enforced it. The
+ * override is typed as any `z.ZodObject` at all, and no existing check could see a widening:
+ * `diffToolSets` compares names, `checkAdvertisedShape` asks only whether the schema is object-typed,
+ * and the smoke arguments are synthesized FROM the advertised schema, so a widened schema simply gets
+ * widened arguments and passes.
+ *
+ * Narrowing is defined mechanically, which is all a schema comparison can honestly do here: every
+ * advertised property exists in the contract's, and every advertised requirement is one the contract
+ * also requires. Making an optional contract field required is therefore a widening of the caller's
+ * obligations and fails -- which is the case a hand-written override is most likely to get wrong.
+ */
+export function checkInputNarrowing(expected: readonly McpToolDefinition[], listed: readonly ListedTool[]): string[] {
+  const listedByName = new Map(listed.map((tool) => [tool.name, tool]));
+  const failures: string[] = [];
+  for (const tool of expected) {
+    const advertised = listedByName.get(tool.name);
+    // Absent is diffToolSets' finding; a schema-less advertisement is checkAdvertisedShape's.
+    if (!advertised?.inputSchema) continue;
+    const contractProperties = new Set(Object.keys((tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}));
+    const contractRequired = new Set((tool.inputSchema as { required?: string[] }).required ?? []);
+    for (const property of Object.keys(advertised.inputSchema.properties ?? {})) {
+      if (!contractProperties.has(property)) failures.push(`${tool.name} advertises input property ${property}, which its contract does not declare`);
+    }
+    for (const property of advertised.inputSchema.required ?? []) {
+      if (!contractRequired.has(property)) failures.push(`${tool.name} requires input property ${property}, which its contract does not require`);
+    }
+  }
+  return failures;
+}
+
+/**
  * Every registered tool must have been smoke-called.
  *
  * This is the assertion metagraphed's validator lacks, and the reason 92 of its 205 tools are never
@@ -92,8 +126,14 @@ export function checkEveryToolCalled(listed: readonly ListedTool[], called: Read
 
 export type VersionLockInput = {
   packageVersion: string;
-  advertisedLatestVersion: string;
-  serverInfoVersion: string;
+  /** The compatibility constant, where one exists. Only @loopover/mcp has one; the miner's lock is
+   *  the two-way one between its package and what its server advertises. */
+  advertisedLatestVersion?: string | undefined;
+  /** Read off a CONNECTED client, never re-read from the package.json this is compared against
+   *  (#9661) -- hence `undefined` is a case: a server that advertised no version at all. */
+  serverInfoVersion: string | undefined;
+  /** Which server's `serverInfo` this is, so one helper can lock more than one of them. */
+  serverLabel?: string;
 };
 
 /**
@@ -105,11 +145,17 @@ export type VersionLockInput = {
  */
 export function checkVersionLock(input: VersionLockInput): string[] {
   const failures: string[] = [];
-  if (input.advertisedLatestVersion !== input.packageVersion) {
+  if (input.advertisedLatestVersion !== undefined && input.advertisedLatestVersion !== input.packageVersion) {
     failures.push(`compatibility advertises ${input.advertisedLatestVersion} but @loopover/mcp is ${input.packageVersion}`);
   }
-  if (input.serverInfoVersion !== input.packageVersion) {
-    failures.push(`stdio serverInfo reports ${input.serverInfoVersion} but @loopover/mcp is ${input.packageVersion}`);
+  const label = input.serverLabel ?? "stdio";
+  // #9661: absent is its own failure. `undefined !== packageVersion` would report it as a mismatch,
+  // but the two are not the same problem -- one server drifted, the other advertised nothing at all,
+  // and an empty string would otherwise have to be read as a version.
+  if (input.serverInfoVersion === undefined || input.serverInfoVersion.trim() === "") {
+    failures.push(`${label} serverInfo advertises no version`);
+  } else if (input.serverInfoVersion !== input.packageVersion) {
+    failures.push(`${label} serverInfo reports ${input.serverInfoVersion} but its package is ${input.packageVersion}`);
   }
   return failures;
 }

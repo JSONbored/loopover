@@ -12,13 +12,11 @@
 import { z } from "zod";
 import { defineTool } from "../tool-definition.js";
 import { toolErrorFields } from "../shared.js";
-import { PLAN_STEP_STATUSES } from "../enums.js";
+import { CLAIM_STATUSES, MINER_RUN_STATES, PLAN_STEP_STATUSES, QUEUE_STATUSES } from "../enums.js";
 
 /** Statuses a portfolio-queue entry can hold. */
-export const QUEUE_STATUSES = ["queued", "in_progress", "done"] as const;
 
 /** Statuses a local claim-ledger row can hold. */
-export const CLAIM_STATUSES = ["active", "released", "expired"] as const;
 
 /** Per-status counts, repeated at both the global and per-repo level of the dashboard. */
 const queueStatusCounts = z.looseObject({
@@ -231,7 +229,6 @@ export const minerAuditFeedTool = defineTool({
 // ── run state ───────────────────────────────────────────────────────────────────────────────────
 
 /** `RunState` (packages/loopover-miner/lib/run-state.ts). */
-export const MINER_RUN_STATES = ["idle", "discovering", "planning", "preparing"] as const;
 
 export const MinerGetRunStateInput = z.object({
   repoFullName: z.string().min(1).optional(),

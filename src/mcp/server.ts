@@ -23,6 +23,10 @@ import {
   AdminListConfigBackupsInput,
   AdminListConfigBackupsOutput,
   AdminTriggerRedeployInput,
+  LocalBranchAnalysisInput,
+  RemoteLocalScorePreviewInput,
+  MarkNotificationsReadInput,
+  WatchIssuesInput,
   AdminRotateSecretInput,
   AdminRotateSecretOutput,
   AdminTriggerRedeployOutput,
@@ -107,6 +111,8 @@ import {
   PreflightLocalDiffOutput,
   RunLocalScorerInput,
   RunLocalScorerOutput,
+  CompareLocalVariantsInput,
+  ComparePrVariantsInput,
   CompareVariantsOutput,
   PreviewLocalPrScoreOutput,
   PreflightCurrentBranchOutput,
@@ -144,7 +150,9 @@ import {
   ValidateLinkedIssueOutput,
   CheckBeforeStartInput,
   CheckBeforeStartOutput,
+  FindOpportunitiesInput,
   FindOpportunitiesOutput,
+  RetrieveIssueContextInput,
   RetrieveIssueContextOutput,
   GetEligibilityPlanOutput,
   ListNotificationsInput,
@@ -266,19 +274,12 @@ import {
 } from "@loopover/contract/tools";
 import { TOOL_CATEGORIES, type ToolCategory } from "@loopover/contract";
 import {
-  MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH,
-  MAX_FIND_OPPORTUNITIES_LANGUAGES,
-  MAX_FIND_OPPORTUNITIES_OWNER_LENGTH,
-  MAX_FIND_OPPORTUNITIES_REPO_LENGTH,
-  MAX_FIND_OPPORTUNITIES_TARGETS,
   runFindOpportunities,
   validateFindOpportunitiesInput,
 } from "./find-opportunities";
 import { loadPrAiReviewFindings, assertContributorOwnsPullRequest } from "./pr-ai-review-findings";
 import { sanitizeUntrustedMcpText } from "./untrusted-text";
 import {
-  MAX_ISSUE_RAG_OWNER_LENGTH,
-  MAX_ISSUE_RAG_REPO_LENGTH,
   runIssueRagRetrieval,
   validateIssueRagInput,
 } from "./issue-rag";
@@ -335,8 +336,6 @@ import {
   listRepoSyncSegments,
   listRepoSyncStates,
   listRepositories,
-  MAX_NOTIFICATION_DELIVERY_ID_LENGTH,
-  MAX_NOTIFICATION_MARK_READ_IDS,
   markNotificationDeliveriesRead,
   recordAuditEvent,
   recordPostMergeIncidentReport,
@@ -466,7 +465,7 @@ import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePl
 import { buildFocusManifestValidation } from "../services/focus-manifest-validation";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
-import { compileFocusManifestPolicy, MAX_FOCUS_MANIFEST_BYTES } from "../signals/focus-manifest";
+import { compileFocusManifestPolicy } from "../signals/focus-manifest";
 import { loadPublicRepoFocusManifest, loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { buildPredictedGateVerdict, buildGateDispositions, type PredictedGateVerdict } from "../rules/predicted-gate";
 export { buildGateDispositions, type GateDisposition } from "../rules/predicted-gate";
@@ -479,8 +478,7 @@ import { evaluateEscalation } from "../loop-escalation";
 import { buildStructuralImprovementAssessment } from "../signals/improvement";
 import { buildBoundaryTestGenerationFinding, buildBoundaryTestGenerationSpec } from "../signals/boundary-test-generation";
 import { attachDataQuality, buildRepoDataQuality } from "../signals/data-quality";
-import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
-import { SCENARIO_MAX_BRANCH_REF_CHARS, SCENARIO_MAX_LINKED_ISSUE_NUMBERS, SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
+import { SCENARIO_MAX_REPO_FULL_NAME_CHARS } from "../scenarios/input-model";
 import { loadUpstreamStatus } from "../upstream/ruleset";
 import {
   authoritativeGateOverride,
@@ -511,70 +509,12 @@ function decisionPackSummary(login: string, freshness: string, rebuildEnqueued: 
 }
 
 
-const ownerRepoPullShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  number: z.number().int().positive(),
-};
-
-
-
-// (#8660) write-side mirror of DELETE /v1/repos/:owner/:repo/selftune/overrides. `confirm` is the required
-// confirmation field this destructive reset must carry, matching the sibling maintainer-mutation tools'
-// deliberate action params (loopover_set_agent_paused's `paused`, loopover_set_action_autonomy's action/level)
-// and the REST route's own "an optional body is treated as a confirmation of the override being cleared" intent.
-const clearSelftuneOverrideShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  confirm: z.literal(true),
-};
-
-// (#9298) owner/repo/pull (mirrors ownerRepoPullShape) plus the same body fields the REST route's
-// postMergeIncidentReportSchema validates. Declared inline rather than spread from that schema's `.shape`
-// because src/api/routes.ts imports this module before it defines postMergeIncidentReportSchema, so reading
-// `.shape` at module-init time would dereference `undefined` (circular-import temporal dead zone).
-const fileIncidentReportShape = {
-  ...ownerRepoPullShape,
-  description: z.string().min(1).max(4000),
-  severity: z.enum(["low", "medium", "high", "critical"]),
-  mergedSha: z
-    .string()
-    .regex(/^[0-9a-f]{7,40}$/i)
-    .optional(),
-};
 
 
 
 
-const issueRagShape = {
-  owner: z.string().max(MAX_ISSUE_RAG_OWNER_LENGTH),
-  repo: z.string().max(MAX_ISSUE_RAG_REPO_LENGTH),
-  title: z.string().max(PREFLIGHT_LIMITS.titleChars),
-  body: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
-  labels: z.array(z.string().max(PREFLIGHT_LIMITS.labelChars)).max(PREFLIGHT_LIMITS.labels).optional(),
-  topK: z.number().int().min(1).max(12).optional(),
-};
 
-const findOpportunitiesShape = {
-  targets: z
-    .array(
-      z.object({
-        owner: z.string().min(1).max(MAX_FIND_OPPORTUNITIES_OWNER_LENGTH),
-        repo: z.string().min(1).max(MAX_FIND_OPPORTUNITIES_REPO_LENGTH),
-      }),
-    )
-    .max(MAX_FIND_OPPORTUNITIES_TARGETS)
-    .optional(),
-  searchQuery: z.string().min(1).max(500).optional(),
-  goalSpec: z
-    .object({
-      lane: z.string().min(1).optional(),
-      minRankScore: z.number().min(0).max(100).optional(),
-      languages: z.array(z.string().min(1).max(MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH)).max(MAX_FIND_OPPORTUNITIES_LANGUAGES).optional(),
-    })
-    .optional(),
-  limit: z.number().int().min(1).max(50).optional(),
-};
+
 
 
 // #7721 admin tools — self-hosted-instance-only, gated behind LOOPOVER_MCP_ADMIN_ENABLED at
@@ -582,178 +522,21 @@ const findOpportunitiesShape = {
 // Schemas for all four (#9518) come from @loopover/contract/tools -- AdminGetConfigInput,
 // AdminWriteConfigInput, AdminListConfigBackupsInput, AdminTriggerRedeployInput.
 
-const preflightShape = {
-  repoFullName: z.string().min(3).max(PREFLIGHT_LIMITS.repoFullNameChars),
-  contributorLogin: z.string().min(1).max(PREFLIGHT_LIMITS.contributorLoginChars).optional(),
-  title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars),
-  body: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
-  labels: z.array(z.string().max(PREFLIGHT_LIMITS.labelChars)).max(PREFLIGHT_LIMITS.labels).optional(),
-  changedFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
-  linkedIssues: z.array(z.number().int().positive()).max(PREFLIGHT_LIMITS.linkedIssues).optional(),
-  tests: z.array(z.string().max(PREFLIGHT_LIMITS.testChars)).max(PREFLIGHT_LIMITS.tests).optional(),
-  authorAssociation: z.string().max(PREFLIGHT_LIMITS.authorAssociationChars).optional(),
-};
-
-const localDiffPreflightShape = {
-  ...preflightShape,
-  changedLineCount: z.number().int().min(0).optional(),
-  testFiles: z.array(z.string().max(PREFLIGHT_LIMITS.changedFileChars)).max(PREFLIGHT_LIMITS.changedFiles).optional(),
-  commitMessage: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
-};
-
-const branchEligibilityShape = {
-  status: z.enum(["eligible", "ineligible", "unknown"]),
-  source: z.enum(["github_metadata", "local_metadata", "registry", "user_supplied"]).optional(),
-  reason: z.string().optional(),
-  checkedAt: z.string().optional(),
-  stale: z.boolean().optional(),
-};
-
-const callerBranchEligibilitySchema = z
-  .object(branchEligibilityShape)
-  .strict()
-  .transform((value) => ({ ...value, status: value.status === "eligible" ? ("unknown" as const) : value.status, source: "user_supplied" as const }));
-
-// Changed-file metadata + local validation results — shared by the local-branch analysis and the #782 local
-// scorer. METADATA ONLY (paths + line counts), never source content, so the no-upload boundary holds.
-const changedFileSchema = z
-  .object({
-    path: z.string().min(1),
-    previousPath: z.string().min(1).optional(),
-    additions: z.number().int().min(0).optional(),
-    deletions: z.number().int().min(0).optional(),
-    status: z.enum(["added", "modified", "deleted", "renamed", "copied", "unknown"]).optional(),
-    binary: z.boolean().optional(),
-  })
-  .strict();
-
-const validationEntrySchema = z
-  .object({
-    command: z.string().min(1),
-    status: z.enum(["passed", "failed", "not_run", "skipped", "focused", "unknown"]),
-    summary: z.string().optional(),
-    durationMs: z.number().int().min(0).optional(),
-    exitCode: z.number().int().min(0).optional(),
-  })
-  .strict();
-
-// #782 run_local_scorer input — changed-file metadata + the local validation results.
-const runLocalScorerShape = {
-  changedFiles: z.array(changedFileSchema).min(1).max(500),
-  validation: z.array(validationEntrySchema).max(50).optional(),
-};
-
 
 // GitHub permissions that imply real write access to a repo. Cached PR author_association can report
 // MEMBER/COLLABORATOR for users without push permission, so write-capable MCP surfaces must verify live.
 const REPO_WRITE_PERMISSIONS = new Set(["admin", "maintain", "write"]);
 
 
-// #3003 (part of #2993) — on-demand repo-doc refresh, the manual counterpart to the scheduled sweep
-// (src/queue/processors.ts's "repo-doc-refresh-sweep"). Both call the SAME performRepoDocRefresh runner, which
-// itself calls openRepoDocPullRequest -- the one place enable/scope/eligibility/diffing is decided.
-const refreshRepoDocsShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-};
 
-
-// #6757: dryRun/create/limit mirror the REST route's contributorIssueDraftGenerateSchema EXACTLY (same
-// defaults, same bounds) so the two surfaces cannot drift. `create` alone does not open issues — the handler
-// re-applies the route's explicit_create_requires_dry_run_false guard, so a caller must pass BOTH create:true
-// and dryRun:false, and can never silently create.
-const generateContributorIssueDraftsShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  dryRun: z.boolean().optional().default(true),
-  create: z.boolean().optional().default(false),
-  limit: z.number().int().min(1).max(20).optional().default(5),
-};
-
-
-// #7426: dryRun/create/limit mirror generateContributorIssueDraftsShape's own bounds/defaults (create alone is
-// rejected -- the handler re-applies the explicit_create_requires_dry_run_false guard). `limit` is capped lower
-// (10, not 20): every draft here costs real LLM spend, unlike that tool's zero-cost static signals.
-// #7427: title/description/dueOn are the CALLER's own input, never model-generated -- milestone metadata is
-// maintainer-authored/approved by design. Only ever consulted when actually creating; a dry-run preview makes
-// no milestone-related GitHub calls at all.
-const planRepoIssuesMilestoneShape = z.object({
-  title: z.string().min(1).max(200),
-  description: z.string().max(2000).optional(),
-  dueOn: z.string().datetime({ offset: true }).optional(),
-});
-
-const planRepoIssuesShape = {
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  goal: z.string().min(1).max(2000),
-  dryRun: z.boolean().optional().default(true),
-  create: z.boolean().optional().default(false),
-  limit: z.number().int().min(1).max(10).optional().default(5),
-  milestone: planRepoIssuesMilestoneShape.optional(),
-};
 
 
 // #784 (MCP slice) — the agent audit feed: executed actions + approval decisions for a repo.
 
 
-const focusManifestInputSchema = z
-  .record(z.string(), z.unknown())
-  .refine((manifest) => isJsonByteLengthWithinLimit(manifest, MAX_FOCUS_MANIFEST_BYTES), {
-    message: `focusManifest must serialize to ${MAX_FOCUS_MANIFEST_BYTES} bytes or fewer`,
-  });
 
-function isJsonByteLengthWithinLimit(value: unknown, maxBytes: number): boolean {
-  try {
-    return new TextEncoder().encode(JSON.stringify(value)).byteLength <= maxBytes;
-  } catch {
-    return false;
-  }
-}
 
-const localBranchAnalysisShape = {
-  login: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS),
-  repoFullName: z.string().min(3).max(SCENARIO_MAX_REPO_FULL_NAME_CHARS),
-  baseRef: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
-  headRef: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
-  branchName: z.string().min(1).max(SCENARIO_MAX_BRANCH_REF_CHARS).optional(),
-  baseSha: z.string().min(1).optional(),
-  headSha: z.string().min(1).optional(),
-  mergeBaseSha: z.string().min(1).optional(),
-  remoteTrackingSha: z.string().min(1).optional(),
-  commitMessages: z.array(z.string()).max(30).optional(),
-  changedFiles: z.array(changedFileSchema).max(500).optional(),
-  validation: z.array(validationEntrySchema).max(50).optional(),
-  linkedIssues: z.array(z.number().int().positive()).max(SCENARIO_MAX_LINKED_ISSUE_NUMBERS).optional(),
-  labels: z.array(z.string()).optional(),
-  title: z.string().min(1).optional(),
-  body: z.string().optional(),
-  pendingMergedPrCount: z.number().int().min(0).optional(),
-  pendingClosedPrCount: z.number().int().min(0).optional(),
-  approvedPrCount: z.number().int().min(0).optional(),
-  expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
-  projectedCredibility: z.number().min(0).max(1).optional(),
-  scenarioNotes: z.array(z.string()).max(20).optional(),
-  focusManifest: focusManifestInputSchema.optional(),
-  branchEligibility: callerBranchEligibilitySchema.optional(),
-  localScorer: z
-    .object({
-      mode: z.enum(["metadata_only", "external_command", "gittensor_root"]),
-      activeModel: z.string().optional(),
-      sourceTokenScore: z.number().min(0).optional(),
-      totalTokenScore: z.number().min(0).optional(),
-      sourceLines: z.number().min(0).optional(),
-      testTokenScore: z.number().min(0).optional(),
-      nonCodeTokenScore: z.number().min(0).optional(),
-      warnings: z.array(z.string()).optional(),
-    })
-    .strict()
-    .optional(),
-};
 
-const localBranchVariantsShape = {
-  variants: z.array(z.object(localBranchAnalysisShape).strict()).min(1).max(10),
-};
 
 
 function contributorOpenIssueCount(issues: Array<{ repoFullName: string; state: string }>, repoFullName: string): number {
@@ -761,47 +544,8 @@ function contributorOpenIssueCount(issues: Array<{ repoFullName: string; state: 
   return issues.filter((issue) => issue.repoFullName.toLowerCase() === targetRepo && issue.state === "open").length;
 }
 
-const linkedIssueContextShape = {
-  status: z.enum(["raw", "plausible", "validated", "invalid", "unavailable"]).optional(),
-  source: z.enum(["user_supplied", "official_mirror", "github_cache", "issue_quality", "missing"]).optional(),
-  issueNumbers: z.array(z.number().int().positive()).max(50).optional(),
-  solvedByPullRequests: z.array(z.number().int().positive()).max(50).optional(),
-  reason: z.string().optional(),
-  warnings: z.array(z.string()).max(20).optional(),
-};
 
-const scorePreviewShape = {
-  repoFullName: z.string().min(3),
-  targetType: z.enum(["planned_pr", "pull_request", "local_diff", "variant"]).default("local_diff"),
-  targetKey: z.string().optional(),
-  contributorLogin: z.string().min(1).optional(),
-  labels: z.array(z.string()).optional(),
-  linkedIssueMode: z.enum(["none", "standard", "maintainer"]).default("none"),
-  linkedIssueContext: z.object(linkedIssueContextShape).strict().optional(),
-  sourceTokenScore: z.number().min(0).optional(),
-  totalTokenScore: z.number().min(0).optional(),
-  sourceLines: z.number().min(0).optional(),
-  testTokenScore: z.number().min(0).optional(),
-  nonCodeTokenScore: z.number().min(0).optional(),
-  existingContributorTokenScore: z.number().min(0).optional(),
-  prAgeHours: z.number().min(0).optional(),
-  openPrCount: z.number().int().min(0).optional(),
-  credibility: z.number().min(0).max(1).optional(),
-  changesRequestedCount: z.number().int().min(0).optional(),
-  duplicateRiskCount: z.number().int().min(0).optional(),
-  metadataOnly: z.boolean().default(true),
-  pendingMergedPrCount: z.number().int().min(0).optional(),
-  pendingClosedPrCount: z.number().int().min(0).optional(),
-  approvedPrCount: z.number().int().min(0).optional(),
-  expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
-  projectedCredibility: z.number().min(0).max(1).optional(),
-  scenarioNotes: z.array(z.string()).max(20).optional(),
-  branchEligibility: callerBranchEligibilitySchema.optional(),
-};
 
-const variantsShape = {
-  variants: z.array(z.object(scorePreviewShape)).min(1).max(10),
-};
 
 
 
@@ -829,34 +573,6 @@ export const gatePrecisionOutputSchema = {
 
 
 
-const predictGateShape = {
-  login: z.string().min(1),
-  owner: z.string().min(1),
-  repo: z.string().min(1),
-  title: z.string().min(1),
-  body: z.string().optional(),
-  labels: z.array(z.string()).optional(),
-  linkedIssues: z.array(z.number().int().positive()).optional(),
-  // The PR's changed file PATHS (metadata only — paths, never source content). Supplying them lets the predictor
-  // also evaluate the focus-manifest path policy + path-gated pre-merge checks, matching the live gate (#11-13/#18).
-  changedPaths: z.array(z.string().min(1).max(PREFLIGHT_LIMITS.changedFileChars)).max(500).optional(),
-};
-
-// Pure local-metadata computation (no repo data, no secrets) — the agent supplies its own diff metadata
-// (paths + line counts, never source), so there is nothing to scope. Mirrors the other local-* tools.
-const checkSlopRiskShape = {
-  changedFiles: z
-    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
-    .max(2000),
-  description: z.string().max(20000).optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-  testFiles: z.array(z.string().max(400)).max(2000).optional(),
-  commitMessages: z.array(z.string().max(2000)).max(200).optional(),
-  hasLinkedIssue: z.boolean().optional(),
-  issueDiscoveryLane: z.boolean().optional(),
-};
-
-
 // Idea-intake bridge input (#4798, spec #4779). Fields are loose here so the engine's validateIdeaSubmission
 // owns the real bounds/format checks and returns the actionable error list — an empty/malformed submission
 // reaches the handler rather than being rejected upstream by the schema. `decomposition` is the optional
@@ -875,110 +591,15 @@ const checkSlopRiskShape = {
 // Loop escalation evaluator input (#4806): an already-computed loop outcome + health tier + operator signals.
 
 
-// Deterministic structural-improvement counterpart to checkSlopRiskShape (#4746, sub-issue I of epic #4737):
-// the positive-axis mirror of checkSlopRisk, same pure local-metadata contract. changedFiles/tests/testFiles
-// are reused verbatim (same shape as checkSlopRiskShape) so the two signals never disagree about what counts
-// as test evidence. complexityDeltas/duplicationDeltas mirror ComplexityDeltaLike/DuplicationDeltaLike
-// (src/signals/improvement.ts) as already-derived structured deltas — the calling agent computes them from
-// its own local working tree (real before/after content, no reconstructOldContent trick needed) and supplies
-// them here; this tool never reads file content or diffs itself. Every field is optional:
-// buildStructuralImprovementAssessment degrades cleanly to "insufficient-signal" when nothing is supplied
-// (see its own tests), so there is no synthetic "at least one field required" check to duplicate here. No
-// auth required — same choice as checkSlopRisk: a pure function over caller-supplied structured data with no
-// owner/repo/login to scope, and improvementScore carries no gate/blocker power (advisory-only; see
-// improvement.ts's header comment), so there is nothing to gate.
-const checkImprovementPotentialShape = {
-  changedFiles: z
-    .array(z.object({ path: z.string().min(1).max(400), additions: z.number().int().min(0).optional(), deletions: z.number().int().min(0).optional() }))
-    .max(2000)
-    .optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-  testFiles: z.array(z.string().max(400)).max(2000).optional(),
-  patchCoverageDeltaPercent: z.number().optional(),
-  complexityDeltas: z
-    .array(
-      z.object({
-        file: z.string().min(1).max(400),
-        line: z.number().int().min(1),
-        name: z.string().min(1).max(400),
-        before: z.number().int().min(0),
-        after: z.number().int().min(0),
-        delta: z.number().int(),
-      }),
-    )
-    .max(2000)
-    .optional(),
-  duplicationDeltas: z
-    .array(
-      z.object({
-        file: z.string().min(1).max(400),
-        line: z.number().int().min(1),
-        duplicateOfLine: z.number().int().min(1),
-        lines: z.number().int().min(1),
-      }),
-    )
-    .max(2000)
-    .optional(),
-};
-
-
-// Coverage-gap self-check (#2235): pure local-metadata, like checkSlopRisk — the agent supplies its changed
-// paths (plus any test paths) and asks whether the change carries enough test evidence, no source uploaded.
-const checkTestEvidenceShape = {
-  changedPaths: z.array(z.string().min(1).max(400)).max(2000),
-  testFiles: z.array(z.string().min(1).max(400)).max(2000).optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-};
-
-
-// Issue-side slop triage (#533): pure local-metadata, like checkSlopRisk — the agent supplies the issue
-// title + body, nothing to scope. Advisory-only; issues never block.
-const checkIssueSlopShape = {
-  title: z.string().max(500).optional(),
-  body: z.string().max(40000).optional(),
-};
-
-
-// Boundary-safe test-generation suggestion (#1972): pure local-metadata, like checkSlopRisk — the agent
-// supplies changed-file paths plus precomputed boundary-touch metadata from its local diff scan. The remote MCP
-// boundary never accepts patch/source text. Advisory-only; this tool never blocks or writes anything — it only
-// returns criteria/hints for the caller's OWN agent to scaffold tests from.
-const suggestBoundaryTestsShape = {
-  changedFiles: z.array(z.object({ path: z.string().min(1).max(400) }).strict()).max(500),
-  boundaryTouches: z
-    .array(
-      z
-        .object({
-          path: z.string().min(1).max(400),
-          kind: z.enum(["array_index_bounds", "null_or_undefined_branch", "empty_collection_check"]),
-        })
-        .strict(),
-    )
-    .max(20)
-    .optional(),
-  tests: z.array(z.string().max(400)).max(2000).optional(),
-  testFiles: z.array(z.string().max(400)).max(2000).optional(),
-};
 
 
 
 
-const markNotificationsReadShape = {
-  login: z.string().min(1),
-  ids: z
-    .array(z.string().min(1).max(MAX_NOTIFICATION_DELIVERY_ID_LENGTH))
-    .max(MAX_NOTIFICATION_MARK_READ_IDS)
-    .optional(),
-};
+
+
 
 // #699 path B: a miner's self-scoped issue-watch subscriptions. `action` defaults to `list`; `watch`/`unwatch`
 // require repoFullName. `labels` ([]/omitted = any) filters which new issues notify.
-const watchIssuesShape = {
-  login: z.string().min(1),
-  action: z.enum(["watch", "unwatch", "list"]).default("list"),
-  repoFullName: z.string().min(3).max(200).optional(),
-  labels: z.array(z.string().min(1).max(100)).max(50).optional(),
-};
 
 
 
@@ -1589,7 +1210,7 @@ export class LoopoverMcp {
     register(
       "loopover_mark_notifications_read",
       {
-        inputSchema: markNotificationsReadShape,
+        inputSchema: MarkNotificationsReadInput,
         outputSchema: MarkNotificationsReadOutput,
       },
       async (input) => this.toolResult(await this.markNotificationsRead(input.login, input.ids)),
@@ -1598,7 +1219,7 @@ export class LoopoverMcp {
     register(
       "loopover_watch_issues",
       {
-        inputSchema: watchIssuesShape,
+        inputSchema: WatchIssuesInput,
         outputSchema: WatchIssuesOutput,
       },
       async (input) => this.toolResult(await this.watchIssues(input)),
@@ -1764,7 +1385,7 @@ export class LoopoverMcp {
     register(
       "loopover_find_opportunities",
       {
-        inputSchema: findOpportunitiesShape,
+        inputSchema: FindOpportunitiesInput,
         outputSchema: FindOpportunitiesOutput,
       },
       async (input) => this.toolResult(await this.findOpportunities(input)),
@@ -1773,7 +1394,7 @@ export class LoopoverMcp {
     register(
       "loopover_retrieve_issue_context",
       {
-        inputSchema: issueRagShape,
+        inputSchema: RetrieveIssueContextInput,
         outputSchema: RetrieveIssueContextOutput,
       },
       async (input) => this.toolResult(await this.retrieveIssueContext(input)),
@@ -1809,7 +1430,7 @@ export class LoopoverMcp {
     register(
       "loopover_preview_local_pr_score",
       {
-        inputSchema: scorePreviewShape,
+        inputSchema: RemoteLocalScorePreviewInput,
         outputSchema: PreviewLocalPrScoreOutput,
       },
       async (input) => this.toolResult(await this.previewScore(input)),
@@ -1818,7 +1439,7 @@ export class LoopoverMcp {
     register(
       "loopover_get_eligibility_plan",
       {
-        inputSchema: scorePreviewShape,
+        inputSchema: RemoteLocalScorePreviewInput,
         outputSchema: GetEligibilityPlanOutput,
       },
       async (input) => this.toolResult(await this.getEligibilityPlan(input)),
@@ -2019,7 +1640,7 @@ export class LoopoverMcp {
         // may send; relocating the input would have silently dropped that downgrade. The contract's
         // ExplainScoreBreakdownInput documents the pre-transform wire shape, which is what the
         // advertised inputSchema should say.
-        inputSchema: scorePreviewShape,
+        inputSchema: RemoteLocalScorePreviewInput,
         outputSchema: ExplainScoreBreakdownOutput,
       },
       async (input) => this.toolResult(await this.explainScoreBreakdown(input)),
@@ -2037,7 +1658,7 @@ export class LoopoverMcp {
     register(
       "loopover_compare_pr_variants",
       {
-        inputSchema: variantsShape,
+        inputSchema: ComparePrVariantsInput,
         outputSchema: CompareVariantsOutput,
       },
       async (input) => this.toolResult(await this.comparePrVariants(input.variants)),
@@ -2074,7 +1695,7 @@ export class LoopoverMcp {
     register(
       "loopover_preflight_current_branch",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: PreflightCurrentBranchOutput,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "preflight")),
@@ -2083,7 +1704,7 @@ export class LoopoverMcp {
     register(
       "loopover_preview_current_branch_score",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: PreviewCurrentBranchScoreOutput,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "scorePreview")),
@@ -2092,7 +1713,7 @@ export class LoopoverMcp {
     register(
       "loopover_rank_local_next_actions",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: RankLocalNextActionsOutput,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "nextActions")),
@@ -2101,7 +1722,7 @@ export class LoopoverMcp {
     register(
       "loopover_explain_local_blockers",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: ExplainLocalBlockersOutput,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "scoreBlockers")),
@@ -2110,7 +1731,7 @@ export class LoopoverMcp {
     register(
       "loopover_remediation_plan",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: RemediationPlanOutput,
       },
       async (input) => this.toolResult(await this.remediationPlan(input)),
@@ -2119,7 +1740,7 @@ export class LoopoverMcp {
     register(
       "loopover_prepare_pr_packet",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: PrepareLocalPrPacketOutput,
       },
       async (input) => this.toolResult(await this.localBranchSlice(input, "prPacket")),
@@ -2128,7 +1749,7 @@ export class LoopoverMcp {
     register(
       "loopover_draft_pr_body",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: DraftPrBodyOutput,
       },
       async (input) => this.toolResult(await this.draftPrBody(input)),
@@ -2137,7 +1758,7 @@ export class LoopoverMcp {
     register(
       "loopover_compare_local_variants",
       {
-        inputSchema: localBranchVariantsShape,
+        inputSchema: CompareLocalVariantsInput,
         outputSchema: CompareVariantsOutput,
       },
       async (input) => this.toolResult(await this.compareLocalVariants(input.variants)),
@@ -2182,7 +1803,7 @@ export class LoopoverMcp {
     register(
       "loopover_agent_prepare_pr_packet",
       {
-        inputSchema: localBranchAnalysisShape,
+        inputSchema: LocalBranchAnalysisInput,
         outputSchema: AgentRunBundleOutput,
       },
       async (input) => this.toolResult(await this.agentPreparePrPacket(input)),
@@ -3117,7 +2738,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async findOpportunities(input: z.infer<z.ZodObject<typeof findOpportunitiesShape>>): Promise<ToolPayload> {
+  private async findOpportunities(input: z.infer<typeof FindOpportunitiesInput>): Promise<ToolPayload> {
     const validated = validateFindOpportunitiesInput(input);
     if (!validated.ok) {
       return {
@@ -3145,7 +2766,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async retrieveIssueContext(input: z.infer<z.ZodObject<typeof issueRagShape>>): Promise<ToolPayload> {
+  private async retrieveIssueContext(input: z.infer<typeof RetrieveIssueContextInput>): Promise<ToolPayload> {
     const validated = validateIssueRagInput(input);
     if (!validated.ok) {
       return {
@@ -4030,7 +3651,7 @@ export class LoopoverMcp {
   // gate as the sibling write tools (loopover_set_agent_paused/loopover_set_action_autonomy) — stricter than the
   // audit tool's read gate — and calls the exact deleteLiveOverride the REST route already uses, returning the
   // route's { repoFullName, cleared: true } shape. Branch-free: `confirm` is enforced by the input schema.
-  private async clearSelftuneOverride(input: z.infer<z.ZodObject<typeof clearSelftuneOverrideShape>>): Promise<ToolPayload> {
+  private async clearSelftuneOverride(input: z.infer<typeof ClearSelftuneOverrideInput>): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoManageAccess(fullName);
     await deleteLiveOverride(this.env as unknown as StorageEnv, fullName);
@@ -4044,7 +3665,7 @@ export class LoopoverMcp {
   // gate, then the REST route's exact PR-must-exist-and-be-merged validation, then the same
   // recordPostMergeIncidentReport persistence (reporterKind "customer", the calling actor) and response shape.
   // Missing/unmerged PRs return the route's 404/409 error codes as a normal `{ ok: false, error }` tool result.
-  private async fileIncidentReport(input: z.infer<z.ZodObject<typeof fileIncidentReportShape>>): Promise<ToolPayload> {
+  private async fileIncidentReport(input: z.infer<typeof FileIncidentReportInput>): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoManageAccess(fullName);
     const pullRequest = await getPullRequest(this.env, fullName, input.number);
@@ -4324,7 +3945,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async checkSlopRisk(input: z.infer<z.ZodObject<typeof checkSlopRiskShape>>): Promise<ToolPayload> {
+  private async checkSlopRisk(input: z.infer<typeof CheckSlopRiskInput>): Promise<ToolPayload> {
     await this.enforceToolRateLimit("loopover_check_slop_risk");
     const assessment = buildSlopAssessment(input);
     // Return band + findings only — omit the exact numeric score and rubric thresholds to prevent
@@ -4336,7 +3957,7 @@ export class LoopoverMcp {
   }
 
   private async checkImprovementPotential(
-    input: z.infer<z.ZodObject<typeof checkImprovementPotentialShape>>,
+    input: z.infer<typeof CheckImprovementPotentialInput>,
   ): Promise<ToolPayload> {
     await this.enforceToolRateLimit("loopover_check_improvement_potential");
     const assessment = buildStructuralImprovementAssessment(input);
@@ -4350,7 +3971,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async checkTestEvidence(input: z.infer<z.ZodObject<typeof checkTestEvidenceShape>>): Promise<ToolPayload> {
+  private async checkTestEvidence(input: z.infer<typeof CheckTestEvidenceInput>): Promise<ToolPayload> {
     await this.enforceToolRateLimit("loopover_check_test_evidence");
     // #6749: the classification/guidance logic now lives in the engine's buildTestEvidenceReport, shared with
     // POST /v1/lint/test-evidence and the local CLI mirror so all three surfaces agree by construction.
@@ -4361,7 +3982,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async checkIssueSlop(input: z.infer<z.ZodObject<typeof checkIssueSlopShape>>): Promise<ToolPayload> {
+  private async checkIssueSlop(input: z.infer<typeof CheckIssueSlopInput>): Promise<ToolPayload> {
     await this.enforceToolRateLimit("loopover_check_issue_slop");
     const assessment = buildIssueSlopAssessment(input);
     return {
@@ -4370,7 +3991,7 @@ export class LoopoverMcp {
     };
   }
 
-  private suggestBoundaryTests(input: z.infer<z.ZodObject<typeof suggestBoundaryTestsShape>>): ToolPayload {
+  private suggestBoundaryTests(input: z.infer<typeof SuggestBoundaryTestsInput>): ToolPayload {
     const changedPaths = new Set(input.changedFiles.map((file) => file.path));
     const touches = (input.boundaryTouches ?? []).filter((touch) => changedPaths.has(touch.path));
     const finding = buildBoundaryTestGenerationFinding({ touches, tests: input.tests, testFiles: input.testFiles });
@@ -4385,7 +4006,7 @@ export class LoopoverMcp {
    *  (#2234): resolves the repo's public data + config and runs the SAME deterministic predictor, so the two tools
    *  can never diverge (one returns the top-line verdict, the other the itemized per-rule dispositions). */
   private async computePredictedGateVerdict(
-    input: z.infer<z.ZodObject<typeof predictGateShape>>,
+    input: z.infer<typeof PredictGateInput>,
   ): Promise<{ repoFullName: string; verdict: PredictedGateVerdict }> {
     // #9138: shared by both loopover_predict_gate and loopover_explain_gate_disposition -- neither previously
     // called enforceToolRateLimit, so the only ceiling was the shared /mcp route class (120/min), well above
@@ -4441,7 +4062,7 @@ export class LoopoverMcp {
     return { repoFullName, verdict };
   }
 
-  private async predictGate(input: z.infer<z.ZodObject<typeof predictGateShape>>): Promise<ToolPayload> {
+  private async predictGate(input: z.infer<typeof PredictGateInput>): Promise<ToolPayload> {
     const { repoFullName, verdict } = await this.computePredictedGateVerdict(input);
     return {
       summary: `Predicted LoopOver gate for ${repoFullName} under the ${verdict.pack} pack: ${verdict.conclusion}.`,
@@ -4452,7 +4073,7 @@ export class LoopoverMcp {
   /** #2234: the itemized per-rule dispositions behind predict_gate's verdict — which specific gate rules would
    *  block vs advise, and why. Reuses computePredictedGateVerdict (identical prediction), then reshapes it via the
    *  pure buildGateDispositions. Read-only reasoning surface — no merge/close decision. */
-  private async explainGateDisposition(input: z.infer<z.ZodObject<typeof predictGateShape>>): Promise<ToolPayload> {
+  private async explainGateDisposition(input: z.infer<typeof PredictGateInput>): Promise<ToolPayload> {
     const { repoFullName, verdict } = await this.computePredictedGateVerdict(input);
     const dispositions = buildGateDispositions(verdict);
     const blocking = dispositions.filter((disposition) => disposition.status === "block").length;
@@ -4528,7 +4149,7 @@ export class LoopoverMcp {
   }
 
   // #699 path B: manage a miner's issue-watch subscriptions. Self-scoped; watch/unwatch need repoFullName.
-  private async watchIssues(input: z.infer<z.ZodObject<typeof watchIssuesShape>>): Promise<ToolPayload> {
+  private async watchIssues(input: z.infer<typeof WatchIssuesInput>): Promise<ToolPayload> {
     this.requireContributorAccess(input.login);
     let changed: string | undefined;
     if (input.action === "watch" || input.action === "unwatch") {
@@ -4643,7 +4264,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async preflightPr(input: z.infer<z.ZodObject<typeof preflightShape>>): Promise<ToolPayload> {
+  private async preflightPr(input: z.infer<typeof PreflightPrInput>): Promise<ToolPayload> {
     await this.requireRepoAccess(input.repoFullName);
     const [repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
       getRepository(this.env, input.repoFullName),
@@ -4658,7 +4279,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async preflightLocalDiff(input: z.infer<z.ZodObject<typeof localDiffPreflightShape>>): Promise<ToolPayload> {
+  private async preflightLocalDiff(input: z.infer<typeof PreflightLocalDiffInput>): Promise<ToolPayload> {
     await this.requireRepoAccess(input.repoFullName);
     const [repo, issues, pullRequests, bounties, issueQuality] = await Promise.all([
       getRepository(this.env, input.repoFullName),
@@ -4673,7 +4294,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async previewScore(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
+  private async previewScore(input: z.infer<typeof RemoteLocalScorePreviewInput>): Promise<ToolPayload> {
     if (input.contributorLogin) this.requireContributorAccess(input.contributorLogin);
     await this.requireRepoAccess(input.repoFullName);
     const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
@@ -4692,7 +4313,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async getEligibilityPlan(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
+  private async getEligibilityPlan(input: z.infer<typeof RemoteLocalScorePreviewInput>): Promise<ToolPayload> {
     if (input.contributorLogin) this.requireContributorAccess(input.contributorLogin);
     await this.requireRepoAccess(input.repoFullName);
     const [repo, snapshot, evidence, contributorIssues] = await Promise.all([
@@ -4713,7 +4334,7 @@ export class LoopoverMcp {
 
   // #782 — pure deterministic token scorer over caller-supplied changed-file metadata. No repo/contributor
   // access required: it reveals nothing beyond a computation on the caller's own diff stats.
-  private runLocalScorer(input: z.infer<z.ZodObject<typeof runLocalScorerShape>>): ToolPayload {
+  private runLocalScorer(input: z.infer<typeof RunLocalScorerInput>): ToolPayload {
     const tokenScores = computeLocalScorerTokens({ changedFiles: input.changedFiles, validation: input.validation });
     return {
       summary: `Local token scores — ${tokenScores.sourceTokenScore} source / ${tokenScores.testTokenScore} test / ${tokenScores.nonCodeTokenScore} non-code (total ${tokenScores.totalTokenScore}).`,
@@ -4935,7 +4556,7 @@ export class LoopoverMcp {
   // directly), so -- unlike propose/decide's stage-then-accept pattern for genuinely destructive actions --
   // executing it synchronously in one call is appropriately safe. requireRepoManageAccess is checked FIRST,
   // before performRepoDocRefresh touches anything.
-  private async refreshRepoDocs(input: z.infer<z.ZodObject<typeof refreshRepoDocsShape>>): Promise<ToolPayload> {
+  private async refreshRepoDocs(input: z.infer<typeof RefreshRepoDocsInput>): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoManageAccess(fullName);
     const result = await performRepoDocRefresh(this.env, fullName);
@@ -4955,7 +4576,7 @@ export class LoopoverMcp {
   // kill-switch. The result strips the per-draft `drafts[]` (title/body text) from the public-safe tool data,
   // surfacing only the counts + posture, like getAgentAuditFeed's scrub.
   private async generateContributorIssueDrafts(
-    input: z.infer<z.ZodObject<typeof generateContributorIssueDraftsShape>>,
+    input: z.infer<typeof GenerateContributorIssueDraftsInput>,
   ): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoManageAccess(fullName);
@@ -4990,7 +4611,7 @@ export class LoopoverMcp {
   // still overlays the global agent kill-switch on top). Unlike generateContributorIssueDrafts, the response
   // includes each draft's full title/body/labels -- see planRepoIssuesOutputSchema's doc comment for why that's
   // safe here (no loopover-internal signal to scrub).
-  private async planRepoIssues(input: z.infer<z.ZodObject<typeof planRepoIssuesShape>>): Promise<ToolPayload> {
+  private async planRepoIssues(input: z.infer<typeof PlanRepoIssuesInput>): Promise<ToolPayload> {
     const fullName = `${input.owner}/${input.repo}`;
     await this.requireRepoManageAccess(fullName);
     if (input.create && input.dryRun !== false) {
@@ -5047,7 +4668,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async explainScoreBreakdown(input: z.infer<z.ZodObject<typeof scorePreviewShape>>): Promise<ToolPayload> {
+  private async explainScoreBreakdown(input: z.infer<typeof RemoteLocalScorePreviewInput>): Promise<ToolPayload> {
     if (!input.contributorLogin) throw new Error("contributorLogin is required for score breakdown.");
     this.requireContributorAccess(input.contributorLogin);
     await this.requireRepoAccess(input.repoFullName);
@@ -5068,7 +4689,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async explainReviewRisk(input: z.infer<z.ZodObject<typeof preflightShape>>): Promise<ToolPayload> {
+  private async explainReviewRisk(input: z.infer<typeof PreflightPrInput>): Promise<ToolPayload> {
     if (input.contributorLogin) this.requireContributorAccess(input.contributorLogin);
     await this.requireRepoAccess(input.repoFullName);
     const [repo, issues, pullRequests, bounties] = await Promise.all([
@@ -5088,7 +4709,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async comparePrVariants(variants: Array<z.infer<z.ZodObject<typeof scorePreviewShape>>>): Promise<ToolPayload> {
+  private async comparePrVariants(variants: Array<z.infer<typeof RemoteLocalScorePreviewInput>>): Promise<ToolPayload> {
     const previews = [];
     for (const variant of variants) previews.push((await this.previewScore({ ...variant, targetType: "variant" })).data);
     previews.sort((left, right) => {
@@ -5102,7 +4723,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async localBranchSlice(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>, slice: "preflight" | "scorePreview" | "nextActions" | "scoreBlockers" | "prPacket"): Promise<ToolPayload> {
+  private async localBranchSlice(input: z.infer<typeof LocalBranchAnalysisInput>, slice: "preflight" | "scorePreview" | "nextActions" | "scoreBlockers" | "prPacket"): Promise<ToolPayload> {
     const analysis = await this.analyzeLocalBranch(input);
     return {
       summary: `${analysis.summary} (${slice}).`,
@@ -5120,7 +4741,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async compareLocalVariants(variants: Array<z.infer<z.ZodObject<typeof localBranchAnalysisShape>>>): Promise<ToolPayload> {
+  private async compareLocalVariants(variants: Array<z.infer<typeof LocalBranchAnalysisInput>>): Promise<ToolPayload> {
     const analyses = [];
     for (const variant of variants) analyses.push(await this.analyzeLocalBranch(variant));
     analyses.sort(
@@ -5227,7 +4848,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async agentPreparePrPacket(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
+  private async agentPreparePrPacket(input: z.infer<typeof LocalBranchAnalysisInput>): Promise<ToolPayload> {
     this.requireContributorAccess(input.login);
     const bundle = await preparePrPacketWithAgent(this.env, input, "mcp");
     return {
@@ -5236,7 +4857,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async remediationPlan(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
+  private async remediationPlan(input: z.infer<typeof LocalBranchAnalysisInput>): Promise<ToolPayload> {
     const analysis = await this.analyzeLocalBranch(input);
     const plan = buildRemediationPlan({
       login: analysis.login,
@@ -5253,7 +4874,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async draftPrBody(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>): Promise<ToolPayload> {
+  private async draftPrBody(input: z.infer<typeof LocalBranchAnalysisInput>): Promise<ToolPayload> {
     const analysis = await this.analyzeLocalBranch(input);
     const draft = buildPublicPrBodyDraft(analysis);
     // Human-readable summary carries the rendered markdown body; structured draft is returned as JSON.
@@ -5263,7 +4884,7 @@ export class LoopoverMcp {
     };
   }
 
-  private async analyzeLocalBranch(input: z.infer<z.ZodObject<typeof localBranchAnalysisShape>>) {
+  private async analyzeLocalBranch(input: z.infer<typeof LocalBranchAnalysisInput>) {
     this.requireContributorAccess(input.login);
     await this.requireRepoAccess(input.repoFullName);
     const [context, repo, issues, pullRequests, recentMergedPullRequests, bounties, snapshot, issueQuality, repoManifest] = await Promise.all([

@@ -90,8 +90,6 @@ import {
   CheckTestEvidenceInput,
   ClearSelftuneOverrideInput,
   ClosePrInput,
-  CompareLocalVariantsInput,
-  ComparePrVariantsInput,
   CreateBranchInput,
   CurrentBranchInput,
   DecidePendingActionInput,
@@ -142,6 +140,7 @@ import {
   LocalStatusInput,
   LocalStatusStructuredInput,
   MarkNotificationsReadInput,
+  StdioMarkNotificationsReadInput,
   MonitorOpenPrsInput,
   OpenPrInput,
   PlanRepoIssuesInput,
@@ -164,6 +163,9 @@ import {
   ValidateConfigInput,
   ValidateLinkedIssueInput,
   WatchIssuesInput,
+  StdioWatchIssuesInput,
+  StdioCompareLocalVariantsInput,
+  StdioComparePrVariantsInput,
   getToolContract,
   projectToolDefinition,
   ListPendingActionsStdioInput,
@@ -1597,6 +1599,9 @@ registerStdioTool(
     if (!contributorLogin) throw new Error("No GitHub login: pass `login`, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
     return toolResult(`Marked LoopOver notifications read for ${contributorLogin}.`, await postMarkNotificationsRead(contributorLogin, ids));
   },
+  // #9662: this server resolves the login from the active session, so it accepts a call without one --
+  // stated as a declared narrowing rather than left as a difference nothing could see.
+  { input: StdioMarkNotificationsReadInput },
 );
 
 // #7763: stdio mirror of the remote loopover_watch_issues + the `watch` CLI. Reuses the shared
@@ -1610,17 +1615,19 @@ registerStdioTool(
     if ((action === "watch" || action === "unwatch") && !repoFullName) throw new Error(`action "${action}" requires repoFullName.`);
     return toolResult(`Issue-watch subscriptions for ${contributorLogin}.`, await watchIssuesRequest(contributorLogin, action, repoFullName, labels));
   },
+  { input: StdioWatchIssuesInput },
 );
 
 registerStdioTool(
   "loopover_compare_pr_variants",
-  async ({ variants }: z.infer<typeof ComparePrVariantsInput>) => {
+  async ({ variants }: z.infer<typeof StdioComparePrVariantsInput>) => {
     const roots = await clientWorkspaceRoots();
     const previews = [];
     for (const variant of variants) previews.push(await previewLocalScore(withWorkspaceRoots({ ...variant, targetKey: variant.targetKey ?? `variant:${previews.length + 1}` }, roots)));
     previews.sort((left, right) => Number(right?.remotePreview?.result?.effectiveEstimatedScore ?? right?.remotePreview?.result?.scoreEstimate?.estimatedMergedScore ?? 0) - Number(left?.remotePreview?.result?.effectiveEstimatedScore ?? left?.remotePreview?.result?.scoreEstimate?.estimatedMergedScore ?? 0));
     return toolResult("LoopOver PR variant comparison.", { variants: previews });
   },
+  { input: StdioComparePrVariantsInput },
 );
 
 registerStdioTool(
@@ -1751,7 +1758,7 @@ registerStdioTool(
 
 registerStdioTool(
   "loopover_compare_local_variants",
-  async ({ variants }: z.infer<typeof CompareLocalVariantsInput>) => {
+  async ({ variants }: z.infer<typeof StdioCompareLocalVariantsInput>) => {
     const roots = await clientWorkspaceRoots();
     const analyses = [];
     for (const variant of variants) analyses.push(await analyzeCurrentBranch(withWorkspaceRoots(variant, roots)));
@@ -1770,6 +1777,7 @@ registerStdioTool(
       })),
     });
   },
+  { input: StdioCompareLocalVariantsInput },
 );
 
 registerStdioTool(

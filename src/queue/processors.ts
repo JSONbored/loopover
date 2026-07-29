@@ -3272,6 +3272,7 @@ async function runAgentMaintenancePlanAndExecute(
     settings.expectedCiContexts,
     admissionKey,
     settings.advisoryCheckRuns,
+    settings.ignoredCheckRuns,
   );
   // #2137: informational-only nudge for the operator — never affects the disposition below (ciState is
   // unchanged). recordAuditEvent is a DB write with its own internal failure handling; a failure here must
@@ -4011,6 +4012,7 @@ async function runAgentMaintenancePlanAndExecute(
       // plan was evaluated against, or the two can disagree on ciState.
       requiredCiContexts: requiredContexts,
       advisoryCheckRuns: settings.advisoryCheckRuns, // #4372: same exclusion the plan used, for step-8 re-verify
+      ignoredCheckRuns: settings.ignoredCheckRuns, // #9810: ditto for the ignore list
       // #3472 split-brain: the executor's own live manual-review hold guard (immediately before approve/merge)
       // must check the SAME configured label the planner itself resolves labels.manualReview from.
       manualReviewLabel: settings.manualReviewLabel,

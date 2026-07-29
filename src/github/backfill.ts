@@ -2719,6 +2719,11 @@ export type LiveCiAggregate = {
   // surfaced here so the disposition planner can route the PR to a manual-review hold instead of silently
   // swallowing a signal a maintainer installed a whole app to raise. Empty for every repo that doesn't opt in.
   advisoryHoldDetails: Array<{ name: string; appSlug: string; conclusion: string }>;
+  // #9810: a maintainer-declared `gate.ignoredCheckRuns` check-run that was seen and excluded ENTIRELY -- never
+  // gates, never pends, never holds, whatever its conclusion. Informational only, surfaced so the panel/audit
+  // can say "this check was ignored by repo policy" instead of the check silently vanishing. Empty for every
+  // repo that doesn't opt in.
+  ignoredCheckDetails: Array<{ name: string; appSlug: string; conclusion: string }>;
   // Informational-only (#2137): set when the aggregate resolved to "passed" with no branch-protection required
   // contexts configured (`enforceRequiredOnly` false) — meaning a workflow that never triggers on this commit at
   // all (e.g. path-filtered out, or a broken YAML trigger) is indistinguishable from one that doesn't exist, and
@@ -2992,12 +2997,13 @@ async function reduceLiveCiAggregate(
     statuses: ReadonlyArray<LiveCiStatus>;
     requiredContexts: ReadonlySet<string> | null | undefined;
     advisoryCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null | undefined;
+    ignoredCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null | undefined;
     checkRunsIncomplete: boolean;
     statusIncomplete: boolean;
     fetchSuites: () => Promise<ReadonlyArray<LiveCiSuite> | null>;
   },
 ): Promise<LiveCiAggregate> {
-  const { checkRuns, statuses, requiredContexts, advisoryCheckRuns, checkRunsIncomplete, statusIncomplete, fetchSuites } = inputs;
+  const { checkRuns, statuses, requiredContexts, advisoryCheckRuns, ignoredCheckRuns, checkRunsIncomplete, statusIncomplete, fetchSuites } = inputs;
   const enforceRequiredOnly = requiredContexts != null && requiredContexts.size > 0;
   const isRequired = (name: string): boolean => !enforceRequiredOnly || requiredContexts!.has(name);
   // Deliberately the OPPOSITE unknown-case default from isRequired() above, and used ONLY for a third-party
@@ -3016,6 +3022,7 @@ async function reduceLiveCiAggregate(
   const failingDetails: LiveCiAggregate["failingDetails"] = [];
   const nonRequiredFailingDetails: LiveCiAggregate["nonRequiredFailingDetails"] = [];
   const advisoryHoldDetails: LiveCiAggregate["advisoryHoldDetails"] = [];
+  const ignoredCheckDetails: LiveCiAggregate["ignoredCheckDetails"] = [];
   let total = 0;
   let anyPending = false;
   let anyVisiblePending = false;
@@ -3040,6 +3047,14 @@ async function reduceLiveCiAggregate(
     // with a non-passing conclusion, it is recorded in advisoryHoldDetails so the disposition planner can route
     // the PR to a manual-review hold. An advisory check still in progress is simply ignored (it may yet pass);
     // nothing about it holds the gate either way.
+    // #9810: an ignored check-run is excluded from EVERYTHING -- ciState, pending, holds. Recorded
+    // informationally so the exclusion is visible rather than the check silently vanishing. Checked BEFORE
+    // the advisory list: if a check appears in both, ignore is the stronger, later-declared maintainer intent.
+    const ignoredMatch = matchAdvisoryCheckRun(run, ignoredCheckRuns);
+    if (ignoredMatch) {
+      ignoredCheckDetails.push({ name: ignoredMatch.name, appSlug: ignoredMatch.appSlug, conclusion: (run.conclusion ?? run.status ?? "").toLowerCase() });
+      continue;
+    }
     const advisoryMatch = matchAdvisoryCheckRun(run, advisoryCheckRuns);
     if (advisoryMatch) {
       const advisoryConclusion = (run.conclusion ?? "").toLowerCase();
@@ -3159,7 +3174,7 @@ async function reduceLiveCiAggregate(
   // A partial/paginated read can't tell "never appears" from "appears on a page we didn't fetch" -- only a
   // COMPLETE read's absence is a confident signal worth a short surfacing cap (#selfhost-ci-deferral-staleness).
   const hasMissingRequiredContext = anyMissingRequiredContext && !checkRunsIncomplete && !statusIncomplete;
-  return { ciState, hasPending, hasVisiblePending: anyRequiredVisiblePending, hasMissingRequiredContext, failingDetails, nonRequiredFailingDetails, advisoryHoldDetails, ciCompletenessWarning };
+  return { ciState, hasPending, hasVisiblePending: anyRequiredVisiblePending, hasMissingRequiredContext, failingDetails, nonRequiredFailingDetails, advisoryHoldDetails, ignoredCheckDetails, ciCompletenessWarning };
 }
 
 /**
@@ -3183,8 +3198,11 @@ export async function fetchLiveCiAggregate(
   // #4372: maintainer-declared advisory check-runs (trailing/optional — every existing positional caller passing
   // requiredContexts+admissionKey stays byte-identical). Excluded from the aggregate; non-passing ⇒ advisoryHoldDetails.
   advisoryCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null,
+  // #9810: maintainer-declared IGNORED check-runs — excluded from the aggregate entirely, and (unlike advisory)
+  // never routed to a hold. Same trailing-optional discipline: existing positional callers are unaffected.
+  ignoredCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null,
 ): Promise<LiveCiAggregate> {
-  if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], advisoryHoldDetails: [], ciCompletenessWarning: null };
+  if (!headSha) return { ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], advisoryHoldDetails: [], ignoredCheckDetails: [], ciCompletenessWarning: null };
   // Check-runs + classic statuses are accumulated across pages here; the single classification lives in
   // reduceLiveCiAggregate so the REST and GraphQL paths reach byte-identical verdicts (#1941).
   const checkRuns: LiveCiCheckRun[] = [];
@@ -3239,6 +3257,7 @@ export async function fetchLiveCiAggregate(
     statuses,
     requiredContexts,
     advisoryCheckRuns,
+      ignoredCheckRuns,
     checkRunsIncomplete,
     statusIncomplete,
     // Lazily read the check-SUITES backstop only when the reducer finds the cheaper sources fully settled; a fetch
@@ -3305,6 +3324,7 @@ export async function fetchLiveCiAggregateViaGraphQl(
   requiredContexts?: ReadonlySet<string> | null,
   admissionKey?: GitHubRateLimitAdmissionKey,
   advisoryCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null,
+  ignoredCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null,
 ): Promise<LiveCiAggregate | null> {
   if (!headSha || !token) return null;
   const parsed = parseBackfillRepoFullName(repoFullName);
@@ -3390,6 +3410,7 @@ export async function fetchLiveCiAggregateViaGraphQl(
     statuses,
     requiredContexts,
     advisoryCheckRuns,
+      ignoredCheckRuns,
     checkRunsIncomplete: false,
     statusIncomplete: false,
     fetchSuites: async () => suites, // already fetched in the same query — never a second round-trip
@@ -3410,14 +3431,15 @@ export async function fetchLiveCiAggregatePreferGraphQl(
   requiredContexts?: ReadonlySet<string> | null,
   admissionKey?: GitHubRateLimitAdmissionKey,
   advisoryCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null,
+  ignoredCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null,
 ): Promise<LiveCiAggregate> {
   if (isStatusRollupGraphQlEnabled(env)) {
     // fetchLiveCiAggregateViaGraphQl handles all its own errors and returns null on any uncertainty (it never
     // rejects), so a null result — not a throw — is the fall-back-to-REST signal.
-    const rollup = await fetchLiveCiAggregateViaGraphQl(env, repoFullName, headSha, token, requiredContexts, admissionKey, advisoryCheckRuns);
+    const rollup = await fetchLiveCiAggregateViaGraphQl(env, repoFullName, headSha, token, requiredContexts, admissionKey, advisoryCheckRuns, ignoredCheckRuns);
     if (rollup) return rollup;
   }
-  return fetchLiveCiAggregate(env, repoFullName, headSha, token, requiredContexts, admissionKey, advisoryCheckRuns);
+  return fetchLiveCiAggregate(env, repoFullName, headSha, token, requiredContexts, admissionKey, advisoryCheckRuns, ignoredCheckRuns);
 }
 
 /**
@@ -3958,6 +3980,10 @@ export function deserializeCachedCiAggregate(
       // it is already baked into the cached `ciState`. Pinned end-to-end by pr-detail-durable-cache.test.ts (the
       // deserialize-[] + invalidation halves) and backfill-2.test.ts (the fresh read re-deriving the hold).
       advisoryHoldDetails: [],
+      // #9810: same treatment, and safer still -- ignoredCheckDetails drives NOTHING (informational surfacing
+      // only), so an empty reconstruction on a cache hit cannot change any disposition. The exclusion's real
+      // effect is already baked into the cached `ciState`.
+      ignoredCheckDetails: [],
       ciCompletenessWarning: cached.ciCompletenessWarning ?? null,
     };
   } catch {

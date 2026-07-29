@@ -1031,6 +1031,11 @@ export type RepositorySettings = {
    *  `null`/absent/empty ⇒ byte-identical to today for every repo that doesn't opt in. Config-as-code only —
    *  no DB column; set via `.loopover.yml gate.advisoryCheckRuns`. */
   advisoryCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null | undefined;
+  /** `gate.ignoredCheckRuns` (#9810): third-party check-runs EXCLUDED from CI resolution entirely -- never
+   *  gate, never pend, never hold. Spoof-resistant `{ name, appSlug }` match, same as advisoryCheckRuns. For a
+   *  check whose verdict carries no signal for this repo (e.g. a vendor contributor-trust score) while other
+   *  checks from the same app stay meaningful. Config-as-code only; set via `.loopover.yml gate.ignoredCheckRuns`. */
+  ignoredCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null | undefined;
   /** Dry-run disposition (#gate-dryrun). When true, the gate renders the would-be merge/close/manual verdict (every
    *  advisory sub-gate promoted to block) WITHOUT enforcing — the posted check stays non-blocking. Lets advisory mode
    *  preview exactly what it would do before the maintainer flips to real enforcement. Default off.

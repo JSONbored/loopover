@@ -6125,7 +6125,7 @@ describe("queue processors", () => {
         hasMissingRequiredContext: false,
         failingDetails: [],
         nonRequiredFailingDetails: [],
-        advisoryHoldDetails: [],
+        advisoryHoldDetails: [], ignoredCheckDetails: [],
         ciCompletenessWarning: null,
       });
       const posted = { count: 0, body: "" };

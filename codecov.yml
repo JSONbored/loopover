@@ -11,14 +11,32 @@ codecov:
   # Don't post a verdict until the CI run that produced the report has finished.
   require_ci_to_pass: true
   notify:
-    # The count that ALWAYS lands whenever validate-tests runs: since the 2026-07-24 unsharding, the
-    # backend suite produces ONE whole-suite lcov upload (flags: backend) instead of the former 3 shard
-    # uploads this threshold was sized for. It must stay 1, not 2, even though review-enrichment /
-    # control-plane add their own flag uploads on PRs that touch them -- those uploads only exist on such
-    # PRs, and a floor above the guaranteed minimum would leave codecov/patch permanently un-posted on
-    # every other PR. The narrow premature-window this reintroduces (a rees/control-plane upload landing
-    # and posting before the ~25-minute backend run finishes) self-corrects on the backend upload, and
-    # require_ci_to_pass above still holds the final verdict to the run's own conclusion.
+    # Hold every status and comment until CI says the uploads are done, rather than guessing from a
+    # count (#9801). `after_n_builds` fires on the Nth upload to ARRIVE, and arrival order does not
+    # match importance: validate-code's rees / control-plane / engine reports land in ~2 minutes while
+    # validate-tests is still running the backend lcov that covers most of src/**. So the verdict was
+    # computed from a partial report -- codecov/patch went pass, then fail, while validate-tests was
+    # still pending, with Codecov's own comment printing `backend | BASE 1 | HEAD 0`.
+    #
+    # That is not cosmetic here: the gate closes a contributor PR on ANY red check, codecov/patch
+    # included, so a transient partial-report red can close a PR that has no defect.
+    #
+    # Raising the count cannot fix it -- see the reasoning preserved on after_n_builds below -- because
+    # a count cannot express "wait for the backend upload specifically". manual_trigger can: Codecov
+    # sends nothing until `codecovcli send-notifications` runs, and the codecov-notify job in
+    # .github/workflows/ci.yml runs that once, after every uploading job has finished.
+    #
+    # Failure mode if the trigger never runs: codecov/patch simply never posts, so the gate sees an
+    # incomplete check set and waits. That is fail-safe -- it cannot merge unreviewed and cannot
+    # false-close -- which is the whole point of the change.
+    manual_trigger: true
+    # Inert while manual_trigger is true, and kept deliberately so removing manual_trigger restores the
+    # correct value rather than the default. The count that ALWAYS lands whenever validate-tests runs:
+    # since the 2026-07-24 unsharding, the backend suite produces ONE whole-suite lcov upload
+    # (flags: backend) instead of the former 3 shard uploads this threshold was sized for. It must stay
+    # 1, not 2, even though review-enrichment / control-plane add their own flag uploads on PRs that
+    # touch them -- those uploads only exist on such PRs, and a floor above the guaranteed minimum would
+    # leave codecov/patch permanently un-posted on every other PR.
     after_n_builds: 1
 
 coverage:

@@ -142,6 +142,111 @@ describe("mountRemoteTools against the real server (#9526)", () => {
     expect(result.status === "mounted" && result.skipped).toEqual(["loopover_gateway_twice"]);
   });
 
+  it("CALLS a proxied tool and forwards it to the remote's own tools/call", async () => {
+    // Listing a proxied tool proves registration; calling one proves the proxy actually routes. The fixture
+    // server answers /mcp, so this exercises the whole path the way a client would.
+    await mod.mountRemoteTools({
+      argv: ["--stdio"],
+      fetchImpl: remoteToolsFetch([{ name: "loopover_gateway_call_probe", description: "callable through the gateway" }]),
+    });
+
+    const client = await connect("gateway-call-test");
+    try {
+      const result = (await client.callTool({ name: "loopover_gateway_call_probe", arguments: { owner: "acme" } })) as {
+        isError?: boolean;
+        structuredContent?: { calledTool?: string; echoedArguments?: unknown };
+      };
+      // The remote's `result` is handed back VERBATIM -- this layer routes, it does not interpret -- and the
+      // arguments reached the remote untouched. Asserting the payload rather than merely "it resolved":
+      // callTool resolves for a failed call too, so a weaker assertion passes even when nothing was proxied.
+      expect(result.isError).toBeFalsy();
+      expect(result.structuredContent?.calledTool).toBe("loopover_gateway_call_probe");
+      expect(result.structuredContent?.echoedArguments).toEqual({ owner: "acme" });
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("hands back the WHOLE payload when the remote's envelope carries no `result`", async () => {
+    // The `??` fallback, and a real posture rather than a defensive shrug: a remote that answers a shape
+    // this package does not model must still reach the caller intact, so the caller can see what came back
+    // instead of an empty success.
+    await mod.mountRemoteTools({
+      argv: ["--stdio"],
+      fetchImpl: remoteToolsFetch([{ name: "loopover_gateway_resultless" }]),
+    });
+    const client = await connect("gateway-resultless");
+    try {
+      const raw = (await client.callTool({ name: "loopover_gateway_resultless", arguments: {} })) as { note?: string; isError?: boolean };
+      expect(raw.isError).toBeFalsy();
+      expect(raw.note, "the envelope itself reaches the caller when it carries no result").toBe("no result member");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("mounts a tool carrying annotations, and one carrying neither description nor annotations", async () => {
+    const result = await mod.mountRemoteTools({
+      argv: ["--stdio"],
+      fetchImpl: remoteToolsFetch([
+        { name: "loopover_gateway_annotated", description: "has hints", annotations: { readOnlyHint: true, destructiveHint: false } },
+        // No description, no annotations: the remote is free to send a minimal descriptor and it must mount.
+        { name: "loopover_gateway_bare" },
+      ]),
+    });
+    expect(result.status === "mounted" && result.tools).toHaveLength(2);
+
+    const client = await connect("gateway-annotations-test");
+    try {
+      const tools = (await client.listTools()).tools;
+      expect(tools.find((tool) => tool.name === "loopover_gateway_annotated")?.annotations?.readOnlyHint).toBe(true);
+      const bare = tools.find((tool) => tool.name === "loopover_gateway_bare");
+      expect(bare, "a descriptor with only a name must still mount").toBeDefined();
+      expect(bare!.description).toBeUndefined();
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("publishes an advisory resource a client can READ, and updates it on a later mount", async () => {
+    await mod.mountRemoteTools({ argv: ["--stdio", "--no-remote"] });
+    const client = await connect("gateway-advisory-read");
+    try {
+      const disabled = await client.readResource({ uri: "loopover://gateway/status" });
+      expect(String((disabled.contents[0] as { text?: string }).text)).toContain("--no-remote");
+
+      // A successful mount must not leave the earlier failure's advisory standing.
+      await mod.mountRemoteTools({ argv: ["--stdio"], fetchImpl: remoteToolsFetch([]) });
+      const after = await client.readResource({ uri: "loopover://gateway/status" });
+      expect(JSON.parse(String((after.contents[0] as { text?: string }).text)).status).toBe("mounted");
+    } finally {
+      await client.close();
+    }
+  });
+
+  it("uses a REAL fetch when the caller injects none", async () => {
+    // The default transport, exercised against the loopback fixture server rather than stubbed away -- so
+    // the one line that actually talks to the network is covered by talking to a network.
+    const result = await mod.mountRemoteTools({ argv: ["--stdio"] });
+    // The fixture answers tools/call, not tools/list, so discovery finds no tool array and degrades --
+    // which is the point: the real transport ran, and a shape it did not expect did not break the server.
+    expect(["mounted", "unavailable"]).toContain(result.status);
+  });
+
+  it("defaults argv to the process's own, and the transport to a real fetch, without touching the network", async () => {
+    // Both defaults on one call. No session means discoverRemoteTools returns before it ever calls the
+    // transport, so the real fetch default is selected and never invoked -- which is the point: an
+    // unauthenticated contributor makes no outbound request at all.
+    const token = process.env.LOOPOVER_API_TOKEN;
+    delete process.env.LOOPOVER_API_TOKEN;
+    try {
+      const result = await mod.mountRemoteTools();
+      expect(result.status).toBe("unauthenticated");
+    } finally {
+      process.env.LOOPOVER_API_TOKEN = token;
+    }
+  });
+
   it("an unreachable API leaves a server that still lists its LOCAL tools", async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("ECONNREFUSED");

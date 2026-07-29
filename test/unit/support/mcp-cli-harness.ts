@@ -257,6 +257,35 @@ export async function startFixtureServer(
       response.end(JSON.stringify({ version: options.latestVersion ?? "0.4.0" }));
       return;
     }
+    // #9526: the remote MCP endpoint the stdio gateway proxies tools/call to. Answers the JSON-RPC envelope
+    // a real server does, so a proxied call can be asserted end to end rather than only up to the request.
+    if (new URL(request.url ?? "/", "http://localhost").pathname === "/mcp") {
+      let raw = "";
+      request.on("data", (chunk) => {
+        raw += chunk;
+      });
+      request.on("end", () => {
+        const parsed = JSON.parse(raw || "{}") as { id?: unknown; params?: { name?: string; arguments?: unknown } };
+        // A tool named `*_resultless` gets an envelope with NO `result` member, so the gateway's
+        // "hand back the whole payload" fallback can be exercised against a real response rather than a
+        // hand-built object. Keyed on the name because one fixture serves every gateway test.
+        if (parsed.params?.name?.endsWith("_resultless")) {
+          response.end(JSON.stringify({ jsonrpc: "2.0", id: parsed.id ?? 1, note: "no result member" }));
+          return;
+        }
+        response.end(
+          JSON.stringify({
+            jsonrpc: "2.0",
+            id: parsed.id ?? 1,
+            result: {
+              content: [{ type: "text", text: `remote answered ${parsed.params?.name ?? "unknown"}` }],
+              structuredContent: { calledTool: parsed.params?.name, echoedArguments: parsed.params?.arguments ?? null },
+            },
+          }),
+        );
+      });
+      return;
+    }
     if (request.url === "/v1/mcp/compatibility") {
       if (options.compatibilityStatus && options.compatibilityStatus >= 400) {
         response.statusCode = options.compatibilityStatus;

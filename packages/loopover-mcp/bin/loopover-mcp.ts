@@ -2510,7 +2510,15 @@ function registerProxiedTool(tool: RemoteToolDescriptor): void {
       ...(tool.description ? { description: tool.description } : {}),
       // The schema OBJECTS, not their `.shape` -- a raw shape is re-wrapped in a plain `z.object` that
       // silently drops the catchall, turning every extra field the remote allows into a -32602 here.
-      ...(contract ? { inputSchema: contract.input, outputSchema: contract.output } : {}),
+      //
+      // A tool absent from the registry (a remote running ahead of this package) still gets an inputSchema,
+      // just a fully open one. That is NOT cosmetic: the SDK invokes a handler as `(args, extra)` only when
+      // an inputSchema is declared, and as `(extra)` alone when it is not -- so omitting it made the proxy
+      // forward the SDK's own `{ signal, requestId }` to the remote AS THE ARGUMENTS, silently dropping
+      // everything the caller passed. An open object keeps the remote the only validator, which is where
+      // validation belongs for a tool this package does not model.
+      inputSchema: contract?.input ?? z.looseObject({}),
+      ...(contract ? { outputSchema: contract.output } : {}),
       ...(tool.annotations ? { annotations: tool.annotations as never } : {}),
       _meta: { ...(tool._meta ?? {}), transport: "proxied" },
     } as never,
@@ -2534,11 +2542,15 @@ function registerProxiedTool(tool: RemoteToolDescriptor): void {
 let gatewayAdvisoryState: { status: string; advisory: string } | null = null;
 let gatewayAdvisoryRegistered = false;
 
-/** The advisory a client sees instead of remote tools. A resource, never an error -- see gateway.ts. */
+/**
+ * The resource a client reads to learn why it does or does not have the remote tools.
+ *
+ * A resource, never an error -- see gateway.ts. Registered on EVERY outcome, including success: a mount
+ * that succeeded must not leave an earlier failure's advisory standing, and "why don't I have the remote
+ * tools" deserves an answer when the answer is "you do".
+ */
 function registerGatewayAdvisory(result: GatewayMountResult): void {
-  const advisory = gatewayAdvisoryResource(result);
-  if (!advisory) return;
-  gatewayAdvisoryState = advisory;
+  gatewayAdvisoryState = gatewayAdvisoryResource(result) ?? { status: "mounted", advisory: "Remote tools are mounted on this server." };
   if (gatewayAdvisoryRegistered) return;
   gatewayAdvisoryRegistered = true;
   server.registerResource(
@@ -2577,10 +2589,8 @@ export async function mountRemoteTools(options: { argv?: readonly string[]; fetc
     fetchImpl: options.fetchImpl ?? (defaultGatewayFetch as GatewayFetch),
   });
 
-  if (result.status !== "mounted") {
-    registerGatewayAdvisory(result);
-    return result;
-  }
+  registerGatewayAdvisory(result);
+  if (result.status !== "mounted") return result;
 
   const mounted: RemoteToolDescriptor[] = [];
   const skipped = [...result.skipped];

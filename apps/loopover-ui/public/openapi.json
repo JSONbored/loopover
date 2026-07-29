@@ -16718,8 +16718,8 @@
       "OrbWebhookSignature": {
         "type": "apiKey",
         "in": "header",
-        "name": "x-loopover-signature",
-        "description": "HMAC signature over the raw request body, verified against the instance's shared secret. The webhook carries no bearer token."
+        "name": "x-hub-signature-256",
+        "description": "GitHub-style HMAC-SHA256 signature over the raw request body, verified against the receiving app's own webhook secret. A webhook delivery carries no bearer token."
       }
     }
   },
@@ -20701,6 +20701,11 @@
         "operationId": "postGithubWebhook",
         "tags": [
           "Webhooks"
+        ],
+        "security": [
+          {
+            "OrbWebhookSignature": []
+          }
         ]
       }
     },
@@ -20977,7 +20982,8 @@
         "operationId": "postAuthGithubDeviceStart",
         "tags": [
           "Auth"
-        ]
+        ],
+        "security": []
       }
     },
     "/v1/auth/github/device/poll": {
@@ -21003,7 +21009,8 @@
         "operationId": "postAuthGithubDevicePoll",
         "tags": [
           "Auth"
-        ]
+        ],
+        "security": []
       }
     },
     "/v1/auth/github/session": {
@@ -21029,7 +21036,8 @@
         "operationId": "postAuthGithubSession",
         "tags": [
           "Auth"
-        ]
+        ],
+        "security": []
       }
     },
     "/v1/auth/logout": {
@@ -21055,7 +21063,8 @@
         "operationId": "postAuthLogout",
         "tags": [
           "Auth"
-        ]
+        ],
+        "security": []
       }
     },
     "/v1/auth/session": {
@@ -22206,7 +22215,7 @@
         "summary": "Queue a contributor evidence build job",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -22215,6 +22224,11 @@
         "operationId": "postInternalJobsBuildContributorEvidence",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -22246,7 +22260,7 @@
         "summary": "Queue a burden forecast build job",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -22255,6 +22269,11 @@
         "operationId": "postInternalJobsBuildBurdenForecasts",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -22309,7 +22328,7 @@
         "summary": "Queue a data fidelity repair job",
         "responses": {
           "202": {
-            "description": "Internal job queued"
+            "description": "Job queued"
           },
           "401": {
             "description": "Invalid internal token"
@@ -22318,6 +22337,11 @@
         "operationId": "postInternalJobsRepairDataFidelity",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -22335,6 +22359,11 @@
         "operationId": "postInternalBountiesImport",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -23549,6 +23578,11 @@
         "operationId": "getInternalProviderCredentialsByProvider",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       },
       "post": {
@@ -23567,23 +23601,6 @@
             "in": "path"
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "credential": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "credential"
-                ]
-              }
-            }
-          }
-        },
         "responses": {
           "200": {
             "description": "Credential stored. Returns the secret-free status.",
@@ -23611,6 +23628,11 @@
         "operationId": "postInternalProviderCredentialsByProvider",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       },
       "delete": {
@@ -23661,6 +23683,11 @@
         "operationId": "deleteInternalProviderCredentialsByProvider",
         "tags": [
           "Internal"
+        ],
+        "security": [
+          {
+            "LoopOverBearer": []
+          }
         ]
       }
     },
@@ -26297,7 +26324,12 @@
           "422": {
             "description": "Authenticated but unverifiable: unknown_key, bad_signature, row_not_found, or row_hash_mismatch — an `ok` report must verify against a published key AND match the live chain row"
           }
-        }
+        },
+        "security": [
+          {
+            "OrbBearer": []
+          }
+        ]
       }
     },
     "/v1/public/repos/{owner}/{repo}/proof": {

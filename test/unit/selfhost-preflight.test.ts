@@ -450,6 +450,24 @@ describe("ledger-anchor configuration preflight (#9769)", () => {
     return result.problems.filter((p: SelfHostPreflightProblem) => p.var.startsWith("LOOPOVER_LEDGER_ANCHOR"));
   };
 
+  // #9850: a malformed waiver fails CLOSED -- safe, but silent. The operator believes rows are declared when
+  // they are not, and finds out only when the public endpoint keeps failing on mismatches they thought they
+  // had disclosed. Same class as the half-configured anchoring below: the danger is the set-but-ineffective
+  // value, not the unset one.
+  const waiverProblems = (env: Record<string, string | undefined>) =>
+    preflightEnv({ ...base, ...env }).problems.filter((p: SelfHostPreflightProblem) => p.var === "LOOPOVER_LEDGER_CONTENT_WAIVER");
+
+  it("flags a set-but-unparseable content waiver, which would otherwise waive nothing in silence", () => {
+    const problems = waiverProblems({ LOOPOVER_LEDGER_CONTENT_WAIVER: "5-257" }); // no reason
+    expect(problems).toHaveLength(1);
+    expect(problems[0]!.message).toContain("NOTHING is waived");
+  });
+
+  it("stays silent for an unset waiver (opt-in) and for a well-formed one", () => {
+    expect(waiverProblems({})).toEqual([]);
+    expect(waiverProblems({ LOOPOVER_LEDGER_CONTENT_WAIVER: "5-257:pre-9123 record overwrite" })).toEqual([]);
+  });
+
   it("INVARIANT: anchoring is opt-in — configuring none of it is never a problem", () => {
     expect(preflightEnv(base)).toEqual({ ok: true, problems: [] });
   });

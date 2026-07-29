@@ -439,11 +439,67 @@ const LEDGER_APPEND_GRACE_MS = 5 * 60 * 1000;
  * original preimage. Read-only; safe on a public route — it reads `record_json` to recompute a digest but
  * never RETURNS record contents, only the break kind, sequence, and (public, already-exposed) record id.
  */
+/** A declared, bounded exclusion from the CONTENT re-check (#9850). Chain checks are never waived. */
+export type LedgerContentWaiver = { fromSeq: number; toSeq: number; reason: string };
+
+/**
+ * PURE. Parse `LOOPOVER_LEDGER_CONTENT_WAIVER`, format `<fromSeq>-<toSeq>:<reason>`.
+ *
+ * WHY THIS EXISTS. A row whose record preimage is genuinely unrecoverable -- e.g. the rows the pre-#9123
+ * record-overwriting UPDATE left behind -- can never be reconciled again. Rewriting those records so the
+ * digests match would be exactly the tampering this ledger exists to detect, so the only honest options are
+ * to fail forever or to declare the damage. A permanently-red endpoint is one nobody reads, which is a worse
+ * public signal than a green one carrying an explicit, counted exclusion.
+ *
+ * FOUR PROPERTIES MAKE THIS A DISCLOSURE RATHER THAN A COVER-UP, and each is enforced here:
+ *
+ *   1. BOUNDED BY SEQ, NOT TIME. A date boundary drifts: as the clock advances it silently swallows new
+ *      damage. A seq range is fixed forever -- only an explicit edit widens it. (The retention cutoff above
+ *      gets to be time-based because it tracks a published policy that genuinely moves; this does not.)
+ *   2. BOTH ENDS REQUIRED. An open-ended waiver is a blanket exemption wearing a range's clothes.
+ *   3. A REASON IS MANDATORY. You cannot waive silently; the text is published with the count, so the claim
+ *      being made is legible to whoever is checking.
+ *   4. CONTENT ONLY. Enforced at the call site, not here: a waived row still has to pass sequence,
+ *      predecessor and row_hash. Tampering with a waived row's CHAIN position still fails.
+ *
+ * Returns null on anything malformed -- fail CLOSED, waiving nothing, so a typo cannot widen an exclusion.
+ * src/selfhost/preflight.ts surfaces the malformed value rather than leaving it silently inert.
+ */
+export function parseLedgerContentWaiver(raw: string | undefined): LedgerContentWaiver | null {
+  if (!raw) return null;
+  const separator = raw.indexOf(":");
+  if (separator < 0) return null;
+  const reason = raw.slice(separator + 1).trim();
+  if (reason === "") return null;
+  const match = /^\s*(\d+)\s*-\s*(\d+)\s*$/.exec(raw.slice(0, separator));
+  if (!match) return null;
+  const fromSeq = Number(match[1]);
+  const toSeq = Number(match[2]);
+  // A descending or zero-based range is a mistake, not an intent: seq starts at 1 and a waiver must name a
+  // real, forward interval.
+  if (fromSeq < 1 || toSeq < fromSeq) return null;
+  return { fromSeq, toSeq, reason };
+}
+
 export async function verifyDecisionLedger(
   env: Env,
   afterSeq = 0,
   limit = 500,
-): Promise<{ ok: boolean; checked: number; nextAfterSeq: number | null; tipSeq: number; tipHash: string; totalCount: number; prunedRecords: number; contentMismatches: number; break?: LedgerBreak }> {
+): Promise<{
+  ok: boolean;
+  checked: number;
+  nextAfterSeq: number | null;
+  tipSeq: number;
+  tipHash: string;
+  totalCount: number;
+  prunedRecords: number;
+  contentMismatches: number;
+  /** #9850: mismatches inside the declared waiver -- reported separately and prominently, never folded into
+   *  contentMismatches, so "83 rows are excused" can never read as "83 rows are fine". */
+  waivedContentMismatches: number;
+  contentWaiver: LedgerContentWaiver | null;
+  break?: LedgerBreak;
+}> {
   const bounded = Math.max(1, Math.min(1000, limit));
   // #9474: rows whose record preimage was legitimately pruned by the published retention policy (see the
   // missing-record branch below). Surfaced in the result so "the chain is clean but N old preimages are no
@@ -464,7 +520,9 @@ export async function verifyDecisionLedger(
   // `ok` is still false and the first mismatch is still reported as `break`, so nothing about the verdict is
   // softened; the scan simply keeps going and reports how many there are.
   let contentMismatches = 0;
+  let waivedContentMismatches = 0;
   let firstContentMismatch: LedgerBreak | null = null;
+  const contentWaiver = parseLedgerContentWaiver(env.LOOPOVER_LEDGER_CONTENT_WAIVER);
   const decisionRecordsPruneCutoff = retentionCutoffIsoForTable("decision_records");
   const [totalRow, globalTip, prior] = await Promise.all([
     env.DB.prepare("SELECT COUNT(*) AS n FROM decision_ledger").first<{ n: number }>(),
@@ -477,7 +535,7 @@ export async function verifyDecisionLedger(
   const tipSeq = globalTip?.seq ?? 0;
   const tipHash = globalTip?.rowHash ?? LEDGER_GENESIS_HASH;
   // `== null` deliberately: D1 drivers disagree on .first() returning null vs undefined for no-row.
-  if (afterSeq > 0 && prior == null) return { ok: false, checked: 0, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, break: { kind: "sequence_gap", atSeq: afterSeq, expectedSeq: afterSeq } };
+  if (afterSeq > 0 && prior == null) return { ok: false, checked: 0, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, break: { kind: "sequence_gap", atSeq: afterSeq, expectedSeq: afterSeq } };
   let prevHash = prior?.rowHash ?? LEDGER_GENESIS_HASH;
   let expectedSeq = afterSeq + 1;
   const { results } = await env.DB.prepare(
@@ -503,10 +561,10 @@ export async function verifyDecisionLedger(
   // from) so a call that finds ZERO new rows still has an anchor to reconcile against.
   let lastVerifiedCreatedAt = prior?.createdAt ?? null;
   for (const row of results) {
-    if (row.seq !== expectedSeq) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, break: { kind: "sequence_gap", atSeq: row.seq, expectedSeq } };
-    if (row.prevHash !== prevHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, break: { kind: "predecessor_mismatch", atSeq: row.seq } };
+    if (row.seq !== expectedSeq) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, break: { kind: "sequence_gap", atSeq: row.seq, expectedSeq } };
+    if (row.prevHash !== prevHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, break: { kind: "predecessor_mismatch", atSeq: row.seq } };
     const recomputed = await ledgerRowHash(prevHash, { seq: row.seq, recordId: row.recordId, recordDigest: row.recordDigest, createdAt: row.createdAt });
-    if (recomputed !== row.rowHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, break: { kind: "row_hash_mismatch", atSeq: row.seq } };
+    if (recomputed !== row.rowHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, break: { kind: "row_hash_mismatch", atSeq: row.seq } };
     // #9078: the promised record/ledger reconciliation — a row_hash chained cleanly can still commit to a
     // digest whose CONTENT has since been rewritten (or whose preimage is simply gone). Neither is visible to
     // the chain-only checks above, since those only ever compare ledger rows against each other.
@@ -524,7 +582,7 @@ export async function verifyDecisionLedger(
       if (decisionRecordsPruneCutoff !== null && row.createdAt < decisionRecordsPruneCutoff) {
         prunedRecords += 1;
       } else {
-        return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, break: { kind: "missing_record", atSeq: row.seq, recordId: row.recordId } };
+        return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, break: { kind: "missing_record", atSeq: row.seq, recordId: row.recordId } };
       }
     } else {
       let recomputedContentDigest: string | null = null;
@@ -535,8 +593,15 @@ export async function verifyDecisionLedger(
         recomputedContentDigest = null;
       }
       if (recomputedContentDigest !== row.recordDigest) {
-        contentMismatches += 1;
-        firstContentMismatch ??= { kind: "content_mismatch", atSeq: row.seq, recordId: row.recordId };
+        // Inside a declared waiver this is counted and disclosed, not forgiven silently -- and note this is
+        // reached only AFTER the chain checks above passed for this row, so a waiver can never excuse a
+        // structural break.
+        if (contentWaiver !== null && row.seq >= contentWaiver.fromSeq && row.seq <= contentWaiver.toSeq) {
+          waivedContentMismatches += 1;
+        } else {
+          contentMismatches += 1;
+          firstContentMismatch ??= { kind: "content_mismatch", atSeq: row.seq, recordId: row.recordId };
+        }
       }
     }
     prevHash = row.rowHash;
@@ -589,6 +654,8 @@ export async function verifyDecisionLedger(
         totalCount,
         prunedRecords,
         contentMismatches,
+        waivedContentMismatches,
+        contentWaiver,
         break:
           orphan.createdAt > lastVerifiedCreatedAt
             ? { kind: "short_tail", atSeq: expectedSeq - 1 }
@@ -599,9 +666,9 @@ export async function verifyDecisionLedger(
   // A content mismatch is still a FAILED verification -- the scan continuing does not soften the verdict, it
   // only stops one bad row from hiding every row after it. The first is reported as `break` exactly as before.
   if (firstContentMismatch !== null) {
-    return { ok: false, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, break: firstContentMismatch };
+    return { ok: false, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, break: firstContentMismatch };
   }
-  return { ok: true, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches };
+  return { ok: true, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver };
 }
 
 /** One ledger row, exactly as chained -- the shape `GET /v1/public/decision-ledger/row/:seq` returns. */

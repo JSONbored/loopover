@@ -21,10 +21,12 @@ function hasBlockingGate(contributionWorkflow: RepoProfileContributionWorkflow):
   return contributionWorkflow.gatePublishesCheck;
 }
 
-/** A repo that both requires a linked issue AND has a policy stricter than "optional" has a real, non-obvious
- *  admission rule worth writing down -- mirrors the mismatch repo-policy-readiness.ts already treats as notable. */
+/** A repo whose linked-issue rule actually BLOCKS a PR has a real, non-obvious admission rule worth writing
+ *  down. `linkedIssueGateMode` is the enforcement authority (repo-profile.ts's doc comment on that field) --
+ *  `requireLinkedIssue`/`linkedIssuePolicy` alone are advisory-only and must not decide this, matching the
+ *  identical assertion in repo-doc-render.ts's "Requires a linked issue" line. */
 function hasStrictLinkedIssueRule(contributionWorkflow: RepoProfileContributionWorkflow): boolean {
-  return contributionWorkflow.requireLinkedIssue && contributionWorkflow.linkedIssuePolicy !== "optional";
+  return contributionWorkflow.linkedIssueGateMode === "block";
 }
 
 function hasMultiStageCi(contributionWorkflow: RepoProfileContributionWorkflow): boolean {

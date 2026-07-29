@@ -25,12 +25,12 @@ describe("shouldGenerateRepoSkill (#3001)", () => {
   it.each([
     ["no signals", contributionWorkflow(), false],
     ["gate only", contributionWorkflow({ gatePublishesCheck: true }), false],
-    ["strict linked issue only", contributionWorkflow({ requireLinkedIssue: true, linkedIssuePolicy: "required" }), false],
+    ["strict linked issue only", contributionWorkflow({ requireLinkedIssue: true, linkedIssuePolicy: "required", linkedIssueGateMode: "block" }), false],
     ["multi-stage CI only", contributionWorkflow({ ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }), false],
-    ["gate + strict linked issue (2 of 3)", contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required" }), true],
+    ["gate + strict linked issue (2 of 3)", contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", linkedIssueGateMode: "block" }), true],
     ["gate + multi-stage CI (2 of 3)", contributionWorkflow({ gatePublishesCheck: true, ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }), true],
-    ["strict linked issue + multi-stage CI (2 of 3)", contributionWorkflow({ requireLinkedIssue: true, linkedIssuePolicy: "preferred", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }), true],
-    ["all three signals (3 of 3)", contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }), true],
+    ["strict linked issue + multi-stage CI (2 of 3)", contributionWorkflow({ requireLinkedIssue: true, linkedIssuePolicy: "preferred", linkedIssueGateMode: "block", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }), true],
+    ["all three signals (3 of 3)", contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", linkedIssueGateMode: "block", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }), true],
   ])("%s -> %s", (_label, workflow, expected) => {
     expect(shouldGenerateRepoSkill(presentProfile({ contributionWorkflow: workflow }) as Extract<RepoProfile, { present: true }>)).toBe(expected);
   });
@@ -39,6 +39,24 @@ describe("shouldGenerateRepoSkill (#3001)", () => {
     const workflow = contributionWorkflow({ requireLinkedIssue: true, linkedIssuePolicy: "optional", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] });
     // requireLinkedIssue+optional is a settings/policy mismatch, not a "strict rule" -- only 1 real signal
     // (multi-stage CI) fires, below the 2-of-3 threshold.
+    expect(shouldGenerateRepoSkill(presentProfile({ contributionWorkflow: workflow }) as Extract<RepoProfile, { present: true }>)).toBe(false);
+  });
+
+  it("only linkedIssueGateMode \"block\" counts as a strict linked-issue rule, not requireLinkedIssue/linkedIssuePolicy alone (#9671)", () => {
+    // requireLinkedIssue: true + linkedIssuePolicy: "required" used to be sufficient on their own; the actual
+    // enforcement authority is linkedIssueGateMode (repo-profile.ts's doc comment on that field), matching
+    // repo-doc-render.ts's identical "Requires a linked issue" assertion.
+    const gateOnlyAdvisoryLinkedIssue = contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", linkedIssueGateMode: "advisory" });
+    expect(shouldGenerateRepoSkill(presentProfile({ contributionWorkflow: gateOnlyAdvisoryLinkedIssue }) as Extract<RepoProfile, { present: true }>)).toBe(false);
+
+    const gateOnlyBlockLinkedIssue = contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", linkedIssueGateMode: "block" });
+    expect(shouldGenerateRepoSkill(presentProfile({ contributionWorkflow: gateOnlyBlockLinkedIssue }) as Extract<RepoProfile, { present: true }>)).toBe(true);
+  });
+
+  it("a repo with only advisory linked-issue + multi-stage CI does not reach the 2-of-3 threshold", () => {
+    // linkedIssueGateMode "advisory" means the linked-issue signal must not count, even though
+    // requireLinkedIssue/linkedIssuePolicy look strict -- leaving only 1 real signal (multi-stage CI).
+    const workflow = contributionWorkflow({ requireLinkedIssue: true, linkedIssuePolicy: "required", linkedIssueGateMode: "advisory", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] });
     expect(shouldGenerateRepoSkill(presentProfile({ contributionWorkflow: workflow }) as Extract<RepoProfile, { present: true }>)).toBe(false);
   });
 
@@ -116,13 +134,30 @@ describe("renderRepoSkillContent (#3001)", () => {
     });
     const content = renderRepoSkillContent(profile);
     expect(content).not.toBeNull();
+    expect(content).not.toContain("A linked issue is required");
     expect(content).toContain("Required: no");
     expect(content).not.toContain("Required: yes");
   });
 
+  it("the trigger sentence and the Linked-issues section agree in block mode: both state a linked issue is required (#9671)", () => {
+    const profile = presentProfile({
+      contributionWorkflow: contributionWorkflow({
+        gatePublishesCheck: true,
+        requireLinkedIssue: true,
+        linkedIssuePolicy: "required",
+        linkedIssueGateMode: "block",
+        ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"],
+      }),
+    });
+    const content = renderRepoSkillContent(profile);
+    expect(content).not.toBeNull();
+    expect(content).toContain('A linked issue is required, with a "required" policy.');
+    expect(content).toContain("Required: yes");
+  });
+
   it("omits the gate-check reason line when the trigger fires via linked-issue + multi-stage CI alone (no blocking gate)", () => {
     const profile = presentProfile({
-      contributionWorkflow: contributionWorkflow({ gatePublishesCheck: false, requireLinkedIssue: true, linkedIssuePolicy: "preferred", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }),
+      contributionWorkflow: contributionWorkflow({ gatePublishesCheck: false, requireLinkedIssue: true, linkedIssuePolicy: "preferred", linkedIssueGateMode: "block", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }),
     });
     const content = renderRepoSkillContent(profile);
     expect(content).not.toBeNull();
@@ -133,7 +168,7 @@ describe("renderRepoSkillContent (#3001)", () => {
 
   it("omits the multi-stage-CI reason line when the trigger fires via gate + strict linked issue alone (single CI file)", () => {
     const profile = presentProfile({
-      contributionWorkflow: contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", ciWorkflowFiles: [".github/workflows/ci.yml"] }),
+      contributionWorkflow: contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", linkedIssueGateMode: "block", ciWorkflowFiles: [".github/workflows/ci.yml"] }),
     });
     const content = renderRepoSkillContent(profile);
     expect(content).not.toBeNull();

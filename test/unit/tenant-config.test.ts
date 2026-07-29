@@ -68,3 +68,46 @@ describe("tenant config store (#4787)", () => {
     expect(DEFAULT_TENANT_CONFIG.preferences.allowedActionClasses).not.toContain("delete_repo");
   });
 });
+
+describe("tenant-config isolation + normalization (#9614)", () => {
+  it("normalizes an EXPLICIT maxConcurrentLoops override with finiteNonNegativeInt", () => {
+    const norm = (v: number) => resolveTenantConfig({ preferences: { maxConcurrentLoops: v } }).preferences.maxConcurrentLoops;
+    expect(norm(-5)).toBe(0); // negative -> 0
+    expect(norm(0.5)).toBe(0); // fractional -> floor -> 0
+    expect(norm(Number.NaN)).toBe(0); // non-finite -> 0
+    expect(norm(Number.POSITIVE_INFINITY)).toBe(0); // non-finite -> 0
+    expect(norm(3)).toBe(3); // finite positive int passes through
+  });
+
+  it("an ABSENT maxConcurrentLoops override still inherits DEFAULT_TENANT_CONFIG's 1", () => {
+    // pauseOnFailure supplied so the preferences override object is present but maxConcurrentLoops is not.
+    expect(resolveTenantConfig({ preferences: { pauseOnFailure: false } }).preferences.maxConcurrentLoops).toBe(1);
+  });
+
+  it("drops non-string entries from an allowedActionClasses override rather than copying them through", () => {
+    const cfg = resolveTenantConfig({
+      preferences: { allowedActionClasses: ["open_pr", 42, null, "comment"] as unknown as string[] },
+    });
+    expect(cfg.preferences.allowedActionClasses).toEqual(["open_pr", "comment"]);
+  });
+
+  it("getTenantConfig returns a caller-owned deep copy on the HIT path — mutating it never reaches the store", () => {
+    const store = setTenantConfig(EMPTY_TENANT_CONFIG_STORE, "acme", { preferences: { allowedActionClasses: ["open_pr"] } });
+    const first = getTenantConfig(store, "acme");
+    (first.preferences.allowedActionClasses as string[]).push("merge_pr");
+    first.preferences.maxConcurrentLoops = 99;
+    first.autonomyLevel = "auto";
+    const second = getTenantConfig(store, "acme");
+    expect(second.preferences.allowedActionClasses).toEqual(["open_pr"]);
+    expect(second.preferences.maxConcurrentLoops).toBe(1);
+    expect(second.autonomyLevel).toBe("suggest");
+  });
+
+  it("setTenantConfig deep-freezes the stored entry (config, its preferences, and the action-class array)", () => {
+    const store = setTenantConfig(EMPTY_TENANT_CONFIG_STORE, "acme", {});
+    const stored = store["acme"]!;
+    expect(Object.isFrozen(stored)).toBe(true);
+    expect(Object.isFrozen(stored.preferences)).toBe(true);
+    expect(Object.isFrozen(stored.preferences.allowedActionClasses)).toBe(true);
+  });
+});

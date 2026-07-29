@@ -152,7 +152,11 @@ const SECRET_KEY_PATTERN = /token|secret|password|passwd|dsn|credential|api[_-]?
  * The token prefixes carry their own `\b`; the PEM header must NOT, because a word boundary before
  * a leading hyphen never matches and the whole alternative would be dead. That is not hypothetical
  * -- it was, until the forbidden-content test in test/unit/mcp-dispatch-telemetry.test.ts caught a
- * full `-----BEGIN RSA PRIVATE KEY-----` passing through untouched.
+ * complete RSA PEM private-key header passing through untouched.
+ *
+ * That header is described rather than quoted on purpose: this file is PUBLISHED (#9749), and a literal
+ * key marker in the tarball trips every secret scanner that reads it -- ours in check-contract-package.ts,
+ * and a consumer's own. The pattern on the next line is what must be exact; the prose need not be.
  */
 const SECRET_VALUE_PATTERN = /\b(?:gh[pousr]_[A-Za-z0-9]{16,}|sk-[A-Za-z0-9]{16,}|phc_[A-Za-z0-9]{16,})|-----BEGIN [A-Z ]*PRIVATE KEY-----/;
 

@@ -1,5 +1,6 @@
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { renameRepositoryIdentity } from "../../src/db/repo-identity-rename";
+import { RENAME_OUT_OF_SCOPE_TABLES, renameRepositoryIdentity } from "../../src/db/repo-identity-rename";
 import {
   getAgentCommandAnswer,
   getBurdenForecast,
@@ -1222,6 +1223,119 @@ describe("renameRepositoryIdentity", () => {
       expect(newPrLevel?.n).toBe(2); // both rows sharing the same target_key survive -- no uniqueness on this column
       const unrelated = await env.DB.prepare("select count(*) as n from audit_events where target_key = ?").bind("some/other-repo#1").first<{ n: number }>();
       expect(unrelated?.n).toBe(1);
+    });
+  });
+
+  describe("linked_issue_claims (#9650)", () => {
+    it("folds a colliding new-name row, keeping the pre-existing old-name row's claimed_at", async () => {
+      const env = createTestEnv();
+      const ins = (repo: string, pn: number, iss: number, at: string) =>
+        env.DB.prepare("INSERT INTO linked_issue_claims (repo_full_name, pull_number, issue_number, claimed_at) VALUES (?,?,?,?)").bind(repo, pn, iss, at).run();
+      await ins(OLD, 1, 2, "2026-01-01T00:00:00.000Z"); // pre-existing old-name row
+      await ins(NEW, 1, 2, "2026-09-09T00:00:00.000Z"); // stray new-name row that would collide on the composite PK
+      await ins(OLD, 3, 4, "2026-02-02T00:00:00.000Z"); // non-colliding old-name row
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const oldLeft = await env.DB.prepare("select count(*) as n from linked_issue_claims where repo_full_name = ?").bind(OLD).first<{ n: number }>();
+      expect(oldLeft?.n).toBe(0);
+      // The OLD row's claimed_at survives at (1,2) -- history is never dropped in favor of the new-name row.
+      const kept = await env.DB.prepare("select claimed_at from linked_issue_claims where repo_full_name = ? and pull_number = 1 and issue_number = 2").bind(NEW).first<{ claimed_at: string }>();
+      expect(kept?.claimed_at).toBe("2026-01-01T00:00:00.000Z");
+    });
+  });
+
+  for (const { table, col, label, insert } of [
+    {
+      table: "bounty_lifecycle_events",
+      col: "repo_full_name",
+      label: "bounty_lifecycle_events",
+      insert: (env: Env, repo: string) =>
+        env.DB.prepare("INSERT INTO bounty_lifecycle_events (id, bounty_id, repo_full_name, issue_number, status) VALUES (?,?,?,?,?)").bind("ble-1", "b1", repo, 7, "open").run(),
+    },
+    {
+      table: "webhook_events",
+      col: "repository_full_name",
+      label: "webhook_events",
+      insert: (env: Env, repo: string) =>
+        env.DB.prepare("INSERT INTO webhook_events (delivery_id, event_name, repository_full_name, payload_hash, status) VALUES (?,?,?,?,?)").bind("wh-1", "push", repo, "h1", "processed").run(),
+    },
+    {
+      table: "score_previews",
+      col: "repo_full_name",
+      label: "score_previews",
+      insert: (env: Env, repo: string) =>
+        env.DB.prepare("INSERT INTO score_previews (id, scoring_model_snapshot_id, repo_full_name, target_type, target_key) VALUES (?,?,?,?,?)").bind("sp-1", "sm1", repo, "pull_request", "k1").run(),
+    },
+  ]) {
+    describe(`${label} (#9650)`, () => {
+      it("renames the repo-identity column, leaving zero rows under the old name", async () => {
+        const env = createTestEnv();
+        await insert(env, OLD);
+        await renameRepositoryIdentity(env, OLD, NEW);
+        const oldLeft = await env.DB.prepare(`select count(*) as n from ${table} where ${col} = ?`).bind(OLD).first<{ n: number }>();
+        expect(oldLeft?.n).toBe(0);
+        const newRows = await env.DB.prepare(`select count(*) as n from ${table} where ${col} = ?`).bind(NEW).first<{ n: number }>();
+        expect(newRows?.n).toBe(1);
+      });
+    });
+  }
+
+  describe("renameRepositoryIdentity completeness (drift guard, #9650)", () => {
+    // Every schema.ts table carrying a repo_full_name / repository_full_name column must be either renamed by
+    // this module or explicitly exempt — so the list (which has drifted before) can never silently regress.
+    // Mirrors retention.test.ts's RETENTION_POLICY completeness guard.
+    const REPO_IDENTITY_COLUMNS = new Set(["repo_full_name", "repository_full_name"]);
+
+    /** Map each schema.ts table that carries a repo-identity column to its Drizzle EXPORT variable name (the
+     *  name the rename module references it by, e.g. `pull_requests` -> `pullRequests`). */
+    async function repoIdentityTables(): Promise<Array<{ sqlName: string; varName: string }>> {
+      const { getTableColumns, getTableName, isTable } = await import("drizzle-orm");
+      const schema = await import("../../src/db/schema");
+      const out: Array<{ sqlName: string; varName: string }> = [];
+      for (const [varName, value] of Object.entries(schema)) {
+        if (!isTable(value)) continue;
+        const columns = getTableColumns(value);
+        if (Object.values(columns).some((c) => REPO_IDENTITY_COLUMNS.has((c as { name: string }).name))) {
+          out.push({ sqlName: getTableName(value), varName });
+        }
+      }
+      return out;
+    }
+
+    it("every schema.ts table with a repo-identity column is renamed here or explicitly exempt", async () => {
+      const source = readFileSync("src/db/repo-identity-rename.ts", "utf8");
+      const unaccounted: string[] = [];
+      for (const { sqlName, varName } of await repoIdentityTables()) {
+        // Referenced either by its Drizzle variable (the fold-style blocks) or by its raw SQL name (the plain
+        // UPDATE blocks). Word-boundary on the var name so `pullRequests` doesn't also satisfy `pullRequestFiles`.
+        const referenced = new RegExp(`\\b${varName}\\b`).test(source) || source.includes(sqlName);
+        if (!referenced && !RENAME_OUT_OF_SCOPE_TABLES.has(sqlName)) unaccounted.push(sqlName);
+      }
+      expect(unaccounted).toEqual([]);
+    });
+
+    it("no table is both renamed here and listed as out-of-scope", async () => {
+      const source = readFileSync("src/db/repo-identity-rename.ts", "utf8");
+      const tablesByName = new Map((await repoIdentityTables()).map((t) => [t.sqlName, t.varName]));
+      const both = [...RENAME_OUT_OF_SCOPE_TABLES].filter((sqlName) => {
+        const varName = tablesByName.get(sqlName);
+        // "Renamed here" means an actual UPDATE, not merely a mention in the out-of-scope prose. The prose names
+        // the exempt tables in comments only; a real rename references the Drizzle var or `<sql_name> SET`.
+        return source.includes(`${sqlName} SET`) || (varName !== undefined && new RegExp(`\\.update\\(${varName}\\)`).test(source));
+      });
+      expect(both).toEqual([]);
+    });
+
+    it("no RENAME_OUT_OF_SCOPE_TABLES entry is dead (still exists in schema.ts or migrations/)", async () => {
+      const schemaSqlNames = new Set((await repoIdentityTables()).map((t) => t.sqlName));
+      const migrationsSql = readdirSync("migrations")
+        .filter((f) => f.endsWith(".sql"))
+        .map((f) => readFileSync(`migrations/${f}`, "utf8"))
+        .join("\n")
+        .toLowerCase();
+      const dead = [...RENAME_OUT_OF_SCOPE_TABLES].filter((table) => !schemaSqlNames.has(table) && !migrationsSql.includes(table.toLowerCase()));
+      expect(dead).toEqual([]);
     });
   });
 });

@@ -343,7 +343,7 @@ export async function persistDecisionRecord(
           `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at, reevaluation_reason, supersedes_record_id, reevaluation_actor, findings_count)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-          .bind(id, record.repoFullName.slice(0, 200), record.pullNumber, record.headSha, record.action, record.reasonCode.slice(0, 200), recordDigest, canonicalJson(record), record.decidedAt, reevaluated?.reason ?? null, reevaluated?.supersedesRecordId ?? null, reevaluated?.actor ?? null, record.findingsCount)
+          .bind(id, record.repoFullName.slice(0, 200), record.pullNumber, record.headSha, record.action, record.reasonCode.slice(0, 200), recordDigest, canonicalJson(record), record.decidedAt, reevaluated?.reason ?? null, reevaluated?.supersedesRecordId ?? null, reevaluated?.actor ?? null, record.findingsCount ?? null)
           .run();
       } catch (error) {
         if (attempt >= attempts) throw error;

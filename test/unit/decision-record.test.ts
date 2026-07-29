@@ -940,6 +940,42 @@ describe("verdict immutability per head SHA (#9742)", () => {
     expect(isReevaluationReason(undefined)).toBe(false);
   });
 
+  it("REGRESSION: a record built WITHOUT buildDecisionRecord still writes (#9743)", async () => {
+    // findingsCount used to be bound raw. A caller that assembles a DecisionRecord literal rather than
+    // going through buildDecisionRecord leaves it `undefined`, D1 refuses `undefined` as a bind, and the
+    // insert threw straight into the outer catch -- so the row silently never appeared and the ledger
+    // just... had fewer decisions in it. Nothing surfaced. Caught live by proof-summary's fixtures.
+    const env = createTestEnv();
+    const literal = {
+      schemaVersion: DECISION_RECORD_SCHEMA_VERSION,
+      repoFullName: "o/r",
+      pullNumber: 9,
+      headSha: "abc1234def",
+      baseSha: null,
+      action: "merge",
+      reasonCode: "clean",
+      configDigest: "c",
+      settingsDigest: "s",
+      gatePack: "oss-anti-slop",
+      ciState: "success",
+      modelIds: null,
+      promptDigest: null,
+      aiConfidence: null,
+      aiAgreement: null,
+      salvageability: null,
+      divertedByHoldout: false,
+      decidedAt: "2026-07-29T00:00:00.000Z",
+    } as never;
+
+    const id = await persistDecisionRecord(env, literal, "d".repeat(64));
+
+    expect(id, "the write must succeed, not swallow an undefined bind").not.toBeNull();
+    const row = await env.DB.prepare("SELECT findings_count AS findingsCount FROM decision_records WHERE id = ?")
+      .bind(id)
+      .first<{ findingsCount: number | null }>();
+    expect(row?.findingsCount, "an unstated count is NULL, which is not the same as zero findings").toBeNull();
+  });
+
   it("records WHO asked, when a person did, and nothing when a schedule did", async () => {
     const env = createTestEnv();
     const first = await buildDecisionRecord(target({ decidedAt: "2026-07-29T00:00:00Z" }));

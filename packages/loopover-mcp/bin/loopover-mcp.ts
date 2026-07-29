@@ -9,6 +9,15 @@ import { fileURLToPath } from "node:url";
 import { CLI_RESPONSE_SCHEMAS, type ApiResponse, type ValidatedApiPath } from "@loopover/contract/api-schemas";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
+  GATEWAY_DISABLED_ADVISORY,
+  discoverRemoteTools,
+  gatewayAdvisoryResource,
+  gatewayDisabled,
+  type GatewayFetch,
+  type GatewayMountResult,
+  type RemoteToolDescriptor,
+} from "../lib/gateway.js";
 import { buildFeasibilityVerdict, buildPrTextLint, buildGateDispositions, buildPublicPrBodyDraft } from "@loopover/engine";
 // #9537: the plan-DAG state machine, formerly hand-copied into this file, untyped.
 import { applyStepResult, buildPlanDag, nextReadySteps, planProgress, validatePlanDag, type PlanDag } from "@loopover/engine";
@@ -832,6 +841,13 @@ export const server = new McpServer({
 // Reads telemetryState() HERE on purpose: registerStdioTool's second parameter is the TOOL's config and
 // shadows the module-level `config`, so a read inside a nested function would silently see the wrong object.
 /* v8 ignore start -- thin registration glue; wrapStdioToolHandler covered by unit tests (#8690) */
+/**
+ * Every tool THIS server registers locally. Gateway mode reads it to skip a remote tool of the same name
+ * (#9526) -- the contract registry makes a collision impossible, but a duplicate registration would crash
+ * the server, so "local wins" is a cheaper failure than refusing to start.
+ */
+const locallyRegisteredToolNames = new Set<string>();
+
 function registerStdioTool<TInput>(
   name: string,
   handler: (input: TInput, extra?: unknown) => unknown,
@@ -842,6 +858,7 @@ function registerStdioTool<TInput>(
 ): void {
   const contract = getToolContract(name);
   if (!contract) throw new Error(`No @loopover/contract entry for stdio tool: ${name}`);
+  locallyRegisteredToolNames.add(name);
   server.registerTool(
     name,
     {
@@ -2447,10 +2464,108 @@ server.registerPrompt(
   }),
 );
 
+/** The real transport for the discovery call; injected in tests so no test reaches the network. */
+const defaultGatewayFetch: GatewayFetch = async (url, init) => {
+  const response = await fetch(url, init as RequestInit);
+  return { ok: response.ok, status: response.status, json: () => response.json() };
+};
+
+/**
+ * Re-register one remote tool as a passthrough proxy.
+ *
+ * Schemas come from the CONTRACT REGISTRY, not from the wire. The SDK's registerTool takes zod, while
+ * tools/list carries JSON Schema, so the wire shape cannot be handed over as-is -- and reaching for the
+ * registry is the better answer anyway: it is the same source the remote registered from, so the proxy
+ * advertises exactly what the remote enforces without this package trusting a remote-supplied schema. A
+ * tool absent from the registry (a remote running ahead of this package) still mounts, with the remote as
+ * the only validator -- which is where validation belongs regardless.
+ *
+ * `_meta.transport` marks the tool so telemetry can tell a proxied call from a local one (#9526 requirement
+ * 6) without having to know which names are remote.
+ */
+function registerProxiedTool(tool: RemoteToolDescriptor): void {
+  const contract = getToolContract(tool.name);
+  server.registerTool(
+    tool.name,
+    {
+      ...(tool.title ? { title: tool.title } : {}),
+      ...(tool.description ? { description: tool.description } : {}),
+      ...(contract ? { inputSchema: contract.input.shape, outputSchema: contract.output } : {}),
+      ...(tool.annotations ? { annotations: tool.annotations as never } : {}),
+      _meta: { ...(tool._meta ?? {}), transport: "proxied" },
+    } as never,
+    (async (input: unknown) => {
+      // Forwarded verbatim to the remote's own tools/call: this layer routes, it does not interpret.
+      const payload = await apiPost("/mcp", { jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name: tool.name, arguments: input } });
+      const result = (payload as { result?: unknown }).result;
+      return (result ?? payload) as never;
+    }) as never,
+  );
+}
+
+/** Registered at most once: a re-mount replaces the advisory's CONTENT, not the registration. */
+let gatewayAdvisoryState: { status: string; advisory: string } | null = null;
+let gatewayAdvisoryRegistered = false;
+
+/** The advisory a client sees instead of remote tools. A resource, never an error -- see gateway.ts. */
+function registerGatewayAdvisory(result: GatewayMountResult): void {
+  const advisory = gatewayAdvisoryResource(result);
+  if (!advisory) return;
+  gatewayAdvisoryState = advisory;
+  if (gatewayAdvisoryRegistered) return;
+  gatewayAdvisoryRegistered = true;
+  server.registerResource(
+    "loopover_gateway_status",
+    "loopover://gateway/status",
+    { title: "LoopOver gateway status", description: "Why remote tools are or are not mounted on this stdio server.", mimeType: "application/json" },
+    async () => ({ contents: [{ uri: "loopover://gateway/status", mimeType: "application/json", text: JSON.stringify(gatewayAdvisoryState, null, 2) }] }),
+  );
+}
+
+/**
+ * Gateway mode (#9526): mount the REMOTE server's tools onto this stdio server.
+ *
+ * One stdio entry, every tool the caller's session entitles them to -- rather than a local config for the
+ * local-git tools and a second, separate remote entry for the rest. Each proxied tool re-registers with the
+ * schemas that came across the wire, so nothing is duplicated here and a remote schema change needs no
+ * release of this package.
+ *
+ * Every failure is non-fatal by design. No session, no network, a 500 from the API -- all of them leave a
+ * working local server plus one advisory resource. An enhancement that can break startup is a liability, and
+ * a contributor on a plane still needs their local tools.
+ */
+export async function mountRemoteTools(options: { argv?: readonly string[]; fetchImpl?: GatewayFetch } = {}): Promise<GatewayMountResult> {
+  const argv = options.argv ?? cliArgs;
+  if (gatewayDisabled(argv)) {
+    registerGatewayAdvisory({ status: "unavailable", advisory: GATEWAY_DISABLED_ADVISORY });
+    return { status: "unavailable", advisory: GATEWAY_DISABLED_ADVISORY };
+  }
+
+  const result = await discoverRemoteTools({
+    apiUrl,
+    token: getApiToken() ?? null,
+    // Local wins on a collision. The contract registry makes one impossible -- a name is local-git OR
+    // remote, never both -- but a duplicate registration would crash the server, so this degrades instead.
+    localToolNames: locallyRegisteredToolNames,
+    fetchImpl: options.fetchImpl ?? (defaultGatewayFetch as GatewayFetch),
+  });
+
+  if (result.status !== "mounted") {
+    registerGatewayAdvisory(result);
+    return result;
+  }
+  for (const tool of result.tools) registerProxiedTool(tool);
+  return result;
+}
+
 // #7764: only bind the shared stdin/stdout transport when actually launched as the CLI/stdio process. An
 // in-process unit-test importer holds the exported `server` and connects it to an in-memory transport instead.
-/* v8 ignore next -- only the launched stdio process binds the real transport; unit tests connect in-memory. */
-if (runAsCliEntrypoint) await server.connect(new StdioServerTransport());
+/* v8 ignore next 4 -- only the launched stdio process mounts remote tools and binds the real transport;
+   unit tests call mountRemoteTools() directly and connect in-memory. */
+if (runAsCliEntrypoint) {
+  await mountRemoteTools();
+  await server.connect(new StdioServerTransport());
+}
 
 async function withClientWorkspaceRoots(input: any) {
   return withWorkspaceRoots(input, await clientWorkspaceRoots());

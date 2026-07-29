@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+import type { ChatActionDispatchResult } from "../../../packages/loopover-miner/lib/chat-action-dispatch.js";
 import { createChatActionRegistry } from "../../../packages/loopover-miner/lib/chat-action-registry.js";
 import { ChatConversation } from "./components/chat/conversation";
 import { GOVERNOR_CHAT_ACTION_PENDING_MESSAGE } from "./lib/chat-governor-action-copy";
@@ -288,7 +289,11 @@ describe("ChatConversation governor pause/resume chat actions (#8670)", () => {
   });
 
   it("surfaces a non-executed dispatch (flag off / gated) as a system note instead of an empty turn", async () => {
-    const runGovernorChatActionImpl = vi.fn(async () => ({ ok: false, status: "disabled", action: null }));
+    const runGovernorChatActionImpl = vi.fn(async (): Promise<ChatActionDispatchResult> => ({
+      ok: false,
+      status: "disabled",
+      action: null,
+    }));
     render(
       <ChatConversation
         streamChatImpl={async function* () {

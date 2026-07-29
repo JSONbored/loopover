@@ -84,11 +84,11 @@ function round3(value: number): number {
  * and no new SQL surface exists for this page.
  */
 export function buildProofAccuracy(decided: number, confirmed: number, minimumDecisions: number = PROOF_MIN_DECISIONS): ProofAccuracy {
-  if (decided < minimumDecisions || decided <= 0) return { state: "insufficient_data", decided: Math.max(0, decided), minimumDecisions };
+  // ONE guard for both reasons a rate is unpublishable, and both arms are reachable: `wilsonInterval`
+  // returns null exactly when there are no trials, which IS the "nothing decided" case, so checking it
+  // here rather than pre-empting it with a separate `decided <= 0` test avoids a branch no input can take.
   const interval = wilsonInterval(confirmed, decided);
-  /* v8 ignore next -- wilsonInterval returns null only for trials <= 0, which the guard above already
-     excluded; the branch exists so a future change to that helper cannot produce a NaN interval here. */
-  if (!interval) return { state: "insufficient_data", decided, minimumDecisions };
+  if (!interval || decided < minimumDecisions) return { state: "insufficient_data", decided: Math.max(0, decided), minimumDecisions };
   return {
     state: "published",
     accuracy: round3(confirmed / decided),
@@ -342,4 +342,49 @@ export async function loadProofSummary(
     records,
     checkedAt,
   });
+}
+
+/** Everything the proof surfaces read, injected as one bag. The routes bind the real implementations; tests
+ *  bind failing ones, which is what makes the unavailable path a tested outcome rather than a hoped-for one. */
+export type ProofPageDeps = {
+  loadManifest: (env: Env, repoFullName: string) => Promise<{ publicProof: { present: boolean; enabled: boolean } } | null>;
+  verifyLedger: (env: Env) => Promise<{ ok: boolean; tipSeq: number; totalCount: number; break?: { kind: string; atSeq: number } | undefined }>;
+  loadAnchors: (env: Env) => Promise<{ anchors: PublicLedgerAnchor[] }>;
+  now?: (() => string) | undefined;
+};
+
+/** The two outcomes both proof surfaces share. The JSON route and the badge route render them differently;
+ *  deciding them is not theirs to duplicate.
+ *
+ *  There is deliberately NO `unavailable` case. `loadProofSummary` is TOTAL: every read it performs is
+ *  wrapped per section, so a failing ledger, anchor or decision-record read degrades to that section's
+ *  honest neutral state and the page still composes. Carrying a 503 outcome would mean carrying a branch
+ *  no input can reach -- dead code that a test can only reach by faking a dependency contract violation,
+ *  which proves nothing about the system. If a future read is ever added outside that per-section
+ *  discipline, the fix is to wrap it there (where the honest-degradation tests live), not to reintroduce a
+ *  catch-all here that would silently turn a partial page into a blank 503. */
+export type ProofPageResult =
+  | { status: "ok"; summary: ProofSummary }
+  | { status: "disabled" };
+
+/**
+ * Resolve what a proof surface should serve for one repo: the gate, the read, and the failure outcome.
+ *
+ * This exists as ONE function because the alternative already bit us: the gate lived inline in two route
+ * bodies, and exactly one of them was wired to the per-repo opt-out while the other silently was not. A
+ * shared resolver makes "the badge and the page agree about whether this repo is published" true by
+ * construction rather than by two call sites remembering the same thing.
+ *
+ * The override is resolved FIRST, so a repo that turned its page off never has its decision records queried
+ * to build a summary that would be discarded.
+ */
+export async function resolveProofPage(env: Env, repoFullName: string, deps: ProofPageDeps): Promise<ProofPageResult> {
+  const override = await loadProofPageRepoOverride(env, repoFullName, deps.loadManifest);
+  if (!isProofPageEnabledForRepo(env, override)) return { status: "disabled" };
+  const summary = await loadProofSummary(env, repoFullName, {
+    verifyLedger: deps.verifyLedger,
+    loadAnchors: deps.loadAnchors,
+    ...(deps.now ? { now: deps.now } : {}),
+  });
+  return { status: "ok", summary };
 }

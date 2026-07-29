@@ -306,7 +306,7 @@ import { isRagEnabled } from "../review/rag-wire";
 import { loadDecisionLedgerTip, loadPublicDecisionRecord, loadPublicLedgerRow, verifyDecisionLedger } from "../review/decision-record";
 import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
 import { anchorSigningInput, buildLedgerAnchorPayload, currentAnchorKey, parseAnchorPublicKeys, signLedgerAnchorPayload } from "../review/ledger-anchor";
-import { isProofPageEnabledForRepo, loadProofPageRepoOverride, loadProofSummary } from "../review/proof-summary";
+import { resolveProofPage } from "../review/proof-summary";
 import { renderProofBadgeSvg } from "./proof-badge";
 import { ingestBittensorAnchorReport, parseBittensorAnchorReport } from "../review/ledger-anchor-bittensor";
 import { loadPublicLedgerAnchors } from "../review/ledger-anchor-persistence";
@@ -1353,57 +1353,38 @@ export function createApp() {
   });
 
   // #9569: the public proof page's data, and its README badge. Read-only over the SAME public sources the
-  // standalone endpoints already serve -- no new verification mechanism and no new SQL surface. Two gates
-  // must allow (see isProofPageEnabledForRepo's recorded opt-out decision): the operator's fleet-wide flag,
-  // default OFF like every sibling public surface, and the repo's own opt-out.
+  // standalone endpoints already serve -- no new verification mechanism and no new SQL surface.
+  //
+  // Both handlers are thin renderers over ONE resolver (resolveProofPage): the gate, the read and the
+  // failure outcome are decided there, so the page and the badge cannot disagree about whether a repo is
+  // published. That is not a stylistic preference -- the gate previously lived inline in both bodies and
+  // exactly one of them was wired to the per-repo opt-out.
+  const proofPageDeps = {
+    loadManifest: loadRepoFocusManifest,
+    verifyLedger: (env: Env) => verifyDecisionLedger(env),
+    loadAnchors: (env: Env) => loadPublicLedgerAnchors(env, { limit: 20 }),
+  };
+
   app.get("/v1/public/repos/:owner/:repo/proof", async (c) => {
-    const repoFullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    // The repo's OWN opt-out, loaded before anything else is read: a repo that turned its page off must not
-    // have its decision records queried to build a summary that will be discarded.
-    const override = await loadProofPageRepoOverride(c.env, repoFullName, loadRepoFocusManifest);
-    if (!isProofPageEnabledForRepo(c.env, override)) return c.json({ error: "not_found" }, 404);
-    try {
-      const summary = await loadProofSummary(c.env, repoFullName, {
-        verifyLedger: (env) => verifyDecisionLedger(env),
-        loadAnchors: (env) => loadPublicLedgerAnchors(env, { limit: 20 }),
-      });
-      c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-      return c.json(summary);
-    } catch {
-      /* v8 ignore next -- defense in depth: loadProofSummary wraps every section (and the override loader
-         its own read) in try/catch, so nothing inside currently throws. Kept so a future read added there
-         without that discipline degrades to 503 rather than a 500 on an unauthenticated public route. */
-      return c.json({ error: "unavailable" }, 503);
-    }
+    const result = await resolveProofPage(c.env, `${c.req.param("owner")}/${c.req.param("repo")}`, proofPageDeps);
+    if (result.status === "disabled") return c.json({ error: "not_found" }, 404);
+    c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return c.json(result.summary);
   });
 
   // The badge deliberately reports the LEDGER's state rather than an accuracy percentage: a badge is a
   // one-glance claim, and an accuracy number without the interval that makes it honest (which does not fit
-  // in a badge) is exactly the bare scalar the proof summary refuses to publish.
+  // in a badge) is exactly the bare scalar the proof summary refuses to publish. A disabled repo renders
+  // the neutral badge rather than an error -- a broken image in a README is worse than an honest one.
   app.get("/v1/public/repos/:owner/:repo/proof-badge.svg", async (c) => {
     c.header("Content-Type", "image/svg+xml; charset=utf-8");
-    const badgeRepoFullName = `${c.req.param("owner")}/${c.req.param("repo")}`;
-    const badgeOverride = await loadProofPageRepoOverride(c.env, badgeRepoFullName, loadRepoFocusManifest);
-    if (!isProofPageEnabledForRepo(c.env, badgeOverride)) {
+    const result = await resolveProofPage(c.env, `${c.req.param("owner")}/${c.req.param("repo")}`, proofPageDeps);
+    if (result.status === "disabled") {
       c.header("Cache-Control", "public, max-age=300");
       return c.body(renderProofBadgeSvg(null), 404);
     }
-    try {
-      const summary = await loadProofSummary(c.env, badgeRepoFullName, {
-        verifyLedger: (env) => verifyDecisionLedger(env),
-        loadAnchors: (env) => loadPublicLedgerAnchors(env, { limit: 20 }),
-      });
-      c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
-      return c.body(renderProofBadgeSvg(summary));
-    } catch {
-      // Same defense-in-depth arm as the proof route above: a README embed gets the neutral badge rather
-      // than a broken image if a future unguarded read is added. Unreachable today -- every inner read is
-      // individually fail-safe -- so the whole arm is excluded rather than left as a coverage hole.
-      /* v8 ignore start */
-      c.header("Cache-Control", "public, max-age=300");
-      return c.body(renderProofBadgeSvg(null), 503);
-      /* v8 ignore stop */
-    }
+    c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
+    return c.body(renderProofBadgeSvg(result.summary));
   });
 
   // #9277 (epic #9267): the current tip's SIGNED checkpoint, for the operator's off-Worker Bittensor

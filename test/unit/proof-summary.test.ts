@@ -18,7 +18,7 @@ import { createApp } from "../../src/api/routes";
 import { appendDecisionLedger, persistDecisionRecord } from "../../src/review/decision-record";
 import { loadPublicLedgerAnchors, recordLedgerAnchorAttempt } from "../../src/review/ledger-anchor-persistence";
 import { createTestEnv } from "../helpers/d1";
-import { loadProofPageRepoOverride } from "../../src/review/proof-summary";
+import { loadProofPageRepoOverride, resolveProofPage, type ProofPageDeps } from "../../src/review/proof-summary";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import type { PublicLedgerAnchor } from "../../src/review/ledger-anchor-persistence";
 
@@ -369,5 +369,76 @@ describe("loadProofSummary + routes (#9569)", () => {
     // public page over an optional manifest read.
     const syncThrow = (() => { throw new Error("d1 down"); }) as unknown as Parameters<typeof loadProofPageRepoOverride>[2];
     expect(await loadProofPageRepoOverride(env, "o/r", syncThrow)).toEqual({ present: false, enabled: false });
+  });
+
+  it("resolveProofPage: the gate outcomes, and a TOTAL composition that degrades instead of failing", async () => {
+    const env = await seeded();
+    const deps: ProofPageDeps = {
+      loadManifest: async () => null,
+      verifyLedger: async () => ({ ok: true, tipSeq: 3, totalCount: 3 }),
+      loadAnchors: async () => ({ anchors: [] }),
+      now: () => CHECKED_AT,
+    };
+
+    const ok = await resolveProofPage(env, "o/r", deps);
+    expect(ok.status).toBe("ok");
+    if (ok.status === "ok") expect(ok.summary.decisionCount).toBe(3);
+
+    // Fleet flag off ⇒ disabled.
+    expect(await resolveProofPage(createTestEnv(), "o/r", deps)).toEqual({ status: "disabled" });
+
+    // Per-repo opt-out ⇒ disabled even with the fleet flag on.
+    expect(
+      await resolveProofPage(env, "o/r", { ...deps, loadManifest: async () => ({ publicProof: { present: true, enabled: false } }) }),
+    ).toEqual({ status: "disabled" });
+
+    // REGRESSION: the composition is TOTAL. Every dependency failing at once -- manifest, ledger, anchors,
+    // and the DB binding itself throwing on property access -- still resolves to a rendered page in its
+    // honest neutral states, never a rejected promise. This is what makes an `unavailable` outcome
+    // unnecessary rather than merely untested: there is no input that fails the composition.
+    const hostile = createTestEnv({ LOOPOVER_PUBLIC_PROOF: "true" });
+    Object.defineProperty(hostile, "DB", {
+      get() {
+        throw new Error("binding unavailable");
+      },
+    });
+    const degraded = await resolveProofPage(hostile, "o/r", {
+      loadManifest: async () => { throw new Error("manifest down"); },
+      verifyLedger: async () => { throw new Error("ledger down"); },
+      loadAnchors: async () => { throw new Error("anchors down"); },
+      now: () => CHECKED_AT,
+    });
+    expect(degraded.status).toBe("ok");
+    if (degraded.status !== "ok") return;
+    expect(degraded.summary).toMatchObject({
+      decisionCount: 0,
+      sampleRecords: [],
+      ledger: { state: "unavailable", checkedAt: CHECKED_AT },
+      anchor: { state: "not_yet_anchored" },
+    });
+    expect(degraded.summary.accuracy).toMatchObject({ state: "insufficient_data", decided: 0 });
+  });
+
+  it("REGRESSION: both surfaces render the SAME resolver outcome, so page and badge cannot disagree", async () => {
+    const app = createApp();
+    // A repo opted out in its manifest: the page 404s and the badge 404s with a neutral SVG, from one
+    // decision. The gate previously lived inline in both bodies and only one honored the opt-out.
+    const env = await seeded();
+    await upsertRepoFocusManifest(env, "o/r", { publicProof: { enabled: false } } as never);
+    expect((await app.request("/v1/public/repos/o/r/proof", {}, env)).status).toBe(404);
+    const badge = await app.request("/v1/public/repos/o/r/proof-badge.svg", {}, env);
+    expect(badge.status).toBe(404);
+    expect(badge.headers.get("content-type")).toContain("image/svg+xml");
+    expect(await badge.text()).toContain("unavailable");
+
+    // And with every DB read failing, BOTH still serve 200 over the degraded page rather than erroring.
+    const broken = await seeded();
+    Object.defineProperty(broken, "DB", {
+      get() {
+        throw new Error("binding unavailable");
+      },
+    });
+    expect((await app.request("/v1/public/repos/o/r/proof", {}, broken)).status).toBe(200);
+    expect((await app.request("/v1/public/repos/o/r/proof-badge.svg", {}, broken)).status).toBe(200);
   });
 });

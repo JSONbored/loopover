@@ -70,3 +70,43 @@ describe("CORS: everything else stays on the strict, credentialed allowlist (#op
     expect(res.headers.get("access-control-allow-origin")).toBeNull();
   });
 });
+
+describe("CORS: the public no-credential branch varies by Origin (#9712)", () => {
+  it("GET /health with an Origin returns Access-Control-Allow-Origin: * AND Vary: Origin", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const res = await app.request("/health", { headers: { origin: PREVIEW_ORIGIN } }, env);
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    expect(res.headers.get("vary")).toContain("Origin");
+  });
+
+  it("GET /v1/public/stats and the per-repo badge route also carry Vary: Origin on the open branch", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    env.LOOPOVER_PUBLIC_STATS = "true";
+    const stats = await app.request("/v1/public/stats", { headers: { origin: "https://random-preview.pages.dev" } }, env);
+    expect(stats.headers.get("access-control-allow-origin")).toBe("*");
+    expect(stats.headers.get("vary")).toContain("Origin");
+
+    const badge = await app.request("/v1/public/github/repos/acme/widgets/stats", { headers: { origin: PREVIEW_ORIGIN } }, env);
+    expect(badge.headers.get("access-control-allow-origin")).toBe("*");
+    expect(badge.headers.get("vary")).toContain("Origin");
+  });
+
+  it("GET /health with NO Origin sets no Access-Control-Allow-Origin — proving the response genuinely varies", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const res = await app.request("/health", {}, env);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
+  it("REGRESSION: the credentialed branch still returns exactly one Vary: Origin plus credentials", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const res = await app.request("/v1/app/kill-switch", { headers: { origin: "https://loopover.ai", authorization: `Bearer ${env.LOOPOVER_API_TOKEN}` } }, env);
+    expect(res.headers.get("access-control-allow-credentials")).toBe("true");
+    // Exactly one Origin token — appended, not duplicated or overwritten.
+    expect((res.headers.get("vary") ?? "").split(",").map((v) => v.trim()).filter((v) => v === "Origin")).toEqual(["Origin"]);
+  });
+});

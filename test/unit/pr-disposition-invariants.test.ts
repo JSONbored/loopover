@@ -218,3 +218,45 @@ describe("unstable explained only by an IGNORED check (#9810 follow-up)", () => 
     expect(d.wouldApprove).toBe(true);
   });
 });
+
+describe("guardrail hold released by a clean escalated review (#9808 second half)", () => {
+  const base = {
+    reviewGood: true, guardrailHit: true, migrationCollisionHold: false, unlinkedIssueMatchHold: false,
+    advisoryCheckHold: false, unlinkedIssueMatchCloseWithoutCloseActing: false, mergeableState: "clean",
+  };
+
+  it("REGRESSION: cleared ⇒ the PR proceeds instead of summoning a human", () => {
+    // The gap this closes: #9821 shipped the escalated review, but the disposition still held every guarded
+    // PR unconditionally — the 74 held PRs / 14 days kept landing on the maintainer, just with better
+    // reviews attached. Full-autonomy mode releases the hold when the escalation came back clean.
+    const d = derivePrDisposition({ ...base, guardrailEscalationCleared: true });
+    expect(d.heldForManualReview).toBe(false);
+    expect(d.wouldApprove).toBe(true);
+    expect(d.wouldMerge).toBe(true);
+  });
+
+  it("INVARIANT: default (flag absent/false) is byte-identical to today — hold", () => {
+    expect(derivePrDisposition(base).heldForManualReview).toBe(true);
+    expect(derivePrDisposition({ ...base, guardrailEscalationCleared: false }).heldForManualReview).toBe(true);
+  });
+
+  it("INVARIANT: cleared releases ONLY the guardrail term — every other hold still holds", () => {
+    for (const extra of [
+      { migrationCollisionHold: true },
+      { unlinkedIssueMatchHold: true },
+      { advisoryCheckHold: true },
+      { mergeableState: "unstable" },
+    ]) {
+      const d = derivePrDisposition({ ...base, guardrailEscalationCleared: true, ...extra });
+      expect(d.heldForManualReview, JSON.stringify(extra)).toBe(true);
+    }
+  });
+
+  it("INVARIANT: cleared without reviewGood cannot merge — the release rides ON the clean verdict", () => {
+    // The caller only sets cleared when reviewGood, but the disposition must not trust that: a red gate or
+    // CI still blocks even if the flag were mis-set upstream.
+    const d = derivePrDisposition({ ...base, reviewGood: false, guardrailEscalationCleared: true });
+    expect(d.wouldApprove).toBe(false);
+    expect(d.wouldMerge).toBe(false);
+  });
+});

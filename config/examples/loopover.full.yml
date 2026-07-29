@@ -303,6 +303,14 @@ gate:
     selfConsistencyRuns: 3
     # provider: anthropic
     # model: claude-opus-5
+    # What a CLEAN escalated review buys (#9808). `hold` (default): the PR still waits for a human even when
+    # the escalated review found nothing — human-in-the-loop mode. `proceed`: a clean escalated review
+    # (gate success + green CI) RELEASES the guardrail hold and the normal approve/merge path continues —
+    # full-autonomy mode, where the guarded path is protected by the escalated review instead of a queue.
+    # Fail-closed: `proceed` is inert unless at least one escalation knob above is actually set, so the hold
+    # can never be released without the extra scrutiny that justifies releasing it. Layered like every other
+    # manifest field (global -> per-repo), so repos can be flipped to full-auto one at a time.
+    # onCleanReview: proceed
 
   advisoryCheckRuns:
     - name: Contributor trust

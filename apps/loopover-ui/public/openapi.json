@@ -10197,6 +10197,15 @@
             "nullable": true,
             "minimum": 0,
             "maximum": 1440
+          },
+          "guardrailEscalationOnCleanReview": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "hold",
+              "proceed",
+              null
+            ]
           }
         },
         "required": [

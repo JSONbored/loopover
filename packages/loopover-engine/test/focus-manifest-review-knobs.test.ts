@@ -88,3 +88,18 @@ test("a non-mapping guardrailEscalation is ignored wholesale, and absence leaves
   const json = gateConfigToJson(absent.gate) as Record<string, unknown>;
   assert.equal(json.guardrailEscalation, undefined);
 });
+
+test("onCleanReview parses, round-trips, makes the gate present alone, and rejects junk (#9808)", () => {
+  const parsed = parseFocusManifest({ gate: { guardrailEscalation: { onCleanReview: "proceed" } } });
+  assert.equal(parsed.gate.present, true);
+  assert.equal(parsed.gate.guardrailEscalationOnCleanReview, "proceed");
+  assert.deepEqual(parseFocusManifest({ gate: gateConfigToJson(parsed.gate) }).gate, parsed.gate);
+
+  const hold = parseFocusManifest({ gate: { guardrailEscalation: { onCleanReview: "hold", effort: "high" } } });
+  assert.equal(hold.gate.guardrailEscalationOnCleanReview, "hold");
+  assert.deepEqual(parseFocusManifest({ gate: gateConfigToJson(hold.gate) }).gate, hold.gate);
+
+  const junk = parseFocusManifest({ gate: { guardrailEscalation: { onCleanReview: "yolo" } } });
+  assert.equal(junk.gate.guardrailEscalationOnCleanReview, null);
+  assert.ok(junk.warnings.some((w) => /guardrailEscalation\.onCleanReview/.test(w)));
+});

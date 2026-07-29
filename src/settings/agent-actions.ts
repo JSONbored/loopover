@@ -275,6 +275,14 @@ export type AgentActionPlanInput = {
   // review-good PRs; blockers, red CI, and base conflicts still close for close-eligible contributors.
   changedPaths: string[];
   hardGuardrailGlobs: string[];
+  /** #9808 second half: the guardrail-escalation settings, threaded as discrete fields like every other
+   *  settings-derived input here. `onCleanReview: "proceed"` + at least one knob set + reviewGood releases
+   *  the guardrail hold; anything less keeps today's behavior exactly. */
+  guardrailEscalationOnCleanReview?: "hold" | "proceed" | null | undefined;
+  guardrailEscalationEffort?: string | null | undefined;
+  guardrailEscalationSelfConsistencyRuns?: number | null | undefined;
+  guardrailEscalationModel?: string | null | undefined;
+  guardrailEscalationProvider?: string | null | undefined;
   // Configured manual-review hold label. Undefined uses the default "manual-review"; null disables only the
   // label, not the guardrail hold. Separate from review_state_label so operators can avoid ready/changes labels.
   manualReviewLabel?: string | null | undefined;
@@ -1115,10 +1123,28 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // are not disposition. reviewGood is computed here (moved up from beside canMerge — same formula,
   // gate passes AND CI green) because the disposition needs it.
   const reviewGood = gatePassing && ciPassed;
+  // #9808 second half: a clean ESCALATED review releases the guardrail hold -- full-autonomy mode. All four
+  // conjuncts are load-bearing:
+  //   - the mode is an explicit opt-in (`guardrailEscalation.onCleanReview: proceed`), default hold, layered
+  //     global -> per-repo like every other manifest field, so an operator can flip one repo at a time;
+  //   - at least one escalation knob must actually be SET -- the release is justified by extra scrutiny, so
+  //     absent scrutiny there is nothing to vouch for the guarded path (fail-closed against a config that
+  //     sets the mode but forgets the escalation);
+  //   - reviewGood: the gate passed (which already folds in the AI verdict's blockers -- a consensus blocker
+  //     fails the gate) AND CI is green;
+  //   - guardrailHit, or there is nothing to clear.
+  const escalationConfigured =
+    input.guardrailEscalationEffort != null ||
+    input.guardrailEscalationSelfConsistencyRuns != null ||
+    input.guardrailEscalationModel != null ||
+    input.guardrailEscalationProvider != null;
+  const guardrailEscalationCleared =
+    guardrailHit && reviewGood && escalationConfigured && input.guardrailEscalationOnCleanReview === "proceed";
   const disposition = derivePrDisposition({
     mergeableState: input.pr.mergeableState,
     reviewGood,
     guardrailHit,
+    guardrailEscalationCleared,
     migrationCollisionHold: input.migrationCollisionHold !== undefined,
     unlinkedIssueMatchHold: input.unlinkedIssueMatchHold !== undefined,
     priorityEligibilityHold: input.priorityEligibilityHold !== undefined,
@@ -1214,7 +1240,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // still separately wants manualReview) — without this, the cleanup would remove a label the fallback is
   // about to re-add later in this same pass. See its own doc comment at the (former) point of use below.
   const manualHoldReason =
-    guardrailHit
+    guardrailHit && !guardrailEscalationCleared
       ? `verdict=${conclusion}; ${guardrailReason}`
       : ciUnverified
         ? "CI could not be verified"

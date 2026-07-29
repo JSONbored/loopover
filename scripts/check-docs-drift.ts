@@ -182,6 +182,7 @@ export const SETTINGS_ALIAS_MANIFEST: AliasManifestRow[] = [
   { field: "guardrailEscalationModel", aliases: ["guardrailEscalation:"] },
   { field: "guardrailEscalationEffort", aliases: ["guardrailEscalation:"] },
   { field: "guardrailEscalationSelfConsistencyRuns", aliases: ["guardrailEscalation:"] },
+  { field: "guardrailEscalationOnCleanReview", aliases: ["guardrailEscalation:"] },
   { field: "aiReviewAllAuthors", aliases: ["allAuthors"] },
   { field: "aiReviewCloseConfidence", aliases: ["closeConfidence"] },
   { field: "aiReviewSalvageabilityMinScore", aliases: ["salvageabilityMinScore"] },

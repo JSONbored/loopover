@@ -459,6 +459,7 @@ export const RepositorySettingsSchema = z
     guardrailEscalationModel: z.string().nullable().optional(),
     guardrailEscalationEffort: z.enum(["low", "medium", "high", "xhigh", "max"]).nullable().optional(),
     guardrailEscalationSelfConsistencyRuns: z.number().nullable().optional(),
+    guardrailEscalationOnCleanReview: z.enum(["hold", "proceed"]).nullable().optional(),
     copycatGateMode: z.enum(["off", "warn", "label", "block"]).optional(),
     copycatGateMinScore: z.number().nullable().optional(),
     gateDryRun: z.boolean().optional(),

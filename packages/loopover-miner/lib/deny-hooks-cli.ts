@@ -12,6 +12,7 @@
 // Strictly local + offline (like `purge`/`queue`): only the local synthesis SQLite is touched.
 import { readFileSync } from "node:fs";
 import { initDenyHookSynthesisStore } from "./deny-hook-synthesis.js";
+import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
 
 const USAGE = [
   "Usage:",
@@ -29,13 +30,50 @@ function parseHistoryFile(path: string): HistoryRecord[] {
   return parsed as HistoryRecord[];
 }
 
-export function runDenyHooks(args: string[]): number {
-  const json = args.includes("--json");
-  const positional = args.filter((arg) => !arg.startsWith("--"));
+type ParsedDenyHooksArgs =
+  | { subcommand: string | undefined; repoFullName: string | undefined; proposalId: string | undefined; historyPath: string | undefined; json: boolean }
+  | { error: string };
+
+/** Index-based parse (mirroring `parseRepoIdentifierArgs` in `portfolio-queue-cli.ts`): consume `--history <value>`
+ *  as a flag+value pair so the value never leaks into the positional list (the `args.filter` bug this replaces —
+ *  same class as closed #5833's `hooks check --tool/--input`). A missing or flag-like `--history` value, and any
+ *  unrecognized `-`-prefixed token, are parse errors here rather than downstream nonsense-repo operations. */
+export function parseDenyHooksArgs(args: string[]): ParsedDenyHooksArgs {
+  let json = false;
+  let historyPath: string | undefined;
+  const positional: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index]!;
+    if (token === "--json") {
+      json = true;
+      continue;
+    }
+    if (token === "--history") {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        return { error: "refresh requires --history <file.json>\n" + USAGE };
+      }
+      historyPath = value;
+      index += 1;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      return { error: `Unknown option: ${token}` };
+    }
+    positional.push(token);
+  }
   const [subcommand, repoFullName, proposalId] = positional;
+  return { subcommand, repoFullName, proposalId, historyPath, json };
+}
+
+export function runDenyHooks(args: string[]): number {
+  const parsed = parseDenyHooksArgs(args);
+  if ("error" in parsed) {
+    return reportCliFailure(argsWantJson(args), parsed.error);
+  }
+  const { subcommand, repoFullName, proposalId, historyPath, json } = parsed;
   if (!subcommand || !repoFullName) {
-    console.error(USAGE);
-    return 2;
+    return reportCliFailure(json, USAGE);
   }
   const store = initDenyHookSynthesisStore();
   try {
@@ -56,11 +94,8 @@ export function runDenyHooks(args: string[]): number {
         return 0;
       }
       case "refresh": {
-        const historyFlag = args.indexOf("--history");
-        const historyPath = historyFlag !== -1 ? args[historyFlag + 1] : undefined;
         if (!historyPath) {
-          console.error("refresh requires --history <file.json>\n" + USAGE);
-          return 2;
+          return reportCliFailure(json, "refresh requires --history <file.json>\n" + USAGE);
         }
         const proposals = store.refreshProposals(repoFullName, parseHistoryFile(historyPath));
         if (json) {
@@ -73,23 +108,17 @@ export function runDenyHooks(args: string[]): number {
       case "approve":
       case "reject": {
         if (!proposalId) {
-          console.error(USAGE);
-          return 2;
+          return reportCliFailure(json, USAGE);
         }
         store.setProposalStatus(repoFullName, proposalId, subcommand === "approve" ? "approved" : "rejected");
         console.log(`${subcommand === "approve" ? "Approved" : "Rejected"} ${proposalId} for ${repoFullName}${subcommand === "approve" ? " — it enforces on the next attempt." : "."}`);
         return 0;
       }
       default:
-        console.error(USAGE);
-        return 2;
+        return reportCliFailure(json, USAGE);
     }
   } catch (error) {
-    // String(error) renders an Error as "Error: <message>" — every throw site here (store methods,
-    // readFileSync, JSON.parse, parseHistoryFile) throws real Errors, so a two-arm instanceof ternary
-    // would carry a permanently-unreachable branch.
-    console.error(String(error));
-    return 1;
+    return reportCliFailure(json, describeCliError(error));
   } finally {
     store.close();
   }

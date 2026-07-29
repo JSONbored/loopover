@@ -1,6 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ElicitRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { LoopoverMcp } from "../../src/mcp/server";
 import {
   resetInstanceDiagnosticsForTesting,
@@ -30,6 +31,24 @@ async function connect(env: Env, identity: AuthIdentity = INTERNAL) {
 }
 
 /** The tool's structured payload. Typed off the SDK's own loose result shape rather than a narrow local one. */
+/**
+ * A client that ADVERTISES elicitation and answers every prompt the same way. Without the capability the
+ * server's confirmDestructive falls through on the schema-level confirm alone, so the decline path — and
+ * the "an elicitation that errors is a decline, not an implicit yes" rule — is only reachable from here.
+ */
+async function connectEliciting(env: Env, action: "accept" | "decline" | "throw") {
+  const server = new LoopoverMcp(env, INTERNAL).createServer();
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await server.connect(serverTransport);
+  const client = new Client({ name: "eliciting-test", version: "0.1.0" }, { capabilities: { elicitation: {} } });
+  client.setRequestHandler(ElicitRequestSchema, async () => {
+    if (action === "throw") throw new Error("client blew up mid-prompt");
+    return { action: action === "accept" ? "accept" : "decline" };
+  });
+  await client.connect(clientTransport);
+  return client;
+}
+
 function structured(result: { structuredContent?: unknown } | Record<string, unknown>): Record<string, unknown> {
   return ((result as { structuredContent?: unknown }).structuredContent ?? {}) as Record<string, unknown>;
 }
@@ -52,6 +71,56 @@ describe("ops tools when the queue backend has no dead-letter admin (#9522)", ()
     const result = await client.callTool({ name, arguments: args });
     expect(result.isError, `${name} must not error`).toBeFalsy();
     expect(structured(result).unavailable).toBe(true);
+    await client.close();
+  });
+});
+
+/** A JOBS binding that DOES expose dead-letter admin — the self-host queue's shape, not Cloudflare's. */
+function withDeadLetterAdmin(env: Env, overrides: Record<string, unknown> = {}): Env {
+  const job = { id: 1, jobType: "refresh-registry", attempts: 3, lastError: "boom", createdAtMs: 1, deadAtMs: 2 };
+  (env as unknown as { JOBS: Record<string, unknown> }).JOBS = {
+    send: async () => undefined,
+    listDeadLetterJobs: () => [job],
+    deadCount: () => 1,
+    replayDeadLetterJob: () => true,
+    deleteDeadLetterJob: () => true,
+    purgeDeadLetterJobs: () => 3,
+    ...overrides,
+  };
+  return env;
+}
+
+describe("dead-letter tools against a backend that HAS the admin surface (#9522)", () => {
+  it("lists the parked jobs with their total", async () => {
+    const client = await connect(withDeadLetterAdmin(createTestEnv()));
+    const result = structured(await client.callTool({ name: "loopover_ops_list_dead_letter_jobs", arguments: {} }));
+    expect(result.total).toBe(1);
+    expect((result.items as unknown[]).length).toBe(1);
+    await client.close();
+  });
+
+  it("replays a job and reports ok", async () => {
+    const client = await connect(withDeadLetterAdmin(createTestEnv()));
+    expect(structured(await client.callTool({ name: "loopover_ops_replay_dead_letter_job", arguments: { id: 1 } }))).toMatchObject({ ok: true, id: 1 });
+    await client.close();
+  });
+
+  it("reports notFound for an id the queue no longer has", async () => {
+    const client = await connect(withDeadLetterAdmin(createTestEnv(), { replayDeadLetterJob: () => false, deleteDeadLetterJob: () => false }));
+    expect(structured(await client.callTool({ name: "loopover_ops_replay_dead_letter_job", arguments: { id: 9 } }))).toMatchObject({ notFound: true });
+    expect(structured(await client.callTool({ name: "loopover_ops_delete_dead_letter_job", arguments: { id: 9, confirm: true } }))).toMatchObject({ notFound: true });
+    await client.close();
+  });
+
+  it("deletes a job and reports ok", async () => {
+    const client = await connect(withDeadLetterAdmin(createTestEnv()));
+    expect(structured(await client.callTool({ name: "loopover_ops_delete_dead_letter_job", arguments: { id: 1, confirm: true } }))).toMatchObject({ ok: true });
+    await client.close();
+  });
+
+  it("purges every job and reports how many went", async () => {
+    const client = await connect(withDeadLetterAdmin(createTestEnv()));
+    expect(structured(await client.callTool({ name: "loopover_ops_purge_dead_letter_jobs", arguments: { confirm: true } }))).toMatchObject({ ok: true, purged: 3 });
     await client.close();
   });
 });
@@ -369,6 +438,255 @@ describe("self-host instance diagnostics (#9522)", () => {
     const result = structured(await client.callTool({ name, arguments: {} }));
     expect(result.configured).toBe(true);
     expect(result.error).toContain("boom");
+    await client.close();
+  });
+});
+
+describe("destructive confirmation via elicitation (#9522)", () => {
+  it("a DECLINE leaves the action undone and reports it as a structured result, not an error", async () => {
+    const client = await connectEliciting(withDeadLetterAdmin(createTestEnv()), "decline");
+    const result = await client.callTool({ name: "loopover_ops_delete_dead_letter_job", arguments: { id: 1, confirm: true } });
+    expect(result.isError, "declining is a valid answer, not a failure").toBeFalsy();
+    expect(structured(result).declined).toBe(true);
+    await client.close();
+  });
+
+  it("an ACCEPT proceeds", async () => {
+    const client = await connectEliciting(withDeadLetterAdmin(createTestEnv()), "accept");
+    expect(structured(await client.callTool({ name: "loopover_ops_delete_dead_letter_job", arguments: { id: 1, confirm: true } }))).toMatchObject({ ok: true });
+    await client.close();
+  });
+
+  it("an elicitation that ERRORS is treated as a decline, never as an implicit yes", async () => {
+    // A client that advertises the capability then fails to answer must not silently authorize an
+    // irreversible action.
+    const client = await connectEliciting(withDeadLetterAdmin(createTestEnv()), "throw");
+    expect(structured(await client.callTool({ name: "loopover_ops_purge_dead_letter_jobs", arguments: { confirm: true } })).declined).toBe(true);
+    await client.close();
+  });
+
+  it("declining the kill-switch RELEASE leaves it engaged", async () => {
+    const env = createTestEnv();
+    const engager = await connect(env);
+    await engager.callTool({ name: "loopover_ops_set_kill_switch", arguments: { frozen: true } });
+    await engager.close();
+
+    const client = await connectEliciting(env, "decline");
+    const result = structured(await client.callTool({ name: "loopover_ops_set_kill_switch", arguments: { frozen: false, confirm: true } }));
+    expect(result.declined).toBe(true);
+    expect(result.frozen, "the switch must still be engaged after a decline").toBe(true);
+    await client.close();
+  });
+
+  it("declining a config push sends nothing", async () => {
+    const client = await connectEliciting(createTestEnv(), "decline");
+    const result = structured(
+      await client.callTool({ name: "loopover_fleet_config_push", arguments: { installationIds: [1], pushId: "p", message: "m", confirm: true } }),
+    );
+    expect(result.declined).toBe(true);
+    await client.close();
+  });
+
+  it("declining an enrollment revoke leaves it active", async () => {
+    const client = await connectEliciting(createTestEnv({ ORB_BROKER_ENABLED: "true" }), "decline");
+    expect(structured(await client.callTool({ name: "loopover_fleet_revoke_enrollment", arguments: { enrollId: "e-1", confirm: true } })).declined).toBe(true);
+    await client.close();
+  });
+
+  it("declining a tenant destroy leaves it standing", async () => {
+    const client = await connectEliciting(
+      createTestEnv({ LOOPOVER_CONTROL_PLANE_URL: "https://cp.invalid", LOOPOVER_CONTROL_PLANE_ADMIN_TOKEN: "tok" }),
+      "decline",
+    );
+    expect(structured(await client.callTool({ name: "loopover_tenant_destroy", arguments: { name: "acme", product: "ams", confirm: true } })).declined).toBe(true);
+    await client.close();
+  });
+});
+
+/** Record an installation the way the webhook would, so the register/enrollment paths have a real row. */
+async function seedInstallation(env: Env, installationId = 4242): Promise<void> {
+  await env.DB.prepare(
+    "INSERT INTO orb_github_installations (installation_id, account_login, registered, first_seen_at, last_event_at) VALUES (?, ?, 1, ?, ?)",
+  )
+    .bind(installationId, "acme", "2026-07-01T00:00:00.000Z", "2026-07-01T00:00:00.000Z")
+    .run();
+}
+
+describe("fleet write paths against real rows (#9522)", () => {
+  it("registers a recorded installation and audits it", async () => {
+    const env = createTestEnv();
+    await seedInstallation(env);
+    const client = await connect(env);
+    expect(structured(await client.callTool({ name: "loopover_fleet_register_installation", arguments: { installationId: 4242 } }))).toMatchObject({
+      installationId: 4242,
+      registered: true,
+    });
+    await client.close();
+  });
+
+  it("surfaces the missing-credentials failure rather than reporting a backfill that did not run", async () => {
+    // Reconciling against GitHub needs the Orb App credentials, which a test env has none of. The point is
+    // that it FAILS LOUD: a silent "backfilled 0" would read as a clean reconcile.
+    const client = await connect(createTestEnv());
+    const result = await client.callTool({ name: "loopover_fleet_backfill_installations", arguments: {} });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("credentials are not configured");
+    await client.close();
+  });
+
+  it("opts a recorded installation OUT, blocking self-enrollment", async () => {
+    const env = createTestEnv();
+    await seedInstallation(env, 5150);
+    const client = await connect(env);
+    expect(
+      structured(await client.callTool({ name: "loopover_fleet_register_installation", arguments: { installationId: 5150, registered: false } })),
+    ).toMatchObject({ registered: false });
+    await client.close();
+  });
+
+  it("refuses to enroll an installation that is not REGISTERED", async () => {
+    // Registration is the onboarding gate: an unregistered install must not be able to broker tokens.
+    const env = createTestEnv({ ORB_BROKER_ENABLED: "true" });
+    await env.DB.prepare(
+      "INSERT INTO orb_github_installations (installation_id, account_login, registered, first_seen_at, last_event_at) VALUES (?, ?, 0, ?, ?)",
+    )
+      .bind(6161, "unregistered", "2026-07-01T00:00:00.000Z", "2026-07-01T00:00:00.000Z")
+      .run();
+    const client = await connect(env);
+    expect(structured(await client.callTool({ name: "loopover_fleet_issue_enrollment", arguments: { installationId: 6161 } })).error).toBeDefined();
+    await client.close();
+  });
+
+  it("issues, rotates, and revokes an enrollment for a registered installation", async () => {
+    const env = createTestEnv({ ORB_BROKER_ENABLED: "true" });
+    await seedInstallation(env);
+    const client = await connect(env);
+
+    const issued = structured(await client.callTool({ name: "loopover_fleet_issue_enrollment", arguments: { installationId: 4242 } }));
+    expect(String(issued.secret ?? ""), "the plaintext is shown exactly once").not.toBe("");
+    const enrollId = String(issued.enrollId);
+
+    // Issuing again without rotate is a conflict; rotate=true replaces it.
+    const rotated = structured(await client.callTool({ name: "loopover_fleet_rotate_enrollment", arguments: { installationId: 4242 } }));
+    expect(rotated.secret ?? rotated.error, "rotation must answer either way").toBeDefined();
+
+    const revoked = structured(await client.callTool({ name: "loopover_fleet_revoke_enrollment", arguments: { enrollId, confirm: true } }));
+    expect(revoked.error ?? revoked.enrollId ?? revoked.revoked).toBeDefined();
+    await client.close();
+  });
+});
+
+describe("tenant write paths against a reachable control plane (#9522)", () => {
+  function controlPlaneEnv() {
+    return createTestEnv({ LOOPOVER_CONTROL_PLANE_URL: "https://cp.example", LOOPOVER_CONTROL_PLANE_ADMIN_TOKEN: "tok" });
+  }
+
+  function stubControlPlane(body: unknown) {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } }));
+  }
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("creates a tenant and reports the record", async () => {
+    stubControlPlane({ tenant: "acme", product: "ams", state: "provisioning" });
+    const client = await connect(controlPlaneEnv());
+    expect(structured(await client.callTool({ name: "loopover_tenant_create", arguments: { name: "acme", product: "ams" } }))).toMatchObject({
+      configured: true,
+      state: "provisioning",
+    });
+    await client.close();
+  });
+
+  it("lists tenants, and tolerates a payload whose `tenants` is not an array", async () => {
+    stubControlPlane({ tenants: [{ tenant: "acme" }] });
+    const client = await connect(controlPlaneEnv());
+    expect(structured(await client.callTool({ name: "loopover_tenant_list", arguments: {} })).configured).toBe(true);
+    await client.close();
+
+    // A payload with no `tenants` key at all: the Array.isArray guard is what keeps the summary from
+    // reading `.length` off undefined.
+    stubControlPlane({});
+    const other = await connect(controlPlaneEnv());
+    expect(structured(await other.callTool({ name: "loopover_tenant_list", arguments: {} })).configured).toBe(true);
+    await other.close();
+  });
+
+  it("points a tenant at an installation", async () => {
+    stubControlPlane({ tenant: "acme", orbInstallationId: 7 });
+    const client = await connect(controlPlaneEnv());
+    expect(
+      structured(await client.callTool({ name: "loopover_tenant_set_orb_installation", arguments: { name: "acme", product: "orb", orbInstallationId: 7 } })),
+    ).toMatchObject({ configured: true });
+    await client.close();
+  });
+
+  it("destroys a tenant", async () => {
+    stubControlPlane({ tenant: "acme", state: "torn down" });
+    const client = await connect(controlPlaneEnv());
+    expect(structured(await client.callTool({ name: "loopover_tenant_destroy", arguments: { name: "acme", product: "ams", confirm: true } }))).toMatchObject({
+      configured: true,
+    });
+    await client.close();
+  });
+});
+
+describe("requireOperator over a SESSION identity (#9522)", () => {
+  // The static-credential path is covered above; a session must actually hold the operator role, and there
+  // is no per-repo scoping that could stand in for it.
+  const session: AuthIdentity = {
+    kind: "session",
+    actor: "octocat",
+    session: { token: "t", githubLogin: "octocat", githubUserId: 1, createdAt: "2026-07-01T00:00:00.000Z", expiresAt: "2030-01-01T00:00:00.000Z" } as never,
+  };
+
+  it("refuses a session with no operator role", async () => {
+    const client = await connect(createTestEnv(), session);
+    const result = await client.callTool({ name: "loopover_ops_get_kill_switch", arguments: {} });
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toMatch(/operator role|insufficient_role/);
+    await client.close();
+  });
+});
+
+describe("instance diagnostics render every optional shape (#9522)", () => {
+  const ADMIN_ID: AuthIdentity = { kind: "static", actor: "mcp-admin" };
+
+  it("reports an unknown version and no redeploy hint when the reader omits them", async () => {
+    setInstanceStatusReader(async () => ({}));
+    const client = await connect(createTestEnv({ LOOPOVER_MCP_ADMIN_ENABLED: "true" }), ADMIN_ID);
+    expect(structured(await client.callTool({ name: "loopover_admin_get_status", arguments: {} })).configured).toBe(true);
+    await client.close();
+  });
+
+  it("reports an untruncated tail and a never-backed-up instance", async () => {
+    setInstanceLogTailer(async () => ({ lines: ["a"], truncated: false }));
+    setInstanceBackupStatusReader(async () => ({}));
+    const client = await connect(createTestEnv({ LOOPOVER_MCP_ADMIN_ENABLED: "true" }), ADMIN_ID);
+    expect(structured(await client.callTool({ name: "loopover_admin_tail_logs", arguments: {} })).truncated).toBe(false);
+    expect(structured(await client.callTool({ name: "loopover_admin_get_backup_status", arguments: {} })).configured).toBe(true);
+    await client.close();
+  });
+});
+
+describe("run-only jobs (#9522)", () => {
+  it("runs refresh-installation-health inline", async () => {
+    const client = await connect(createTestEnv());
+    const result = await client.callTool({ name: "loopover_fleet_run_job", arguments: { job: "refresh-installation-health", mode: "run" } });
+    expect(structured(result).unsupportedMode).toBeUndefined();
+    await client.close();
+  });
+
+  it("passes a numeric limit through to a run-only job, and omits a non-numeric one", async () => {
+    const client = await connect(createTestEnv());
+    for (const payload of [{ limit: 5 }, { limit: "five" }]) {
+      const result = await client.callTool({
+        name: "loopover_fleet_run_job",
+        arguments: { job: "backfill-contributor-gate-history", mode: "run", payload },
+      });
+      expect(structured(result).unsupportedMode).toBeUndefined();
+    }
     await client.close();
   });
 });

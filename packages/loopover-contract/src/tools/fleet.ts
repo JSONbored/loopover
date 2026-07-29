@@ -93,7 +93,9 @@ export const fleetListInstallationsTool = defineTool({
 
 export const FleetRegisterInstallationInput = z.object({
   installationId: z.number().int().positive(),
-  accountLogin: z.string().min(1).max(200).optional(),
+  // The route supports opting OUT, and the tool must too: without this the opt-out half of the onboarding
+  // gate was unreachable over MCP, so an operator could register an install but never un-register it.
+  registered: z.boolean().optional().describe("Defaults to true. Pass false to opt the installation OUT, which also blocks OAuth self-enrollment."),
 });
 
 export const FleetRegisterInstallationOutput = z.looseObject({});
@@ -101,7 +103,8 @@ export const FleetRegisterInstallationOutput = z.looseObject({});
 export const fleetRegisterInstallationTool = defineTool({
   name: "loopover_fleet_register_installation",
   title: "Register a fleet installation",
-  description: "Owner only. Record a GitHub App installation in the fleet registry so its repos are reachable by fleet jobs.",
+  description:
+    "Owner only. Opt a GitHub App installation into (or, with registered=false, out of) the fleet registry. Only REGISTERED installations count toward the public counter and are eligible for token brokering; opting out also blocks OAuth self-enrollment until an operator opts back in. Refuses an installation the webhook has never recorded — an install must arrive that way first.",
   category: "fleet",
   auth: "internal",
   locality: "remote",

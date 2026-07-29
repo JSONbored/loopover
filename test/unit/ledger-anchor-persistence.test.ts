@@ -103,6 +103,45 @@ describe("recordLedgerAnchorAttempt / loadPublicLedgerAnchors (#9271)", () => {
     expect(third.nextBefore).toBeNull(); // no more pages
   });
 
+  it("REGRESSION (#9715): rows sharing one created_at are ALL returned across a page boundary, none skipped", async () => {
+    const env = createTestEnv();
+    // One scheduler tick records an attempt per backend at the SAME millisecond createdAt -- exactly the tie
+    // the old `created_at < cursor` predicate skipped once it straddled a page. Four tied rows here.
+    const tiedAt = "2026-07-27T12:00:00.000Z";
+    for (let seq = 1; seq <= 4; seq += 1) {
+      await recordLedgerAnchorAttempt(
+        env,
+        okAttempt({ payload: buildLedgerAnchorPayload({ seq, rowHash: `${seq}`.repeat(64).slice(0, 64), totalCount: seq }, tiedAt) }),
+        tiedAt,
+      );
+    }
+
+    // Page through the tie group in 2s. Before the fix the second page started strictly before `tiedAt`, so the
+    // two tied rows after the first page's boundary were silently unreachable. Collect every id across pages.
+    const seen = new Set<string>();
+    let before: string | null = null;
+    for (let guard = 0; guard < 10; guard += 1) {
+      const pageResult: { anchors: { id: string }[]; nextBefore: string | null } = await loadPublicLedgerAnchors(env, { limit: 2, ...(before ? { before } : {}) });
+      for (const anchor of pageResult.anchors) seen.add(anchor.id);
+      before = pageResult.nextBefore;
+      if (before === null) break;
+    }
+
+    // All four tied rows must be reachable through the paginated API -- the whole point of this endpoint.
+    expect(seen.size).toBe(4);
+  });
+
+  it("#9715: an unparseable `before` cursor falls back to the first page rather than throwing (public route)", async () => {
+    const env = createTestEnv();
+    await recordLedgerAnchorAttempt(env, okAttempt());
+
+    // No `|` separator, an empty component, and a leading `|` are all malformed -> treated as no cursor.
+    for (const before of ["not-a-cursor", "2026-07-27T12:00:00.000Z", "|only-id", "ts-only|"]) {
+      const result = await loadPublicLedgerAnchors(env, { before });
+      expect(result.anchors).toHaveLength(1); // first page, not an error, not empty
+    }
+  });
+
   it("clamps limit to [1, 200] rather than trusting caller input", async () => {
     const env = createTestEnv();
     await recordLedgerAnchorAttempt(env, okAttempt());

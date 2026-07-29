@@ -81,10 +81,27 @@ export async function recordLedgerAnchorAttempt(env: Env, attempt: LedgerAnchorA
 
 export type LedgerAnchorListFilter = {
   backend?: LedgerAnchorBackend;
-  /** Cursor: return rows strictly older than this ISO timestamp. Omit for the first (newest) page. */
+  /** Opaque keyset cursor (a `created_at|id` pair, as returned in a prior page's `nextBefore`): resume strictly
+   *  after that exact row in `(created_at DESC, id DESC)` order. Omit for the first (newest) page; an
+   *  unparseable value is treated as "no cursor" rather than an error, since this is a public route. */
   before?: string;
   limit?: number;
 };
+
+/** Encode a keyset cursor as one opaque string. `created_at` is an ISO timestamp and `id` a UUID, so neither
+ *  contains a `|` -- the separator round-trips unambiguously and `parseAnchorCursor` splits on the first `|`. */
+function encodeAnchorCursor(createdAt: string, id: string): string {
+  return `${createdAt}|${id}`;
+}
+
+/** Parse a `created_at|id` cursor. Returns null for a missing or malformed value (no `|`, or an empty
+ *  component) so a bad `before` on this unauthenticated public route falls back to the first page, never throws. */
+function parseAnchorCursor(before: string | undefined): { createdAt: string; id: string } | null {
+  if (!before) return null;
+  const separator = before.indexOf("|");
+  if (separator <= 0 || separator === before.length - 1) return null;
+  return { createdAt: before.slice(0, separator), id: before.slice(separator + 1) };
+}
 
 const DEFAULT_ANCHOR_LIST_LIMIT = 50;
 const MAX_ANCHOR_LIST_LIMIT = 200;
@@ -103,9 +120,14 @@ export async function loadPublicLedgerAnchors(env: Env, filter: LedgerAnchorList
     conditions.push("backend = ?");
     binds.push(filter.backend);
   }
-  if (filter.before) {
-    conditions.push("created_at < ?");
-    binds.push(filter.before);
+  const cursor = parseAnchorCursor(filter.before);
+  if (cursor) {
+    // Row-comparison keyset predicate matching ORDER BY created_at DESC, id DESC: resume strictly after the
+    // cursor row. Filtering on created_at alone (the prior behavior) silently skipped any rows that shared the
+    // cursor's created_at but sorted after it on the id tiebreak -- e.g. the several backends written in one
+    // scheduler tick at the same millisecond nowIso() (#9715).
+    conditions.push("(created_at < ? OR (created_at = ? AND id < ?))");
+    binds.push(cursor.createdAt, cursor.createdAt, cursor.id);
   }
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
   // Fetch one extra row to know whether a next page exists, without a separate COUNT query.
@@ -122,9 +144,11 @@ export async function loadPublicLedgerAnchors(env: Env, filter: LedgerAnchorList
    * guards a driver-shape change, mirroring loadPublicRulePrecision's identical note on COUNT(*). */
   const results = rows.results ?? [];
   const page = results.slice(0, limit);
-  // `> limit` guarantees `page` has exactly `limit` (>=1) elements, so `page[page.length - 1]` is always
-  /* v8 ignore next -- defined; the ?. only guards TypeScript's array-index type, not a reachable runtime case. */
-  const nextBefore = results.length > limit ? (page[page.length - 1]?.createdAt ?? null) : null;
+  // A fetched extra row (results.length > limit) means another page exists; encode BOTH (created_at, id) of the
+  // last returned row into the cursor so the next page resumes exactly after it and no created_at tie is skipped
+  // (#9715). `> limit` guarantees `page` has exactly `limit` (>=1) elements, so the last element is defined.
+  const lastRow = results.length > limit ? page[page.length - 1] : undefined;
+  const nextBefore = lastRow ? encodeAnchorCursor(lastRow.createdAt, lastRow.id) : null;
 
   const anchors: PublicLedgerAnchor[] = page.map((row) => ({
     id: row.id,

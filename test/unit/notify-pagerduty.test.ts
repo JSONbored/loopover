@@ -230,6 +230,60 @@ describe("triggerPagerDutyIncident — cooldown gate (alert fatigue control #2)"
     expect(calls).toHaveLength(1);
   });
 
+  it("REGRESSION: a recent suppression (denied/cooldown_active) row does NOT itself suppress the next page (#9695)", async () => {
+    const calls = stubFetch();
+    const env = enabledEnv();
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    // Before #9695 this `denied` row was counted (the counter did not filter outcome/detail), so a single
+    // suppression self-renewed the window and the repo could never page again.
+    await recordAuditEvent(env, {
+      eventType: "external_notification.pagerduty",
+      actor: "loopover",
+      targetKey: "ops_anomaly:acme/widgets",
+      outcome: "denied",
+      detail: "cooldown_active",
+      metadata: {},
+      createdAt: fiveMinutesAgo,
+    });
+    await trigger(env);
+    expect(calls).toHaveLength(1); // it pages, because no ACTUAL page happened in the window
+  });
+
+  it("REGRESSION: a recent auto-resolve (completed/resolved) row does NOT suppress the next page (#9695)", async () => {
+    const calls = stubFetch();
+    const env = enabledEnv();
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    // resolved shares outcome "completed" with a real page, so an outcome-only filter would wrongly count it.
+    await recordAuditEvent(env, {
+      eventType: "external_notification.pagerduty",
+      actor: "loopover",
+      targetKey: "ops_anomaly:acme/widgets",
+      outcome: "completed",
+      detail: "resolved",
+      metadata: {},
+      createdAt: fiveMinutesAgo,
+    });
+    await trigger(env);
+    expect(calls).toHaveLength(1); // a re-page for a flapping condition is not blocked by its own resolve
+  });
+
+  it("REGRESSION: a recent failed page (error) does NOT suppress its own retry (#9695)", async () => {
+    const calls = stubFetch();
+    const env = enabledEnv();
+    const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    await recordAuditEvent(env, {
+      eventType: "external_notification.pagerduty",
+      actor: "loopover",
+      targetKey: "ops_anomaly:acme/widgets",
+      outcome: "error",
+      detail: "The page failed",
+      metadata: {},
+      createdAt: fiveMinutesAgo,
+    });
+    await trigger(env);
+    expect(calls).toHaveLength(1); // nobody was paged, so the retry must go through
+  });
+
   it("REGRESSION: a recent page recorded under the pre-rebrand 'loopover' actor still suppresses a duplicate within the cooldown window", async () => {
     const calls = stubFetch();
     const env = enabledEnv();

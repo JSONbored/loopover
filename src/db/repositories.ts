@@ -3161,6 +3161,39 @@ export async function countRecentAuditEventsForActorAndTarget(env: Env, actor: s
   return row.count;
 }
 
+/** Same as {@link countRecentAuditEventsForActorAndTarget} but additionally scoped to a specific `outcome` +
+ *  `detail`. Backs the PagerDuty cooldown (#9695): a repeat page is suppressed only by rows that ACTUALLY paged
+ *  (outcome "completed", detail "triggered"), never by the suppression rows or the auto-resolve rows that share
+ *  the same eventType/targetKey — otherwise a single page (or even a `denied` non-page) self-renewed the window
+ *  every cron tick and the repo never paged again. */
+export async function countRecentAuditEventsForActorTargetAndOutcome(
+  env: Env,
+  actor: string,
+  eventType: string,
+  targetKey: string,
+  outcome: string,
+  detail: string,
+  sinceIso: string,
+): Promise<number> {
+  const db = getDb(env.DB);
+  const [row] = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(auditEvents)
+    .where(
+      and(
+        eq(auditEvents.actor, actor),
+        eq(auditEvents.eventType, eventType),
+        eq(auditEvents.targetKey, targetKey),
+        eq(auditEvents.outcome, outcome),
+        eq(auditEvents.detail, detail),
+        gte(auditEvents.createdAt, sinceIso),
+      ),
+    );
+  /* v8 ignore next -- count(*) always returns exactly one row; the empty-array guard only satisfies the destructure type. */
+  if (!row) return 0;
+  return row.count;
+}
+
 /** Shared by every `targetKey` literal-prefix `LIKE` scan below ({@link countRecentAuditEventsForActorInRepo},
  *  {@link findHottestReviewTargetForRepo}) so a repo name containing a SQL `LIKE` wildcard (`%`/`_`) is always
  *  matched literally, never as a pattern -- e.g. `owner/foo_bar` must never spuriously match `owner/fooXbar#...`'s

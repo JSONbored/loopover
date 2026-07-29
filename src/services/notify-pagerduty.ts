@@ -1,4 +1,4 @@
-import { countRecentAuditEventsForActorAndTarget, recordAuditEvent } from "../db/repositories";
+import { countRecentAuditEventsForActorTargetAndOutcome, recordAuditEvent } from "../db/repositories";
 import { errorMessage } from "../utils/json";
 import { meetsSeverityThreshold, resolveSeverityThreshold, type LoopoverSeverity } from "./severity-threshold";
 
@@ -21,6 +21,12 @@ import { meetsSeverityThreshold, resolveSeverityThreshold, type LoopoverSeverity
 //     every cron tick doesn't re-page every tick.
 
 const PAGERDUTY_EVENTS_URL = "https://events.pagerduty.com/v2/enqueue";
+
+// The audit `detail` written for a real page vs an auto-resolve. Both share outcome "completed", so the cooldown
+// must key off `detail` to count only rows that ACTUALLY paged (#9695). Exported + used at both the write and
+// the read site so the two spellings can never drift.
+export const PAGERDUTY_AUDIT_DETAIL_TRIGGERED = "triggered";
+export const PAGERDUTY_AUDIT_DETAIL_RESOLVED = "resolved";
 // PagerDuty routing/integration keys are 32 lowercase hex characters.
 const ROUTING_KEY_RE = /^[a-f0-9]{32}$/i;
 const DEFAULT_MIN_SEVERITY: PagerDutySeverity = "error";
@@ -182,8 +188,8 @@ export async function triggerPagerDutyIncident(
   // window can reach back across the deploy boundary. Querying both actors costs one extra indexed count and
   // removes the whole risk category rather than requiring a precisely-timed follow-up cleanup.
   const [recentPagesNewActor, recentPagesLegacyActor] = await Promise.all([
-    countRecentAuditEventsForActorAndTarget(env, "loopover", "external_notification.pagerduty", params.dedupKey, cooldownSinceIso),
-    countRecentAuditEventsForActorAndTarget(env, "gittensory", "external_notification.pagerduty", params.dedupKey, cooldownSinceIso),
+    countRecentAuditEventsForActorTargetAndOutcome(env, "loopover", "external_notification.pagerduty", params.dedupKey, "completed", PAGERDUTY_AUDIT_DETAIL_TRIGGERED, cooldownSinceIso),
+    countRecentAuditEventsForActorTargetAndOutcome(env, "gittensory", "external_notification.pagerduty", params.dedupKey, "completed", PAGERDUTY_AUDIT_DETAIL_TRIGGERED, cooldownSinceIso),
   ]);
   const recentPages = recentPagesNewActor + recentPagesLegacyActor;
   if (recentPages > 0) {
@@ -211,7 +217,7 @@ export async function triggerPagerDutyIncident(
       signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) throw new Error(`pagerduty_events_http_${response.status}`);
-    await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "completed", "triggered", { source: resolution.source });
+    await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "completed", PAGERDUTY_AUDIT_DETAIL_TRIGGERED, { source: resolution.source });
   } catch (error) {
     const message = errorMessage(error);
     console.warn(JSON.stringify({ event: "pagerduty_trigger_failed", repo: params.repoFullName, message: message.slice(0, 200) }));
@@ -251,7 +257,7 @@ export async function resolvePagerDutyIncident(
       signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) throw new Error(`pagerduty_events_http_${response.status}`);
-    await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "completed", "resolved", { source: resolution.source });
+    await auditPagerDutyNotification(env, { repoFullName: params.repoFullName, dedupKey: params.dedupKey }, "completed", PAGERDUTY_AUDIT_DETAIL_RESOLVED, { source: resolution.source });
   } catch (error) {
     const message = errorMessage(error);
     console.warn(JSON.stringify({ event: "pagerduty_resolve_failed", repo: params.repoFullName, message: message.slice(0, 200) }));

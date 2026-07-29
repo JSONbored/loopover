@@ -583,7 +583,7 @@ describe("agent approval queue (#779)", () => {
 
     expect(result.status).toBe("accepted");
     expect(fetchRequiredStatusContexts).toHaveBeenCalledWith(env, "owner/repo", null, expect.any(String), expect.any(String));
-    expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "h7", expect.any(String), new Set(["build", "test"]), expect.any(String), undefined);
+    expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "h7", expect.any(String), new Set(["build", "test"]), expect.any(String), null, null);
   });
 
   it("unions branch-protection contexts into the accept-time live CI re-check", async () => {
@@ -599,7 +599,7 @@ describe("agent approval queue (#779)", () => {
 
     expect(result.status).toBe("accepted");
     expect(fetchRequiredStatusContexts).toHaveBeenCalledWith(env, "owner/repo", "main", expect.any(String), expect.any(String));
-    expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "h7", expect.any(String), new Set(["branch-required", "build"]), expect.any(String), undefined);
+    expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "h7", expect.any(String), new Set(["branch-required", "build"]), expect.any(String), null, null);
   });
 
   it("falls back to expectedCiContexts when the accept-time branch-protection read fails", async () => {
@@ -614,7 +614,7 @@ describe("agent approval queue (#779)", () => {
     const result = await decidePendingAgentAction(env, { id: action.id, decision: "accept", decidedBy: "owner" });
 
     expect(result.status).toBe("accepted");
-    expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "h7", expect.any(String), new Set(["build"]), expect.any(String), null);
+    expect(fetchLiveCiAggregate).toHaveBeenCalledWith(env, "owner/repo", "h7", expect.any(String), new Set(["build"]), expect.any(String), null, null);
   });
 
   it("accept supersedes a staged merge when live CI has since turned pending, not just failed (#2126)", async () => {

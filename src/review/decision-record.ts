@@ -443,12 +443,28 @@ export async function verifyDecisionLedger(
   env: Env,
   afterSeq = 0,
   limit = 500,
-): Promise<{ ok: boolean; checked: number; nextAfterSeq: number | null; tipSeq: number; tipHash: string; totalCount: number; prunedRecords: number; break?: LedgerBreak }> {
+): Promise<{ ok: boolean; checked: number; nextAfterSeq: number | null; tipSeq: number; tipHash: string; totalCount: number; prunedRecords: number; contentMismatches: number; break?: LedgerBreak }> {
   const bounded = Math.max(1, Math.min(1000, limit));
   // #9474: rows whose record preimage was legitimately pruned by the published retention policy (see the
   // missing-record branch below). Surfaced in the result so "the chain is clean but N old preimages are no
   // longer independently checkable" is an explicit, countable statement rather than silent.
   let prunedRecords = 0;
+  // #9850: content mismatches no longer ABORT the scan, they accumulate. Returning at the first one made a
+  // single unreconcilable row a denial-of-verification for everything after it: found on a live instance
+  // carrying 83 rows (seq 5-257) from before #9123 replaced the record-overwriting UPDATE with the revision
+  // scheme, where verification stopped at seq 5 and never examined the remaining 1,649 rows. Real tampering
+  // at seq 900 would have been invisible behind permanent, historical damage at seq 5.
+  //
+  // Safe to continue precisely BECAUSE the chain checks above already passed for this row: sequence,
+  // predecessor and row_hash all reconciled, so `prevHash` for the next row is sound. A content mismatch says
+  // "this row's preimage no longer matches what the chain committed to", which is a statement about that row
+  // alone. A STRUCTURAL break is different -- a sequence gap or predecessor mismatch means everything after
+  // it is unverifiable, so those still return immediately.
+  //
+  // `ok` is still false and the first mismatch is still reported as `break`, so nothing about the verdict is
+  // softened; the scan simply keeps going and reports how many there are.
+  let contentMismatches = 0;
+  let firstContentMismatch: LedgerBreak | null = null;
   const decisionRecordsPruneCutoff = retentionCutoffIsoForTable("decision_records");
   const [totalRow, globalTip, prior] = await Promise.all([
     env.DB.prepare("SELECT COUNT(*) AS n FROM decision_ledger").first<{ n: number }>(),
@@ -461,7 +477,7 @@ export async function verifyDecisionLedger(
   const tipSeq = globalTip?.seq ?? 0;
   const tipHash = globalTip?.rowHash ?? LEDGER_GENESIS_HASH;
   // `== null` deliberately: D1 drivers disagree on .first() returning null vs undefined for no-row.
-  if (afterSeq > 0 && prior == null) return { ok: false, checked: 0, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, break: { kind: "sequence_gap", atSeq: afterSeq, expectedSeq: afterSeq } };
+  if (afterSeq > 0 && prior == null) return { ok: false, checked: 0, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, break: { kind: "sequence_gap", atSeq: afterSeq, expectedSeq: afterSeq } };
   let prevHash = prior?.rowHash ?? LEDGER_GENESIS_HASH;
   let expectedSeq = afterSeq + 1;
   const { results } = await env.DB.prepare(
@@ -487,10 +503,10 @@ export async function verifyDecisionLedger(
   // from) so a call that finds ZERO new rows still has an anchor to reconcile against.
   let lastVerifiedCreatedAt = prior?.createdAt ?? null;
   for (const row of results) {
-    if (row.seq !== expectedSeq) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, break: { kind: "sequence_gap", atSeq: row.seq, expectedSeq } };
-    if (row.prevHash !== prevHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, break: { kind: "predecessor_mismatch", atSeq: row.seq } };
+    if (row.seq !== expectedSeq) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, break: { kind: "sequence_gap", atSeq: row.seq, expectedSeq } };
+    if (row.prevHash !== prevHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, break: { kind: "predecessor_mismatch", atSeq: row.seq } };
     const recomputed = await ledgerRowHash(prevHash, { seq: row.seq, recordId: row.recordId, recordDigest: row.recordDigest, createdAt: row.createdAt });
-    if (recomputed !== row.rowHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, break: { kind: "row_hash_mismatch", atSeq: row.seq } };
+    if (recomputed !== row.rowHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, break: { kind: "row_hash_mismatch", atSeq: row.seq } };
     // #9078: the promised record/ledger reconciliation — a row_hash chained cleanly can still commit to a
     // digest whose CONTENT has since been rewritten (or whose preimage is simply gone). Neither is visible to
     // the chain-only checks above, since those only ever compare ledger rows against each other.
@@ -508,7 +524,7 @@ export async function verifyDecisionLedger(
       if (decisionRecordsPruneCutoff !== null && row.createdAt < decisionRecordsPruneCutoff) {
         prunedRecords += 1;
       } else {
-        return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, break: { kind: "missing_record", atSeq: row.seq, recordId: row.recordId } };
+        return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, break: { kind: "missing_record", atSeq: row.seq, recordId: row.recordId } };
       }
     } else {
       let recomputedContentDigest: string | null = null;
@@ -518,7 +534,10 @@ export async function verifyDecisionLedger(
         // Unparseable record_json is itself proof the content no longer matches whatever the chain committed to.
         recomputedContentDigest = null;
       }
-      if (recomputedContentDigest !== row.recordDigest) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, break: { kind: "content_mismatch", atSeq: row.seq, recordId: row.recordId } };
+      if (recomputedContentDigest !== row.recordDigest) {
+        contentMismatches += 1;
+        firstContentMismatch ??= { kind: "content_mismatch", atSeq: row.seq, recordId: row.recordId };
+      }
     }
     prevHash = row.rowHash;
     lastVerifiedCreatedAt = row.createdAt;
@@ -569,6 +588,7 @@ export async function verifyDecisionLedger(
         tipHash,
         totalCount,
         prunedRecords,
+        contentMismatches,
         break:
           orphan.createdAt > lastVerifiedCreatedAt
             ? { kind: "short_tail", atSeq: expectedSeq - 1 }
@@ -576,7 +596,12 @@ export async function verifyDecisionLedger(
       };
     }
   }
-  return { ok: true, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords };
+  // A content mismatch is still a FAILED verification -- the scan continuing does not soften the verdict, it
+  // only stops one bad row from hiding every row after it. The first is reported as `break` exactly as before.
+  if (firstContentMismatch !== null) {
+    return { ok: false, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, break: firstContentMismatch };
+  }
+  return { ok: true, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches };
 }
 
 /** One ledger row, exactly as chained -- the shape `GET /v1/public/decision-ledger/row/:seq` returns. */

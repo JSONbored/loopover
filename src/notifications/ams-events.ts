@@ -103,6 +103,27 @@ export function buildAmsGovernorPausedEvent(input: {
   };
 }
 
+// The `ams_pr_outcome` dedupKey is the ONLY carrier of the merged/closed decision (DetectedNotificationEvent
+// has no `decision` field), so its exact format is load-bearing. Both the producer below and the reader
+// (parseAmsPrOutcomeDecision) derive from this one prefix so the format is spelled once, not twice (#9703).
+const AMS_PR_OUTCOME_DEDUP_KEY_PREFIX = "ams_pr_outcome";
+
+/** Build the decision-carrying dedupKey. The single source of the `ams_pr_outcome:...:decision:closedAt` shape. */
+function amsPrOutcomeDedupKey(repoFullName: string, pullNumber: number, decision: "merged" | "closed", closedAt: string): string {
+  return `${AMS_PR_OUTCOME_DEDUP_KEY_PREFIX}:${repoFullName}#${pullNumber}:${decision}:${closedAt}`;
+}
+
+/** Anchored matcher for a well-formed `ams_pr_outcome` dedupKey, with the decision as capture group 1. Derives
+ *  its prefix + decision segment from the same constants the producer uses, so the two cannot drift (#9703). */
+export const AMS_PR_OUTCOME_DEDUP_KEY_PATTERN = new RegExp(`^${AMS_PR_OUTCOME_DEDUP_KEY_PREFIX}:.+#\\d+:(merged|closed):.+$`);
+
+/** The single reader of AMS_PR_OUTCOME_DEDUP_KEY_PATTERN: returns the embedded decision, or null when the key is
+ *  malformed (missing/unknown decision segment). A null result must never be rendered as an unproven merge. */
+export function parseAmsPrOutcomeDecision(dedupKey: string): "merged" | "closed" | null {
+  const match = AMS_PR_OUTCOME_DEDUP_KEY_PATTERN.exec(dedupKey);
+  return match ? (match[1] as "merged" | "closed") : null;
+}
+
 /** Miner-local PR outcome change (merged or closed). */
 export function buildAmsPrOutcomeEvent(input: {
   recipientLogin: string;
@@ -120,7 +141,7 @@ export function buildAmsPrOutcomeEvent(input: {
     recipientLogin,
     repoFullName: input.repoFullName,
     pullNumber: input.pullNumber,
-    dedupKey: `ams_pr_outcome:${input.repoFullName}#${input.pullNumber}:${input.decision}:${closedAt}`,
+    dedupKey: amsPrOutcomeDedupKey(input.repoFullName, input.pullNumber, input.decision, closedAt),
     deeplink: githubPullDeeplink(input.repoFullName, input.pullNumber),
     actorLogin: recipientLogin,
     detectedAt,
@@ -140,6 +161,11 @@ export function normalizeAmsNotificationEventInput(
   if (!isAmsNotificationEventType(record.eventType)) return null;
   if (typeof record.repoFullName !== "string" || !record.repoFullName.trim()) return null;
   if (typeof record.dedupKey !== "string" || !record.dedupKey.trim()) return null;
+  // ams_pr_outcome-only: its dedupKey is the sole carrier of the merged/closed decision, so a key that does not
+  // parse would silently render as "closed without merge" (including for a real merge). Reject it at ingest --
+  // the MCP/self-host path reaches this normalizer directly, so validating only in the HTTP zod schema is not
+  // enough. Every other AMS kind keeps its existing non-empty-string check unchanged (#9703).
+  if (record.eventType === "ams_pr_outcome" && parseAmsPrOutcomeDecision(record.dedupKey.trim()) === null) return null;
   if (typeof record.deeplink !== "string" || !record.deeplink.trim()) return null;
   if (typeof record.actorLogin !== "string" || !record.actorLogin.trim()) return null;
   if (typeof record.detectedAt !== "string" || !record.detectedAt.trim()) return null;

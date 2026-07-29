@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  AMS_PR_OUTCOME_DEDUP_KEY_PATTERN,
   buildAmsAttemptFailedEvent,
   buildAmsAttemptStartedEvent,
   buildAmsGovernorPausedEvent,
   buildAmsPrOutcomeEvent,
   isAmsNotificationEventType,
   normalizeAmsNotificationEventInput,
+  parseAmsPrOutcomeDecision,
 } from "../../src/notifications/ams-events";
 
 describe("AMS notification event builders (#7657)", () => {
@@ -98,6 +100,47 @@ describe("AMS notification event builders (#7657)", () => {
       detectedAt: "2026-07-21T02:00:00.000Z",
     });
     expect(closed.dedupKey).toContain(":closed:");
+  });
+
+  it("#9703: parseAmsPrOutcomeDecision reads the decision from a well-formed dedupKey and null otherwise", () => {
+    // The builder's own key round-trips through the parser for both decisions.
+    const merged = buildAmsPrOutcomeEvent({ recipientLogin: "miner", repoFullName: "acme/widgets", pullNumber: 7, decision: "merged" });
+    const closed = buildAmsPrOutcomeEvent({ recipientLogin: "miner", repoFullName: "acme/widgets", pullNumber: 7, decision: "closed" });
+    expect(parseAmsPrOutcomeDecision(merged.dedupKey)).toBe("merged");
+    expect(parseAmsPrOutcomeDecision(closed.dedupKey)).toBe("closed");
+    expect(AMS_PR_OUTCOME_DEDUP_KEY_PATTERN.test(merged.dedupKey)).toBe(true);
+
+    // Malformed keys: wrong prefix, no decision segment, an unknown decision, and the loose-substring trap where
+    // ":merged:" appears somewhere other than the decision segment. All must parse to null, never a false merge.
+    for (const bad of [
+      "k",
+      "ams_pr_outcome:acme/widgets#7", // truncated, no decision/closedAt
+      "ams_pr_outcome:acme/widgets#7:reopened:2026-07-21T00:00:00.000Z", // unknown decision
+      "other:acme/widgets#7:merged:2026-07-21T00:00:00.000Z", // wrong prefix
+      "ams_pr_outcome:acme/widgets:merged:#7:2026", // no #<pullNumber> before the decision
+    ]) {
+      expect(parseAmsPrOutcomeDecision(bad)).toBeNull();
+    }
+  });
+
+  it("#9703: normalizeAmsNotificationEventInput rejects an ams_pr_outcome whose dedupKey has no valid decision", () => {
+    const base = {
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      deeplink: "https://example.com",
+      actorLogin: "miner",
+      detectedAt: "2026-07-21T00:00:00.000Z",
+    };
+    // A malformed ams_pr_outcome key would silently render as "closed without merge" -- rejected at ingest.
+    expect(normalizeAmsNotificationEventInput({ ...base, eventType: "ams_pr_outcome", dedupKey: "ams_pr_outcome:no-decision" }, "miner")).toBeNull();
+    // A well-formed one is accepted.
+    const good = normalizeAmsNotificationEventInput(
+      { ...base, eventType: "ams_pr_outcome", dedupKey: "ams_pr_outcome:acme/widgets#7:merged:2026-07-21T00:00:00.000Z" },
+      "miner",
+    );
+    expect(good).not.toBeNull();
+    // The ams_pr_outcome-only rule does not touch other AMS kinds: a loose dedupKey still passes for them.
+    expect(normalizeAmsNotificationEventInput({ ...base, eventType: "ams_attempt_started", dedupKey: "k" }, "miner")).not.toBeNull();
   });
 
   it("normalizes ingest payloads and rejects non-AMS kinds", () => {

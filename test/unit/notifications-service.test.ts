@@ -156,6 +156,15 @@ describe("AMS notification event kinds (#7657)", () => {
     );
     expect(closed.title.toLowerCase()).toContain("close");
     expect(closed.body.toLowerCase()).toContain("without merge");
+
+    // #9703: a malformed dedupKey (no valid decision) renders the CLOSED copy -- never a false merge. This arm
+    // is unreachable from the ingest route (normalizeAmsNotificationEventInput rejects such a key upstream), but
+    // buildAmsPrOutcomeNotification stays fail-safe on its own regardless of how the event was constructed.
+    const malformed = buildNotificationContent(
+      event({ eventType: "ams_pr_outcome", dedupKey: "ams_pr_outcome:owner/repo#7:no-decision-here" }),
+    );
+    expect(malformed.title.toLowerCase()).toContain("close");
+    expect(malformed.body.toLowerCase()).toContain("without merge");
   });
 
   it("evaluates AMS events and enqueues notify-deliver jobs (job-dispatch handoff shape)", async () => {

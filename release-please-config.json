@@ -39,7 +39,7 @@
     {
       "type": "linked-versions",
       "groupName": "engine-and-dependents",
-      "components": ["engine", "mcp", "miner"],
+      "components": ["engine", "contract", "mcp", "miner"],
       "merge": true
     }
   ],

@@ -17,10 +17,11 @@ name: Package Release Please
 # targets/workflows, and bundling them would work against this repo's small-focused-PR convention.
 #
 # linked-versions plugin, group "engine-and-dependents" (release-please-config.json) -- the
-# exception to the above: packages/loopover-mcp and packages/loopover-miner both carry a REAL
-# runtime `dependencies` entry on packages/loopover-engine, so they are not actually independent of
-# it. The node-workspace plugin bumps a dependent's `@loopover/engine` version range the moment
-# engine's own version changes, but under plain separate-pull-requests: true that bump lands on the
+# exception to the above: packages/loopover-mcp and packages/loopover-miner both carry REAL runtime
+# `dependencies` entries on packages/loopover-engine AND (since #9749) packages/loopover-contract,
+# so they are not actually independent of either. The node-workspace plugin bumps a dependent's
+# `@loopover/engine` / `@loopover/contract` version range the moment that package's own version
+# changes, but under plain separate-pull-requests: true that bump lands on the
 # dependent's OWN separate branch/PR -- meaning the dependent's package.json ends up requiring an
 # engine version that exists NOWHERE (not locally on that branch, since engine's bump lives on a
 # different unmerged branch; not on npm either, since it hasn't published yet). `npm ci` then fails
@@ -30,12 +31,15 @@ name: Package Release Please
 # NOT override separate-pull-requests -- verified against release-please's manifest.ts and
 # docs/manifest-releaser.md: separate-pull-requests is enforced as the final PR-splitting decision
 # regardless of what plugins attempt internally). linked-versions is the mechanism that actually
-# overrides per-component isolation, but ONLY for the named `components` in its group: engine's new
-# version and its dependents' bumped ranges land together in ONE PR/commit, so npm workspaces
-# resolves the dependency from the LOCAL checkout (always satisfies the range, regardless of npm
-# registry publish timing or ordering) instead of hitting the ETARGET race. packages/loopover-ui-kit
-# has no dependency edge to any other package here and is not in the group, so it keeps its fully
-# independent release cadence untouched.
+# overrides per-component isolation, but ONLY for the named `components` in its group: the
+# prerequisite's new version and its dependents' bumped ranges land together in ONE PR/commit, so
+# npm workspaces resolves the dependency from the LOCAL checkout (always satisfies the range,
+# regardless of npm registry publish timing or ordering) instead of hitting the ETARGET race.
+# `contract` is in the group for exactly the same reason engine is, and NOT because it is
+# "published alongside" them: membership tracks the dependency EDGE, not release cadence.
+# packages/loopover-ui-kit has no dependency edge to any other package here and is not in the group,
+# so it keeps its fully independent release cadence untouched -- which is also why "publish it like
+# ui-kit" is the wrong instinct for any future package that something here actually depends on.
 #
 # Runs on every push to main, not just a schedule: release-please is idempotent (it recomputes
 # purely from conventional-commit history since each component's last release tag), so the extra

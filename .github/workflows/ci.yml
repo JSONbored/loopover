@@ -1253,3 +1253,60 @@ jobs:
           echo "::error title=CI::A required CI job failed or was cancelled."
           echo "Job results: ${{ join(needs.*.result, ', ') }}"
           exit 1
+
+  # Codecov sends nothing until it is told the uploads are done (codecov.yml's notify.manual_trigger).
+  # This job is the one place that can truthfully say "that's all of them": it needs every uploading job
+  # (validate-code carries rees / control-plane / engine, validate-tests carries backend), so it cannot
+  # run before they have finished.
+  #
+  # Before this existed, notify.after_n_builds fired the verdict on the first upload to ARRIVE, and
+  # arrival order does not match importance -- validate-code finishes in ~2 minutes while validate-tests
+  # is still producing the backend lcov. codecov/patch therefore posted a conclusion computed from a
+  # partial report (#9801).
+  #
+  # Deliberately NOT in `validate`'s needs, and deliberately non-fatal. The bug being fixed is a phantom
+  # red closing a good PR, so the fix must not add a new way to do that: a Codecov delivery hiccup must
+  # never fail the required check. If the trigger does not run, no status posts, the gate sees an
+  # incomplete check set and waits -- it cannot merge unreviewed and cannot false-close.
+  codecov-notify:
+    name: codecov-notify
+    needs: [changes, validate-code, validate-tests]
+    # Skip only when neither uploading job ran: a fully path-filtered PR uploads nothing, and asking
+    # Codecov to notify on a commit it has no reports for is an error rather than a verdict. Uses
+    # !cancelled() rather than always() so a run superseded by a newer push does not notify on a stale
+    # sha -- the replacement run posts the real verdict.
+    if: ${{ !cancelled() && (needs.validate-code.result != 'skipped' || needs.validate-tests.result != 'skipped') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      # Every failure path below is swallowed on purpose. A red check from THIS job would be closed by
+      # the gate, which is precisely the bug being fixed -- the notifier must never be able to fail a PR.
+      # Worst case is that no verdict posts, leaving the check set incomplete, and the gate waits.
+      - name: Release the Codecov verdict
+        env:
+          # Empty on fork PRs, where Actions withholds secrets. That matches the tokenless upload steps
+          # in validate-code / validate-tests, so pass --token only when there is one to pass.
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+          # MUST match the uploads' override_commit exactly (head sha on a PR, github.sha on push) or the
+          # notification targets a commit that has no reports attached to it.
+          COMMIT_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          SLUG: ${{ github.repository }}
+          # Pinned like every action SHA in this file -- the CLI reaches the same Codecov API the uploads do.
+          CODECOV_CLI_VERSION: "11.3.1"
+        run: |
+          if ! pipx install "codecov-cli==${CODECOV_CLI_VERSION}"; then
+            echo "::warning title=Codecov::could not install codecov-cli==${CODECOV_CLI_VERSION}; no verdict will post for ${COMMIT_SHA}."
+            exit 0
+          fi
+          args=(--commit-sha "$COMMIT_SHA" --slug "$SLUG" --git-service github --fail-on-error)
+          # `[ -n "$X" ] && args+=(...)` would abort the step under `bash -e` when the token is absent.
+          if [ -n "$CODECOV_TOKEN" ]; then
+            args+=(--token "$CODECOV_TOKEN")
+          fi
+          # --fail-on-error makes the CLI exit non-zero so a real failure is visible in the log; catching
+          # it keeps that visibility without ever turning this check red.
+          if ! codecovcli send-notifications "${args[@]}"; then
+            echo "::warning title=Codecov::send-notifications failed for ${COMMIT_SHA} -- codecov/patch will not post for this run."
+          fi

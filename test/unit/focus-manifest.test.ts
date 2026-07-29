@@ -1642,6 +1642,76 @@ describe("parseFocusManifest gate config", () => {
     expect(over.warnings.some((w) => /gate\.aiReview\.reviewers" is capped/.test(w))).toBe(true);
   });
 
+  it("parses gate.aiReview.effort/selfConsistencyRuns and gate.guardrailEscalation with full branch coverage (#9821)", () => {
+    // Every field set: parse, presence, round-trip, resolve.
+    const full = parseFocusManifest({
+      gate: {
+        aiReview: { effort: "high", selfConsistencyRuns: 3 },
+        guardrailEscalation: { provider: "anthropic", model: "claude-opus-5", effort: "xhigh", selfConsistencyRuns: 2 },
+      },
+    });
+    expect(full.gate.present).toBe(true);
+    expect(full.gate.aiReviewEffort).toBe("high");
+    expect(full.gate.aiReviewSelfConsistencyRuns).toBe(3);
+    expect(full.gate.guardrailEscalationProvider).toBe("anthropic");
+    expect(full.gate.guardrailEscalationModel).toBe("claude-opus-5");
+    expect(full.gate.guardrailEscalationEffort).toBe("xhigh");
+    expect(full.gate.guardrailEscalationSelfConsistencyRuns).toBe(2);
+    expect(parseFocusManifest({ gate: gateConfigToJson(full.gate) }).gate).toEqual(full.gate); // serialize round-trips
+
+    // Each of the six fields ALONE flips presence — the #9813 presence-gap class, per field.
+    for (const gate of [
+      { aiReview: { effort: "low" } },
+      { aiReview: { selfConsistencyRuns: 0 } },
+      { guardrailEscalation: { provider: "openai" } },
+      { guardrailEscalation: { model: "m" } },
+      { guardrailEscalation: { effort: "max" } },
+      { guardrailEscalation: { selfConsistencyRuns: 3 } },
+    ]) {
+      expect(parseFocusManifest({ gate }).gate.present).toBe(true);
+    }
+
+    // Partial escalation: unset fields stay null (each falls through to repo/global downstream).
+    const partial = parseFocusManifest({ gate: { guardrailEscalation: { effort: "high" } } });
+    expect(partial.gate.guardrailEscalationEffort).toBe("high");
+    expect(partial.gate.guardrailEscalationProvider).toBeNull();
+    expect(partial.gate.guardrailEscalationModel).toBeNull();
+    expect(partial.gate.guardrailEscalationSelfConsistencyRuns).toBeNull();
+    expect(parseFocusManifest({ gate: gateConfigToJson(partial.gate) }).gate).toEqual(partial.gate);
+
+    // Invalid values warn and stay null — never silently coerced.
+    const bad = parseFocusManifest({
+      gate: { aiReview: { effort: "ultra", selfConsistencyRuns: -1 }, guardrailEscalation: { provider: "grok", effort: 7, selfConsistencyRuns: "three", model: 42 } },
+    });
+    expect(bad.gate.aiReviewEffort).toBeNull();
+    expect(bad.gate.aiReviewSelfConsistencyRuns).toBeNull();
+    expect(bad.gate.guardrailEscalationProvider).toBeNull();
+    expect(bad.gate.guardrailEscalationEffort).toBeNull();
+    expect(bad.gate.guardrailEscalationSelfConsistencyRuns).toBeNull();
+    expect(bad.gate.guardrailEscalationModel).toBeNull();
+    expect(bad.warnings.some((w) => /gate\.aiReview\.effort/.test(w))).toBe(true);
+    expect(bad.warnings.some((w) => /gate\.guardrailEscalation\.provider/.test(w))).toBe(true);
+
+    // A non-mapping guardrailEscalation is ignored wholesale (same contract as gate.aiReview).
+    const notMap = parseFocusManifest({ gate: { guardrailEscalation: "high", claMode: "advisory" } });
+    expect(notMap.gate.guardrailEscalationEffort).toBeNull();
+
+    // Resolution: each field lands on effective settings; absent leaves the DB value untouched.
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, full);
+    expect(eff.aiReviewEffort).toBe("high");
+    expect(eff.aiReviewSelfConsistencyRuns).toBe(3);
+    expect(eff.guardrailEscalationProvider).toBe("anthropic");
+    expect(eff.guardrailEscalationModel).toBe("claude-opus-5");
+    expect(eff.guardrailEscalationEffort).toBe("xhigh");
+    expect(eff.guardrailEscalationSelfConsistencyRuns).toBe(2);
+    const untouched = resolveEffectiveSettings(
+      { aiReviewEffort: "low", guardrailEscalationModel: "existing" } as unknown as RepositorySettings,
+      parseFocusManifest({ gate: { claMode: "advisory" } }),
+    );
+    expect(untouched.aiReviewEffort).toBe("low");
+    expect(untouched.guardrailEscalationModel).toBe("existing");
+  });
+
   it("parses gate.ignoredCheckRuns, makes the gate present, round-trips + resolves it, and drops spoofable entries (#9810)", () => {
     const m = parseFocusManifest({ gate: { ignoredCheckRuns: [{ name: "Contributor trust", appSlug: "example-security-app" }] } });
     expect(m.gate.present).toBe(true);

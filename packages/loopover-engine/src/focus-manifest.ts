@@ -2076,7 +2076,9 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     gate.aiReviewLowConfidenceDisposition !== null ||
     gate.aiReviewCombine !== null ||
     gate.aiReviewOnMerge !== null ||
-    gate.aiReviewReviewers !== null
+    gate.aiReviewReviewers !== null ||
+    gate.aiReviewEffort !== null ||
+    gate.aiReviewSelfConsistencyRuns !== null
   ) {
     const aiReview: Record<string, JsonValue> = {};
     if (gate.aiReviewMode !== null) aiReview.mode = gate.aiReviewMode;

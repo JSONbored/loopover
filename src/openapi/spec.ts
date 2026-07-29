@@ -1,5 +1,6 @@
 import { OpenApiGeneratorV3, OpenAPIRegistry } from "@asteasolutions/zod-to-openapi";
 import { requiresApiToken } from "../auth/route-auth";
+import { registerDiscoveryRouteSpecs } from "./discovery-route-specs";
 import { registerOrbAndControlRouteSpecs } from "./orb-and-control-route-specs";
 import { registerInternalAndPublicRouteSpecs } from "./internal-and-public-route-specs";
 import { z } from "zod";
@@ -174,7 +175,12 @@ function loopOperationMeta(method: string, path: string, tag: string): { operati
  * that had to restate this list would go quiet the moment a new registrar was added, which is the rot the
  * anti-rot guards in this repo keep finding.
  */
-export const SPEC_REGISTRARS: ReadonlyArray<(registry: OpenAPIRegistry) => void> = [registerOrbAndControlRouteSpecs, registerInternalAndPublicRouteSpecs];
+export const SPEC_REGISTRARS: ReadonlyArray<(registry: OpenAPIRegistry) => void> = [
+  registerOrbAndControlRouteSpecs,
+  // #9526: served by this app and computed at request time from the contract registry.
+  registerDiscoveryRouteSpecs,
+  registerInternalAndPublicRouteSpecs,
+];
 
 export function buildOpenApiSpec() {
   const registry = new OpenAPIRegistry();

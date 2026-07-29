@@ -9,6 +9,7 @@ import {
   resolveErrorCode,
   toolExcludesPayloads,
   UNKNOWN_TOOL_CATEGORY,
+  type McpTelemetryTransport,
   type McpToolCallTelemetry,
 } from "@loopover/contract";
 
@@ -111,6 +112,9 @@ export function wrapStdioToolHandler(
   name: string,
   getTelemetryEnabled: () => boolean,
   handler: StdioToolHandler,
+  // #9526: "local" means this process did the work; "proxied" means it forwarded the call to the hosted
+  // server through gateway mode. Defaulted so every pre-gateway registration keeps reporting what it did.
+  transport: McpTelemetryTransport = "local",
 ): StdioToolHandler {
   return async (...args) => {
     const startedAt = Date.now();
@@ -124,6 +128,7 @@ export function wrapStdioToolHandler(
         tool: name,
         ok,
         durationMs: Date.now() - startedAt,
+        transport,
         args: args[0],
         result: result?.structuredContent,
       });
@@ -134,6 +139,7 @@ export function wrapStdioToolHandler(
         tool: name,
         ok: false,
         durationMs: Date.now() - startedAt,
+        transport,
         args: args[0],
         error,
       });
@@ -155,7 +161,7 @@ export function wrapStdioToolHandler(
  */
 export async function recordStdioDispatchTelemetry(
   telemetryEnabled: boolean,
-  call: { tool: string; ok: boolean; durationMs: number; args?: unknown; result?: unknown; error?: unknown },
+  call: { tool: string; ok: boolean; durationMs: number; transport?: McpTelemetryTransport; args?: unknown; result?: unknown; error?: unknown },
 ): Promise<void> {
   if (telemetryEnabled !== true) return;
   const apiKey = trimmedOrUndefined(process.env.LOOPOVER_MCP_POSTHOG_API_KEY);
@@ -166,6 +172,7 @@ export async function recordStdioDispatchTelemetry(
       tool: call.tool,
       category: contract?.category ?? UNKNOWN_TOOL_CATEGORY,
       surface: "stdio",
+      transport: call.transport ?? "local",
       ok: call.ok,
       durationMs: call.durationMs,
       ...(call.ok ? {} : { errorCode: resolveErrorCode(call.error) }),

@@ -40,7 +40,7 @@ loopover-mcp tools [--json]
 loopover-mcp tools search <query> [--json]
 loopover-mcp doctor [--profile name] [--cwd path] [--exit-code] [--json]
 loopover-mcp telemetry enable|disable|status [--json]
-loopover-mcp init-client --print codex|claude|cursor|mcp|vscode [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
+loopover-mcp init-client --print codex|claude|cursor|mcp|vscode [--mode stdio|remote|miner] [--agent-profile miner-planner|maintainer-triage|repo-owner-intake] [--json]
 loopover-mcp decision-pack --login <github-login> [--json]
 loopover-mcp repo-decision --login <github-login> --repo owner/repo [--json]
 loopover-mcp contributor-profile [--login <github-login>] [--json]
@@ -334,7 +334,57 @@ The same capabilities are exposed to MCP clients as:
 
 ### Client config
 
-`init-client --print <host>` prints the stdio MCP config for a host: `codex` (TOML), `claude`, `cursor`, and `mcp` (the shared `mcpServers` JSON shape), and `vscode` (VS Code's native `servers` map with `"type": "stdio"`, for `.vscode/mcp.json`). It prints config only; it never edits client files.
+<!-- GENERATED:MCP-CLIENT-CONFIG:BEGIN — edit packages/loopover-contract/src/client-config.ts, then `npm run mcp:client-config` -->
+
+`init-client --print <host> [--mode <mode>]` prints the MCP config for a host: `codex`, `claude`, `cursor`, `mcp`, `vscode`. Modes are `stdio`, `remote`, `miner`, defaulting to `stdio`. It prints config only; it never edits client files.
+
+#### Local stdio (gateway)
+
+The recommended default. Runs `loopover-mcp` on your machine, keeps auth and git analysis local, and — once you have run `loopover-mcp login` — mounts the remote tool set too, so one entry serves every tool your session entitles you to.
+
+Claude Desktop / Claude Code, in `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "loopover": {
+      "command": "loopover-mcp",
+      "args": ["--stdio"]
+    }
+  }
+}
+```
+
+- Run `loopover-mcp login` before starting the client; without a session you get the local-git tools only, plus an advisory resource explaining how to get the rest.
+- Pass `--no-remote` to keep the server purely local and skip the remote mount entirely.
+- Assumes `loopover-mcp` is on your PATH; pass `--command /absolute/path/to/loopover-mcp` if your client does not inherit your shell PATH.
+
+#### Remote streamable-http
+
+For agents that run in the cloud, or anywhere you do not want a local Node process. Connects straight to the hosted server; the local-git tools are not available over this transport because there is no local checkout to read.
+
+Claude Desktop / Claude Code, in `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "loopover": {
+      "type": "http",
+      "url": "https://api.loopover.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer ${LOOPOVER_API_TOKEN}"
+      }
+    }
+  }
+}
+```
+
+- Authenticates with a bearer token read from `LOOPOVER_API_TOKEN` — the same variable the CLI honors. Set it in the environment your client starts in; never paste the token into the config file.
+- Tools whose work is a local git operation are absent here by design. Use the stdio mode if you need them.
+
+The remote endpoint is `https://api.loopover.ai/mcp` — the same URL `/.well-known/mcp.json` advertises.
+
+<!-- GENERATED:MCP-CLIENT-CONFIG:END -->
 
 ### Agent profiles
 

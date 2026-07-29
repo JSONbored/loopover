@@ -311,6 +311,7 @@ import {
   isMcpReadUnscoped,
   type AuthIdentity,
 } from "../auth/security";
+import { LATEST_RECOMMENDED_MCP_VERSION } from "../services/mcp-compatibility";
 import { canLoginAccessRepo, canWatchRepo, loadControlPanelAccessScope, loadControlPanelRoleSummary, type ControlPanelAccessScope } from "../services/control-panel-roles";
 import {
   countOpenIssues,
@@ -1228,7 +1229,10 @@ export class LoopoverMcp {
   createServer(): McpServer {
     const server = new McpServer({
       name: "loopover",
-      version: "0.1.0",
+      // #9526: derived, not a hand-bumped constant. LATEST_RECOMMENDED_MCP_VERSION already reads
+      // @loopover/mcp's package.json, which the release automation owns -- so serverInfo, the compatibility
+      // metadata, the server card, and server.json all report the one version that actually shipped.
+      version: LATEST_RECOMMENDED_MCP_VERSION,
     });
 
     // #6301 — register every tool through this thin wrapper so its category rides along as MCP

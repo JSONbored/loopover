@@ -1,0 +1,26 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-07-09/server.schema.json",
+  "name": "io.github.JSONbored/loopover",
+  "description": "LoopOver's contribution-intelligence tools: issue ranking, branch and PR preflight, gate prediction, review explanation, and maintainer/operator management.",
+  "repository": {
+    "url": "https://github.com/JSONbored/loopover",
+    "source": "github"
+  },
+  "version": "3.15.2",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://api.loopover.ai/mcp"
+    }
+  ],
+  "packages": [
+    {
+      "registry_type": "npm",
+      "identifier": "@loopover/mcp",
+      "version": "3.15.2",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}

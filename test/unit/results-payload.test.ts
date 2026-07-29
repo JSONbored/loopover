@@ -73,4 +73,30 @@ describe("buildResultsPayload — packages a completed loop iteration (#4801)", 
     const p = buildResultsPayload({ repoFullName: "acme/widgets", prNumber: 12, title, changedFiles: [] });
     expect(p.summary).toBe(`Opened PR #12 in acme/widgets: ${title}. no file changes. Status: open.`);
   });
+
+  it("#9611: a path-traversal repoFullName yields no link and an 'unknown repository' summary", () => {
+    const p = buildResultsPayload({ repoFullName: "acme/widgets/../../evil", prNumber: 1, title: "t", changedFiles: [] });
+    expect(p.prLink).toBeNull();
+    expect(p.summary).toContain("unknown repository");
+    expect(p.summary).not.toContain("../");
+  });
+
+  it("#9611: a non-positive or non-integer prNumber takes the no-PR branch (link null, valid repo still named)", () => {
+    for (const prNumber of [0, -3, 2.5]) {
+      const p = buildResultsPayload({ repoFullName: "acme/widgets", prNumber, title: "t", changedFiles: [] });
+      expect(p.prLink).toBeNull();
+      expect(p.summary).toContain("No pull request was opened for acme/widgets");
+    }
+  });
+
+  it("#9611: negative/fractional additions and deletions normalize to non-negative integers", () => {
+    const p = buildResultsPayload({ repoFullName: "acme/widgets", prNumber: 1, title: "t", changedFiles: [{ path: "a", additions: -5, deletions: 2.7 }] });
+    expect(p.diffPreview[0]).toEqual({ path: "a", additions: 0, deletions: 2 });
+    expect(p.totals).toEqual({ files: 1, additions: 0, deletions: 2 });
+  });
+
+  it("#9611: a valid repo + positive integer PR still produces the canonical link", () => {
+    const p = buildResultsPayload({ repoFullName: "acme/widgets", prNumber: 42, title: "t", changedFiles: [] });
+    expect(p.prLink).toBe("https://github.com/acme/widgets/pull/42");
+  });
 });

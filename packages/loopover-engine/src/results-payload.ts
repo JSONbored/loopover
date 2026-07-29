@@ -40,22 +40,45 @@ export type ResultsPayload = {
 
 /** Package a completed iteration into the customer-facing results payload (#4801). Pure: it formats
  *  already-fetched iteration metadata, it does not fetch, open, or deliver anything. */
+// #9611: the same path-safety guard restated locally (this engine package must not import from the miner
+// package, and governor-ledger.ts keeps its own copy for the same reason): a repo segment is entirely
+// [A-Za-z0-9._-] and is not a bare "." / ".." traversal segment.
+const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
+function isValidRepoSegment(segment: string): boolean {
+  return REPO_SEGMENT_PATTERN.test(segment) && segment !== "." && segment !== "..";
+}
+
+// #9611: same non-negative-integer normalization the sibling Rent-a-Loop modules use (tenant-quota.ts etc.),
+// so a caller-supplied negative or fractional additions/deletions count can't flow into totals or the diff.
+function finiteNonNegativeInt(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
 export function buildResultsPayload(result: IterationResult): ResultsPayload {
   const normalized: DiffPreviewFile[] = (result.changedFiles ?? []).map((f) => ({
     path: f.path,
-    additions: f.additions ?? 0,
-    deletions: f.deletions ?? 0,
+    additions: finiteNonNegativeInt(f.additions ?? 0),
+    deletions: finiteNonNegativeInt(f.deletions ?? 0),
   }));
   const totals = normalized.reduce(
     (acc, f) => ({ files: acc.files + 1, additions: acc.additions + f.additions, deletions: acc.deletions + f.deletions }),
     { files: 0, additions: 0, deletions: 0 },
   );
 
-  const hasPr = result.prNumber !== null && result.prNumber !== undefined;
-  const prLink = hasPr ? `https://github.com/${result.repoFullName}/pull/${result.prNumber}` : null;
+  // #9611: `prLink` becomes a clickable customer-facing URL, so validate BOTH interpolated values. An
+  // unvalidated repoFullName like "acme/widgets/../../evil" resolves in the browser to github.com/evil; a
+  // non-positive or non-integer prNumber renders ".../pull/0" or ".../pull/-3". Treat repoFullName as real
+  // only when it is exactly two path-safe segments, and require a positive integer PR number.
+  const repoSegments = result.repoFullName.split("/");
+  const validRepo = repoSegments.length === 2 && repoSegments.every((segment) => isValidRepoSegment(segment));
+  const repoDisplay = validRepo ? result.repoFullName : "unknown repository";
+
+  const hasPr =
+    result.prNumber !== null && result.prNumber !== undefined && Number.isInteger(result.prNumber) && result.prNumber > 0;
+  const prLink = hasPr && validRepo ? `https://github.com/${result.repoFullName}/pull/${result.prNumber}` : null;
   const status: LoopResultStatus = result.status ?? "open";
 
-  const prPart = hasPr ? `Opened PR #${result.prNumber} in ${result.repoFullName}` : `No pull request was opened for ${result.repoFullName}`;
+  const prPart = hasPr ? `Opened PR #${result.prNumber} in ${repoDisplay}` : `No pull request was opened for ${repoDisplay}`;
   const changePart =
     totals.files === 0
       ? "no file changes"

@@ -1,5 +1,6 @@
 import { FileCog, Loader2, Save } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { apiFetch } from "@/lib/api/request";
 import { getApiOrigin } from "@/lib/api/origin";
@@ -138,50 +139,49 @@ export function MaintainerSettings({ reviewability }: { reviewability: Array<{ p
   const repoOptions = useMemo(() => extractPreviewRepoOptions(reviewability), [reviewability]);
   const [repoFullName, setRepoFullName] = useState(repoOptions[0] ?? "");
   const [settings, setSettings] = useState<MaintainerSettings | null>(null);
-  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
 
   const base = repoApiBase(repoFullName);
   const hasRepos = repoOptions.length > 0;
 
-  const load = useCallback(
-    async (opts?: { cancelled?: () => boolean }) => {
-      const isCancelled = opts?.cancelled ?? (() => false);
-      const apiBase = repoApiBase(repoFullName);
-      if (!apiBase) return;
-      setMessage(null);
-      setLoading(true);
-      const result = await apiFetch<MaintainerSettings>(`${apiBase}/settings`, {
+  // react-query rather than a hand-rolled load effect (#9588): the query key drops a response a newer repo
+  // selection has superseded, which the `cancelled` callback this replaces did by hand. Options are pinned
+  // to the previous behaviour -- one attempt, no focus refetch, nothing cached across mounts.
+  const query = useQuery({
+    queryKey: ["maintainer-settings", base],
+    enabled: base !== null && base !== "",
+    retry: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    queryFn: async () => {
+      const result = await apiFetch<MaintainerSettings>(`${base}/settings`, {
         label: "Repository settings",
         credentials: "include",
         silentStatus: true,
       });
-      // Ignore responses after a newer repoFullName keyed a fresh load (#7784).
-      if (isCancelled()) return;
+      if (!result.ok) throw new Error(result.message);
       // Default the agent-layer fields defensively so the editor renders even against an older response shape.
-      setSettings(
-        result.ok
-          ? {
-              ...result.data,
-              autonomy: result.data.autonomy ?? {},
-              agentPaused: result.data.agentPaused ?? false,
-              agentDryRun: result.data.agentDryRun ?? false,
-            }
-          : null,
-      );
-      setLoading(false);
+      return {
+        ...result.data,
+        autonomy: result.data.autonomy ?? {},
+        agentPaused: result.data.agentPaused ?? false,
+        agentDryRun: result.data.agentDryRun ?? false,
+      };
     },
-    [repoFullName],
-  );
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    void load({ cancelled: () => cancelled });
-    return () => {
-      cancelled = true;
-    };
-  }, [load]);
+  const loading = query.isFetching;
+  const load = () => void query.refetch();
+
+  // The editor mutates `settings`, so it stays state -- seeded from each new response and gated on
+  // dataUpdatedAt, applied during render (React's documented pattern). A fresh response re-seeds the
+  // editor; a maintainer's in-progress edits survive every re-render in between.
+  const [seededAt, setSeededAt] = useState<number | null>(null);
+  if (query.data && seededAt !== query.dataUpdatedAt) {
+    setSeededAt(query.dataUpdatedAt);
+    setSettings(query.data);
+  }
 
   function setField<K extends keyof MaintainerSettings>(key: K, value: MaintainerSettings[K]) {
     setSettings((current) => (current ? { ...current, [key]: value } : current));
@@ -526,36 +526,37 @@ type FocusManifestResponse = { manifest: unknown };
  */
 function FocusManifestEditor({ base }: { base: string | null }) {
   const [text, setText] = useState("");
-  const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<Message | null>(null);
 
-  const load = useCallback(
-    async (opts?: { cancelled?: () => boolean }) => {
-      const isCancelled = opts?.cancelled ?? (() => false);
-      if (!base) return;
-      setLoading(true);
-      setMessage(null);
+  // react-query rather than a hand-rolled load effect (#9588); the query key does the supersession the
+  // `cancelled` callback did by hand. Pinned to the previous behaviour -- one attempt, no focus refetch.
+  const query = useQuery({
+    queryKey: ["focus-manifest", base],
+    enabled: base !== null && base !== "",
+    retry: false,
+    refetchOnWindowFocus: false,
+    gcTime: 0,
+    queryFn: async () => {
       const result = await apiFetch<FocusManifestResponse>(`${base}/focus-manifest`, {
         label: "Focus manifest",
         credentials: "include",
         silentStatus: true,
       });
-      // Ignore responses after a newer base keyed a fresh load (#7784).
-      if (isCancelled()) return;
-      setText(result.ok ? JSON.stringify(result.data.manifest, null, 2) : "");
-      setLoading(false);
+      // A failed read renders as an empty editor, exactly as before -- not as an error surface.
+      return result.ok ? JSON.stringify(result.data.manifest, null, 2) : "";
     },
-    [base],
-  );
+  });
 
-  useEffect(() => {
-    let cancelled = false;
-    void load({ cancelled: () => cancelled });
-    return () => {
-      cancelled = true;
-    };
-  }, [load]);
+  const loading = query.isFetching;
+  const load = () => void query.refetch();
+
+  // The textarea is edited, so its content stays state -- re-seeded only when a NEW response arrives.
+  const [seededAt, setSeededAt] = useState<number | null>(null);
+  if (query.data !== undefined && seededAt !== query.dataUpdatedAt) {
+    setSeededAt(query.dataUpdatedAt);
+    setText(query.data);
+  }
 
   async function save() {
     if (!base) return;

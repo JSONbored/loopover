@@ -341,6 +341,10 @@ export async function buildRepoMap(
 /** Render entries into a bounded plain-text outline: one line per symbol (`kind name (line N): signature`),
  *  skipped/empty files noted with a one-line placeholder. Stops once `maxOutputChars` would be exceeded and
  *  appends a truncation marker, so a caller/prompt-builder can tell the map is partial rather than complete. */
+/** The one-line marker appended when the map is truncated to fit `maxOutputChars`. Its length is reserved
+ *  from the budget so the rendered string never exceeds `maxOutputChars` (#9617). */
+const TRUNCATION_MARKER = "… (repo map truncated to fit the output budget)";
+
 export function renderRepoMap(
   entries: readonly RepoMapFileEntry[],
   maxOutputChars = 20_000,
@@ -378,6 +382,19 @@ export function renderRepoMap(
     }
   }
 
-  if (truncated) lines.push("… (repo map truncated to fit the output budget)");
+  // A complete render is emitted at full budget, byte-for-byte as before — no marker, no reserved headroom.
+  if (!truncated) return lines.join("\n");
+
+  // Truncated: the marker itself must fit inside maxOutputChars (#9617) — pushLine budgets content but the
+  // marker used to be appended unbudgeted, overshooting by up to its own length + a newline. If the budget
+  // can't even hold the marker alone, an over-budget marker-only string is worse than nothing: return "".
+  if (maxOutputChars < TRUNCATION_MARKER.length) return "";
+  // Reserve room for the marker (plus its joining newline while content lines remain) by dropping trailing
+  // content lines until it fits, then append it.
+  while (lines.length > 0 && length + TRUNCATION_MARKER.length + 1 > maxOutputChars) {
+    const removed = lines.pop()!;
+    length -= lines.length === 0 ? removed.length : removed.length + 1;
+  }
+  lines.push(TRUNCATION_MARKER);
   return lines.join("\n");
 }

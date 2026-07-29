@@ -123,10 +123,11 @@ describe("runRiskControlRecalibration", () => {
 
   it("REGRESSION (#9048): NO CERTIFIABLE THRESHOLD — ample labels but no λ clears α reports the true total, not a residual stratum, under a distinct event_type", async () => {
     const env = createTestEnv({ LOOPOVER_RISK_CONTROL_CLOSE_ALPHA: "0.005" }); // fixed alpha; floor = 598
-    // 600 dirty pairs (all wrong) at 0.5, then 50 clean pairs at 0.99 — 650 total, well over the 598 floor,
-    // but no candidate certifies: 0.5 has ruinous error, 0.99 falls below the floor once 0.5 is dropped.
-    for (let i = 1; i <= 600; i += 1) await seedLabeledDecision(env, i, "close", "incorrect", 0.5);
-    for (let i = 601; i <= 650; i += 1) await seedLabeledDecision(env, i, "close", "correct", 0.99);
+    // 700 dirty pairs (all wrong) at 0.5, then 100 clean pairs at 0.99 — 800 total, over the split-delta floor
+    // for these 2 candidates (#9637: 736, not the raw 598), but no candidate certifies: 0.5 has ruinous error,
+    // 0.99 falls below the split-delta floor once 0.5 is dropped.
+    for (let i = 1; i <= 700; i += 1) await seedLabeledDecision(env, i, "close", "incorrect", 0.5);
+    for (let i = 701; i <= 800; i += 1) await seedLabeledDecision(env, i, "close", "correct", 0.99);
     const summary = await runRiskControlRecalibration(env);
     expect(summary.close).toBe("no_certifiable_threshold");
     const flag = await env.DB.prepare(`SELECT value FROM system_flags WHERE key = ?`).bind(riskControlFlagKey("close")).first();
@@ -134,7 +135,7 @@ describe("runRiskControlRecalibration", () => {
     const audit = await env.DB.prepare(
       `SELECT detail FROM audit_events WHERE event_type = 'risk_control_no_certifiable_threshold' AND target_key = 'riskcontrol:close'`,
     ).first<{ detail: string }>();
-    expect(audit!.detail).toContain("650 labels available but no threshold achieves α=0.005");
+    expect(audit!.detail).toContain("800 labels available but no threshold achieves α=0.005");
     // The label-shortfall event must NOT also fire for this scope — it is a distinct outcome (#9048).
     const shortfall = await env.DB.prepare(
       `SELECT detail FROM audit_events WHERE event_type = 'risk_control_insufficient' AND target_key = 'riskcontrol:close'`,
@@ -157,7 +158,7 @@ describe("fail-safe arms", () => {
     vi.restoreAllMocks();
   });
 
-  it("a throwing arm recalibration is contained: the OTHER arm still runs and the summary reports insufficient", async () => {
+  it("REGRESSION (#9637): a throwing arm recalibration reports 'error', never a statistical status — an infra failure is not a label shortfall", async () => {
     const env = createTestEnv();
     const { vi } = await import("vitest");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -169,7 +170,7 @@ describe("fail-safe arms", () => {
       return realPrepare(sql);
     });
     const summary = await runRiskControlRecalibration(env);
-    expect(summary).toEqual({ close: "insufficient_labels", merge: "insufficient_labels" });
+    expect(summary).toEqual({ close: "error", merge: "error" });
     expect(warn).toHaveBeenCalled();
     vi.restoreAllMocks();
   });

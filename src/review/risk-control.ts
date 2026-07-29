@@ -22,7 +22,11 @@
 // HONESTY GUARDS, all load-bearing:
 //   • INSUFFICIENT LABELS IS A REFUSAL, never a degraded guess. Even a zero-error calibration set cannot
 //     certify α until n ≥ ln(δ)/ln(1−α) (the exact rule-of-three bound) — at α=0.005, δ=0.05 that is 598
-//     clean labels. Below it this module refuses and the caller keeps the static floor.
+//     clean labels. Below it this module refuses and the caller keeps the static floor. #9637: this floor is
+//     evaluated at the δ the scan actually TESTS (δ/K, the Bonferroni split above), not the raw δ — a set that
+//     clears the raw floor can still be short of what the split scan needs, and reporting that as
+//     `no_certifiable_threshold` instead would misdirect an operator toward investigating precision when the
+//     real gap is label count.
 //   • NO CERTIFIABLE THRESHOLD IS ALSO A REFUSAL, distinct from insufficient labels (#9048): a repo can have
 //     plenty of labels and still refuse when no λ's bound clears α — a fundamentally different shortfall
 //     ("the error rate is too high", not "there aren't enough labels"). `no_certifiable_threshold` carries the
@@ -146,19 +150,29 @@ export function calibrateActThreshold(pairs: CalibrationPair[], alpha: number, d
   // #9066: Bonferroni-split δ across the K candidates this scan actually tests — see the module header for
   // why this, not literal fixed-sequence stopping, is the chosen fix.
   const testDelta = delta / candidates.length;
+  // #9637: the label floor must be re-checked at the δ the scan actually tests (testDelta), not the raw δ
+  // above — a zero-error set can clear the raw-δ floor yet still be short of what the split-δ scan needs,
+  // and without this re-check every candidate below fails its n >= effectiveNeeded gate, falling through to
+  // `no_certifiable_threshold` (an error-rate shortfall) when the true shortfall is labels. candidates.length
+  // is always ≥ 1 here (the raw-δ floor check above already returned for an empty `pairs`), so this divides
+  // safely and, at K=1, effectiveNeeded === needed — identical to pre-#9637 behavior.
+  const effectiveNeeded = minimumCalibrationLabels(alpha, testDelta);
+  if (sorted.length < effectiveNeeded) {
+    return { status: "insufficient_labels", needed: effectiveNeeded, have: sorted.length, alpha, delta };
+  }
   let dropped = 0;
   let droppedErrors = 0;
   let index = 0;
   // Tracks the closest-to-certifying candidate for `no_certifiable_threshold`'s message. The very first
-  // candidate always computes a bound (n = sorted.length ≥ needed, guaranteed by the floor check above), so
-  // these are always overwritten before any caller can observe the initial values.
+  // candidate always computes a bound (n = sorted.length ≥ effectiveNeeded, guaranteed by the floor check
+  // above), so these are always overwritten before any caller can observe the initial values.
   let bestLambda = candidates[0]!;
   let bestN = sorted.length;
   let bestUpperBound = Infinity;
   for (const lambda of candidates) {
     const n = sorted.length - dropped;
     const errors = totalErrors - droppedErrors;
-    if (n >= needed) {
+    if (n >= effectiveNeeded) {
       const bound = clopperPearsonUpperBound(errors, n, testDelta);
       if (bound < bestUpperBound) {
         bestUpperBound = bound;
@@ -206,6 +220,11 @@ export function validateCalibrationPayload(value: unknown): { alpha: number; lam
   if (typeof v.coverageAtLambda !== "number" || !(v.coverageAtLambda >= 0 && v.coverageAtLambda <= 1)) return null;
   if (typeof v.delta !== "number" || !(v.delta > 0 && v.delta <= 1)) return null;
   if (typeof v.nAtLambda !== "number" || !Number.isFinite(v.nAtLambda)) return null;
+  // #9637: deliberately the UNSPLIT delta, not delta/K — the stored payload only ever records the originally-
+  // requested delta (candidates.length is not persisted), and nAtLambda is the coverage at the ALREADY-
+  // CERTIFIED lambda, not a candidate count mid-scan. A payload legitimately certified by the split-delta scan
+  // always clears this looser, unsplit-delta floor too (effectiveNeeded ≥ needed), so this stays the coarser,
+  // always-safe check calibrateActThreshold itself no longer uses for its own scan.
   if (v.nAtLambda < minimumCalibrationLabels(v.alpha, v.delta)) return null;
   return { alpha: v.alpha, lambda: v.lambda, coverageAtLambda: v.coverageAtLambda, nAtLambda: v.nAtLambda, delta: v.delta };
 }

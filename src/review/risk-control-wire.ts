@@ -178,8 +178,8 @@ async function recalibrateArm(env: Env, arm: "close" | "merge", verdict: "close"
  *  (#8835's "per-repo where sample size permits, global fallback otherwise"). A repo key certifies or is
  *  retracted independently of the global one; the actuation read prefers the repo key. Returns per-arm
  *  global statuses for the caller's log line. */
-export async function runRiskControlRecalibration(env: Env): Promise<Record<string, CalibrationResult["status"]>> {
-  const summary: Record<string, CalibrationResult["status"]> = {};
+export async function runRiskControlRecalibration(env: Env): Promise<Record<string, CalibrationResult["status"] | "error">> {
+  const summary: Record<string, CalibrationResult["status"] | "error"> = {};
   for (const { arm, verdict, alpha } of riskControlArms(env)) {
     try {
       summary[arm] = (await recalibrateArm(env, arm, verdict, alpha, null)).status;
@@ -195,7 +195,10 @@ export async function runRiskControlRecalibration(env: Env): Promise<Record<stri
       }
     } catch (error) {
       console.warn(JSON.stringify({ event: "risk_control_recalibrate_error", arm, message: errorMessage(error).slice(0, 160) }));
-      summary[arm] = "insufficient_labels";
+      // #9637: an infrastructure failure (DB read/write, JSON parse) is not a statistical shortfall — reporting
+      // it as insufficient_labels told an operator to go collect labels for a problem collecting labels never
+      // caused, in the same daily-tick log line #9048 split for the opposite reason.
+      summary[arm] = "error";
     }
   }
   return summary;

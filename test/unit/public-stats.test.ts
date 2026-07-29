@@ -737,6 +737,42 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.byProject.map((row) => row.accuracyPct)).toEqual([null]);
   });
 
+  it("REGRESSION: the accuracy denominator is bounded to audit_events' retention window, not lifetime (real D1)", async () => {
+    // `github_app.pr_public_surface_published` is the ONE retention-exempt event type, so reviewed/merged/
+    // closed are immortal, while `reversal_*` rows prune at 90 days. Pairing them made 1 - reversed/decided
+    // drift toward 100% as the ledger aged -- live: 2377/602/508 reviewed, 0 reversals, 100% each.
+    const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/loopover" });
+    const old = new Date(NOW - 200 * 86_400_000).toISOString(); // outside the 90-day window
+    const recent = new Date(NOW - 5 * 86_400_000).toISOString();
+    await upsertRepositoryFromGitHub(env, { name: "loopover", full_name: "JSONbored/loopover", private: false, owner: { login: "JSONbored" } }, 1);
+
+    // Four ancient merged PRs -- they keep counting toward `reviewed`, but must NOT pad the accuracy
+    // denominator, because a reversal of any of them would long since have been pruned.
+    for (const number of [1, 2, 3, 4]) {
+      await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number, title: `old ${number}`, state: "closed", merged_at: old, user: { login: "a" }, head: { sha: `s${number}` }, labels: [] });
+      await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: `JSONbored/loopover#${number}`, outcome: "completed", createdAt: old });
+    }
+    // One recent auto-closed PR, reversed by a human.
+    await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number: 5, title: "recent", state: "open", user: { login: "b" }, head: { sha: "s5" }, labels: [] });
+    await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: "JSONbored/loopover#5", outcome: "completed", createdAt: recent });
+    await recordAuditEvent(env, { eventType: "agent.action.close", targetKey: "JSONbored/loopover#5", outcome: "completed", createdAt: recent });
+    await recordAuditEvent(env, { eventType: "reversal_reopened", targetKey: "JSONbored/loopover#5", outcome: "completed", createdAt: recent });
+    // ...and one recent merged PR that stands, so the windowed denominator is 1 merged + 0 closed... plus
+    // PR#5 which is currently `open` and so counts as inReview, not decided.
+    await upsertPullRequestFromGitHub(env, "JSONbored/loopover", { number: 6, title: "recent ok", state: "closed", merged_at: recent, user: { login: "c" }, head: { sha: "s6" }, labels: [] });
+    await recordAuditEvent(env, { eventType: "github_app.pr_public_surface_published", targetKey: "JSONbored/loopover#6", outcome: "completed", createdAt: recent });
+
+    const out = await getPublicStats(env, NOW);
+    // Lifetime volume still reports every PR ever published -- that part is measured and unaffected.
+    expect(out.totals.reviewed).toBe(6);
+    expect(out.totals.merged).toBe(5);
+    expect(out.totals.reversed).toBe(1);
+    // Accuracy divides by the WINDOWED denominator (PR#6 merged inside the window), not the lifetime 5.
+    // 1 - 1/1 = 0%, not the 1 - 1/5 = 80% the old lifetime pairing would have published.
+    expect(out.byProject[0]?.accuracyPct).toBe(0);
+    expect(out.totals.accuracyPct).toBe(0);
+  });
+
   it("publishes a real accuracy once the deployment records the auto-actions a reversal attaches to (real D1)", async () => {
     const env = createTestEnv({ LOOPOVER_PUBLIC_STATS_REPOS: "JSONbored/loopover" });
     await upsertRepositoryFromGitHub(env, { name: "loopover", full_name: "JSONbored/loopover", private: false, owner: { login: "JSONbored" } }, 1);

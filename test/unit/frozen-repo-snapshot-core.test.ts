@@ -11,7 +11,7 @@ import {
   type FrozenRepoSnapshot,
   type RawWorkUnitRecord,
 } from "../../scripts/frozen-repo-snapshot-core";
-import { parseArgs, missingArgs } from "../../scripts/frozen-repo-snapshot";
+import { fetchAllPages, GITHUB_MAX_PAGES, GITHUB_PER_PAGE, missingArgs, parseArgs } from "../../scripts/frozen-repo-snapshot";
 
 // #9259 (harness #9216, epic #8534): leak-proofing IS the deliverable. A snapshot that leaks future
 // information still produces perfectly well-formed numbers downstream, so the failure is silent — which is
@@ -293,5 +293,79 @@ describe("frozen-repo-snapshot CLI arg handling (#9259)", () => {
     expect(parseArgs(["--db"]).db).toBe("loopover");
     // An unrecognized flag is ignored rather than throwing.
     expect(parseArgs(["--nonsense", "x", "--repo", "o/r"]).repo).toBe("o/r");
+  });
+});
+
+describe("fetchAllPages — the CLI's pagination (#9259)", () => {
+  /** A fake list endpoint holding `total` records, paged the way GitHub pages. */
+  function pagedSource(total: number): { read: (url: string) => Promise<number[]>; calls: string[] } {
+    const calls: string[] = [];
+    return {
+      calls,
+      read: async (url: string) => {
+        calls.push(url);
+        const page = Number(new URL(url, "https://x.test").searchParams.get("page"));
+        const start = (page - 1) * GITHUB_PER_PAGE;
+        return Array.from({ length: Math.max(0, Math.min(GITHUB_PER_PAGE, total - start)) }, (_, index) => start + index);
+      },
+    };
+  }
+
+  const url = (page: number) => `https://api.github.com/list?per_page=${GITHUB_PER_PAGE}&page=${page}`;
+
+  it("REGRESSION: reads EVERY page — a single per_page=100 request silently dropped older records", () => {
+    // The defect this test exists for: 250 records used to come back as 100, producing a well-formed but
+    // incomplete snapshot whose checksum depended on how much the reader happened to see.
+    return (async () => {
+      const source = pagedSource(250);
+      const result = await fetchAllPages(url, source.read);
+      expect(result.truncated).toBe(false);
+      expect(result.items).toHaveLength(250);
+      expect(result.items[0]).toBe(0);
+      expect(result.items[249]).toBe(249);
+      expect(source.calls).toHaveLength(3);
+    })();
+  });
+
+  it("stops at the first SHORT page, and an exactly-full last page costs one extra empty read", async () => {
+    const short = pagedSource(150);
+    expect((await fetchAllPages(url, short.read)).items).toHaveLength(150);
+    expect(short.calls).toHaveLength(2);
+    // Exactly 200: pages 1 and 2 are both full, so page 3 confirms the end. One wasted request beats
+    // guessing the end from a count the API does not promise.
+    const exact = pagedSource(200);
+    const result = await fetchAllPages(url, exact.read);
+    expect(result.items).toHaveLength(200);
+    expect(result.truncated).toBe(false);
+    expect(exact.calls).toHaveLength(3);
+  });
+
+  it("an empty and a single-page source both read exactly once", async () => {
+    for (const total of [0, 1, GITHUB_PER_PAGE - 1]) {
+      const source = pagedSource(total);
+      const result = await fetchAllPages(url, source.read);
+      expect(result).toMatchObject({ truncated: false });
+      expect(result.items).toHaveLength(total);
+      expect(source.calls).toHaveLength(1);
+    }
+  });
+
+  it("REGRESSION: hitting the page bound REPORTS truncation rather than returning a short list as complete", async () => {
+    // Every page is full, so the loop never sees an end. The bound must surface as `truncated`, which the
+    // CLI turns into a refusal to write — a snapshot nobody can reproduce is not worth publishing.
+    const endless = { read: async () => Array.from({ length: GITHUB_PER_PAGE }, (_, index) => index) };
+    const result = await fetchAllPages(url, endless.read, 3);
+    expect(result.truncated).toBe(true);
+    expect(result.items).toHaveLength(3 * GITHUB_PER_PAGE);
+    // The real bound is generous enough that no honest repo reaches it.
+    expect(GITHUB_MAX_PAGES * GITHUB_PER_PAGE).toBeGreaterThanOrEqual(20_000);
+  });
+
+  it("a read error propagates rather than being swallowed into a short, complete-looking list", async () => {
+    const failing = async (url: string) => {
+      if (url.includes("page=2")) throw new Error("GitHub 502");
+      return Array.from({ length: GITHUB_PER_PAGE }, (_, index) => index);
+    };
+    await expect(fetchAllPages(url, failing)).rejects.toThrow("GitHub 502");
   });
 });

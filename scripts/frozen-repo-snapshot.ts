@@ -72,13 +72,59 @@ async function fetchJson<T>(url: string, token: string | undefined): Promise<T> 
   return (await response.json()) as T;
 }
 
+export const GITHUB_PER_PAGE = 100;
+/** Hard stop, so a pathological repo cannot spin forever. 200 pages x 100 = 20k records, comfortably past
+ *  any real benchmark repo; exceeding it is REPORTED, never silently accepted (see below). */
+export const GITHUB_MAX_PAGES = 200;
+
+/**
+ * Read every page of a GitHub list endpoint.
+ *
+ * A single `per_page=100` read is not merely incomplete on a large repo -- it is NON-REPRODUCIBLE, which is
+ * worse for this tool specifically. The snapshot's whole value is that two runs over the same (repo, T)
+ * produce the same checksum; a truncated read makes the checksum a function of how many records the repo
+ * happened to have, so the same T could yield two different "authoritative" snapshots. And the truncation is
+ * silent: the output is a perfectly well-formed snapshot that is simply missing history.
+ *
+ * So this pages to exhaustion and reports `truncated` when it hits the bound rather than returning a short
+ * list as if it were complete. The caller REFUSES to write a truncated snapshot, the same posture as the
+ * leak audit -- a snapshot nobody can reproduce is not one worth publishing.
+ */
+export async function fetchAllPages<T>(
+  pageUrl: (page: number) => string,
+  readPage: (url: string) => Promise<T[]>,
+  maxPages: number = GITHUB_MAX_PAGES,
+): Promise<{ items: T[]; truncated: boolean }> {
+  const items: T[] = [];
+  for (let page = 1; page <= maxPages; page += 1) {
+    const batch = await readPage(pageUrl(page));
+    items.push(...batch);
+    // A short page is the last page. An exactly-full final page costs one extra empty request, which is the
+    // correct trade against guessing the end from a count the API does not promise.
+    if (batch.length < GITHUB_PER_PAGE) return { items, truncated: false };
+  }
+  return { items, truncated: true };
+}
+
 /** Label APPLICATION times come from the issue-events timeline — a label object alone carries no timestamp,
- *  so without this every label would be unfilterable and a post-T label would leak into the snapshot. */
-async function fetchLabelHistory(repo: string, number: number, token: string | undefined): Promise<TimestampedLabel[]> {
-  const events = await fetchJson<GitHubIssueEvent[]>(`https://api.github.com/repos/${repo}/issues/${number}/events?per_page=100`, token);
-  return events
-    .filter((event) => event.event === "labeled" && typeof event.label?.name === "string" && typeof event.created_at === "string")
-    .map((event) => ({ name: String(event.label?.name), appliedAt: String(event.created_at) }));
+ *  so without this every label would be unfilterable and a post-T label would leak into the snapshot.
+ *  Paginated for the same reason as the issue list: a long-lived issue can carry well over 100 events, and
+ *  dropping the earlier ones would silently omit labels that were genuinely applied before T. */
+async function fetchLabelHistory(
+  repo: string,
+  number: number,
+  token: string | undefined,
+): Promise<{ labels: TimestampedLabel[]; truncated: boolean }> {
+  const { items, truncated } = await fetchAllPages<GitHubIssueEvent>(
+    (page) => `https://api.github.com/repos/${repo}/issues/${number}/events?per_page=${GITHUB_PER_PAGE}&page=${page}`,
+    (url) => fetchJson<GitHubIssueEvent[]>(url, token),
+  );
+  return {
+    labels: items
+      .filter((event) => event.event === "labeled" && typeof event.label?.name === "string" && typeof event.created_at === "string")
+      .map((event) => ({ name: String(event.label?.name), appliedAt: String(event.created_at) })),
+    truncated,
+  };
 }
 
 function d1Query(sql: string, remote: boolean, db: string): Array<Record<string, unknown>> {
@@ -105,11 +151,21 @@ async function main(): Promise<void> {
   // `state=all` deliberately: whether a unit was OPEN at T is decided by the pure core from createdAt and
   // closedAt, not by GitHub's CURRENT state -- asking for open-only would silently drop every PR that has
   // closed since T, which is most of them for any historical snapshot.
-  const issues = await fetchJson<GitHubIssue[]>(`https://api.github.com/repos/${repo}/issues?state=all&per_page=100`, token);
+  const issuePages = await fetchAllPages<GitHubIssue>(
+    (page) => `https://api.github.com/repos/${repo}/issues?state=all&per_page=${GITHUB_PER_PAGE}&page=${page}`,
+    (url) => fetchJson<GitHubIssue[]>(url, token),
+  );
+  const truncations: string[] = [];
+  if (issuePages.truncated) truncations.push(`issue list exceeded ${GITHUB_MAX_PAGES} pages`);
 
   const workUnits: RawWorkUnitRecord[] = [];
-  for (const issue of issues) {
-    const labels = await fetchLabelHistory(repo, issue.number, token).catch(() => [] as TimestampedLabel[]);
+  for (const issue of issuePages.items) {
+    // A label-history read that FAILS degrades to no labels (the snapshot loses context but stays honest);
+    // one that TRUNCATES is recorded, because missing an early `labeled` event silently omits a label that
+    // was genuinely applied before T -- a wrong snapshot rather than a thinner one.
+    const history = await fetchLabelHistory(repo, issue.number, token).catch(() => ({ labels: [] as TimestampedLabel[], truncated: false }));
+    if (history.truncated) truncations.push(`#${issue.number} label history exceeded ${GITHUB_MAX_PAGES} pages`);
+    const labels = history.labels;
     workUnits.push({
       workUnitId: `${repo}#${issue.number}`,
       number: issue.number,
@@ -148,6 +204,14 @@ async function main(): Promise<void> {
   const leaks = auditSnapshotForLeaks(snapshot);
   if (leaks.length > 0) {
     console.error(`frozen-repo-snapshot: REFUSING to write a snapshot with future information:\n  ${leaks.join("\n  ")}`);
+    process.exit(1);
+  }
+
+  // Same posture as the leak refusal: a truncated read produces a well-formed snapshot that is simply
+  // missing history, and whose checksum therefore depends on how much the reader happened to see. That is
+  // not a snapshot anyone can reproduce, so it is not one worth writing.
+  if (truncations.length > 0) {
+    console.error(`frozen-repo-snapshot: REFUSING to write a snapshot from a truncated read:\n  ${truncations.join("\n  ")}`);
     process.exit(1);
   }
 

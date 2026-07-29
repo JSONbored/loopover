@@ -232,6 +232,8 @@ export type AgentActionExecutionContext = {
   // exclusion the planning pass used — otherwise the executor could see a maintainer-declared advisory check as
   // failing/pending and block a merge the planner already cleared. Absent ⇒ exclusion off, unchanged from before.
   advisoryCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null | undefined;
+  // #9810: the ignore list, resolved by the CALLER exactly like advisoryCheckRuns above.
+  ignoredCheckRuns?: ReadonlyArray<{ name: string; appSlug: string }> | null | undefined;
   // settings.manualReviewLabel (#3472 split-brain), resolved by the CALLER (same "the executor has no settings
   // access" shape as requiredCiContexts above): the approve/merge live label guard (step 7b below) needs the
   // SAME configured label name the planner itself resolves labels.manualReview from (agent-actions.ts), so a
@@ -589,7 +591,7 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
       const admissionKey = githubRateLimitAdmissionKeyForToken(env, ciToken, ctx.installationId);
       const [liveCi, liveMergeableState, liveThreadBlockers, liveWinnerState] = await Promise.all([
         requiresLiveCiRecheck
-          ? fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, ctx.requiredCiContexts ?? null, admissionKey, ctx.advisoryCheckRuns ?? null)
+          ? fetchLiveCiAggregate(env, ctx.repoFullName, expectedHeadSha, ciToken, ctx.requiredCiContexts ?? null, admissionKey, ctx.advisoryCheckRuns ?? null, ctx.ignoredCheckRuns ?? null)
           : Promise.resolve(undefined),
         requiresLiveMergeableRecheck || requiresLiveApproveMergeableRecheck
           ? fetchLivePullRequestMergeState(env, ctx.repoFullName, ctx.pullNumber, ciToken, admissionKey)

@@ -232,6 +232,13 @@ export type FocusManifestGateConfig = {
    *  config-only — no vendor name is ever hardcoded in behavior. null/empty (unset) ⇒ byte-identical to today.
    *  See {@link RepositorySettings.advisoryCheckRuns}. */
   advisoryCheckRuns: ReadonlyArray<{ name: string; appSlug: string }> | null;
+  /** `gate.ignoredCheckRuns` (#9810): third-party check-runs to EXCLUDE from CI resolution entirely -- never
+   *  gate, never pend, never hold. Same spoof-resistant `{ name, appSlug }` matching as advisoryCheckRuns.
+   *  For a check whose verdict a maintainer has decided carries no signal for this repo (e.g. a vendor's
+   *  contributor-trust score) while OTHER checks from the same app stay meaningful. Advisory still routes a
+   *  failure to a manual-review hold; ignored does not -- the run is treated as if it did not exist, and is
+   *  surfaced informationally in the aggregate for panel transparency. */
+  ignoredCheckRuns: ReadonlyArray<{ name: string; appSlug: string }> | null;
   /** `gate.aiJudgmentBlockers` (#3907): "gate" | "advisory", null (unset) ⇒ "advisory" (byte-identical to
    *  today everywhere that doesn't opt in). Config-as-code only, YML-only (no DB column, no dashboard
    *  toggle) — mirrors `contentLane`'s own YML-only shape, since this only has an effect for repos already
@@ -1358,6 +1365,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   claCheckRunAppSlug: null,
   expectedCiContexts: null,
   advisoryCheckRuns: null,
+  ignoredCheckRuns: null,
   aiJudgmentBlockersMode: null,
   copycatMode: null,
   copycatMinScore: null,
@@ -1806,6 +1814,7 @@ const GATE_TOP_LEVEL_KEYS = new Set<string>([
   "cla",
   "expectedCiContexts",
   "advisoryCheckRuns",
+  "ignoredCheckRuns",
   "aiJudgmentBlockers",
   "copycat",
 ]);
@@ -1900,6 +1909,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     claCheckRunAppSlug: parsePublicSafeText(claRecord?.checkRunAppSlug, "gate.cla.checkRunAppSlug", warnings),
     expectedCiContexts: normalizeOptionalStringList(record.expectedCiContexts, "gate.expectedCiContexts", warnings),
     advisoryCheckRuns: normalizeOptionalAdvisoryCheckRuns(record.advisoryCheckRuns, "gate.advisoryCheckRuns", warnings),
+    ignoredCheckRuns: normalizeOptionalAdvisoryCheckRuns(record.ignoredCheckRuns, "gate.ignoredCheckRuns", warnings),
     aiJudgmentBlockersMode: normalizeOptionalEnum(record.aiJudgmentBlockers, "gate.aiJudgmentBlockers", ["gate", "advisory"] as const, warnings),
     copycatMode: normalizeOptionalEnum(copycatRecord?.mode, "gate.copycat.mode", ["off", "warn", "label", "block"] as const, warnings),
     copycatMinScore: normalizeOptionalScore(copycatRecord?.minScore, "gate.copycat.minScore", warnings),
@@ -1960,6 +1970,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.claCheckRunAppSlug !== null ||
     gate.expectedCiContexts !== null ||
     gate.advisoryCheckRuns !== null ||
+    gate.ignoredCheckRuns !== null ||
     gate.aiJudgmentBlockersMode !== null ||
     gate.copycatMode !== null ||
     gate.copycatMinScore !== null;
@@ -2058,6 +2069,9 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   if (gate.expectedCiContexts !== null) out.expectedCiContexts = gate.expectedCiContexts as JsonValue;
   if (gate.advisoryCheckRuns !== null) {
     out.advisoryCheckRuns = gate.advisoryCheckRuns.map((c) => ({ name: c.name, appSlug: c.appSlug })) as JsonValue;
+  }
+  if (gate.ignoredCheckRuns !== null) {
+    out.ignoredCheckRuns = gate.ignoredCheckRuns.map((c) => ({ name: c.name, appSlug: c.appSlug })) as JsonValue;
   }
   if (gate.aiJudgmentBlockersMode !== null) out.aiJudgmentBlockers = gate.aiJudgmentBlockersMode;
   if (gate.copycatMode !== null || gate.copycatMinScore !== null) {

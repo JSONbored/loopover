@@ -177,7 +177,7 @@ describe("GitHub backfill", () => {
 
       const aggregate = await fetchLiveCiAggregate(env, "JSONbored/gittensory", null, "public-token", null);
 
-      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], advisoryHoldDetails: [], ciCompletenessWarning: null });
+      expect(aggregate).toEqual({ ciState: "unverified", hasPending: false, hasVisiblePending: false, hasMissingRequiredContext: false, failingDetails: [], nonRequiredFailingDetails: [], advisoryHoldDetails: [], ignoredCheckDetails: [], ciCompletenessWarning: null });
       expect(fetchSpy).not.toHaveBeenCalled();
     });
 
@@ -605,6 +605,87 @@ describe("GitHub backfill", () => {
       const aggregate = await fetchLiveCiAggregate(env, "acme/widget", "sha5", "public-token", new Set(["validate", "Third-Party Scan"]));
       expect(aggregate.ciState).toBe("failed");
       expect(aggregate.advisoryHoldDetails).toEqual([]);
+    });
+
+    it("#9810: an IGNORED failing check is excluded entirely — no gate failure AND no hold (unlike advisory)", async () => {
+      // The motivating case: a vendor app posts both a real security scan and a heuristic contributor-trust
+      // score. The trust score fails for perfectly good contributors; under advisoryCheckRuns that still
+      // converted every one of their clean PRs into a manual review. Ignored means "as if it did not exist".
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      stubChecks([
+        { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+        { name: "Contributor trust", status: "completed", conclusion: "action_required", app: { slug: "example-security-app" } },
+      ]);
+      const aggregate = await fetchLiveCiAggregate(env, "acme/widget", "sha-ign-1", "public-token", new Set(["validate", "Contributor trust"]), undefined, null, [
+        { name: "Contributor trust", appSlug: "example-security-app" },
+      ]);
+      expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.advisoryHoldDetails).toEqual([]); // the decisive difference from advisory
+      expect(aggregate.ignoredCheckDetails).toEqual([{ name: "Contributor trust", appSlug: "example-security-app", conclusion: "action_required" }]);
+    });
+
+    it("#9810: a SIBLING check from the same app still gates — ignoring one check never disarms the others", async () => {
+      // Keeping the security scan's protection while dropping the trust check's noise is the whole point.
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      stubChecks([
+        { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+        { name: "Contributor trust", status: "completed", conclusion: "failure", app: { slug: "example-security-app" } },
+        { name: "Security scan", status: "completed", conclusion: "failure", app: { slug: "example-security-app" } },
+      ]);
+      const aggregate = await fetchLiveCiAggregate(env, "acme/widget", "sha-ign-2", "public-token", new Set(["validate", "Security scan"]), undefined, null, [
+        { name: "Contributor trust", appSlug: "example-security-app" },
+      ]);
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.failingDetails.map((d) => d.name)).toEqual(["Security scan"]);
+    });
+
+    it("#9810: an ignored check still PENDING does not hold the gate as 'still running'", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      stubChecks([
+        { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+        { name: "Contributor trust", status: "in_progress", conclusion: null, app: { slug: "example-security-app" } },
+      ]);
+      const aggregate = await fetchLiveCiAggregate(env, "acme/widget", "sha-ign-3", "public-token", new Set(["validate"]), undefined, null, [
+        { name: "Contributor trust", appSlug: "example-security-app" },
+      ]);
+      expect(aggregate.ciState).toBe("passed");
+      expect(aggregate.hasPending).toBe(false);
+    });
+
+    it("#9810: IGNORE wins over ADVISORY when a check is listed in both (the stronger, more explicit intent)", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      stubChecks([
+        { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+        { name: "Contributor trust", status: "completed", conclusion: "failure", app: { slug: "example-security-app" } },
+      ]);
+      const entry = [{ name: "Contributor trust", appSlug: "example-security-app" }];
+      const aggregate = await fetchLiveCiAggregate(env, "acme/widget", "sha-ign-4", "public-token", new Set(["validate"]), undefined, entry, entry);
+      expect(aggregate.advisoryHoldDetails).toEqual([]); // NOT held
+      expect(aggregate.ignoredCheckDetails).toHaveLength(1);
+    });
+
+    it("#9810: a name-only match (no producing app slug) is NOT ignored — spoof resistance matches the advisory path", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      stubChecks([
+        { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+        { name: "Contributor trust", status: "completed", conclusion: "failure" }, // no app ⇒ untrusted
+      ]);
+      const aggregate = await fetchLiveCiAggregate(env, "acme/widget", "sha-ign-5", "public-token", new Set(["validate", "Contributor trust"]), undefined, null, [
+        { name: "Contributor trust", appSlug: "example-security-app" },
+      ]);
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.ignoredCheckDetails).toEqual([]);
+    });
+
+    it("#9810: with NO ignoredCheckRuns configured, behavior is byte-identical to today", async () => {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+      stubChecks([
+        { name: "validate", status: "completed", conclusion: "success", app: { slug: "github-actions" } },
+        { name: "Contributor trust", status: "completed", conclusion: "failure", app: { slug: "example-security-app" } },
+      ]);
+      const aggregate = await fetchLiveCiAggregate(env, "acme/widget", "sha-ign-6", "public-token", new Set(["validate", "Contributor trust"]));
+      expect(aggregate.ciState).toBe("failed");
+      expect(aggregate.ignoredCheckDetails).toEqual([]);
     });
 
     it("#4372: a run whose NAME matches but carries NO producing app slug is NOT treated as advisory (a name-only match is spoofable)", async () => {

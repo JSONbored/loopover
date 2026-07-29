@@ -10127,6 +10127,25 @@
           "updatedAt": {
             "type": "string",
             "nullable": true
+          },
+          "ignoredCheckRuns": {
+            "type": "array",
+            "nullable": true,
+            "items": {
+              "type": "object",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "appSlug": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "name",
+                "appSlug"
+              ]
+            }
           }
         },
         "required": [

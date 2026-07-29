@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { TenantRecord } from "@loopover/contract/control-plane";
 
 import {
   CONTROL_PLANE_ADMIN_TOKEN_FLAG,
@@ -92,17 +93,17 @@ describe("createTenant (#7275)", () => {
       expect(init.method).toBe("POST");
       expect((init.headers as Record<string, string>).authorization).toBe("Bearer admin-secret");
       expect(JSON.parse(String(init.body))).toEqual({ name: "acme", product: "ams" });
-      return Response.json({ name: "acme", product: "ams", state: "provisioning" });
+      return Response.json({ tenant: { name: "acme" }, product: "ams", state: "provisioning" });
     });
     const record = await createTenant("acme", { env: ENABLED_ENV, fetchImpl });
-    expect(record).toEqual({ name: "acme", product: "ams", state: "provisioning" });
+    expect(record).toEqual({ tenant: { name: "acme" }, product: "ams", state: "provisioning" });
   });
 
   it("passes an explicit product through, and trims a URL's trailing slashes", async () => {
     const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
       expect(url).toBe("https://control.example.internal/v1/tenants");
       expect(JSON.parse(String(init.body))).toEqual({ name: "acme", product: "widgets" });
-      return Response.json({ name: "acme", product: "widgets", state: "provisioning" });
+      return Response.json({ tenant: { name: "acme" }, product: "widgets", state: "provisioning" });
     });
     await createTenant("acme", {
       env: { ...ENABLED_ENV, [CONTROL_PLANE_URL_FLAG]: "https://control.example.internal///" },
@@ -115,7 +116,7 @@ describe("createTenant (#7275)", () => {
   it("falls back to the default product when product is blank/whitespace", async () => {
     const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
       expect(JSON.parse(String(init.body))).toEqual({ name: "acme", product: "ams" });
-      return Response.json({ name: "acme", product: "ams", state: "provisioning" });
+      return Response.json({ tenant: { name: "acme" }, product: "ams", state: "provisioning" });
     });
     await createTenant("acme", { env: ENABLED_ENV, fetchImpl, product: "   " });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -159,25 +160,41 @@ describe("listTenants + destroyTenant (#7275)", () => {
       expect(url).toBe("https://control.example.internal/v1/tenants");
       expect(init.method).toBe("GET");
       expect(init.body).toBeUndefined();
-      return Response.json({ tenants: [{ name: "acme", product: "ams", state: "active" }] });
+      return Response.json({ tenants: [{ tenant: { name: "acme" }, product: "ams", state: "active", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }] });
     });
     const records = await listTenants({ env: ENABLED_ENV, fetchImpl });
-    expect(records).toEqual([{ name: "acme", product: "ams", state: "active" }]);
+    expect(records).toEqual([{ tenant: { name: "acme" }, product: "ams", state: "active", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" }]);
   });
 
-  it("degrades a missing/non-array `tenants` field to an empty list", async () => {
+  it("FAILS LOUD on a response with no `tenants` field rather than reporting an empty fleet (#9750)", async () => {
+    // Was: degrade to []. An admin listing that answers "you have no tenants" because the control plane
+    // renamed a field is the most misleading possible answer -- and this client's whole documented posture
+    // is that every call fails loud, precisely because these are deliberate admin actions.
     const fetchImpl = async () => Response.json({ note: "no tenants field" });
-    expect(await listTenants({ env: ENABLED_ENV, fetchImpl })).toEqual([]);
+    await expect(listTenants({ env: ENABLED_ENV, fetchImpl })).rejects.toThrow(/does not match the published contract/);
+  });
+
+  it("rejects a tenant record missing a required field, naming the route (#9750)", async () => {
+    const fetchImpl = async () => Response.json({ tenants: [{ product: "ams", state: "active", createdAt: "x", updatedAt: "y" }] });
+    await expect(listTenants({ env: ENABLED_ENV, fetchImpl })).rejects.toThrow(/GET \/v1\/tenants/);
+  });
+
+  it("ACCEPTS a record carrying a field this client has never heard of", async () => {
+    // The schema is a loose object on purpose: a control plane that starts returning one more field must not
+    // break a client validating against today's shape.
+    const entry = { tenant: { name: "acme" }, product: "ams", state: "active", createdAt: "x", updatedAt: "y", somethingNew: 42 };
+    const fetchImpl = async () => Response.json({ tenants: [entry] });
+    expect(await listTenants({ env: ENABLED_ENV, fetchImpl })).toEqual([entry]);
   });
 
   it("DELETEs a URL-encoded name and returns the final record", async () => {
     const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
       expect(url).toBe("https://control.example.internal/v1/tenants/acme%2Fedge");
       expect(init.method).toBe("DELETE");
-      return Response.json({ name: "acme/edge", state: "torn down" });
+      return Response.json({ tenant: { name: "acme/edge" }, product: "ams", state: "torn down" });
     });
     const record = await destroyTenant("acme/edge", { env: ENABLED_ENV, fetchImpl });
-    expect(record).toEqual({ name: "acme/edge", state: "torn down" });
+    expect(record).toEqual({ tenant: { name: "acme/edge" }, product: "ams", state: "torn down" });
   });
 });
 
@@ -235,7 +252,7 @@ describe("tenant argv parsing (#7275)", () => {
 describe("runTenantCreate (#7275)", () => {
   it("prints json and forwards name/product/env/fetchImpl to the injected client", async () => {
     captureConsole();
-    const createSpy = vi.fn(async () => ({ name: "acme", product: "widgets", state: "provisioning" }));
+    const createSpy = vi.fn(async () => ({ tenant: { name: "acme" }, product: "widgets", state: "provisioning" }) as TenantRecord);
     const fetchImpl = vi.fn();
     const code = await runTenantCreate(["acme", "--product", "widgets", "--json"], {
       createTenant: createSpy,
@@ -244,12 +261,12 @@ describe("runTenantCreate (#7275)", () => {
     });
     expect(code).toBe(0);
     expect(createSpy).toHaveBeenCalledWith("acme", { env: ENABLED_ENV, fetchImpl, product: "widgets" });
-    expect(JSON.parse(logs.join(""))).toEqual({ name: "acme", product: "widgets", state: "provisioning" });
+    expect(JSON.parse(logs.join(""))).toEqual({ tenant: { name: "acme" }, product: "widgets", state: "provisioning" });
   });
 
   it("prints a human summary in text mode, omitting product when not supplied", async () => {
     captureConsole();
-    const createSpy = vi.fn(async (_name: string, _options?: Record<string, unknown>) => ({ name: "acme", product: "ams", state: "provisioning" }));
+    const createSpy = vi.fn(async (_name: string, _options?: Record<string, unknown>) => ({ tenant: { name: "acme" }, product: "ams", state: "provisioning" }) as TenantRecord);
     const code = await runTenantCreate(["acme"], { createTenant: createSpy });
     expect(code).toBe(0);
     expect(createSpy.mock.calls[0]![1]).not.toHaveProperty("product");
@@ -285,18 +302,18 @@ describe("runTenantCreate (#7275)", () => {
 describe("runTenantList (#7275)", () => {
   it("prints json of the records", async () => {
     captureConsole();
-    const listSpy = vi.fn(async () => [{ name: "acme", product: "ams", state: "active" }]);
+    const listSpy = vi.fn(async () => [{ tenant: { name: "acme" }, product: "ams", state: "active" }] as TenantRecord[]);
     const code = await runTenantList(["--json"], { listTenants: listSpy });
     expect(code).toBe(0);
-    expect(JSON.parse(logs.join(""))).toEqual([{ name: "acme", product: "ams", state: "active" }]);
+    expect(JSON.parse(logs.join(""))).toEqual([{ tenant: { name: "acme" }, product: "ams", state: "active" }]);
   });
 
   it("prints one line per tenant in text mode", async () => {
     captureConsole();
     const listSpy = vi.fn(async () => [
-      { name: "acme", product: "ams", state: "active" },
-      { name: "beta", product: "widgets", state: "suspended" },
-    ]);
+      { tenant: { name: "acme" }, product: "ams", state: "active" },
+      { tenant: { name: "beta" }, product: "widgets", state: "suspended" },
+    ] as TenantRecord[]);
     const code = await runTenantList([], { listTenants: listSpy });
     expect(code).toBe(0);
     expect(logs.join("")).toBe("acme  product=ams  state=active\nbeta  product=widgets  state=suspended");
@@ -309,7 +326,9 @@ describe("runTenantList (#7275)", () => {
     expect(logs.join("")).toBe("no tenants");
 
     logs = [];
-    await runTenantList([], { listTenants: vi.fn(async () => [{} as Record<string, unknown>]) });
+    // A record missing every field still renders rather than throwing mid-listing -- the schema is a loose
+    // object and an older control plane is a real possibility.
+    await runTenantList([], { listTenants: vi.fn(async () => [{} as unknown as TenantRecord]) });
     expect(logs.join("")).toBe("(unknown)  product=(unknown)  state=(unknown)");
   });
 
@@ -337,17 +356,17 @@ describe("runTenantList (#7275)", () => {
 describe("runTenantDestroy (#7275)", () => {
   it("prints json and forwards the name to the injected client", async () => {
     captureConsole();
-    const destroySpy = vi.fn(async () => ({ name: "acme", state: "torn down" }));
+    const destroySpy = vi.fn(async () => ({ tenant: { name: "acme" }, product: "ams", state: "torn down" }) as TenantRecord);
     const code = await runTenantDestroy(["acme", "--json"], { destroyTenant: destroySpy });
     expect(code).toBe(0);
     expect(destroySpy).toHaveBeenCalledWith("acme", { env: undefined, fetchImpl: undefined });
-    expect(JSON.parse(logs.join(""))).toEqual({ name: "acme", state: "torn down" });
+    expect(JSON.parse(logs.join(""))).toEqual({ tenant: { name: "acme" }, product: "ams", state: "torn down" });
   });
 
   it("prints a human summary in text mode", async () => {
     captureConsole();
     const code = await runTenantDestroy(["acme"], {
-      destroyTenant: vi.fn(async () => ({ name: "acme", product: "ams", state: "torn down" })),
+      destroyTenant: vi.fn(async () => ({ tenant: { name: "acme" }, product: "ams", state: "torn down" }) as TenantRecord),
     });
     expect(code).toBe(0);
     expect(logs.join("")).toBe("destroyed acme  product=ams  state=torn down");
@@ -377,9 +396,9 @@ describe("runTenantDestroy (#7275)", () => {
 describe("runTenantCli dispatch (#7275)", () => {
   it("routes each subcommand to its handler", async () => {
     captureConsole();
-    expect(await runTenantCli("create", ["acme"], { createTenant: vi.fn(async () => ({ name: "acme", product: "ams", state: "provisioning" })) })).toBe(0);
+    expect(await runTenantCli("create", ["acme"], { createTenant: vi.fn(async () => ({ tenant: { name: "acme" }, product: "ams", state: "provisioning" }) as TenantRecord) })).toBe(0);
     expect(await runTenantCli("list", [], { listTenants: vi.fn(async () => []) })).toBe(0);
-    expect(await runTenantCli("destroy", ["acme"], { destroyTenant: vi.fn(async () => ({ name: "acme", product: "ams", state: "torn down" })) })).toBe(0);
+    expect(await runTenantCli("destroy", ["acme"], { destroyTenant: vi.fn(async () => ({ tenant: { name: "acme" }, product: "ams", state: "torn down" }) as TenantRecord) })).toBe(0);
   });
 
   it("reports usage for an unknown or missing subcommand", async () => {

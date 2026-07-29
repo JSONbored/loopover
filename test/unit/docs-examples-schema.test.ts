@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { localBranchAnalysisSchema } from "../../src/api/routes";
+import { localBranchAnalysisSchema } from "@loopover/contract/api-requests";
 
 // Drift guard (#3045): docs.branch-analysis.tsx and docs.scoreability.tsx each embed a hand-typed
 // JSON example that is supposed to mirror a real backing schema/type. Both pages previously drifted

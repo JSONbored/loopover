@@ -11,6 +11,7 @@
 // This module is the comparison. It is deliberately pure (no fs, no env) so both the ratchet test
 // and any future tooling can use it, and so it stays cheap enough to run on every CI job.
 import type { Hono } from "hono";
+import { SELFHOST_INFRA_ROUTE_KEYS } from "./selfhost-infra-route-specs";
 
 /** A route as either side describes it, normalized to one comparable string. */
 export type RouteKey = string;
@@ -74,8 +75,13 @@ export type RouteSpecDiff = {
 export function diffRoutesAgainstSpec(liveKeys: readonly RouteKey[], specKeys: readonly RouteKey[]): RouteSpecDiff {
   const live = new Set(liveKeys);
   const spec = new Set(specKeys);
+  // #9750: the self-host entrypoint answers a handful of paths in its OWN fetch handler, before the request
+  // reaches this app, so they are legitimately specced without appearing in createApp()'s route table. This
+  // is the ONLY exemption, and it cannot be widened by hand: SELFHOST_INFRA_ROUTE_KEYS is asserted against
+  // the paths src/server.ts really intercepts, read out of its source.
+  const servedElsewhere = new Set<string>(SELFHOST_INFRA_ROUTE_KEYS);
   return {
     missingFromSpec: liveKeys.filter((key) => !spec.has(key)),
-    missingFromApp: specKeys.filter((key) => !live.has(key)),
+    missingFromApp: specKeys.filter((key) => !live.has(key) && !servedElsewhere.has(key)),
   };
 }

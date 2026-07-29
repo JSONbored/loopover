@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "LoopOver control-plane — product-agnostic tenant provisioning/deprovisioning orchestration behind an injectable driver interface (#7524, part of the #7173 ORB+AMS hosting control-plane). Fake in-memory driver only; real Cloudflare/Postgres drivers are out of scope pending the Postgres-provider decision.",
+  "description": "LoopOver control-plane \u2014 product-agnostic tenant provisioning/deprovisioning orchestration behind an injectable driver interface (#7524, part of the #7173 ORB+AMS hosting control-plane). Fake in-memory driver only; real Cloudflare/Postgres drivers are out of scope pending the Postgres-provider decision.",
   "engines": {
     "node": ">=20"
   },
@@ -21,7 +21,8 @@
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",
-    "hono": "^4.12.31"
+    "hono": "^4.12.31",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260724.1",

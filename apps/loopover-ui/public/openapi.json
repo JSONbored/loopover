@@ -27036,6 +27036,146 @@
           }
         }
       }
+    },
+    "/ready": {
+      "get": {
+        "operationId": "getSelfhostReadiness",
+        "tags": [
+          "Self-host infra"
+        ],
+        "summary": "Readiness probe for this self-hosted instance",
+        "description": "Runs the instance's readiness probes against its own database. Answers 503 when any probe fails, so a container orchestrator can gate traffic on the status code alone.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Every readiness probe passed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": {
+                    "nullable": true
+                  },
+                  "description": "Readiness result. `ok: false` is answered with a 503 so an orchestrator can act on the status line alone."
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "At least one readiness probe failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "ok"
+                  ],
+                  "additionalProperties": {
+                    "nullable": true
+                  },
+                  "description": "Readiness result. `ok: false` is answered with a 503 so an orchestrator can act on the status line alone."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "getSelfhostMetrics",
+        "tags": [
+          "Self-host infra"
+        ],
+        "summary": "Prometheus metrics for this self-hosted instance",
+        "description": "Prometheus text exposition (`text/plain; version=0.0.4`), not JSON — this is the scrape endpoint, and it is the one operation here whose response is deliberately not a schema.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Metrics in Prometheus text exposition format"
+          }
+        }
+      }
+    },
+    "/setup": {
+      "get": {
+        "operationId": "getSelfhostSetupWizard",
+        "tags": [
+          "Self-host infra"
+        ],
+        "summary": "First-run GitHub App setup wizard",
+        "description": "Available only while no GitHub App is configured — a live install cannot be rebound. Returns the token-entry form until SELFHOST_SETUP_TOKEN is presented, via the `x-setup-token` header or an `authorization` bearer; never a query parameter, which would leak the secret to access logs and browser history. In brokered mode (ORB_ENROLLMENT_SECRET set) it short-circuits to a brokered-mode page instead.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The token-entry form, or the setup page once authenticated"
+          },
+          "400": {
+            "description": "SELFHOST_SETUP_TOKEN or PUBLIC_API_ORIGIN is not configured"
+          },
+          "403": {
+            "description": "A setup token was supplied and did not match"
+          }
+        }
+      },
+      "post": {
+        "operationId": "postSelfhostSetupWizard",
+        "tags": [
+          "Self-host infra"
+        ],
+        "summary": "Submit the setup token from the wizard's form",
+        "description": "The browser half of the same wizard: the token travels in the POST body rather than a header, for the same reason it never travels in the URL.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The setup page, once the submitted token matched"
+          },
+          "400": {
+            "description": "SELFHOST_SETUP_TOKEN or PUBLIC_API_ORIGIN is not configured"
+          },
+          "403": {
+            "description": "The submitted token did not match"
+          }
+        }
+      }
+    },
+    "/setup/callback": {
+      "get": {
+        "operationId": "getSelfhostSetupCallback",
+        "tags": [
+          "Self-host infra"
+        ],
+        "summary": "GitHub App creation callback for the setup wizard",
+        "description": "Where GitHub returns after the operator creates the App. The one-time code is exchanged for the App's private key and webhook secret, so the redirect origin comes from PUBLIC_API_ORIGIN rather than the request's Host header — a spoofed Host would otherwise send the callback, and the credentials, somewhere else.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The App was created and its credentials were persisted"
+          },
+          "400": {
+            "description": "No `code` parameter, or the wizard is not configured"
+          },
+          "403": {
+            "description": "The `state` parameter did not match the one issued"
+          },
+          "500": {
+            "description": "GitHub rejected the code exchange"
+          }
+        }
+      }
     }
   },
   "servers": [

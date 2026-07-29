@@ -335,6 +335,14 @@ describe("extractSubmittedSourceUrls — frontmatter parsing edge cases", () => 
     );
   });
 
+  it("captures a scalar-only source field authored as a ZERO-INDENT block sequence (#9664)", () => {
+    // The ported sequence branch dropped a zero-indent `- item`, so a URL written this way — valid YAML that
+    // js-yaml/gray-matter accept — never reached the fetch-reachability gate. Mirrors the indented #8016 case.
+    const src = ["---", "documentationUrl:", "- https://docs.acme.example/guide", "---", "", "body"].join("\n");
+    const urls = extractSubmittedSourceUrls(src);
+    expect(urls.map((u) => `${u.field}:${u.url}`)).toContain("documentationUrl:https://docs.acme.example/guide");
+  });
+
   it("does not surface any block-scalar header on a list field as a bogus URL (both indicator orders)", () => {
     // `retrievalSources` is a list field; a block-scalar header is not a URL. The old guard only skipped the bare
     // `|`/`>`, so `|-` leaked as the literal url "|-". YAML allows chomping and the indentation digit in EITHER

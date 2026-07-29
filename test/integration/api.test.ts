@@ -37,6 +37,7 @@ import {
   upsertAgentRecommendationOutcome,
 } from "../../src/db/repositories";
 import { createApp } from "../../src/api/routes";
+import { renderUnavailableBadgeSvg } from "../../src/api/badge";
 import { clearPublicRepoStatsCacheForTests } from "../../src/github/public";
 import { getRepositoryCollaboratorPermission } from "../../src/github/app";
 import { BURDEN_FORECAST_MAX_AGE_MS } from "../../src/services/burden-forecast";
@@ -324,7 +325,13 @@ describe("api routes", () => {
     await upsertRepositoryFromGitHub(env, { name: "not-opted-in", full_name: "acme/not-opted-in", private: false, owner: { login: "acme" }, default_branch: "main" }, 556);
     const notOptedIn = await app.request("/v1/public/repos/acme/not-opted-in/badge.svg", {}, env);
     expect(notOptedIn.status).toBe(404);
-    expect(await notOptedIn.text()).toContain("unavailable");
+    // #9710: the "no public badge" 404 carries the SHORT cache (not the long stale-while-revalidate window) and
+    // renders the exact unavailable badge -- the same shape a monitor distinguishes from the 503 loader-failure.
+    expect(notOptedIn.headers.get("cache-control")).toBe("public, max-age=300");
+    expect(await notOptedIn.text()).toBe(renderUnavailableBadgeSvg());
+    const notOptedInJson = await app.request("/v1/public/repos/acme/not-opted-in/badge.json", {}, env);
+    expect(notOptedInJson.status).toBe(404);
+    expect(notOptedInJson.headers.get("cache-control")).toBe("public, max-age=300");
 
     // Private repos stay unavailable even when installed and explicitly opted in.
     await upsertRepositoryFromGitHub(env, { name: "private", full_name: "acme/private", private: true, owner: { login: "acme" }, default_branch: "main" }, 558);
@@ -358,7 +365,8 @@ describe("api routes", () => {
     expect(failedSvg.status).toBe(503);
     expect(failedSvg.headers.get("content-type")).toContain("image/svg+xml");
     expect(failedSvg.headers.get("cache-control")).toBe("public, max-age=300");
-    expect(await failedSvg.text()).toContain("unavailable");
+    // #9710: the 503 loader-failure branch renders the exact same unavailable badge as the 404 branch.
+    expect(await failedSvg.text()).toBe(renderUnavailableBadgeSvg());
 
     const failedJson = await app.request("/v1/public/repos/acme/badged/badge.json", {}, brokenEnv);
     expect(failedJson.status).toBe(503);

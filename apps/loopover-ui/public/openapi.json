@@ -25915,6 +25915,12 @@
         "responses": {
           "200": {
             "description": "Badge payload"
+          },
+          "404": {
+            "description": "The repo has no public badge (unknown, private, uninstalled, or badgeEnabled off)"
+          },
+          "503": {
+            "description": "The badge data could not be loaded (a transient loader failure, short-cached)"
           }
         },
         "security": []
@@ -25948,6 +25954,12 @@
         "responses": {
           "200": {
             "description": "SVG badge"
+          },
+          "404": {
+            "description": "The repo has no public badge (unknown, private, uninstalled, or badgeEnabled off)"
+          },
+          "503": {
+            "description": "The badge data could not be loaded (a transient loader failure, short-cached)"
           }
         },
         "security": []

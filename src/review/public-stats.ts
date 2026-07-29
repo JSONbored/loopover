@@ -356,9 +356,10 @@ export async function getPublicStats(
   // The own-ledger side needs at least one allowlisted project to query; an empty allowlist skips these three
   // queries entirely (own-ledger totals stay zero) but still lets the Orb aggregate below run.
   const inList = projects.map(() => "?").join(", ");
-  const [dispositions, reversalRows, weeklyRows, effortRows] = projects.length === 0
+  const [dispositions, windowedDispositions, reversalRows, weeklyRows, effortRows] = projects.length === 0
     ? await Promise.all([
         Promise.resolve<DispositionRow[]>([]),
+        Promise.resolve<{ project: string; merged: number; closed: number }[]>([]),
         Promise.resolve<{ project: string; reversed: number }[]>([]),
         Promise.resolve<{ reviewed: number; merged: number }[]>([]),
         Promise.resolve<{ totalMinutes: number | null }[]>([]),
@@ -375,6 +376,25 @@ export async function getPublicStats(
          LEFT JOIN pull_requests pr ON pr.repo_full_name = ev.repo AND pr.number = ev.number
         WHERE LOWER(ev.repo) IN (${inList})
         GROUP BY ev.repo`,
+      ...projects,
+    ),
+    // The ACCURACY denominator, bounded to the same window its numerator can survive in. `reviewed`/
+    // `merged`/`closed` above are lifetime: `github_app.pr_public_surface_published` is the single
+    // retention-EXEMPT audit event type (src/db/retention.ts's DURABLE_AUDIT_EVENT_TYPES), so those
+    // counts never shrink. `reversal_*` rows are pruned with the rest of audit_events at 90 days. Pairing
+    // an immortal denominator with a 90-day numerator makes `1 - reversed/decided` drift toward 100% as
+    // the ledger ages, independent of real reversal behavior -- the same shape #7449 fixed for the
+    // Orb-folded denominator, and confirmed live (2377/602/508 reviewed, 0 reversals, 100% each).
+    safeAll<{ project: string; merged: number; closed: number }>(
+      env,
+      `SELECT ev.repo AS project,
+              SUM(CASE WHEN pr.merged_at IS NOT NULL THEN 1 ELSE 0 END) AS merged,
+              SUM(CASE WHEN pr.state = 'closed' AND pr.merged_at IS NULL THEN 1 ELSE 0 END) AS closed
+         FROM (SELECT DISTINCT repo, number FROM (${PUBLISHED_PR_KEYS}) WHERE created_at >= ?) ev
+         LEFT JOIN pull_requests pr ON pr.repo_full_name = ev.repo AND pr.number = ev.number
+        WHERE LOWER(ev.repo) IN (${inList})
+        GROUP BY ev.repo`,
+      retentionCutoffIsoForTable("audit_events"),
       ...projects,
     ),
     safeAll<{ project: string; reversed: number }>(
@@ -466,6 +486,10 @@ export async function getPublicStats(
   // question about the same deployment, rather than one of them silently disagreeing with the others.
   const totalReversals = [...reversedByProject.values()].reduce((sum, n) => sum + n, 0);
   const reversalObservable = await loadReversalObservability(env, totalReversals);
+  // project -> the retention-windowed merged/closed pairing for `reversed`. See the query's own comment.
+  const windowedByProject = new Map(windowedDispositions.map((row) => [String(row.project).toLowerCase(), row]));
+  let windowedMerged = 0;
+  let windowedClosed = 0;
   const byProject = dispositions
     .map((d) => {
       const merged = d.merged ?? 0;
@@ -474,6 +498,11 @@ export async function getPublicStats(
       const reversed =
         reversedByProject.get(String(d.project).toLowerCase()) ?? 0;
       const reviewed = merged + closed + inReview;
+      const windowed = windowedByProject.get(String(d.project).toLowerCase());
+      const windowedRepoMerged = windowed?.merged ?? 0;
+      const windowedRepoClosed = windowed?.closed ?? 0;
+      windowedMerged += windowedRepoMerged;
+      windowedClosed += windowedRepoClosed;
       totals.handled += reviewed;
       totals.merged += merged;
       totals.closed += closed;
@@ -485,7 +514,7 @@ export async function getPublicStats(
         reviewed,
         merged,
         closed,
-        accuracyPct: accuracyPct(merged, closed, reversed, reversalObservable),
+        accuracyPct: accuracyPct(windowedRepoMerged, windowedRepoClosed, reversed, reversalObservable),
       };
     })
     .filter((r) => r.reviewed > 0)
@@ -501,13 +530,13 @@ export async function getPublicStats(
   // Snapshot before Orb merge: effort SQL only covers allowlisted own-ledger publishes, while `reviewed`
   // below includes Orb fleet outcomes folded into totals.merged/closed.
   const ownLedgerReviewed = reviewedOf(totals);
-  // #7449: also snapshot the pre-fold own-ledger merged/closed. totals.reversed stays own-ledger-only (the Orb
-  // aggregate has no reversal concept), so the published global accuracyPct below is computed from THESE, not the
-  // fleet-folded totals.merged/closed -- otherwise the denominator would grow with every newly registered install
-  // while the numerator stayed own-ledger-scoped, trending the percentage toward 100 independent of real reversal
-  // behavior. The fleet fold still (correctly) inflates reviewed/handled/minutesSaved, which have no such pairing.
-  const ownLedgerMerged = totals.merged;
-  const ownLedgerClosed = totals.closed;
+  // #7449 (superseded, same reasoning): the published global accuracyPct is NOT computed from
+  // totals.merged/closed. Those are lifetime AND fleet-folded, while totals.reversed is own-ledger-only and
+  // 90-day-pruned, so pairing them lets the denominator grow -- with every newly registered install, and with
+  // every additional day of immortal publish events -- while the numerator cannot, trending the percentage
+  // toward 100 independent of real reversal behavior. windowedMerged/windowedClosed (accumulated above) is the
+  // pairing that shares BOTH of the numerator's bounds: own-ledger only, and inside audit_events' retention
+  // window. The fleet fold still correctly inflates reviewed/handled/minutesSaved, which have no such pairing.
   // Fleet accuracy (bugfix, #fairness-analytics): independent of the own-ledger allowlist above, so it's fetched
   // unconditionally alongside the Orb global fold, matching that fold's own unscoped-regardless-of-allowlist
   // behavior (see the "skips the own-ledger queries but still queries the Orb aggregate" test).
@@ -610,10 +639,11 @@ export async function getPublicStats(
       ...totals,
       reviewed,
       filteredPct: filteredPct(reviewed, totals.merged),
-      // Option 1 of #7449: compute the global accuracy from the OWN-LEDGER merged/closed snapshot (not the
-      // fleet-folded totals.merged/closed), so its numerator (own-ledger reversed) and denominator are drawn
-      // from the same population. See the ownLedgerMerged/ownLedgerClosed snapshot above the Orb fold for why.
-      accuracyPct: accuracyPct(ownLedgerMerged, ownLedgerClosed, totals.reversed, reversalObservable),
+      // #7449 extended: compute the global accuracy from windowedMerged/windowedClosed (accumulated in the
+      // byProject fold above), never the fleet-folded lifetime totals.merged/closed, so the numerator
+      // (own-ledger `reversed`) and the denominator are drawn from the same population AND the same
+      // retention window. See the windowed disposition query's own comment for both halves of that pairing.
+      accuracyPct: accuracyPct(windowedMerged, windowedClosed, totals.reversed, reversalObservable),
       minutesSaved,
     },
     weekly: { reviewed: w.reviewed ?? 0, merged: w.merged ?? 0 },

@@ -125,6 +125,22 @@ describe("selectInlineComments (#inline-comments)", () => {
     expect(out).toEqual([{ path: "src/a.ts", line: 2, side: "RIGHT", body: "**Blocker:** Must fix." }]);
   });
 
+  it("anchors a blocker after a blank context line correctly and drops one on the blank line itself (#9663)", () => {
+    // Patch with a blank context line (line 2) then an added line (line 3). Before #9663 addedLinesFromPatch
+    // returned {2} instead of {3}, so the blocker on the ADDED line 3 was dropped and a blocker on the blank
+    // CONTEXT line 2 was wrongly posted -- the exact "your bug is on a line you did not write" failure #9076
+    // exists to prevent, on the path (addedLines) that enforces it for blocker-severity findings.
+    const blankContextFiles = [fileWith("src/a.ts", "@@ -1,3 +1,3 @@\n one\n\n+three")];
+    const out = selectInlineComments(
+      [
+        { path: "src/a.ts", line: 3, severity: "blocker", body: "Real defect on the added line." },
+        { path: "src/a.ts", line: 2, severity: "blocker", body: "Anchored on a blank context line." },
+      ],
+      blankContextFiles,
+    );
+    expect(out).toEqual([{ path: "src/a.ts", line: 3, side: "RIGHT", body: "**Blocker:** Real defect on the added line." }]);
+  });
+
   it("caps the output at 10 comments", () => {
     const bigPatch = "@@ -1,0 +1,12 @@\n" + Array.from({ length: 12 }, (_, i) => `+line${i + 1}`).join("\n");
     const bigFiles = [{ path: "src/big.ts", payload: { patch: bigPatch } }];

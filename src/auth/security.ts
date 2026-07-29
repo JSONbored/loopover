@@ -119,7 +119,12 @@ export async function authenticatePrivateToken(env: Env, token: string | undefin
 }
 
 export async function authenticateInternalToken(env: Env, token: string | undefined): Promise<AuthIdentity | null> {
-  if (await timingSafeEqual(token, env.INTERNAL_JOB_TOKEN)) return { kind: "static", actor: "internal" };
+  // Mirror authenticatePrivateToken's normalization (#9713): early-exit on a falsy bearer, and compare against the
+  // trimmed secret via nonBlank(). extractBearerToken already trims the incoming token, so an INTERNAL_JOB_TOKEN
+  // secret carrying a trailing newline (the shape a `wrangler secret put` piped from a file produces) would
+  // otherwise never match any caller and 401 every /v1/internal/* route, unlike the three secrets above.
+  if (!token) return null;
+  if (await timingSafeEqual(token, nonBlank(env.INTERNAL_JOB_TOKEN))) return { kind: "static", actor: "internal" };
   return null;
 }
 

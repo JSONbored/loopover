@@ -61,7 +61,7 @@ type ReviewRecapInputs = {
  *  one, else `updatedAt` (always populated on write — see toPullRequestRecordFromRow) as a fallback, since a
  *  closed PR's last update IS effectively its close time absent a dedicated column. Returns NaN (never
  *  counted as "in window") only when BOTH are missing/unparseable. */
-function closedAtMs(pr: { closedAt?: string | null | undefined; updatedAt?: string | null | undefined }): number {
+export function closedAtMs(pr: { closedAt?: string | null | undefined; updatedAt?: string | null | undefined }): number {
   const closed = pr.closedAt ? Date.parse(pr.closedAt) : Number.NaN;
   if (Number.isFinite(closed)) return closed;
   const updated = pr.updatedAt ? Date.parse(pr.updatedAt) : Number.NaN;

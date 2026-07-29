@@ -62,6 +62,10 @@ const STAGED_AHEAD_OF_CONSUMERS: ReadonlyMap<string, string> = new Map([
     "src/openapi/define-route.ts",
     "The route-registration seam (#9519), landed by #9533 ahead of the 241-route migration it exists for; #9531 moves routes onto it incrementally.",
   ],
+  [
+    "src/review/benchmark-eval-records.ts",
+    "The benchmark score-record emitter + leaderboard derivation (#9265). Deliberately ahead of its serving route: #9216's endpoint sub-issue wires GET /v1/public/eval-scores to emit benchmark_run records, and #9264 supplies the attestation envelopes its `attested` tier needs. Fully covered by test/unit/benchmark-eval-records.test.ts today.",
+  ],
 ]);
 
 function isEntryPoint(file: string): boolean {

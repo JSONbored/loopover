@@ -440,3 +440,101 @@ describe("self-host environment preflight (#2080)", () => {
     );
   });
 });
+
+describe("ledger-anchor configuration preflight (#9769)", () => {
+  const privateKey = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey.export({ format: "pem", type: "pkcs8" }).toString();
+  const base = { REDIS_URL: "redis://redis:6379", GITHUB_APP_ID: "123", GITHUB_APP_PRIVATE_KEY: privateKey };
+  const key = (over: Record<string, unknown> = {}) => JSON.stringify([{ keyId: "k1", publicKeySpki: "c3BraQ==", notBefore: "2026-01-01T00:00:00.000Z", notAfter: null, ...over }]);
+  const anchorProblems = (env: Record<string, string | undefined>) => {
+    const result = preflightEnv({ ...base, ...env });
+    return result.problems.filter((p: SelfHostPreflightProblem) => p.var.startsWith("LOOPOVER_LEDGER_ANCHOR"));
+  };
+
+  it("INVARIANT: anchoring is opt-in — configuring none of it is never a problem", () => {
+    expect(preflightEnv(base)).toEqual({ ok: true, problems: [] });
+  });
+
+  it("accepts a fully configured Rekor-only setup", () => {
+    expect(anchorProblems({ LOOPOVER_LEDGER_ANCHOR_KEYS: key(), LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY: "pem" })).toEqual([]);
+  });
+
+  it("REGRESSION: catches a published key with no private half — silently disables anchoring today", () => {
+    expect(anchorProblems({ LOOPOVER_LEDGER_ANCHOR_KEYS: key() })).toEqual([
+      expect.objectContaining({ var: "LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY" }),
+    ]);
+  });
+
+  it("REGRESSION: catches a private key with nothing published — anchors would be unverifiable", () => {
+    expect(anchorProblems({ LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY: "pem" })).toEqual([
+      expect.objectContaining({ var: "LOOPOVER_LEDGER_ANCHOR_KEYS" }),
+    ]);
+  });
+
+  it("catches a key list that parses to nothing (malformed JSON, or entries missing required fields)", () => {
+    for (const raw of ["not json", "{}", "[]", JSON.stringify([{ keyId: "k1" }])]) {
+      expect(anchorProblems({ LOOPOVER_LEDGER_ANCHOR_KEYS: raw, LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY: "pem" })).toEqual([
+        expect.objectContaining({ var: "LOOPOVER_LEDGER_ANCHOR_KEYS", message: expect.stringContaining("No usable entries") }),
+      ]);
+    }
+  });
+
+  it("catches a key list with no open-ended entry — no current signing key", () => {
+    const problems = anchorProblems({ LOOPOVER_LEDGER_ANCHOR_KEYS: key({ notAfter: "2026-06-01T00:00:00.000Z" }), LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY: "pem" });
+    expect(problems[0]?.message).toContain("No entry has notAfter: null");
+  });
+
+  it("catches an AMBIGUOUS rotation — more than one open-ended entry fails closed at runtime", () => {
+    const twoOpen = JSON.stringify([
+      { keyId: "k1", publicKeySpki: "c3BraQ==", notBefore: "2026-01-01T00:00:00.000Z", notAfter: null },
+      { keyId: "k2", publicKeySpki: "c3BraR==", notBefore: "2026-02-01T00:00:00.000Z", notAfter: null },
+    ]);
+    const problems = anchorProblems({ LOOPOVER_LEDGER_ANCHOR_KEYS: twoOpen, LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY: "pem" });
+    expect(problems[0]?.message).toContain("2 entries have notAfter: null");
+  });
+
+  it("catches a git target with no installation id — the backend is skipped silently", () => {
+    expect(
+      anchorProblems({
+        LOOPOVER_LEDGER_ANCHOR_KEYS: key(),
+        LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY: "pem",
+        LOOPOVER_LEDGER_ANCHOR_GIT_OWNER: "acme",
+        LOOPOVER_LEDGER_ANCHOR_GIT_REPO: "anchors",
+      }),
+    ).toEqual([expect.objectContaining({ var: "LOOPOVER_LEDGER_ANCHOR_GIT_INSTALLATION_ID" })]);
+  });
+
+  it("catches a non-positive-integer installation id", () => {
+    for (const bad of ["0", "-1", "abc", "1.5"]) {
+      const problems = anchorProblems({
+        LOOPOVER_LEDGER_ANCHOR_KEYS: key(),
+        LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY: "pem",
+        LOOPOVER_LEDGER_ANCHOR_GIT_OWNER: "acme",
+        LOOPOVER_LEDGER_ANCHOR_GIT_REPO: "anchors",
+        LOOPOVER_LEDGER_ANCHOR_GIT_INSTALLATION_ID: bad,
+      });
+      expect(problems.some((p) => p.message.includes("positive integer"))).toBe(true);
+    }
+  });
+
+  it("catches half a git target in either direction", () => {
+    const shared = { LOOPOVER_LEDGER_ANCHOR_KEYS: key(), LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY: "pem", LOOPOVER_LEDGER_ANCHOR_GIT_INSTALLATION_ID: "42" };
+    expect(anchorProblems({ ...shared, LOOPOVER_LEDGER_ANCHOR_GIT_OWNER: "acme" })).toEqual([
+      expect.objectContaining({ var: "LOOPOVER_LEDGER_ANCHOR_GIT_REPO" }),
+    ]);
+    expect(anchorProblems({ ...shared, LOOPOVER_LEDGER_ANCHOR_GIT_REPO: "anchors" })).toEqual([
+      expect.objectContaining({ var: "LOOPOVER_LEDGER_ANCHOR_GIT_OWNER" }),
+    ]);
+  });
+
+  it("accepts a fully configured git + Rekor setup", () => {
+    expect(
+      anchorProblems({
+        LOOPOVER_LEDGER_ANCHOR_KEYS: key(),
+        LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY: "pem",
+        LOOPOVER_LEDGER_ANCHOR_GIT_OWNER: "acme",
+        LOOPOVER_LEDGER_ANCHOR_GIT_REPO: "anchors",
+        LOOPOVER_LEDGER_ANCHOR_GIT_INSTALLATION_ID: "42",
+      }),
+    ).toEqual([]);
+  });
+});

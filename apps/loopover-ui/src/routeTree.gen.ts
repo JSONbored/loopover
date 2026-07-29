@@ -9,83 +9,43 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as RoadmapRouteImport } from './routes/roadmap'
-import { Route as MinersRouteImport } from './routes/miners'
-import { Route as MaintainersRouteImport } from './routes/maintainers'
-import { Route as InstallRouteImport } from './routes/install'
-import { Route as FairnessRouteImport } from './routes/fairness'
-import { Route as DocsRouteImport } from './routes/docs'
-import { Route as ChangelogRouteImport } from './routes/changelog'
-import { Route as AppRouteImport } from './routes/app'
-import { Route as ApiRouteImport } from './routes/api'
-import { Route as AgentsRouteImport } from './routes/agents'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as InstallIndexRouteImport } from './routes/install.index'
-import { Route as DocsIndexRouteImport } from './routes/docs.index'
-import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as AgentsRouteImport } from './routes/agents'
+import { Route as ApiRouteImport } from './routes/api'
+import { Route as AppRouteImport } from './routes/app'
+import { Route as ChangelogRouteImport } from './routes/changelog'
+import { Route as DocsRouteImport } from './routes/docs'
+import { Route as FairnessRouteImport } from './routes/fairness'
+import { Route as InstallRouteImport } from './routes/install'
+import { Route as MaintainersRouteImport } from './routes/maintainers'
+import { Route as MinersRouteImport } from './routes/miners'
+import { Route as RoadmapRouteImport } from './routes/roadmap'
 import { Route as ApiIndexRouteImport } from './routes/api.index'
-import { Route as InstallPermissionsRouteImport } from './routes/install.permissions'
-import { Route as DocsFumadocsSpikeApiReferenceRouteImport } from './routes/docs.fumadocs-spike-api-reference'
-import { Route as DocsSlugRouteImport } from './routes/docs.$slug'
-import { Route as AppWorkbenchRouteImport } from './routes/app.workbench'
-import { Route as AppRunsRouteImport } from './routes/app.runs'
-import { Route as AppReposRouteImport } from './routes/app.repos'
-import { Route as AppPlaygroundRouteImport } from './routes/app.playground'
-import { Route as AppOwnerRouteImport } from './routes/app.owner'
-import { Route as AppOperatorRouteImport } from './routes/app.operator'
-import { Route as AppMinerRouteImport } from './routes/app.miner'
-import { Route as AppMaintainerRouteImport } from './routes/app.maintainer'
-import { Route as AppDigestRouteImport } from './routes/app.digest'
-import { Route as AppConfigGeneratorRouteImport } from './routes/app.config-generator'
-import { Route as AppCommandsRouteImport } from './routes/app.commands'
-import { Route as AppAuditRouteImport } from './routes/app.audit'
-import { Route as AppAnalyticsRouteImport } from './routes/app.analytics'
 import { Route as ApiOpRouteImport } from './routes/api.$op'
+import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as AppAnalyticsRouteImport } from './routes/app.analytics'
+import { Route as AppAuditRouteImport } from './routes/app.audit'
+import { Route as AppCommandsRouteImport } from './routes/app.commands'
+import { Route as AppConfigGeneratorRouteImport } from './routes/app.config-generator'
+import { Route as AppDigestRouteImport } from './routes/app.digest'
+import { Route as AppMaintainerRouteImport } from './routes/app.maintainer'
+import { Route as AppMinerRouteImport } from './routes/app.miner'
+import { Route as AppOperatorRouteImport } from './routes/app.operator'
+import { Route as AppOwnerRouteImport } from './routes/app.owner'
+import { Route as AppPlaygroundRouteImport } from './routes/app.playground'
+import { Route as AppReposRouteImport } from './routes/app.repos'
+import { Route as AppRunsRouteImport } from './routes/app.runs'
+import { Route as AppWorkbenchRouteImport } from './routes/app.workbench'
+import { Route as DocsIndexRouteImport } from './routes/docs.index'
+import { Route as DocsSlugRouteImport } from './routes/docs.$slug'
+import { Route as DocsFumadocsSpikeApiReferenceRouteImport } from './routes/docs.fumadocs-spike-api-reference'
+import { Route as InstallIndexRouteImport } from './routes/install.index'
+import { Route as InstallPermissionsRouteImport } from './routes/install.permissions'
 import { Route as ReposOwnerRepoQualityRouteImport } from './routes/repos.$owner.$repo.quality'
 
-const RoadmapRoute = RoadmapRouteImport.update({
-  id: '/roadmap',
-  path: '/roadmap',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MinersRoute = MinersRouteImport.update({
-  id: '/miners',
-  path: '/miners',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MaintainersRoute = MaintainersRouteImport.update({
-  id: '/maintainers',
-  path: '/maintainers',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const InstallRoute = InstallRouteImport.update({
-  id: '/install',
-  path: '/install',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const FairnessRoute = FairnessRouteImport.update({
-  id: '/fairness',
-  path: '/fairness',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DocsRoute = DocsRouteImport.update({
-  id: '/docs',
-  path: '/docs',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ChangelogRoute = ChangelogRouteImport.update({
-  id: '/changelog',
-  path: '/changelog',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AppRoute = AppRouteImport.update({
-  id: '/app',
-  path: '/app',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ApiRoute = ApiRouteImport.update({
-  id: '/api',
-  path: '/api',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AgentsRoute = AgentsRouteImport.update({
@@ -93,105 +53,64 @@ const AgentsRoute = AgentsRouteImport.update({
   path: '/agents',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const ApiRoute = ApiRouteImport.update({
+  id: '/api',
+  path: '/api',
   getParentRoute: () => rootRouteImport,
 } as any)
-const InstallIndexRoute = InstallIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => InstallRoute,
+const AppRoute = AppRouteImport.update({
+  id: '/app',
+  path: '/app',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const DocsIndexRoute = DocsIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => DocsRoute,
+const ChangelogRoute = ChangelogRouteImport.update({
+  id: '/changelog',
+  path: '/changelog',
+  getParentRoute: () => rootRouteImport,
 } as any)
-const AppIndexRoute = AppIndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => AppRoute,
+const DocsRoute = DocsRouteImport.update({
+  id: '/docs',
+  path: '/docs',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const FairnessRoute = FairnessRouteImport.update({
+  id: '/fairness',
+  path: '/fairness',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InstallRoute = InstallRouteImport.update({
+  id: '/install',
+  path: '/install',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MaintainersRoute = MaintainersRouteImport.update({
+  id: '/maintainers',
+  path: '/maintainers',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MinersRoute = MinersRouteImport.update({
+  id: '/miners',
+  path: '/miners',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RoadmapRoute = RoadmapRouteImport.update({
+  id: '/roadmap',
+  path: '/roadmap',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const ApiIndexRoute = ApiIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ApiRoute,
 } as any)
-const InstallPermissionsRoute = InstallPermissionsRouteImport.update({
-  id: '/permissions',
-  path: '/permissions',
-  getParentRoute: () => InstallRoute,
+const ApiOpRoute = ApiOpRouteImport.update({
+  id: '/$op',
+  path: '/$op',
+  getParentRoute: () => ApiRoute,
 } as any)
-const DocsFumadocsSpikeApiReferenceRoute =
-  DocsFumadocsSpikeApiReferenceRouteImport.update({
-    id: '/fumadocs-spike-api-reference',
-    path: '/fumadocs-spike-api-reference',
-    getParentRoute: () => DocsRoute,
-  } as any)
-const DocsSlugRoute = DocsSlugRouteImport.update({
-  id: '/$slug',
-  path: '/$slug',
-  getParentRoute: () => DocsRoute,
-} as any)
-const AppWorkbenchRoute = AppWorkbenchRouteImport.update({
-  id: '/workbench',
-  path: '/workbench',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppRunsRoute = AppRunsRouteImport.update({
-  id: '/runs',
-  path: '/runs',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppReposRoute = AppReposRouteImport.update({
-  id: '/repos',
-  path: '/repos',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppPlaygroundRoute = AppPlaygroundRouteImport.update({
-  id: '/playground',
-  path: '/playground',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppOwnerRoute = AppOwnerRouteImport.update({
-  id: '/owner',
-  path: '/owner',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppOperatorRoute = AppOperatorRouteImport.update({
-  id: '/operator',
-  path: '/operator',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppMinerRoute = AppMinerRouteImport.update({
-  id: '/miner',
-  path: '/miner',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppMaintainerRoute = AppMaintainerRouteImport.update({
-  id: '/maintainer',
-  path: '/maintainer',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppDigestRoute = AppDigestRouteImport.update({
-  id: '/digest',
-  path: '/digest',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppConfigGeneratorRoute = AppConfigGeneratorRouteImport.update({
-  id: '/config-generator',
-  path: '/config-generator',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppCommandsRoute = AppCommandsRouteImport.update({
-  id: '/commands',
-  path: '/commands',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppAuditRoute = AppAuditRouteImport.update({
-  id: '/audit',
-  path: '/audit',
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => AppRoute,
 } as any)
 const AppAnalyticsRoute = AppAnalyticsRouteImport.update({
@@ -199,10 +118,91 @@ const AppAnalyticsRoute = AppAnalyticsRouteImport.update({
   path: '/analytics',
   getParentRoute: () => AppRoute,
 } as any)
-const ApiOpRoute = ApiOpRouteImport.update({
-  id: '/$op',
-  path: '/$op',
-  getParentRoute: () => ApiRoute,
+const AppAuditRoute = AppAuditRouteImport.update({
+  id: '/audit',
+  path: '/audit',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCommandsRoute = AppCommandsRouteImport.update({
+  id: '/commands',
+  path: '/commands',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppConfigGeneratorRoute = AppConfigGeneratorRouteImport.update({
+  id: '/config-generator',
+  path: '/config-generator',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppDigestRoute = AppDigestRouteImport.update({
+  id: '/digest',
+  path: '/digest',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMaintainerRoute = AppMaintainerRouteImport.update({
+  id: '/maintainer',
+  path: '/maintainer',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMinerRoute = AppMinerRouteImport.update({
+  id: '/miner',
+  path: '/miner',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOperatorRoute = AppOperatorRouteImport.update({
+  id: '/operator',
+  path: '/operator',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppOwnerRoute = AppOwnerRouteImport.update({
+  id: '/owner',
+  path: '/owner',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppPlaygroundRoute = AppPlaygroundRouteImport.update({
+  id: '/playground',
+  path: '/playground',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppReposRoute = AppReposRouteImport.update({
+  id: '/repos',
+  path: '/repos',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppRunsRoute = AppRunsRouteImport.update({
+  id: '/runs',
+  path: '/runs',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppWorkbenchRoute = AppWorkbenchRouteImport.update({
+  id: '/workbench',
+  path: '/workbench',
+  getParentRoute: () => AppRoute,
+} as any)
+const DocsIndexRoute = DocsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsSlugRoute = DocsSlugRouteImport.update({
+  id: '/$slug',
+  path: '/$slug',
+  getParentRoute: () => DocsRoute,
+} as any)
+const DocsFumadocsSpikeApiReferenceRoute =
+  DocsFumadocsSpikeApiReferenceRouteImport.update({
+    id: '/fumadocs-spike-api-reference',
+    path: '/fumadocs-spike-api-reference',
+    getParentRoute: () => DocsRoute,
+  } as any)
+const InstallIndexRoute = InstallIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => InstallRoute,
+} as any)
+const InstallPermissionsRoute = InstallPermissionsRouteImport.update({
+  id: '/permissions',
+  path: '/permissions',
+  getParentRoute: () => InstallRoute,
 } as any)
 const ReposOwnerRepoQualityRoute = ReposOwnerRepoQualityRouteImport.update({
   id: '/repos/$owner/$repo/quality',
@@ -433,67 +433,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/roadmap': {
-      id: '/roadmap'
-      path: '/roadmap'
-      fullPath: '/roadmap'
-      preLoaderRoute: typeof RoadmapRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/miners': {
-      id: '/miners'
-      path: '/miners'
-      fullPath: '/miners'
-      preLoaderRoute: typeof MinersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/maintainers': {
-      id: '/maintainers'
-      path: '/maintainers'
-      fullPath: '/maintainers'
-      preLoaderRoute: typeof MaintainersRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/install': {
-      id: '/install'
-      path: '/install'
-      fullPath: '/install'
-      preLoaderRoute: typeof InstallRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/fairness': {
-      id: '/fairness'
-      path: '/fairness'
-      fullPath: '/fairness'
-      preLoaderRoute: typeof FairnessRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/docs': {
-      id: '/docs'
-      path: '/docs'
-      fullPath: '/docs'
-      preLoaderRoute: typeof DocsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/changelog': {
-      id: '/changelog'
-      path: '/changelog'
-      fullPath: '/changelog'
-      preLoaderRoute: typeof ChangelogRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/app': {
-      id: '/app'
-      path: '/app'
-      fullPath: '/app'
-      preLoaderRoute: typeof AppRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/api': {
-      id: '/api'
-      path: '/api'
-      fullPath: '/api'
-      preLoaderRoute: typeof ApiRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/agents': {
@@ -503,33 +447,68 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/api': {
+      id: '/api'
+      path: '/api'
+      fullPath: '/api'
+      preLoaderRoute: typeof ApiRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/install/': {
-      id: '/install/'
-      path: '/'
-      fullPath: '/install/'
-      preLoaderRoute: typeof InstallIndexRouteImport
-      parentRoute: typeof InstallRoute
+    '/app': {
+      id: '/app'
+      path: '/app'
+      fullPath: '/app'
+      preLoaderRoute: typeof AppRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/docs/': {
-      id: '/docs/'
-      path: '/'
-      fullPath: '/docs/'
-      preLoaderRoute: typeof DocsIndexRouteImport
-      parentRoute: typeof DocsRoute
+    '/changelog': {
+      id: '/changelog'
+      path: '/changelog'
+      fullPath: '/changelog'
+      preLoaderRoute: typeof ChangelogRouteImport
+      parentRoute: typeof rootRouteImport
     }
-    '/app/': {
-      id: '/app/'
-      path: '/'
-      fullPath: '/app/'
-      preLoaderRoute: typeof AppIndexRouteImport
-      parentRoute: typeof AppRoute
+    '/docs': {
+      id: '/docs'
+      path: '/docs'
+      fullPath: '/docs'
+      preLoaderRoute: typeof DocsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/fairness': {
+      id: '/fairness'
+      path: '/fairness'
+      fullPath: '/fairness'
+      preLoaderRoute: typeof FairnessRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/install': {
+      id: '/install'
+      path: '/install'
+      fullPath: '/install'
+      preLoaderRoute: typeof InstallRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/maintainers': {
+      id: '/maintainers'
+      path: '/maintainers'
+      fullPath: '/maintainers'
+      preLoaderRoute: typeof MaintainersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/miners': {
+      id: '/miners'
+      path: '/miners'
+      fullPath: '/miners'
+      preLoaderRoute: typeof MinersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/roadmap': {
+      id: '/roadmap'
+      path: '/roadmap'
+      fullPath: '/roadmap'
+      preLoaderRoute: typeof RoadmapRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/api/': {
       id: '/api/'
@@ -538,109 +517,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiIndexRouteImport
       parentRoute: typeof ApiRoute
     }
-    '/install/permissions': {
-      id: '/install/permissions'
-      path: '/permissions'
-      fullPath: '/install/permissions'
-      preLoaderRoute: typeof InstallPermissionsRouteImport
-      parentRoute: typeof InstallRoute
+    '/api/$op': {
+      id: '/api/$op'
+      path: '/$op'
+      fullPath: '/api/$op'
+      preLoaderRoute: typeof ApiOpRouteImport
+      parentRoute: typeof ApiRoute
     }
-    '/docs/fumadocs-spike-api-reference': {
-      id: '/docs/fumadocs-spike-api-reference'
-      path: '/fumadocs-spike-api-reference'
-      fullPath: '/docs/fumadocs-spike-api-reference'
-      preLoaderRoute: typeof DocsFumadocsSpikeApiReferenceRouteImport
-      parentRoute: typeof DocsRoute
-    }
-    '/docs/$slug': {
-      id: '/docs/$slug'
-      path: '/$slug'
-      fullPath: '/docs/$slug'
-      preLoaderRoute: typeof DocsSlugRouteImport
-      parentRoute: typeof DocsRoute
-    }
-    '/app/workbench': {
-      id: '/app/workbench'
-      path: '/workbench'
-      fullPath: '/app/workbench'
-      preLoaderRoute: typeof AppWorkbenchRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/runs': {
-      id: '/app/runs'
-      path: '/runs'
-      fullPath: '/app/runs'
-      preLoaderRoute: typeof AppRunsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/repos': {
-      id: '/app/repos'
-      path: '/repos'
-      fullPath: '/app/repos'
-      preLoaderRoute: typeof AppReposRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/playground': {
-      id: '/app/playground'
-      path: '/playground'
-      fullPath: '/app/playground'
-      preLoaderRoute: typeof AppPlaygroundRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/owner': {
-      id: '/app/owner'
-      path: '/owner'
-      fullPath: '/app/owner'
-      preLoaderRoute: typeof AppOwnerRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/operator': {
-      id: '/app/operator'
-      path: '/operator'
-      fullPath: '/app/operator'
-      preLoaderRoute: typeof AppOperatorRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/miner': {
-      id: '/app/miner'
-      path: '/miner'
-      fullPath: '/app/miner'
-      preLoaderRoute: typeof AppMinerRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/maintainer': {
-      id: '/app/maintainer'
-      path: '/maintainer'
-      fullPath: '/app/maintainer'
-      preLoaderRoute: typeof AppMaintainerRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/digest': {
-      id: '/app/digest'
-      path: '/digest'
-      fullPath: '/app/digest'
-      preLoaderRoute: typeof AppDigestRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/config-generator': {
-      id: '/app/config-generator'
-      path: '/config-generator'
-      fullPath: '/app/config-generator'
-      preLoaderRoute: typeof AppConfigGeneratorRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/commands': {
-      id: '/app/commands'
-      path: '/commands'
-      fullPath: '/app/commands'
-      preLoaderRoute: typeof AppCommandsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/audit': {
-      id: '/app/audit'
-      path: '/audit'
-      fullPath: '/app/audit'
-      preLoaderRoute: typeof AppAuditRouteImport
+    '/app/': {
+      id: '/app/'
+      path: '/'
+      fullPath: '/app/'
+      preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/analytics': {
@@ -650,12 +538,124 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppAnalyticsRouteImport
       parentRoute: typeof AppRoute
     }
-    '/api/$op': {
-      id: '/api/$op'
-      path: '/$op'
-      fullPath: '/api/$op'
-      preLoaderRoute: typeof ApiOpRouteImport
-      parentRoute: typeof ApiRoute
+    '/app/audit': {
+      id: '/app/audit'
+      path: '/audit'
+      fullPath: '/app/audit'
+      preLoaderRoute: typeof AppAuditRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/commands': {
+      id: '/app/commands'
+      path: '/commands'
+      fullPath: '/app/commands'
+      preLoaderRoute: typeof AppCommandsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/config-generator': {
+      id: '/app/config-generator'
+      path: '/config-generator'
+      fullPath: '/app/config-generator'
+      preLoaderRoute: typeof AppConfigGeneratorRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/digest': {
+      id: '/app/digest'
+      path: '/digest'
+      fullPath: '/app/digest'
+      preLoaderRoute: typeof AppDigestRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/maintainer': {
+      id: '/app/maintainer'
+      path: '/maintainer'
+      fullPath: '/app/maintainer'
+      preLoaderRoute: typeof AppMaintainerRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/miner': {
+      id: '/app/miner'
+      path: '/miner'
+      fullPath: '/app/miner'
+      preLoaderRoute: typeof AppMinerRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/operator': {
+      id: '/app/operator'
+      path: '/operator'
+      fullPath: '/app/operator'
+      preLoaderRoute: typeof AppOperatorRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/owner': {
+      id: '/app/owner'
+      path: '/owner'
+      fullPath: '/app/owner'
+      preLoaderRoute: typeof AppOwnerRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/playground': {
+      id: '/app/playground'
+      path: '/playground'
+      fullPath: '/app/playground'
+      preLoaderRoute: typeof AppPlaygroundRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/repos': {
+      id: '/app/repos'
+      path: '/repos'
+      fullPath: '/app/repos'
+      preLoaderRoute: typeof AppReposRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/runs': {
+      id: '/app/runs'
+      path: '/runs'
+      fullPath: '/app/runs'
+      preLoaderRoute: typeof AppRunsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/workbench': {
+      id: '/app/workbench'
+      path: '/workbench'
+      fullPath: '/app/workbench'
+      preLoaderRoute: typeof AppWorkbenchRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/docs/': {
+      id: '/docs/'
+      path: '/'
+      fullPath: '/docs/'
+      preLoaderRoute: typeof DocsIndexRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/$slug': {
+      id: '/docs/$slug'
+      path: '/$slug'
+      fullPath: '/docs/$slug'
+      preLoaderRoute: typeof DocsSlugRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/docs/fumadocs-spike-api-reference': {
+      id: '/docs/fumadocs-spike-api-reference'
+      path: '/fumadocs-spike-api-reference'
+      fullPath: '/docs/fumadocs-spike-api-reference'
+      preLoaderRoute: typeof DocsFumadocsSpikeApiReferenceRouteImport
+      parentRoute: typeof DocsRoute
+    }
+    '/install/': {
+      id: '/install/'
+      path: '/'
+      fullPath: '/install/'
+      preLoaderRoute: typeof InstallIndexRouteImport
+      parentRoute: typeof InstallRoute
+    }
+    '/install/permissions': {
+      id: '/install/permissions'
+      path: '/permissions'
+      fullPath: '/install/permissions'
+      preLoaderRoute: typeof InstallPermissionsRouteImport
+      parentRoute: typeof InstallRoute
     }
     '/repos/$owner/$repo/quality': {
       id: '/repos/$owner/$repo/quality'

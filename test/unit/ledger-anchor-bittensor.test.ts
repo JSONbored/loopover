@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  BittensorAnchorReportRequestSchema,
   ingestBittensorAnchorReport,
   parseBittensorAnchorReport,
   type BittensorAnchorReport,
@@ -240,5 +241,68 @@ describe("#9277 routes — the submitter's two HTTP touchpoints", () => {
       const page = await app.request(`/v1/public/decision-ledger/anchors${query}`, {}, env);
       expect(((await page.json()) as { anchors: unknown[] }).anchors).toHaveLength(expected);
     }
+  });
+});
+
+// #9770: the published request schema and the runtime validator are one contract described twice --
+// parseBittensorAnchorReport stays the authority (its per-field named rejections are what make a submitter
+// bug diagnosable from the 400 body), and the zod schema exists so the OpenAPI document actually describes
+// the shape a caller must send. This suite is the mechanism that stops them drifting: the SAME payloads go
+// through both, and the two must agree on accept/reject.
+describe("BittensorAnchorReportRequestSchema agrees with parseBittensorAnchorReport (#9770)", () => {
+  const okBody = () => ({
+    signed: {
+      payload: {
+        v: LEDGER_ANCHOR_PAYLOAD_VERSION,
+        ledger: LEDGER_ANCHOR_LEDGER_ID,
+        seq: 7,
+        rowHash: "a".repeat(64),
+        totalCount: 7,
+        at: "2026-07-29T00:00:00.000Z",
+      },
+      keyId: "k1",
+      signature: "c2ln",
+    },
+    status: "ok" as const,
+    backendRef: { netuid: 42, blockNumber: 1234, blockHash: `0x${"b".repeat(64)}`, hotkey: "5Fabc" },
+  });
+  const failedBody = () => ({ signed: okBody().signed, status: "failed" as const, error: "commitment reverted" });
+
+  /** Every case below is run through BOTH. `accepted` is what they must agree on. */
+  const cases: Array<{ name: string; body: unknown; accepted: boolean }> = [
+    { name: "a well-formed ok report", body: okBody(), accepted: true },
+    { name: "a well-formed failed report", body: failedBody(), accepted: true },
+    { name: "an UPPERCASE rowHash / blockHash (case-insensitive by class, not by flag)", body: { ...okBody(), signed: { ...okBody().signed, payload: { ...okBody().signed.payload, rowHash: "A".repeat(64) } }, backendRef: { ...okBody().backendRef, blockHash: `0x${"B".repeat(64)}` } }, accepted: true },
+    { name: "a non-object body", body: "nope", accepted: false },
+    { name: "a missing signed block", body: { status: "ok" }, accepted: false },
+    { name: "a wrong payload version", body: { ...okBody(), signed: { ...okBody().signed, payload: { ...okBody().signed.payload, v: 2 } } }, accepted: false },
+    { name: "a wrong ledger id", body: { ...okBody(), signed: { ...okBody().signed, payload: { ...okBody().signed.payload, ledger: "someone.else" } } }, accepted: false },
+    { name: "a zero seq", body: { ...okBody(), signed: { ...okBody().signed, payload: { ...okBody().signed.payload, seq: 0 } } }, accepted: false },
+    { name: "a non-integer seq", body: { ...okBody(), signed: { ...okBody().signed, payload: { ...okBody().signed.payload, seq: 1.5 } } }, accepted: false },
+    { name: "a short rowHash", body: { ...okBody(), signed: { ...okBody().signed, payload: { ...okBody().signed.payload, rowHash: "abc" } } }, accepted: false },
+    { name: "an empty at", body: { ...okBody(), signed: { ...okBody().signed, payload: { ...okBody().signed.payload, at: "" } } }, accepted: false },
+    { name: "an over-long at", body: { ...okBody(), signed: { ...okBody().signed, payload: { ...okBody().signed.payload, at: "x".repeat(41) } } }, accepted: false },
+    { name: "an empty keyId", body: { ...okBody(), signed: { ...okBody().signed, keyId: "" } }, accepted: false },
+    { name: "an over-long keyId", body: { ...okBody(), signed: { ...okBody().signed, keyId: "k".repeat(65) } }, accepted: false },
+    { name: "an over-long signature", body: { ...okBody(), signed: { ...okBody().signed, signature: "s".repeat(513) } }, accepted: false },
+    { name: "an unknown status", body: { ...okBody(), status: "maybe" }, accepted: false },
+    { name: "an ok report with no backendRef", body: { signed: okBody().signed, status: "ok" }, accepted: false },
+    { name: "a failed report with no error", body: { signed: okBody().signed, status: "failed" }, accepted: false },
+    { name: "a failed report with a blank error", body: { ...failedBody(), error: "   " }, accepted: false },
+    { name: "a netuid above the u16 ceiling", body: { ...okBody(), backendRef: { ...okBody().backendRef, netuid: 65_536 } }, accepted: false },
+    { name: "a negative netuid", body: { ...okBody(), backendRef: { ...okBody().backendRef, netuid: -1 } }, accepted: false },
+    { name: "a zero blockNumber", body: { ...okBody(), backendRef: { ...okBody().backendRef, blockNumber: 0 } }, accepted: false },
+    { name: "a blockHash missing its 0x prefix", body: { ...okBody(), backendRef: { ...okBody().backendRef, blockHash: "b".repeat(64) } }, accepted: false },
+    { name: "a blank hotkey", body: { ...okBody(), backendRef: { ...okBody().backendRef, hotkey: "  " } }, accepted: false },
+    { name: "an over-long hotkey", body: { ...okBody(), backendRef: { ...okBody().backendRef, hotkey: "h".repeat(65) } }, accepted: false },
+  ];
+
+  it.each(cases)("$name", ({ body, accepted }) => {
+    const runtime = !("error" in parseBittensorAnchorReport(body));
+    const published = BittensorAnchorReportRequestSchema.safeParse(body).success;
+    expect(runtime).toBe(accepted);
+    // The load-bearing assertion: the document never promises a shape the endpoint refuses, and never
+    // refuses one the document promises.
+    expect(published).toBe(runtime);
   });
 });

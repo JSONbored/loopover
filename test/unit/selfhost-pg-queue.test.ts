@@ -3853,15 +3853,20 @@ describe("createPgQueue (durable #977)", () => {
     const windowMs = 15 * 60 * 1000;
     const before = Date.now();
     expect(await q.recentDeadCount(windowMs)).toBe(3);
+    const after = Date.now();
 
     const calls = (m.fn as unknown as ReturnType<typeof vi.fn>).mock.calls;
     const call = calls.find((c: unknown[]) => String(c[0]).includes("status='dead' AND dead_at IS NOT NULL"));
     expect(call).toBeDefined();
     const bound = call![1] as number[];
     expect(bound).toEqual([expect.any(Number)]);
-    // The bound cutoff is "now - windowMs", not a fixed constant -- sanity-check it's in the right ballpark.
-    expect(bound[0]).toBeLessThanOrEqual(before - windowMs);
-    expect(bound[0]).toBeGreaterThan(before - windowMs - 5_000);
+    // The bound cutoff is "now - windowMs", not a fixed constant -- so it must fall inside the window the
+    // call itself spanned. Bracketing on BOTH sides is what makes that assertion honest: the previous
+    // version compared only against `before`, and since the implementation reads the clock strictly after
+    // that line, a single millisecond ticking between the two failed the test. That is not hypothetical --
+    // it flaked CI on both attempts (1785302335173 <= 1785302335172).
+    expect(bound[0]).toBeGreaterThanOrEqual(before - windowMs);
+    expect(bound[0]).toBeLessThanOrEqual(after - windowMs);
   });
 
   it("stats() returns persisted queue metric counts", async () => {

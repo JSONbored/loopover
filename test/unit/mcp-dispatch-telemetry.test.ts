@@ -29,8 +29,15 @@ const call: McpToolCallTelemetry = { tool: "loopover_get_repo_context", category
 describe("MCP telemetry event shapes (#9525)", () => {
   it("omits error_code on success rather than sending it as null", () => {
     const properties = buildUsageEventProperties(call);
-    expect(properties).toEqual({ tool: call.tool, category: "maintainer", surface: "remote", ok: true, duration_ms: 12 });
+    expect(properties).toEqual({ tool: call.tool, category: "maintainer", surface: "remote", transport: "local", ok: true, duration_ms: 12 });
     expect("error_code" in properties).toBe(false);
+  });
+
+  it("defaults transport to local for a sink with no notion of proxying, and reports it when there is one (#9526)", () => {
+    // Always emitted, never conditional: a breakdown by transport with an empty `local` bucket would read
+    // as "nothing runs locally" rather than "most sinks do not set this".
+    expect(buildUsageEventProperties(call).transport).toBe("local");
+    expect(buildUsageEventProperties({ ...call, surface: "stdio", transport: "proxied" }).transport).toBe("proxied");
   });
 
   it("carries the closed error code on failure", () => {
@@ -66,7 +73,7 @@ describe("MCP telemetry event shapes (#9525)", () => {
 
   it("keeps span attributes a strict subset -- never arguments or the excluded marker", () => {
     const attributes = buildMcpToolSpanAttributes({ ...call, ok: false, errorCode: "timeout" });
-    expect(Object.keys(attributes).sort()).toEqual(["category", "duration_ms", "error_code", "ok", "surface", "tool"]);
+    expect(Object.keys(attributes).sort()).toEqual(["category", "duration_ms", "error_code", "ok", "surface", "tool", "transport"]);
     expect(mcpToolSpanName("loopover_x")).toBe("mcp.tool/loopover_x");
   });
 });

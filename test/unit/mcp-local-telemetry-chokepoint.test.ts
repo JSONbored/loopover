@@ -146,11 +146,11 @@ describe("loopover-mcp local telemetry chokepoint (#6238)", () => {
     // two separate sets so a future field of OURS can never hide among the vendor's.
     const allowedByEvent: Record<string, string[]> = {
       mcp_tool_call: ["caller_type", "duration_ms", "ok", "tool"],
-      usage_event: ["category", "duration_ms", "ok", "surface", "tool"],
+      usage_event: ["category", "duration_ms", "ok", "surface", "tool", "transport"],
       // No `arguments`/`result`: payloads are excluded for every tool by default (#9525). This test
       // is what established that -- the first design included them, and this assertion found a real
       // commit message on the wire.
-      $mcp_tool_call: ["category", "duration_ms", "ok", "payloads_excluded", "surface", "tool"],
+      $mcp_tool_call: ["category", "duration_ms", "ok", "payloads_excluded", "surface", "tool", "transport"],
     };
     for (const event of received) {
       const properties = Object.keys(event.properties ?? {});

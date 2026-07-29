@@ -25,8 +25,14 @@ only tampering within it.
 Every persisted verdict appends to a hash-chained ledger — each row's hash covers the previous row's
 hash, so any edit to history breaks the chain at a point you can locate.
 
+Run this against **the instance that reviewed the PR** — the host in the review comment's own links.
+A ledger belongs to the runtime that made the decisions, so `api.loopover.ai` is the wrong host to
+ask (see "Which host you ask matters" below):
+
 ```bash
-curl -s "https://api.loopover.ai/v1/public/decision-ledger/verify" | jq
+ORB=https://orb.example.org   # the instance that reviewed the PR
+
+curl -s "$ORB/v1/public/decision-ledger/verify" | jq
 ```
 
 Returns `{ ok, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords }`, and a `break`
@@ -63,13 +69,33 @@ Two response fields encode deliberate, published semantics rather than tolerance
   every row individually external-checkable in real time.
 </Callout>
 
+<Callout variant="warn">
+  **Which host you ask matters.** A decision ledger belongs to the runtime that *made* the decisions,
+  and hosted review execution is retired — only self-host runtimes execute reviews, so each one
+  writes and anchors **its own** chain in its own database. `api.loopover.ai` therefore has no ledger
+  of its own to anchor and never will: its `/v1/public/decision-ledger/*` endpoints answer for an
+  empty chain, and its `anchors` response says so explicitly via `status: "empty_ledger"` rather
+  than an ambiguous empty list.
+
+  So every command on this page runs against `$ORB`, the instance whose reviews you are checking —
+  never against `api.loopover.ai`.
+
+  This is a deliberate boundary, not a gap. Aggregating every instance's records into one central
+  chain would produce an anchored artifact that looks *more* authoritative while proving *less*: the
+  central chain would be a re-chained aggregate nobody's verifier cares about, and each instance's
+  real chain would still be unanchored.
+</Callout>
+
 **Verify an anchor end to end**
 
-a. Fetch the most recent anchor and the currently-published signing key:
+a. Fetch the most recent anchor and the currently-published signing key. `status` tells you which
+state you are in before you read the list — `anchored`, `empty_ledger` (nothing decided yet),
+`unconfigured` (no signing key provisioned), or `pending` (a ledger exists and is due its first
+anchor):
 
 ```bash
-curl -s "https://api.loopover.ai/v1/public/decision-ledger/anchors?limit=1" | jq '.anchors[0]' > anchor.json
-curl -s "https://api.loopover.ai/v1/public/decision-ledger/anchor-key" | jq -c '.keys' > anchor-keys.json
+curl -s "$ORB/v1/public/decision-ledger/anchors?limit=1" | jq '{status, anchor: .anchors[0]}' > anchor.json
+curl -s "$ORB/v1/public/decision-ledger/anchor-key" | jq -c '.keys' > anchor-keys.json
 ```
 
 b. Fetch the actual signed payload the anchor committed to. For the git-commit backend,
@@ -108,7 +134,7 @@ hash yourself:
 
 ```bash
 SEQ=$(jq -r '.payload.seq' anchor-signed.json)
-curl -s "https://api.loopover.ai/v1/public/decision-ledger/row/$SEQ" | jq > row.json
+curl -s "$ORB/v1/public/decision-ledger/row/$SEQ" | jq > row.json
 npx tsx -e '
 import { readFileSync } from "node:fs";
 import { ledgerRowHash } from "./src/review/decision-record.ts";

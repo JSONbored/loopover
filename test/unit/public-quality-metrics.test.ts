@@ -18,7 +18,14 @@ const GENERATED = "2026-06-22T12:00:00.000Z";
 function pr(
   number: number,
   outcome: "merged" | "closed" | "open",
-  opts: { mergedAt?: string; updatedAt?: string; createdAt?: string; slopBand?: string; slopRisk?: number } = {},
+  opts: {
+    mergedAt?: string;
+    updatedAt?: string | null;
+    createdAt?: string;
+    closedAt?: string | null;
+    slopBand?: string;
+    slopRisk?: number;
+  } = {},
 ): PullRequestRecord {
   return {
     repoFullName: "owner/repo",
@@ -26,8 +33,9 @@ function pr(
     title: `PR ${number}`,
     state: outcome === "open" ? "open" : "closed",
     mergedAt: opts.mergedAt ?? (outcome === "merged" ? "2026-06-20T00:00:00.000Z" : null),
-    updatedAt: opts.updatedAt ?? "2026-06-20T00:00:00.000Z",
+    updatedAt: opts.updatedAt === undefined ? "2026-06-20T00:00:00.000Z" : opts.updatedAt,
     createdAt: opts.createdAt ?? "2026-06-01T00:00:00.000Z",
+    ...(opts.closedAt === undefined ? {} : { closedAt: opts.closedAt }),
     slopBand: opts.slopBand,
     slopRisk: opts.slopRisk,
     labels: [],
@@ -137,9 +145,11 @@ describe("buildPublicQualityTrend", () => {
         pr(1, "closed", { updatedAt: "also-not-a-date", createdAt: "still-not-a-date" }),
         pr(2, "merged", { mergedAt: `${currentMonday}T12:00:00.000Z` }),
         {
+          // A closed PR carrying only createdAt no longer counts: closedAtMs falls back to updatedAt (absent
+          // here), never to createdAt, so this PR is skipped rather than bucketed at its open time (#9700).
           repoFullName: "owner/repo",
           number: 3,
-          title: "Closed via createdAt",
+          title: "Closed with only createdAt is skipped",
           state: "closed",
           mergedAt: null,
           labels: [],
@@ -154,7 +164,62 @@ describe("buildPublicQualityTrend", () => {
       gateBlocked: 1,
       gateBlockedThenMerged: 1,
       outcomesMerged: 1,
-      outcomesClosed: 1,
+      outcomesClosed: 0,
+    });
+  });
+
+  describe("closed PRs bucket by close time, not updatedAt (#9700)", () => {
+    // NOW = 2026-06-22 (week of Mon 2026-06-15). "Week 1" here is a week ~8 weeks earlier; "week 8" is current.
+    const weekStart = (offset: number) => isoWeekStart(NOW - offset * 7 * 86_400_000);
+
+    it("counts a PR closed in an early week there, even when updatedAt was bumped into a later week", () => {
+      const earlyWeek = weekStart(7); // oldest bucket in an 8-week window
+      const trend = buildPublicQualityTrend(
+        [],
+        [pr(1, "closed", { closedAt: `${earlyWeek}T10:00:00.000Z`, updatedAt: `${weekStart(0)}T10:00:00.000Z` })],
+        NOW,
+        8,
+      );
+      // The close week gets the outcome; the (later) updatedAt week does not.
+      expect(trend[0]).toMatchObject({ weekStart: earlyWeek, outcomesClosed: 1 });
+      expect(trend[7]).toMatchObject({ weekStart: weekStart(0), outcomesClosed: 0 });
+    });
+
+    it("falls back to updatedAt's week when closedAt is null (rows written before closed_at was persisted)", () => {
+      const updatedWeek = weekStart(3);
+      const trend = buildPublicQualityTrend(
+        [],
+        [pr(1, "closed", { closedAt: null, updatedAt: `${updatedWeek}T10:00:00.000Z` })],
+        NOW,
+        8,
+      );
+      const idx = trend.findIndex((w) => w.weekStart === updatedWeek);
+      expect(trend[idx]).toMatchObject({ outcomesClosed: 1 });
+      expect(trend.reduce((sum, w) => sum + w.outcomesClosed, 0)).toBe(1);
+    });
+
+    it("skips a closed PR whose closedAt and updatedAt are both missing/unparseable", () => {
+      const trend = buildPublicQualityTrend(
+        [],
+        [pr(1, "closed", { closedAt: null, updatedAt: null })],
+        NOW,
+        8,
+      );
+      expect(trend.reduce((sum, w) => sum + w.outcomesClosed, 0)).toBe(0);
+    });
+
+    it("leaves merged-PR bucketing unchanged (still keyed on mergedAt)", () => {
+      const mergeWeek = weekStart(2);
+      const trend = buildPublicQualityTrend(
+        [],
+        // closedAt/updatedAt point at other weeks, but a merged PR must ignore them and bucket by mergedAt.
+        [pr(1, "merged", { mergedAt: `${mergeWeek}T10:00:00.000Z`, closedAt: `${weekStart(6)}T10:00:00.000Z`, updatedAt: `${weekStart(0)}T10:00:00.000Z` })],
+        NOW,
+        8,
+      );
+      const idx = trend.findIndex((w) => w.weekStart === mergeWeek);
+      expect(trend[idx]).toMatchObject({ outcomesMerged: 1 });
+      expect(trend.reduce((sum, w) => sum + w.outcomesMerged, 0)).toBe(1);
     });
   });
 

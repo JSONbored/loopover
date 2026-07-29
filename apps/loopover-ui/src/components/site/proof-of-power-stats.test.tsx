@@ -98,6 +98,7 @@ const PAYLOAD: PublicStats = {
     windowDays: 90,
     gamingFlagsCaught: 0,
   },
+  fleetAccuracyTrend: [{ weekStart: "2026-07-13", verdicts: 40, accuracyPct: 92.5 }],
   accuracyTrend: [
     { weekStart: "2026-05-04", merged: 40, closed: 10, reversed: 2, accuracyPct: 96 },
     { weekStart: "2026-05-11", merged: 42, closed: 9, reversed: 1, accuracyPct: 98 },

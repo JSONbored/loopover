@@ -12,7 +12,12 @@
 // (#8838) consume — one schema, three consumers, so drift between "what we published" and "what we can
 // replay" is structurally impossible.
 //
-// HONEST LIMIT (#9122, mirrored from migrations/0180_decision_ledger.sql's own header): the hash-chained
+// HONEST LIMIT (#9122). This is the CURRENT statement of it, and the only one that gets updated:
+// migrations/0180_decision_ledger.sql carries an older, shorter version in its own header and must keep it
+// verbatim forever. That file has already been applied on running deployments, and runSelfHostMigrations
+// hashes every applied migration's FULL text (comments included) to detect post-apply edits -- so editing
+// its prose, even harmlessly, makes every already-upgraded ORB fail to boot. Documentation about this table
+// belongs here, where it can change freely. The hash-chained
 // ledger below makes this instance's history tamper-EVIDENT against every actor except an operator with
 // direct DB access, on its own — such an operator could still rewrite the chain wholesale (delete every row,
 // recompute a fresh one from genesis) and nothing INTERNAL to this table can detect that from first

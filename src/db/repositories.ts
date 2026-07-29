@@ -3765,6 +3765,10 @@ export async function listGateOutcomeAuditEventRollups(
       and(
         inArray(auditEvents.eventType, ["agent.action.merge", "agent.action.close", "agent.action.hold"]),
         gte(auditEvents.createdAt, options.sinceIso),
+        // Exclude dry-run shadow actions, which agent-action-executor rewrites to outcome "completed" and so
+        // otherwise land in the terminal-outcome buckets. Mirrors public-accuracy-trend.ts's loadReversalDayRows:
+        // same COALESCE default of 'live', so a legacy row without a mode key is still counted (#9694).
+        sql`coalesce(json_extract(${auditEvents.metadataJson}, '$.mode'), 'live') <> 'dry_run'`,
         repoFilter,
       ),
     )

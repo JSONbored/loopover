@@ -1,0 +1,1143 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "LoopOver control plane",
+    "version": "0.1.0",
+    "description": "Tenant provisioning for the hosted ORB + AMS fleet. Admin-only, apart from the GitHub webhook ingress."
+  },
+  "components": {
+    "securitySchemes": {
+      "ControlPlaneAdminBearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The control plane's own admin token. Distinct from any tenant's per-instance secrets and from a LoopOver API token."
+      },
+      "GitHubWebhookSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-hub-signature-256",
+        "description": "GitHub's HMAC-SHA256 over the raw request body, verified against the hosted fleet's own App webhook secret."
+      }
+    },
+    "schemas": {},
+    "parameters": {}
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "operationId": "getControlPlaneHealth",
+        "tags": [
+          "Control plane"
+        ],
+        "summary": "Liveness probe",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The service is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    },
+                    "service": {
+                      "type": "string",
+                      "enum": [
+                        "control-plane"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "status",
+                    "service"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants": {
+      "post": {
+        "operationId": "createTenant",
+        "tags": [
+          "Control plane"
+        ],
+        "summary": "Provision a tenant",
+        "description": "NOT idempotent, by design: an existing tenant of the same name AND product in a non-recreatable state is a 409, not a no-op. A previously torn-down or failed tenant may be recreated — a failed provision must not become a permanent block on retrying setup — and the recreated record does not inherit the old one's createdAt.",
+        "security": [
+          {
+            "ControlPlaneAdminBearer": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "product": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "schedule": {
+                    "type": "object",
+                    "properties": {
+                      "command": {
+                        "type": "string",
+                        "enum": [
+                          "discover",
+                          "manage-poll",
+                          "attempt"
+                        ]
+                      },
+                      "args": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "intervalMs": {
+                        "type": "number",
+                        "minimum": 0,
+                        "exclusiveMinimum": true
+                      }
+                    },
+                    "required": [
+                      "command",
+                      "intervalMs"
+                    ]
+                  },
+                  "orbInstallationId": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "exclusiveMinimum": true
+                  }
+                },
+                "required": [
+                  "name",
+                  "product"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tenant provisioned. Returns the record in its settled state.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tenant": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "pinnedVersion": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ]
+                    },
+                    "product": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "provisioning",
+                        "active",
+                        "suspended",
+                        "failed",
+                        "torn down"
+                      ]
+                    },
+                    "amsSchedule": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "string",
+                          "enum": [
+                            "discover",
+                            "manage-poll",
+                            "attempt"
+                          ]
+                        },
+                        "args": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "intervalMs": {
+                          "type": "number",
+                          "minimum": 0,
+                          "exclusiveMinimum": true
+                        },
+                        "nextDueAt": {
+                          "type": "string"
+                        },
+                        "lastRunAt": {
+                          "type": "string"
+                        },
+                        "lastExitCode": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "command",
+                        "args",
+                        "intervalMs",
+                        "nextDueAt"
+                      ]
+                    },
+                    "orbInstallationId": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "exclusiveMinimum": true
+                    },
+                    "secretRef": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "tenant",
+                    "product",
+                    "state"
+                  ],
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unparseable body, or a field that failed validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin bearer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A tenant of this name and product already exists, or the installation ID is already claimed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No admin token is configured on this deployment, so the surface fails closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listTenants",
+        "tags": [
+          "Control plane"
+        ],
+        "summary": "List every tenant with its lifecycle state",
+        "security": [
+          {
+            "ControlPlaneAdminBearer": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Every tenant, with timestamps",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tenants": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "tenant": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "pinnedVersion": {
+                                "type": "string",
+                                "nullable": true
+                              }
+                            },
+                            "required": [
+                              "name"
+                            ]
+                          },
+                          "product": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "provisioning",
+                              "active",
+                              "suspended",
+                              "failed",
+                              "torn down"
+                            ]
+                          },
+                          "amsSchedule": {
+                            "type": "object",
+                            "properties": {
+                              "command": {
+                                "type": "string",
+                                "enum": [
+                                  "discover",
+                                  "manage-poll",
+                                  "attempt"
+                                ]
+                              },
+                              "args": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "intervalMs": {
+                                "type": "number",
+                                "minimum": 0,
+                                "exclusiveMinimum": true
+                              },
+                              "nextDueAt": {
+                                "type": "string"
+                              },
+                              "lastRunAt": {
+                                "type": "string"
+                              },
+                              "lastExitCode": {
+                                "type": "integer"
+                              }
+                            },
+                            "required": [
+                              "command",
+                              "args",
+                              "intervalMs",
+                              "nextDueAt"
+                            ]
+                          },
+                          "orbInstallationId": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "exclusiveMinimum": true
+                          },
+                          "secretRef": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "string"
+                          },
+                          "updatedAt": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "tenant",
+                          "product",
+                          "state",
+                          "createdAt",
+                          "updatedAt"
+                        ],
+                        "additionalProperties": {
+                          "nullable": true
+                        }
+                      }
+                    }
+                  },
+                  "required": [
+                    "tenants"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin bearer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No admin token is configured on this deployment, so the surface fails closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/rollout": {
+      "post": {
+        "operationId": "rolloutTenants",
+        "tags": [
+          "Control plane"
+        ],
+        "summary": "Roll a pinned image version out across tenants",
+        "description": "DISABLED, not unimplemented: the previous version silently no-opped on all four of its promised effects, so it answers 501 rather than accepting a request that changes nothing a caller can observe.",
+        "security": [
+          {
+            "ControlPlaneAdminBearer": []
+          }
+        ],
+        "responses": {
+          "401": {
+            "description": "Missing or wrong admin bearer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "501": {
+            "description": "Tenant rollout is not implemented",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No admin token is configured on this deployment, so the surface fails closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{name}/orb-installation": {
+      "patch": {
+        "operationId": "relinkOrbInstallation",
+        "tags": [
+          "Control plane"
+        ],
+        "summary": "Re-link an existing ORB tenant's GitHub App installation",
+        "description": "The manual recovery path for a tenant whose routing pointer was wiped by a since-fixed registry bug. Refuses to take an installation another currently-claiming tenant still holds, but never 409s a tenant against itself.",
+        "security": [
+          {
+            "ControlPlaneAdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "name",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "product",
+            "in": "query"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "orbInstallationId": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "exclusiveMinimum": true
+                  }
+                },
+                "required": [
+                  "orbInstallationId"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The installation is now linked to this tenant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tenant": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "pinnedVersion": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ]
+                    },
+                    "product": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "provisioning",
+                        "active",
+                        "suspended",
+                        "failed",
+                        "torn down"
+                      ]
+                    },
+                    "amsSchedule": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "string",
+                          "enum": [
+                            "discover",
+                            "manage-poll",
+                            "attempt"
+                          ]
+                        },
+                        "args": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "intervalMs": {
+                          "type": "number",
+                          "minimum": 0,
+                          "exclusiveMinimum": true
+                        },
+                        "nextDueAt": {
+                          "type": "string"
+                        },
+                        "lastRunAt": {
+                          "type": "string"
+                        },
+                        "lastExitCode": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "command",
+                        "args",
+                        "intervalMs",
+                        "nextDueAt"
+                      ]
+                    },
+                    "orbInstallationId": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "exclusiveMinimum": true
+                    },
+                    "secretRef": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "tenant",
+                    "product",
+                    "state"
+                  ],
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing product query parameter, a non-orb product, or an invalid installation ID",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin bearer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such tenant for that name and product",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Another live tenant already claims that installation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No admin token is configured on this deployment, so the surface fails closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/tenants/{name}": {
+      "delete": {
+        "operationId": "destroyTenant",
+        "tags": [
+          "Control plane"
+        ],
+        "summary": "Tear a tenant down",
+        "description": "Refuses while the record is observably `provisioning`: there is nothing durable yet to revoke, and tearing down mid-provision races the in-flight create. Retry once it settles.",
+        "security": [
+          {
+            "ControlPlaneAdminBearer": []
+          }
+        ],
+        "parameters": [
+          {
+            "schema": {
+              "type": "string"
+            },
+            "required": true,
+            "name": "name",
+            "in": "path"
+          },
+          {
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
+            "required": true,
+            "name": "product",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tenant torn down",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "tenant": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string"
+                        },
+                        "pinnedVersion": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      },
+                      "required": [
+                        "name"
+                      ]
+                    },
+                    "product": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "provisioning",
+                        "active",
+                        "suspended",
+                        "failed",
+                        "torn down"
+                      ]
+                    },
+                    "amsSchedule": {
+                      "type": "object",
+                      "properties": {
+                        "command": {
+                          "type": "string",
+                          "enum": [
+                            "discover",
+                            "manage-poll",
+                            "attempt"
+                          ]
+                        },
+                        "args": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "intervalMs": {
+                          "type": "number",
+                          "minimum": 0,
+                          "exclusiveMinimum": true
+                        },
+                        "nextDueAt": {
+                          "type": "string"
+                        },
+                        "lastRunAt": {
+                          "type": "string"
+                        },
+                        "lastExitCode": {
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "command",
+                        "args",
+                        "intervalMs",
+                        "nextDueAt"
+                      ]
+                    },
+                    "orbInstallationId": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "exclusiveMinimum": true
+                    },
+                    "secretRef": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "tenant",
+                    "product",
+                    "state"
+                  ],
+                  "additionalProperties": {
+                    "nullable": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing product query parameter",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing or wrong admin bearer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such tenant for that name and product",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The tenant is still provisioning",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No admin token is configured on this deployment, so the surface fails closed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/orb/webhook": {
+      "post": {
+        "operationId": "routeOrbWebhook",
+        "tags": [
+          "Control plane"
+        ],
+        "summary": "Route a GitHub webhook to the hosted ORB tenant it belongs to",
+        "description": "Deliberately outside the admin-bearer middleware: GitHub authenticates a webhook with its own HMAC signature over the raw body, not this service's admin token.",
+        "security": [
+          {
+            "GitHubWebhookSignature": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delivered to the tenant's container"
+          },
+          "401": {
+            "description": "The signature did not verify",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "The tenant's container could not be reached",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "No webhook binding is configured on this deployment",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "error"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

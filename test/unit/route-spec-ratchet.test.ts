@@ -13,7 +13,8 @@
 // exception, which is the point -- a new unspecced route fails immediately.
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
-import { buildOpenApiSpec } from "../../src/openapi/spec";
+import { SPEC_REGISTRARS, buildOpenApiSpec } from "../../src/openapi/spec";
+import { OpenAPIRegistry } from "@asteasolutions/zod-to-openapi";
 import {
   diffRoutesAgainstSpec,
   isNonOperationRoute,
@@ -84,4 +85,90 @@ describe("route↔spec ratchet", () => {
     expect(listLiveRouteKeys(createApp() as never).length).toBeGreaterThan(200);
     expect(listSpecRouteKeys(buildOpenApiSpec() as never).length).toBeGreaterThan(200);
   });
+});
+
+// #9706: the ratchet compares SETS, so it is structurally blind to a path registered twice -- both
+// directions of its diff still balance. @asteasolutions/zod-to-openapi silently keeps the last
+// registration, which is how `POST /v1/internal/jobs/backfill-pr-details` came to publish one table's
+// operation while a second, more accurate one (declaring the 400 the handler really returns) was
+// discarded with nothing anywhere reporting it.
+describe("no operation is registered twice (#9706)", () => {
+  it("contributes each method+path exactly once", () => {
+    const registry = new OpenAPIRegistry();
+    for (const register of SPEC_REGISTRARS) register(registry);
+
+    const seen = new Map<string, number>();
+    for (const definition of registry.definitions) {
+      if (definition.type !== "route") continue;
+      const key = `${definition.route.method.toUpperCase()} ${definition.route.path}`;
+      seen.set(key, (seen.get(key) ?? 0) + 1);
+    }
+    expect([...seen].filter(([, count]) => count > 1).map(([key]) => key)).toEqual([]);
+  });
+
+  it("declares every /v1/internal/ operation as bearer-gated", () => {
+    // requiresApiToken returns false for this family -- it has its own middleware -- so the legacy
+    // fill-in left any entry that did not declare `auth` with no stanza at all.
+    const paths = buildOpenApiSpec().paths as Record<string, Record<string, { security?: unknown } | undefined>>;
+    const wrong: string[] = [];
+    for (const [path, item] of Object.entries(paths)) {
+      if (!path.startsWith("/v1/internal/")) continue;
+      for (const method of ["get", "post", "put", "patch", "delete"] as const) {
+        const operation = item[method];
+        if (!operation) continue;
+        if (JSON.stringify(operation.security) !== JSON.stringify([{ LoopOverBearer: [] }])) wrong.push(`${method.toUpperCase()} ${path}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+});
+
+// #9706: the published status has to be the one the handler returns. Every job route enqueues and
+// answers 202; the SINGLE_JOBS table published a 200 that was unreachable for all five of them.
+describe("job operations publish what their handlers actually return (#9706)", () => {
+  const jobOperation = (path: string) => (buildOpenApiSpec().paths as Record<string, { post?: { responses?: Record<string, unknown>; summary?: string } }>)[path]?.post;
+
+  it.each(["rag-index", "regate-pr", "build-contributor-evidence", "build-burden-forecasts", "repair-data-fidelity"])(
+    "%s is queued (202), not run (200)",
+    (segment) => {
+      const operation = jobOperation(`/v1/internal/jobs/${segment}`);
+      expect(Object.keys(operation!.responses!)).toContain("202");
+      expect(Object.keys(operation!.responses!)).not.toContain("200");
+      expect(operation!.summary).toMatch(/^Queue a job to /);
+    },
+  );
+
+  it("rag-index declares a 404 and NO 400 — an unparseable body becomes {}, it is never rejected", () => {
+    const responses = Object.keys(jobOperation("/v1/internal/jobs/rag-index")!.responses!);
+    expect(responses).toContain("404");
+    expect(responses).not.toContain("400");
+  });
+
+  it("regate-pr declares both — it validates its body AND 404s an uninstalled repo", () => {
+    const responses = Object.keys(jobOperation("/v1/internal/jobs/regate-pr")!.responses!);
+    expect(responses).toEqual(expect.arrayContaining(["400", "404"]));
+  });
+
+  it.each([
+    "backfill-repo-segment",
+    "backfill-repo-segment/run",
+    "backfill-pr-details",
+    "backfill-pr-details/run",
+    "build-contributor-decision-packs/run",
+    "refresh-contributor-activity",
+    "refresh-contributor-activity/run",
+    "generate-review-recap",
+    "generate-review-recap/run",
+  ])("%s validates its body, so it declares a 400", (segment) => {
+    expect(Object.keys(jobOperation(`/v1/internal/jobs/${segment}`)!.responses!)).toContain("400");
+  });
+
+  it.each(["refresh-registry", "build-contributor-decision-packs", "generate-signal-snapshots", "rollup-product-usage"])(
+    "%s accepts any body, so it must NOT claim a 400",
+    (segment) => {
+      // The other arm of the per-entry override, and the reason it is per-entry: widening the shared
+      // QUEUED constant would have attached a 400 to every one of these.
+      expect(Object.keys(jobOperation(`/v1/internal/jobs/${segment}`)!.responses!)).not.toContain("400");
+    },
+  );
 });

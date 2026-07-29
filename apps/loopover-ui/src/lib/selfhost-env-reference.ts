@@ -282,6 +282,26 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/ai.ts",
   },
   {
+    name: "LOOPOVER_LEDGER_ANCHOR_GIT_INSTALLATION_ID",
+    firstReference: "src/selfhost/preflight.ts",
+  },
+  {
+    name: "LOOPOVER_LEDGER_ANCHOR_GIT_OWNER",
+    firstReference: "src/selfhost/preflight.ts",
+  },
+  {
+    name: "LOOPOVER_LEDGER_ANCHOR_GIT_REPO",
+    firstReference: "src/selfhost/preflight.ts",
+  },
+  {
+    name: "LOOPOVER_LEDGER_ANCHOR_KEYS",
+    firstReference: "src/selfhost/preflight.ts",
+  },
+  {
+    name: "LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY",
+    firstReference: "src/selfhost/preflight.ts",
+  },
+  {
     name: "LOOPOVER_MCP_TOKEN",
     firstReference: "src/selfhost/preflight.ts",
   },
@@ -759,6 +779,11 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_CENTRAL_POSTHOG_KEY` | `src/selfhost/posthog.ts` |",
   "| `LOOPOVER_ENABLE_PAGERDUTY` | `src/services/notify-pagerduty.ts` |",
   "| `LOOPOVER_ENABLE_UNSAFE_CODEX_REVIEWER` | `src/selfhost/ai.ts` |",
+  "| `LOOPOVER_LEDGER_ANCHOR_GIT_INSTALLATION_ID` | `src/selfhost/preflight.ts` |",
+  "| `LOOPOVER_LEDGER_ANCHOR_GIT_OWNER` | `src/selfhost/preflight.ts` |",
+  "| `LOOPOVER_LEDGER_ANCHOR_GIT_REPO` | `src/selfhost/preflight.ts` |",
+  "| `LOOPOVER_LEDGER_ANCHOR_KEYS` | `src/selfhost/preflight.ts` |",
+  "| `LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_MCP_TOKEN` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_METRICS_REPO_LABELS` | `src/server.ts` |",
   "| `LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS` | `src/selfhost/inert-config.ts` |",

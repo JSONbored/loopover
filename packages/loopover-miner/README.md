@@ -287,7 +287,9 @@ It exposes these read-only tools, generated from the `@loopover/contract` regist
 
 ### Client config
 
-`loopover-mcp` (ORB's hosted contributor-workflow tools) and `loopover-miner-mcp` (AMS's own local state-visibility tools above) can run as two separate stdio servers in the same MCP client session — useful for a dual-role operator running both ORB and AMS on the same box. Generate ORB's half with `loopover-mcp init-client --print claude` (see the [`@loopover/mcp` README](../loopover-mcp/README.md#client-config)); `loopover-miner-mcp` takes no flags, so its entry is just the bin name. Combined, a Claude Desktop / Claude Code style config looks like:
+<!-- GENERATED:MCP-CLIENT-CONFIG:BEGIN — edit packages/loopover-contract/src/client-config.ts, then `npm run mcp:client-config` -->
+
+`loopover-mcp` (ORB's hosted contributor-workflow tools) and `loopover-miner-mcp` (AMS's own local state-visibility tools above) run as two separate stdio servers in the same MCP client session — the dual-role case for an operator running both ORB and AMS on one box. Generate ORB's half with `loopover-mcp init-client --print claude` (see the [`@loopover/mcp` README](../loopover-mcp/README.md#client-config)); `loopover-miner-mcp` takes no flags, so its entry is just the bin name. Combined:
 
 ```json
 {
@@ -304,7 +306,11 @@ It exposes these read-only tools, generated from the `@loopover/contract` regist
 }
 ```
 
-`loopover` exposes ORB's hosted contributor-workflow tools (issue ranking, PR packet prep, decision packs). `loopover-miner` exposes AMS's own local state-visibility tools listed above (portfolio dashboard, claims, audit feed, run state, plans, calibration) — a fully separate, 100% local tool surface with no shared code or network calls between the two. Both follow the same `loopover_*` tool-naming convention (`loopover_...` vs. `loopover_miner_...`), but back onto different stores: ORB's tools read the hosted loopover backend, AMS's tools read this machine's own local SQLite files (see [Local storage](#local-storage)) — a handful of AMS tools even name the ORB tool they mirror (e.g. `loopover_miner_get_run_state` is the read-only analog of `loopover_get_automation_state`) so the relationship is explicit at the point of use, not just here.
+`loopover` exposes ORB's hosted contributor-workflow tools (issue ranking, PR packet prep, decision packs) and, once you have run `loopover-mcp login`, the remote tool set it mounts. `loopover-miner` exposes AMS's own local state-visibility tools listed above (portfolio dashboard, claims, audit feed, run state, plans, calibration) — a fully separate, 100% local tool surface with no shared code or network calls between the two.
+
+Both follow the same `loopover_*` naming convention (`loopover_...` vs. `loopover_miner_...`), but back onto different stores: ORB's tools read the hosted loopover backend, AMS's tools read this machine's own local SQLite files (see [Local storage](#local-storage)) — a handful of AMS tools even name the ORB tool they mirror (e.g. `loopover_miner_get_run_state` is the read-only analog of `loopover_get_automation_state`) so the relationship is explicit at the point of use, not just here.
+
+<!-- GENERATED:MCP-CLIENT-CONFIG:END -->
 
 ## Version check
 

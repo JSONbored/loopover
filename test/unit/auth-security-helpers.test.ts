@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  authenticateInternalToken,
   buildBrowserSessionCookie,
   buildClearedBrowserSessionCookie,
   buildClearedGitHubOAuthStateCookie,
@@ -134,5 +135,38 @@ describe("session/oauth cookie builders", () => {
     expect(buildClearedGitHubOAuthStateCookie("http://[::1]/cb")).toBe(
       "loopover_oauth_state=; Max-Age=0; Path=/v1/auth/github; SameSite=Lax; HttpOnly",
     );
+  });
+});
+
+describe("authenticateInternalToken (#9713)", () => {
+  // authenticateInternalToken reads only env.INTERNAL_JOB_TOKEN, so a minimal cast keeps this pure-helper
+  // suite dependency-light (no D1) while still exercising both the nonBlank() and the early-exit branches.
+  const envWith = (internalJobToken: string): Env => ({ INTERNAL_JOB_TOKEN: internalJobToken }) as unknown as Env;
+
+  it("trims surrounding whitespace on INTERNAL_JOB_TOKEN, matching the three private secrets (regression for #9713)", async () => {
+    const env = envWith("  secret  ");
+    await expect(authenticateInternalToken(env, "secret")).resolves.toEqual({ kind: "static", actor: "internal" });
+  });
+
+  it("authenticates a correct, untrimmed secret (bearer already trimmed by extractBearerToken)", async () => {
+    const env = envWith("secret");
+    await expect(authenticateInternalToken(env, "secret")).resolves.toEqual({ kind: "static", actor: "internal" });
+  });
+
+  it("authenticates nobody when INTERNAL_JOB_TOKEN is whitespace-only", async () => {
+    const env = envWith("   ");
+    // The blank secret trims to undefined via nonBlank(), so even the same whitespace never matches.
+    await expect(authenticateInternalToken(env, "   ")).resolves.toBeNull();
+    await expect(authenticateInternalToken(env, "")).resolves.toBeNull();
+  });
+
+  it("early-returns null for an absent bearer without consulting the secret", async () => {
+    const env = envWith("secret");
+    await expect(authenticateInternalToken(env, undefined)).resolves.toBeNull();
+  });
+
+  it("rejects a token that does not match the configured secret", async () => {
+    const env = envWith("secret");
+    await expect(authenticateInternalToken(env, "wrong")).resolves.toBeNull();
   });
 });

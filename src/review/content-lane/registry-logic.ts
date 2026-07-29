@@ -552,10 +552,14 @@ export function assessSubnetDocument(
     return fail("malformed-json", "Subnet document must be a JSON object.");
   }
   const doc = document as { netuid?: unknown; surfaces?: unknown };
-  if (!Number.isInteger(Number(doc.netuid))) {
+  // Type-first, like the `!Array.isArray(doc.surfaces)` sibling below: validate the RAW value, never Number(raw)
+  // (#9665). Number() coerces null/""/[]/booleans/hex/whitespace strings into "valid" integers, so a document
+  // with `netuid: null` was silently accepted as subnet 0 and threaded into assessSurfaceEntry's consistency
+  // check as if validated. A netuid is a non-negative index, so a negative integer is rejected too.
+  if (typeof doc.netuid !== "number" || !Number.isInteger(doc.netuid) || doc.netuid < 0) {
     return fail("unsupported-shape", "Subnet document netuid must be an integer.");
   }
-  const netuid = Number(doc.netuid); // normalize once; thread the canonical integer to entry + (future) grounding
+  const netuid = doc.netuid; // already validated as a non-negative integer above; no coercion on this path
   if (!Array.isArray(doc.surfaces)) {
     return fail("unsupported-shape", "Subnet document must carry a surfaces[] array.");
   }

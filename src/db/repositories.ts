@@ -6560,6 +6560,32 @@ export async function listStaleActiveReviewTracking(
     .where(and(eq(activeReviewTracking.status, "active"), lt(activeReviewTracking.startedAt, olderThanIso)));
 }
 
+/**
+ * Boot-time orphan sweep (#deploy-orphaned-reviews): terminalize every 'active' row whose review started
+ * BEFORE this process booted. No in-flight review survives a restart -- the pass, its provider subprocess,
+ * and its locks all died with the old process -- so any such row is definitionally an orphan, and while it
+ * exists every new pass for that head skips with "AI review already in progress" (aiReviewLockContendedResult).
+ *
+ * WHY NOT LEAVE IT TO runActiveReviewReconciliation: that sweep only touches rows older than
+ * STALE_ACTIVE_REVIEW_MIN_AGE_MS (15 min) and runs on a 10-minute cron, so a container recreation wedged
+ * every mid-review PR head for 15-25 minutes -- observed live on the ORB (2026-07-29): five deploys in one
+ * day each orphaned the in-flight review, and even the maintainer's forced re-runs bounced off the stale
+ * row. At boot the age heuristic is unnecessary: started_at < process boot time is EXACT, not a guess, so
+ * this neither waits nor risks killing a genuinely live pass (there are none yet).
+ *
+ * Returns the terminalized (repo, PR) pairs so the caller can log one line per healed row.
+ */
+export async function terminalizeActiveReviewsFromBeforeBoot(
+  env: Env,
+  bootIso: string,
+): Promise<Array<{ repoFullName: string; pullNumber: number }>> {
+  return getDb(env.DB)
+    .update(activeReviewTracking)
+    .set({ status: "terminal", updatedAt: nowIso() })
+    .where(and(eq(activeReviewTracking.status, "active"), lt(activeReviewTracking.startedAt, bootIso)))
+    .returning({ repoFullName: activeReviewTracking.repoFullName, pullNumber: activeReviewTracking.pullNumber });
+}
+
 // Review memory (#2178, data-model slice of #1964). Hard per-repo cap on stored suppression signals — mirrors
 // rag.ts's MAX_CHUNKS_PER_REPO discipline (bound a repo-controlled, unboundedly-growable store). A repo that
 // keeps dismissing NEW finding shapes evicts its OLDEST suppression first rather than growing forever.

@@ -26,7 +26,15 @@ import {
   SCENARIO_LIMITS,
   PLAN_STEP_STATUSES,
   PUBLIC_SURFACE_SKIP_REASONS,
+  TEST_FRAMEWORKS,
+  QUEUE_STATUSES,
+  CLAIM_STATUSES,
+  MINER_RUN_STATES,
 } from "@loopover/contract";
+import { TEST_FRAMEWORKS as ENGINE_TEST_FRAMEWORKS } from "../../packages/loopover-engine/src/signals/test-evidence";
+import { QUEUE_STATUSES as MINER_QUEUE_STATUSES } from "../../packages/loopover-miner/lib/portfolio-queue";
+import { CLAIM_STATUSES as MINER_CLAIM_STATUSES } from "../../packages/loopover-miner/lib/claim-ledger";
+import { RUN_STATES as LIVE_MINER_RUN_STATES } from "../../packages/loopover-miner/lib/run-state";
 import { LocalStatusStructuredInput } from "@loopover/contract/tools";
 import { GetRepoContextInput } from "@loopover/contract/tools";
 import { PREFLIGHT_LIMITS as ENGINE_PREFLIGHT_LIMITS } from "../../packages/loopover-engine/src/signals/preflight-limits";
@@ -251,6 +259,26 @@ describe("contract enums", () => {
     // Same reason as the autonomy pins: the contract cannot import the Worker's src/, and a filter
     // vocabulary that silently stops matching the server's is worse than one that fails loudly.
     expect([...PUBLIC_SURFACE_SKIP_REASONS]).toEqual([...SERVER_PUBLIC_SURFACE_SKIP_REASONS]);
+  });
+
+  // #9660: the four restatements that had no pin at all. Three of them sat in tools/miner.ts rather than
+  // enums.ts, outside even the convention that a shared vocabulary lives in one file -- and two appear in
+  // OUTPUT schemas, where a new value makes a tool's real structuredContent fail the schema that same tool
+  // advertises. `validate:mcp` only notices if the cold fixture environment happens to produce it.
+  it("pins the test-framework vocabulary against the engine's live list", () => {
+    expect([...TEST_FRAMEWORKS]).toEqual([...ENGINE_TEST_FRAMEWORKS]);
+  });
+
+  it("pins the miner's queue and claim vocabularies against their live stores", () => {
+    expect([...QUEUE_STATUSES]).toEqual([...MINER_QUEUE_STATUSES]);
+    expect([...CLAIM_STATUSES]).toEqual([...MINER_CLAIM_STATUSES]);
+  });
+
+  it("pins the miner run states against the live run-state store", () => {
+    // RUN_STATES was a `readonly RunState[]` cast over a literal, with the union written out separately --
+    // so the list could gain a state the type did not have. The type is derived from the list now, which is
+    // what makes this pin mean anything.
+    expect([...MINER_RUN_STATES]).toEqual([...LIVE_MINER_RUN_STATES]);
   });
 
   it("pins the preflight input bounds against the engine's live limits", () => {

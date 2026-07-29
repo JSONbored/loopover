@@ -174,13 +174,21 @@ export interface FleetAnalytics {
   cycleTimeObservable: boolean;
 }
 
-function median(xs: number[]): number | null {
+/** The fleet-aggregation median estimator (#9645) — the single one both computeFleetAnalytics and the federated
+ *  peer benchmark (federated-benchmark.ts) share. Sorts a COPY internally (callers need not pre-sort) and, at
+ *  even n, returns the MEAN of the two middle values — unlike {@link percentile}(…, 50)'s nearest-rank, which
+ *  returns the upper-middle value. Null for an empty input. */
+export function median(xs: number[]): number | null {
   if (xs.length === 0) return null;
   const s = [...xs].sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);
   return s.length % 2 === 0 ? (s[mid - 1]! + s[mid]!) / 2 : s[mid]!;
 }
 
+/** Nearest-rank percentile. PRECONDITION: `sorted` MUST already be ascending-sorted — this function does NOT
+ *  sort. Satisfied by its two call sites, cycleP50Ms and cycleP95Ms below, which pass an already-sorted array.
+ *  For a true median use {@link median} (which sorts and averages the two middle values at even n) — a p=50
+ *  call here is nearest-rank, not a median. */
 export function percentile(sorted: number[], p: number): number | null {
   if (sorted.length === 0) return null;
   // Nearest-rank: the p-th percentile is the value at 1-based rank ceil(p/100 * N), i.e. index

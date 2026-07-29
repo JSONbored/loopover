@@ -154,6 +154,7 @@ function stripSqlComments(text: string): string {
 export type SchemaEvent =
   | { type: "define_column"; table: string; column: string }
   | { type: "drop_table"; table: string }
+  | { type: "rename_table"; from: string; to: string }
   | { type: "remove_column"; table: string; column: string };
 
 /** Extract the schema-affecting events a single SQL statement produces. Statements that don't affect table
@@ -162,6 +163,13 @@ export function extractSchemaEvents(rawStatement: string): SchemaEvent[] {
   const statement = stripSqlComments(rawStatement);
   const dropTableMatch = /^\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(\w+)/i.exec(statement);
   if (dropTableMatch) return [{ type: "drop_table", table: dropTableMatch[1]!.toLowerCase() }];
+
+  // `ALTER TABLE <old> RENAME TO <new>` — a whole-table rebuild: every column tracked under <old> must move to
+  // <new> so a collision detector does not go blind on the renamed table (#9647). Checked BEFORE the column
+  // rename below: `RENAME\s+TO` requires TO immediately after RENAME, which the column form (RENAME [COLUMN]
+  // <a> TO <b>, an identifier between RENAME and TO) never has, so the two can't be confused either direction.
+  const renameTableMatch = /\bALTER\s+TABLE\s+(\w+)\s+RENAME\s+TO\s+(\w+)/i.exec(statement);
+  if (renameTableMatch) return [{ type: "rename_table", from: renameTableMatch[1]!.toLowerCase(), to: renameTableMatch[2]!.toLowerCase() }];
 
   const renameColumnMatch = /\bALTER\s+TABLE\s+(\w+)\s+RENAME\s+(?:COLUMN\s+)?(\w+)\s+TO\s+(\w+)/i.exec(statement);
   if (renameColumnMatch) {
@@ -218,6 +226,17 @@ export function detectColumnCollisions(orderedFileContents: ReadonlyArray<readon
         if (event.type === "drop_table") {
           for (const [key, entry] of tracked) {
             if (entry.table === event.table) tracked.delete(key);
+          }
+          continue;
+        }
+        if (event.type === "rename_table") {
+          // Re-key every column tracked under the old name to the new one (#9647): a later CREATE/ALTER against
+          // the renamed table must still collide with a column it already carries, and must NOT collide with the
+          // now-vacated old name. Rebuild the map entries rather than mutating keys in place.
+          for (const [key, entry] of [...tracked]) {
+            if (entry.table !== event.from) continue;
+            tracked.delete(key);
+            tracked.set(`${event.to}.${entry.column}`, { table: event.to, column: entry.column, files: entry.files });
           }
           continue;
         }

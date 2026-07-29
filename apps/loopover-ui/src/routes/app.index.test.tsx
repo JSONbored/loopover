@@ -1,4 +1,5 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, screen, waitFor } from "@testing-library/react";
+import { renderWithQueryClient as render } from "@/lib/test-query-client";
 import { describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 

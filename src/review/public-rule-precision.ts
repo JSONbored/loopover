@@ -45,6 +45,23 @@ export type PublicRulePrecision = {
 };
 
 /**
+ * Provenance tags whose override rows carry a verdict that was NOT a human decision about the rule the row is
+ * filed under, and so cannot support a per-rule "measured accuracy" claim.
+ *
+ * `slop_replay_backfill_v1` (#8277) is the counterfactual replay: it re-scores the deterministic slop signals
+ * over archived diffs, but takes each label verbatim from the `ai_consensus_defect` corpus's human verdict on
+ * the same target (`scripts/backfill-slop-corpus.ts`'s `manifestToSourceCases`). That is exactly the evidence
+ * it was built to be -- internal input to a flip-to-live decision, and by its own module header a LOWER BOUND
+ * on live scoring -- but published under "precision of each automated rule over its human-decided cases" it
+ * asserts something untrue: those were another rule's human-decided cases. It also made the public table print
+ * one number twice, since both rules then shared a label set and a target set.
+ *
+ * NOT excluded: `review_targets_decision_level` (#8083's own backfill), whose labels come from what actually
+ * happened to the PRs THAT rule fired on -- synthesized rows, but genuinely about that rule.
+ */
+const NON_ATTRIBUTABLE_OVERRIDE_PROVENANCES = ["slop_replay_backfill_v1"] as const;
+
+/**
  * Load the public per-rule precision block. Fail-safe per section (the same degradation contract as
  * loadCalibrationTrend): a read error yields an empty/absent section, never a thrown public endpoint.
  */
@@ -57,6 +74,7 @@ export async function loadPublicRulePrecision(env: Env, nowMs: number = Date.now
             SUM(CASE WHEN json_extract(metadata_json, '$.verdict') = 'reversed' THEN 1 ELSE 0 END) AS reversed
        FROM audit_events
       WHERE event_type LIKE '${HUMAN_OVERRIDE_EVENT_TYPE_PREFIX}%' AND created_at >= ?
+        AND COALESCE(json_extract(metadata_json, '$.provenance'), '') NOT IN (${NON_ATTRIBUTABLE_OVERRIDE_PROVENANCES.map((tag) => `'${tag}'`).join(", ")})
       GROUP BY rule_id`,
     sinceIso,
   );

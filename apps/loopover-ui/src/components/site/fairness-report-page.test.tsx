@@ -81,6 +81,7 @@ const FIXTURE: PublicStats = {
     windowDays: 90,
     gamingFlagsCaught: 1,
   },
+  fleetAccuracyTrend: [{ weekStart: "2026-07-13", verdicts: 40, accuracyPct: 92.5 }],
   accuracyTrend: [
     { weekStart: "2026-07-13", merged: 30, closed: 15, reversed: 1, accuracyPct: 97.8 },
   ],
@@ -242,6 +243,33 @@ describe("FairnessReportPage (#fairness-analytics)", () => {
     await waitFor(() => expect(screen.getByText("By repository")).toBeTruthy());
     const notes = screen.getAllByText(/not measurable on this deployment, not 100%/);
     expect(notes.length).toBe(2); // one under each affected table
+  });
+
+  it("#9676: renders the fleet trend as its own section, never merged into the own-ledger table", async () => {
+    apiFetch.mockResolvedValue({ ok: true, data: FIXTURE, status: 200, durationMs: 10 });
+    renderWithClient(<FairnessReportPage />);
+
+    await waitFor(() => expect(screen.getByText("Weekly trend — self-hosted fleet")).toBeTruthy());
+    // Two distinct sections, so a reader can never read one population's number off the other's row.
+    expect(screen.getByText("Weekly trend")).toBeTruthy();
+    expect(screen.getByText("Decisions scored")).toBeTruthy();
+    expect(screen.getByText("92.5%")).toBeTruthy();
+  });
+
+  it("#9676: hides the fleet trend entirely when no week has a scored verdict", async () => {
+    apiFetch.mockResolvedValue({
+      ok: true,
+      data: {
+        ...FIXTURE,
+        fleetAccuracyTrend: [{ weekStart: "2026-07-13", verdicts: null, accuracyPct: null }],
+      },
+      status: 200,
+      durationMs: 10,
+    });
+    renderWithClient(<FairnessReportPage />);
+
+    await waitFor(() => expect(screen.getByText("Weekly trend")).toBeTruthy());
+    expect(screen.queryByText("Weekly trend — self-hosted fleet")).toBeNull();
   });
 
   it("does not show the unmeasurable-accuracy note when every accuracy is real", async () => {

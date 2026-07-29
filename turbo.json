@@ -23,7 +23,11 @@
       // engine package" comment) already burned this repo on once. packages/loopover-mcp/bin/** is
       // deliberately NOT listed: every test reference to it is a runtime path string
       // (`join(process.cwd(), "packages/loopover-mcp/bin/loopover-mcp.js")`, spawned as a subprocess or
-      // read as raw text), never a static import, so its contents don't affect tsc's type-checked surface.
+      // read as raw text) -- that WAS true when written and is not any more: mcp-cli-completion-spec.test.ts
+      // statically imports CLI_COMMAND_SPEC/CLI_FLAG_SPEC from bin/loopover-mcp, so the .ts IS on tsc's
+      // surface and is now listed below. This list is no longer trusted to memory either:
+      // scripts/check-turbo-typecheck-inputs.ts recomputes the real reach every CI run (#9848), which is
+      // what caught this claim going stale, along with three other unhashed paths.
       // This list is a snapshot of test/'s real cross-package reach as of the audit that added it, not a
       // structural guarantee -- a future test file importing from a NOT-yet-listed package/app would
       // reopen the same silent-stale-cache gap. Re-run the same grep (every src/+test/ import crossing a
@@ -47,6 +51,10 @@
         "packages/loopover-miner/bin/**",
         "packages/loopover-mcp/package.json",
         "packages/discovery-index/src/**",
+        "packages/discovery-index/scripts/**",
+        "packages/loopover-mcp/bin/**",
+        "packages/loopover-mcp/lib/**",
+        "packages/loopover-miner/scripts/**",
         "apps/loopover-ui/src/lib/**"
       ],
       "outputs": []

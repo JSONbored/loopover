@@ -15,6 +15,7 @@
     "deploy": "wrangler deploy",
     "deploy:api": "turbo run build --filter=@loopover/engine --filter=@loopover/contract && wrangler d1 migrations apply loopover --remote && wrangler deploy",
     "selfhost:postgres:migrate": "tsx scripts/migrate-selfhost-sqlite-to-postgres.ts",
+    "ledger:anchor-keygen": "tsx scripts/gen-ledger-anchor-keypair.ts",
     "selfhost:env-reference": "node --experimental-strip-types scripts/gen-selfhost-env-reference.ts",
     "selfhost:env-reference:check": "node --experimental-strip-types scripts/gen-selfhost-env-reference.ts --check",
     "miner:env-reference": "tsx packages/loopover-miner/scripts/generate-env-reference.ts",

@@ -254,7 +254,7 @@ describe("recordEligibilityExclusionSignals via runDiscover (#8544)", () => {
           });
         }),
         recordHumanOverride: vi.fn(async () => undefined),
-        queryRuleHistory: vi.fn(async () => ({ fired: [], overrides: [] })),
+        queryRuleHistory: vi.fn(async () => ({ fired: [], overrides: [], saturated: false })),
       },
     };
   }
@@ -351,7 +351,7 @@ describe("recordEligibilityExclusionSignals via runDiscover (#8544)", () => {
       initSignalTrackingStore: () => ({
         recordRuleFired,
         recordHumanOverride: vi.fn(async () => undefined),
-        queryRuleHistory: vi.fn(async () => ({ fired: [], overrides: [] })),
+        queryRuleHistory: vi.fn(async () => ({ fired: [], overrides: [], saturated: false })),
       }),
     });
     expect(exitCode).toBe(0);

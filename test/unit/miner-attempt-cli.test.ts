@@ -1333,7 +1333,7 @@ describe("runAttempt (#5132)", () => {
     const store = {
       recordRuleFired: overrides.recordRuleFired ?? (async (event: RuleFiredEvent) => void fired.push(event)),
       recordHumanOverride: async () => undefined,
-      queryRuleHistory: async () => ({ fired: [], overrides: [] }),
+      queryRuleHistory: async () => ({ fired: [], overrides: [], saturated: false }),
     } as unknown as SignalStore;
     return { store, fired };
   }

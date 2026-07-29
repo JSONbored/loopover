@@ -100,7 +100,12 @@ export function createSignalTrackingStore(eventLedger: SignalTrackingLedger): Si
         payload: toHumanOverridePayload(event),
       });
     },
-    async queryRuleHistory(ruleId: string, sinceMs: number): Promise<{ fired: RuleFiredEvent[]; overrides: HumanOverrideEvent[] }> {
+    // #9805: the interface carries a `limit`/`saturated` pair so a publishing caller can tell a complete read
+    // from a truncated one. This store reads the WHOLE local event ledger in memory -- there is no bound to
+    // hit and nothing is ever left behind -- so `limit` is accepted for interface conformance and ignored,
+    // and `saturated` is unconditionally false. That is a true statement here, not a stub: reporting `true`
+    // would claim missing rows that do not exist.
+    async queryRuleHistory(ruleId: string, sinceMs: number): Promise<{ fired: RuleFiredEvent[]; overrides: HumanOverrideEvent[]; saturated: boolean }> {
       const sinceIso = new Date(sinceMs).toISOString();
       const fired: RuleFiredEvent[] = [];
       const overrides: HumanOverrideEvent[] = [];
@@ -127,7 +132,7 @@ export function createSignalTrackingStore(eventLedger: SignalTrackingLedger): Si
           });
         }
       }
-      return { fired, overrides };
+      return { fired, overrides, saturated: false };
     },
   };
 }

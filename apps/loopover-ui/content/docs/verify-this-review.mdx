@@ -138,11 +138,28 @@ transport — recompute `recordDigest` over the record's own remaining fields an
 curl -s "https://api.loopover.ai/v1/public/eval-scores" | jq '.records'
 ```
 
-That array is empty whenever the latest backtest run's corpus is empty. A checksum over zero cases
-is byte-identical for every rule and every window, so it commits to nothing a reader could re-derive
-the scores from — publishing a record against it would assert a reproducibility that does not exist.
-An empty `records` array therefore means *the numbers are not currently committed to a corpus*, never
-that the numbers are zero.
+Each record's `commitments.corpusChecksum` is the checksum of the corpus you downloaded in step 2 —
+the same rule, the same window, the same bytes. So you can close the loop yourself: hash the corpus,
+read the record, compare.
+
+```bash
+curl -s "https://api.loopover.ai/v1/public/eval-corpus?ruleId=ai_consensus_defect" | jq -r '.checksum'
+curl -s "https://api.loopover.ai/v1/public/eval-scores" \
+  | jq -r '.records[] | select(.workUnit.ruleId == "ai_consensus_defect") | .commitments.corpusChecksum'
+```
+
+A rule is **omitted** from `records` — rather than published with a commitment you could not check —
+in exactly three cases:
+
+- **its corpus is empty.** A checksum over zero cases is byte-identical for every rule, every window
+  and every deployment, so it commits to nothing you could re-derive the scores from;
+- **its corpus is truncated** (`truncated: true` in step 2). The checksum would then cover a prefix of
+  the window while the record's `decided`/`confirmed` cover all of it, so re-deriving from the
+  published cases would give you different numbers than the ones published;
+- **the deployment has neither a persisted backtest run nor a usable corpus** for that rule.
+
+An empty `records` array therefore means *these numbers are not currently committed to a corpus* —
+never that the numbers are zero.
 
 The aggregated run history is readable directly too, again against the deployment's own database
 (operator / self-host):

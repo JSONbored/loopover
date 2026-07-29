@@ -66,6 +66,10 @@ export const RAW_SQL_ONLY_TABLES: Set<string> = new Set([
   "orb_reuse_counters",
   "orb_risk_control_arms",
   "orb_signals",
+  // #9783: per-instance/per-day confusion-matrix cells folded from orb_signals (above) by the retention
+  // prune, and unioned back in by computeFleetAnalytics, loadPublicFleetAccuracyTrend and
+  // listFleetInstances -- all via env.DB.prepare, no Drizzle use. Same shape as orb_outcome_rollups.
+  "orb_signal_rollups",
   "orb_webhook_events",
   "override_audit",
   "predicted_gate_calibration_ledger",

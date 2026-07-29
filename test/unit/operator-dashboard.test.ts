@@ -5,7 +5,8 @@ import {
   latestUsageRollup,
   __operatorDashboardInternals,
 } from "../../src/services/operator-dashboard";
-import type { ProductUsageDailyRollupRecord } from "../../src/types";
+import { createAgentRun, replaceAgentActions, upsertAgentRecommendationOutcome } from "../../src/db/repositories";
+import type { AgentRecommendationOutcomeRecord, ProductUsageDailyRollupRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
 const FORBIDDEN_EXPORT_TERMS =
@@ -336,7 +337,80 @@ describe("operator dashboard payload", () => {
     expect(latestUsageRollup(rollups)?.day).toBe("2026-05-30");
     expect(latestUsageRollup([])).toBeNull();
   });
+
+  it("renders the recommendation-quality tile with a positive rate when resolved outcomes exist", async () => {
+    const env = createTestEnv();
+    const now = new Date().toISOString(); // keep the outcome inside the dashboard's rolling analytics window
+    await createAgentRun(env, {
+      id: "run:dashboard-merged",
+      objective: "Track quality",
+      actorLogin: "dashboard-dev",
+      surface: "api",
+      mode: "copilot",
+      status: "completed",
+      dataQualityStatus: "complete",
+      payload: {},
+      createdAt: now,
+      updatedAt: now,
+    });
+    await replaceAgentActions(env, "run:dashboard-merged", [
+      {
+        id: "action:dashboard-merged",
+        runId: "run:dashboard-merged",
+        actionType: "choose_next_work",
+        targetRepoFullName: "owner/repo",
+        targetPullNumber: null,
+        targetIssueNumber: null,
+        status: "recommended",
+        recommendation: "pursue",
+        why: ["Safe aggregate fixture."],
+        blockedBy: [],
+        publicSafeSummary: "Safe aggregate fixture.",
+        approvalRequired: true,
+        safetyClass: "private",
+        payload: {},
+        createdAt: now,
+      },
+    ]);
+    await upsertAgentRecommendationOutcome(env, recommendationOutcome("merged", now));
+
+    const payload = await buildOperatorDashboardPayload(env);
+
+    expect(payload.metrics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "Recommendation quality", value: "1/1", delta: "100% positive" }),
+      ]),
+    );
+  });
 });
+
+function recommendationOutcome(outcomeState: AgentRecommendationOutcomeRecord["outcomeState"], now: string): AgentRecommendationOutcomeRecord {
+  return {
+    id: `outcome:dashboard-${outcomeState}`,
+    actionId: `action:dashboard-${outcomeState}`,
+    runId: `run:dashboard-${outcomeState}`,
+    actorLogin: "dashboard-dev",
+    actionType: "choose_next_work",
+    surface: null,
+    targetRepoFullName: "owner/repo",
+    targetPullNumber: null,
+    targetIssueNumber: null,
+    source: "inferred",
+    outcomeState,
+    outcomeTargetType: "repository",
+    outcomeRepoFullName: "owner/repo",
+    outcomePullNumber: null,
+    outcomeIssueNumber: null,
+    maintainerLane: false,
+    confidence: "high",
+    reason: "safe aggregate fixture",
+    sourceUpdatedAt: now,
+    detectedAt: now,
+    metadata: {},
+    createdAt: now,
+    updatedAt: now,
+  };
+}
 
 function rollup(day: string): ProductUsageDailyRollupRecord {
   return {

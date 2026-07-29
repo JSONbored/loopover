@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createAgentRun, replaceAgentActions, upsertAgentRecommendationOutcome } from "../../src/db/repositories";
+import { buildRecommendationOutcomeCalibration } from "../../src/services/outcome-calibration";
 import { buildRecommendationQualityReport, buildRecommendationQualityReportFromOutcomes } from "../../src/services/recommendation-quality-report";
 import type { AgentRecommendationOutcomeRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -30,14 +31,21 @@ describe("recommendation quality report", () => {
     expect(report).toMatchObject({
       visibility: "operator_only",
       empty: false,
-      sparse: false,
-      totals: { total: 6, positive: 3, negative: 3, positiveRate: 0.5, maintainerLaneTotal: 1, lowConfidence: 1 },
+      // Only 4 outcomes now count toward the resolved total (the 2 stale/ignored are pending), so it reads as sparse.
+      sparse: true,
+      totals: { total: 4, positive: 3, negative: 1, pending: 2, positiveRate: 0.75, maintainerLaneTotal: 1, lowConfidence: 1 },
       publicExport: { available: false },
     });
-    expect(report.roleSurfaces.map((surface) => surface.role)).toEqual(["miner", "maintainer", "owner", "operator"]);
+    // operator's only outcome (operator-ignored) is pending now, so it has no resolved total and drops from
+    // the role surfaces; its pending count survives in the top-level totals.pending.
+    expect(report.roleSurfaces.map((surface) => surface.role)).toEqual(["miner", "maintainer", "owner"]);
     expect(report.roleSurfaces.find((surface) => surface.role === "miner")).toMatchObject({ total: 2, positive: 1, negative: 1 });
+    // stale/ignored are pending now, not failures, so they no longer appear as failure categories (#9701).
     expect(report.failureCategories.map((category) => category.category)).toEqual(
-      expect.arrayContaining(["closed_without_merge", "stale", "ignored", "low_confidence", "maintainer_lane"]),
+      expect.arrayContaining(["closed_without_merge", "low_confidence", "maintainer_lane"]),
+    );
+    expect(report.failureCategories.map((category) => category.category)).not.toEqual(
+      expect.arrayContaining(["stale", "ignored"]),
     );
     expect(report.trends).toHaveLength(6);
     expect(JSON.stringify(report)).not.toMatch(FORBIDDEN_REPORT_TERMS);
@@ -175,7 +183,7 @@ describe("recommendation quality report", () => {
     expect(empty).toMatchObject({
       empty: true,
       sparse: false,
-      totals: { total: 0, positive: 0, negative: 0, positiveRate: 0 },
+      totals: { total: 0, positive: 0, negative: 0, pending: 0, positiveRate: null },
       roleSurfaces: [],
       failureCategories: [],
     });
@@ -194,7 +202,7 @@ describe("recommendation quality report", () => {
       [
         outcome("metadata-array", "accepted", { metadata: { roles: ["unknown", "repo-owner"] }, repo: "owner/mixed" }),
         outcome("metadata-array-negative", "closed", { metadata: { roles: ["owner"] }, repo: "owner/mixed", updatedAt: "2026-05-30T00:00:00.000Z" }),
-        outcome("metadata-contributor", "ignored", { metadata: { audience: "contributor" }, repo: "owner/miner", confidence: "medium" }),
+        outcome("metadata-contributor", "closed", { metadata: { audience: "contributor" }, repo: "owner/miner", confidence: "medium" }),
         outcome("metadata-unknown", "merged", { metadata: { role: "reviewability" }, repo: "owner/fallback", actionType: "check_duplicate_risk" }),
         outcome("no-repo", "stale", { repo: null, actionType: "explain_repo_fit" }),
       ],
@@ -251,7 +259,7 @@ describe("recommendation quality report", () => {
       createdAt: "2026-05-26T00:00:00.000Z",
     };
     const missingTimestamp = {
-      ...outcome("missing-time", "ignored", {
+      ...outcome("missing-time", "closed", {
         repo: "owner/no-time",
         metadata: { role: "operator" },
       }),
@@ -331,6 +339,38 @@ describe("recommendation quality report", () => {
       windowDays: 90,
       totals: { total: 0 },
     });
+  });
+
+  it("agrees with buildRecommendationOutcomeCalibration on positiveRate for a stale-heavy ledger (#9701)", () => {
+    const outcomes = [
+      ...Array.from({ length: 5 }, (_unused, index) => outcome(`accepted-${index}`, "accepted", { repo: "owner/repo" })),
+      ...Array.from({ length: 5 }, (_unused, index) => outcome(`stale-${index}`, "stale", { repo: "owner/repo" })),
+    ];
+
+    const calibration = buildRecommendationOutcomeCalibration(outcomes);
+    const report = buildRecommendationQualityReportFromOutcomes(outcomes, { generatedAt: "2026-06-01T00:00:00.000Z", windowDays: 42 });
+
+    // Same window, same ledger: both aggregators must report the same positive rate (unactioned stale
+    // recommendations are pending, not failures, so 5 accepted + 5 stale is 100% positive on both surfaces).
+    expect(calibration.positiveRate).toBe(1);
+    expect(report.totals.positiveRate).toBe(1);
+    expect(report.totals.positiveRate).toBe(calibration.positiveRate);
+    // The stale bucket survives as pending, mirroring RecommendationOutcomeCalibration.pending.
+    expect(report.totals.pending).toBe(5);
+    expect(calibration.pending).toBe(5);
+    // ...and the stale outcomes are no longer attributed as failures.
+    expect(report.failureCategories.some((category) => category.category === "closed_without_merge" || category.category === "rejected")).toBe(false);
+    expect(report.failureCategories.map((category) => category.category)).not.toEqual(expect.arrayContaining(["stale", "ignored"]));
+  });
+
+  it("reports positiveRate null on an empty ledger, matching buildRecommendationOutcomeCalibration (#9701)", () => {
+    const calibration = buildRecommendationOutcomeCalibration([]);
+    const report = buildRecommendationQualityReportFromOutcomes([], { generatedAt: "2026-06-01T00:00:00.000Z", windowDays: 42 });
+
+    expect(calibration.positiveRate).toBeNull();
+    expect(report.totals.positiveRate).toBeNull();
+    expect(report.totals.positiveRate).toBe(calibration.positiveRate);
+    expect(report.totals.pending).toBe(0);
   });
 });
 

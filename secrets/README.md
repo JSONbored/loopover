@@ -123,7 +123,12 @@ of those too; add a matching `secrets:` entry in `docker-compose.yml` (or a
 Everything in this directory except this README is gitignored. `scripts/selfhost-init-secrets.sh`
 generates a real random value for each self-generatable file (so `docker compose build`/`up`
 never fails on a missing file, and boots without any manual `openssl` step) and creates only an
-**empty** placeholder for the four externally-issued ones it can't generate a usable value for. Either
+**empty** placeholder for the four externally-issued ones it can't generate a usable value for. Those
+four placeholders are safe to leave empty: the app treats an empty file for `GITHUB_APP_PRIVATE_KEY_FILE`,
+`ORB_ENROLLMENT_SECRET_FILE`, `PAGERDUTY_ROUTING_KEY_FILE`, or `CLAUDE_CODE_OAUTH_TOKEN_FILE` as "not
+configured", skips it, and logs a `selfhost_secret_file_empty_optional` warning naming the variable. An empty
+file for any OTHER secret is still a hard boot failure -- there it can only mean a truncated write, which
+would otherwise leave you running with a credential that silently reads as unset. Either
 way, it only ever touches the *permissions* of a file that is still empty, never its content — the
 moment a real value lands in one (written by the script or by you), both the content and whatever
 mode you set are left alone on every future run. Always safe to re-run.

@@ -180,3 +180,62 @@ describe("loadFileSecrets return value (#9543 — which vars actually came from 
     expect(loadFileSecrets(env, () => "unused")).toEqual([]);
   });
 });
+
+describe("empty placeholders for externally-issued secrets (#9487 follow-up)", () => {
+  // scripts/selfhost-init-secrets.sh creates a ZERO-BYTE placeholder for the four secrets it cannot
+  // generate, and compose refuses to start unless the file exists. #9487 then made an empty file fatal, so
+  // running the documented setup and starting the container crash-looped it. Observed live on the ORB: an
+  // unused GitHub App key took the whole instance down on upgrade.
+  const EXTERNALLY_ISSUED = [
+    "GITHUB_APP_PRIVATE_KEY_FILE",
+    "ORB_ENROLLMENT_SECRET_FILE",
+    "PAGERDUTY_ROUTING_KEY_FILE",
+    "CLAUDE_CODE_OAUTH_TOKEN_FILE",
+  ];
+
+  it.each(EXTERNALLY_ISSUED)("REGRESSION: an empty %s is skipped, not fatal", (key) => {
+    const env: Record<string, string | undefined> = { [key]: "/run/secrets/placeholder" };
+    expect(() => loadFileSecrets(env, () => "")).not.toThrow();
+    // Left genuinely UNSET rather than set to "" -- the pre-#9487 bug was an empty string that read as
+    // configured-but-blank to anything checking presence rather than truthiness.
+    expect(env[key.slice(0, -"_FILE".length)]).toBeUndefined();
+  });
+
+  it("REGRESSION: reproduces the exact ORB boot crash and shows it is fixed", () => {
+    const env: Record<string, string | undefined> = {
+      GITHUB_APP_PRIVATE_KEY_FILE: "/run/secrets/github_app_private_key",
+      GITHUB_WEBHOOK_SECRET_FILE: "/run/secrets/github_webhook_secret",
+    };
+    const files: Record<string, string> = {
+      "/run/secrets/github_app_private_key": "",
+      "/run/secrets/github_webhook_secret": "a-real-webhook-secret",
+    };
+    expect(() => loadFileSecrets(env, (path) => files[path] ?? "")).not.toThrow();
+    expect(env.GITHUB_APP_PRIVATE_KEY).toBeUndefined();
+    expect(env.GITHUB_WEBHOOK_SECRET).toBe("a-real-webhook-secret");
+  });
+
+  it("INVARIANT: #9487's fail-closed behavior is UNCHANGED for a self-generated secret", () => {
+    // The bug #9487 actually fixed: a truncated webhook secret booting an instance that silently rejected
+    // every webhook. The init script writes a real random value here, so empty can only mean truncation.
+    const env: Record<string, string | undefined> = { GITHUB_WEBHOOK_SECRET_FILE: "/run/secrets/github_webhook_secret" };
+    expect(() => loadFileSecrets(env, () => "")).toThrow(/is empty/);
+  });
+
+  it("whitespace-only is treated the same as empty for an optional secret", () => {
+    const env: Record<string, string | undefined> = { PAGERDUTY_ROUTING_KEY_FILE: "/run/secrets/pagerduty_routing_key" };
+    expect(() => loadFileSecrets(env, () => "  \n\t ")).not.toThrow();
+    expect(env.PAGERDUTY_ROUTING_KEY).toBeUndefined();
+  });
+
+  it("a REAL value in an optional secret still loads normally", () => {
+    const env: Record<string, string | undefined> = { CLAUDE_CODE_OAUTH_TOKEN_FILE: "/run/secrets/claude_code_oauth_token" };
+    expect(loadFileSecrets(env, () => "  real-token  ")).toEqual(["CLAUDE_CODE_OAUTH_TOKEN"]);
+    expect(env.CLAUDE_CODE_OAUTH_TOKEN).toBe("real-token");
+  });
+
+  it("an UNREADABLE optional secret is still fatal — missing is not the same as deliberately empty", () => {
+    const env: Record<string, string | undefined> = { GITHUB_APP_PRIVATE_KEY_FILE: "/run/secrets/gone" };
+    expect(() => loadFileSecrets(env, () => { throw new Error("ENOENT"); })).toThrow(/Failed to read secret file/);
+  });
+});

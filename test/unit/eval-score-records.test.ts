@@ -10,7 +10,10 @@ import {
   type EvalScoreRecord,
 } from "../../src/review/eval-score-records";
 import { contentDigest, sha256Hex } from "../../src/review/decision-record";
-import type { PublicRulePrecision } from "../../src/review/public-rule-precision";
+import { loadPublicRulePrecision, PUBLIC_PRECISION_MIN_DECIDED, type PublicRulePrecision } from "../../src/review/public-rule-precision";
+import { createSignalStore } from "../../src/review/signal-tracking-wire";
+import { persistThresholdBacktestRuns, runThresholdBacktestAdvisory } from "../../src/services/threshold-backtest-run";
+import { createTestEnv } from "../helpers/d1";
 
 const ISSUED_AT = "2026-07-27T12:00:00.000Z";
 
@@ -152,5 +155,71 @@ describe("verifyEvalScoreRecordDigest", () => {
     const [record] = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT);
     const tampered: EvalScoreRecord = { ...(record as EvalScoreRecord), issuedAt: "2099-01-01T00:00:00.000Z" };
     expect(await verifyEvalScoreRecordDigest(tampered)).toBe(false);
+  });
+});
+
+// #9639 Deliverable 4: the /v1/public/eval-scores regression, pinned end to end over a real D1. The unit
+// tests above feed buildEvalScoreRecordsFromRulePrecision a hand-built PublicRulePrecision; this one starts
+// from an in-Worker threshold backtest and goes all the way to records, because the defect lived in the seam
+// between the writer and the reader -- both halves were individually correct and produced [] together.
+describe("in-Worker backtest -> /v1/public/eval-scores records (#9639)", () => {
+  const diff = [
+    "diff --git a/src/rules/advisory.ts b/src/rules/advisory.ts",
+    "@@ -980,7 +980,7 @@",
+    "-export const LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR = 0.5;",
+    "+export const LINKED_ISSUE_SATISFACTION_CONFIDENCE_FLOOR = 0.4;",
+  ].join("\n");
+
+  async function seedRunAndLoad(env: Env, now: number) {
+    const store = createSignalStore(env);
+    // Enough decided cases to clear PUBLIC_PRECISION_MIN_DECIDED, so a rule actually reaches the block.
+    for (let i = 0; i < PUBLIC_PRECISION_MIN_DECIDED + 2; i += 1) {
+      await store.recordRuleFired({
+        ruleId: "linked_issue_scope_mismatch",
+        targetKey: `acme/widgets#${i + 1}`,
+        outcome: "unaddressed",
+        occurredAt: new Date(now - (i + 2) * 1000).toISOString(),
+        metadata: { confidence: 0.3 + (i % 4) * 0.15 },
+      });
+      await store.recordHumanOverride({
+        ruleId: "linked_issue_scope_mismatch",
+        targetKey: `acme/widgets#${i + 1}`,
+        verdict: i % 2 === 0 ? "reversed" : "confirmed",
+        occurredAt: new Date(now - (i + 1) * 1000).toISOString(),
+      });
+    }
+    const run = await runThresholdBacktestAdvisory(env, diff, now);
+    await persistThresholdBacktestRuns(env, "acme/widgets", 7, run.changed, run.comparisons, run.corpusChecksumByRuleId);
+    return { run, precision: await loadPublicRulePrecision(env, now) };
+  }
+
+  it("REGRESSION: emits one record per rule instead of [] -- the whole surface was empty before the writer stamped a checksum", async () => {
+    const env = createTestEnv();
+    const now = Date.now();
+    const { run, precision } = await seedRunAndLoad(env, now);
+    expect(precision.rules.length).toBeGreaterThan(0);
+
+    const records = await buildEvalScoreRecordsFromRulePrecision(precision, ISSUED_AT);
+
+    expect(records).toHaveLength(precision.rules.length);
+    for (const record of records) {
+      expect(record.commitments.corpusChecksum).toBe(run.corpusChecksumByRuleId.get("linked_issue_scope_mismatch"));
+      expect(record.commitments.corpusChecksum).not.toBe(EMPTY_CORPUS_CHECKSUM);
+      expect(record.trust.tier).toBe("reproducible");
+      // Each record still commits to its own content, so the freeze point cannot be swapped undetected.
+      await expect(verifyEvalScoreRecordDigest(record)).resolves.toBe(true);
+    }
+  });
+
+  it("goes back to [] when the same pipeline runs against an empty corpus", async () => {
+    // The counter-case for the one above: the run is persisted either way, so an assertion that records exist
+    // is only meaningful alongside one showing they still do not when the commitment is worthless.
+    const env = createTestEnv();
+    const now = Date.now();
+    const run = await runThresholdBacktestAdvisory(env, diff, now);
+    await persistThresholdBacktestRuns(env, "acme/widgets", 7, run.changed, run.comparisons, run.corpusChecksumByRuleId);
+
+    const precision = await loadPublicRulePrecision(env, now);
+    expect(await buildEvalScoreRecordsFromRulePrecision(precision, ISSUED_AT)).toEqual([]);
   });
 });

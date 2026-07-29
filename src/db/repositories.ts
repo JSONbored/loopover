@@ -4687,7 +4687,7 @@ export async function markPullRequestVisualCaptureSatisfied(env: Env, fullName: 
     // #9030: a proven-successful capture for this head supersedes any earlier "retry pending" marker recorded
     // for the SAME head (an error or a still-building preview on an earlier attempt) -- clearing it here keeps
     // the row's state minimal instead of leaving a now-moot marker sitting alongside a satisfied one.
-    .set({ visualCaptureSatisfiedSha: headSha, visualCaptureRetryPendingSha: null, updatedAt: nowIso() })
+    .set({ visualCaptureSatisfiedSha: headSha, visualCaptureRetryPendingSha: null, visualCaptureRetryPendingAt: null, updatedAt: nowIso() })
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
 }
 
@@ -4702,23 +4702,33 @@ export async function markPullRequestVisualCaptureRetryPending(env: Env, fullNam
   const db = getDb(env.DB);
   await db
     .update(pullRequests)
-    .set({ visualCaptureRetryPendingSha: headSha, updatedAt: nowIso() })
+    // #9876: stamp WHEN, so the latch's age can expire it even if every code path that should release it turns
+    // out to be unreachable -- which has now happened twice. Re-stamped on every mark rather than preserved
+    // from the first: each mark means a fresh retry was just scheduled, so a fresh deadline is the accurate
+    // one. (The sibling R2 budget marker deliberately does the opposite -- it preserves firstAttemptAt -- but
+    // it is counting attempts, where resetting would let the count live forever; here the chain is already
+    // bounded by that very count, so re-stamping cannot extend it indefinitely.)
+    .set({ visualCaptureRetryPendingSha: headSha, visualCaptureRetryPendingAt: nowIso(), updatedAt: nowIso() })
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
 }
 
-/** #9462: clear the retry marker once the bounded recapture budget is EXHAUSTED. Without this the marker set by
- *  the previous attempt outlives the retries that justified it: `scheduleVisualCaptureRetry` early-returns at the
- *  budget, which only skips writing it AGAIN, so `visualCaptureRetryPendingSha === headSha` stayed true forever
- *  for that head. The only other clear is markPullRequestVisualCaptureSatisfied's, which requires a SUCCESSFUL
- *  capture -- exactly the thing that is not happening. A permanently-marked head silently disabled the
- *  screenshotTableGate's close (see the botCaptureRetryPending branch in processors.ts), so the deferral, meant
- *  to be temporary, became a permanent bypass. Not scoped to headSha on the write: the caller has already
- *  established which head it is finishing, and a row whose head moved on has a stale marker worth clearing too. */
+/** Release the retry latch: the retry chain that justified it has ended without a successful capture, so the
+ *  screenshotTableGate must stop deferring and evaluate the evidence actually present.
+ *
+ *  #9462 called this only from `scheduleVisualCaptureRetry`'s budget-exhausted early return. #9876 found that
+ *  path unreachable in the case that matters -- the durable per-head poll budget ends the chain by suppressing
+ *  `previewPending`, so the final attempt never calls that scheduler at all -- and moved the primary call to
+ *  the capture call site's conclusive branch, which every ending passes through. Three contributor PRs sat
+ *  frozen behind the gap, closeable by nobody and passable by nobody.
+ *
+ *  Not scoped to headSha on the write: the caller has already established which head it is finishing, and a row
+ *  whose head moved on has a stale marker worth clearing too. Idempotent -- clearing an absent latch is a
+ *  no-op, which is what makes it safe to call on every conclusive capture. */
 export async function clearPullRequestVisualCaptureRetryPending(env: Env, fullName: string, number: number, headSha: string): Promise<void> {
   const db = getDb(env.DB);
   await db
     .update(pullRequests)
-    .set({ visualCaptureRetryPendingSha: null, updatedAt: nowIso() })
+    .set({ visualCaptureRetryPendingSha: null, visualCaptureRetryPendingAt: null, updatedAt: nowIso() })
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.visualCaptureRetryPendingSha, headSha)));
 }
 
@@ -7381,6 +7391,7 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     linkedIssueHardRuleViolationReason: row.linkedIssueHardRuleViolationReason,
     visualCaptureSatisfiedSha: row.visualCaptureSatisfiedSha,
     visualCaptureRetryPendingSha: row.visualCaptureRetryPendingSha,
+    visualCaptureRetryPendingAt: row.visualCaptureRetryPendingAt,
     screenshotTablePresenceSatisfied: parseJson<{ headSha: string; evidenceFingerprint: string } | null>(row.screenshotTablePresenceSatisfiedJson, null),
   };
 }

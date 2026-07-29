@@ -768,6 +768,11 @@ export type PullRequestRecord = {
    *  CLOSE action defers instead of treating the transient blip as missing evidence. Publish-written; read
    *  straight from the row. */
   visualCaptureRetryPendingSha?: string | null | undefined;
+  /** #9876: when the retry latch above was set, as an ISO timestamp, so its AGE can release it. The explicit
+   *  releases have twice proven unreachable in production, freezing every affected PR; see
+   *  review/visual/visual-capture-retry-latch.ts for why a sha with no timestamp reads as expired rather than
+   *  live. Publish-written alongside the sha; read straight from the row. */
+  visualCaptureRetryPendingAt?: string | null | undefined;
   /** Screenshot-table PRESENCE-mode staleness correlation (#stale-screenshot-table-fix): the (headSha,
    *  evidenceFingerprint) checkpoint the screenshotTableGate's presence-mode check last satisfied for this PR
    *  (see evaluateScreenshotTableGate's staleness comment). `null`/absent = presence mode has never satisfied

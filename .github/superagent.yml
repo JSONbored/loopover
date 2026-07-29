@@ -6,22 +6,20 @@ prScan:
 # Contributor-trust scoring is DISABLED (2026-07-29). Two independent reasons:
 #
 #  1. It does not discriminate here. Established repeat contributors with dozens of merged PRs were scored
-#     "dangerous" (10/100) on volume/velocity alone, with no real signal behind it. The `trustedAuthors`
-#     exemption below was added to fix exactly that and did NOT work — shin-core is listed and was still
-#     flagged `action_required` on PR #9816. An exemption that does not exempt is worse than no exemption:
-#     it looks handled while every affected PR still stalls.
+#     "dangerous" (10/100) on volume/velocity alone, with no real signal behind it. A `trustedAuthors`
+#     allowlist was added to fix exactly that and did NOT work — shin-core was listed and still flagged
+#     `action_required` on PR #9816 — so it has been REMOVED rather than carried along inert and
+#     misleading. An allowlist that does not allow is worse than none: it looks handled while every
+#     affected PR still stalls.
 #  2. Its verdict has no consumer left. LoopOver now lists this check under `gate.ignoredCheckRuns`
 #     (#9813) on all three gate repos, so a non-passing result no longer gates, pends, or holds anything.
 #     Leaving it enabled only produces a permanently-red check on contributor PRs that nothing acts on —
 #     pure noise that makes good contributors think they have failed something.
 #
 # The SECURITY SCAN above stays enabled and still gates CI normally: that is the protection worth having,
-# and it is a different check from the same app. `trustedAuthors` is kept (inert while disabled) so the
-# history is not lost if this is ever revisited.
+# and it is a different check from the same app.
 contributorTrust:
   enabled: false
-  blockBelowScore: 30
-  trustedAuthors: [dhgoal, shin-core, andriypolanski]
 
 comments:
   mode: detailed

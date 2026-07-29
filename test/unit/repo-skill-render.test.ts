@@ -25,12 +25,14 @@ describe("shouldGenerateRepoSkill (#3001)", () => {
   it.each([
     ["no signals", contributionWorkflow(), false],
     ["gate only", contributionWorkflow({ gatePublishesCheck: true }), false],
-    ["strict linked issue only", contributionWorkflow({ requireLinkedIssue: true, linkedIssuePolicy: "required" }), false],
+    // #9671: a "strict linked-issue rule" now means the gate actually blocks (linkedIssueGateMode: "block"),
+    // not merely requireLinkedIssue+non-optional-policy — so these fixtures set block mode to represent it.
+    ["strict linked issue only", contributionWorkflow({ requireLinkedIssue: true, linkedIssuePolicy: "required", linkedIssueGateMode: "block" }), false],
     ["multi-stage CI only", contributionWorkflow({ ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }), false],
-    ["gate + strict linked issue (2 of 3)", contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required" }), true],
+    ["gate + strict linked issue (2 of 3)", contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", linkedIssueGateMode: "block" }), true],
     ["gate + multi-stage CI (2 of 3)", contributionWorkflow({ gatePublishesCheck: true, ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }), true],
-    ["strict linked issue + multi-stage CI (2 of 3)", contributionWorkflow({ requireLinkedIssue: true, linkedIssuePolicy: "preferred", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }), true],
-    ["all three signals (3 of 3)", contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }), true],
+    ["strict linked issue + multi-stage CI (2 of 3)", contributionWorkflow({ requireLinkedIssue: true, linkedIssuePolicy: "preferred", linkedIssueGateMode: "block", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }), true],
+    ["all three signals (3 of 3)", contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", linkedIssueGateMode: "block", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }), true],
   ])("%s -> %s", (_label, workflow, expected) => {
     expect(shouldGenerateRepoSkill(presentProfile({ contributionWorkflow: workflow }) as Extract<RepoProfile, { present: true }>)).toBe(expected);
   });
@@ -45,6 +47,44 @@ describe("shouldGenerateRepoSkill (#3001)", () => {
   it("exactly one CI workflow file does not count as multi-stage", () => {
     const workflow = contributionWorkflow({ gatePublishesCheck: true, ciWorkflowFiles: [".github/workflows/ci.yml"] });
     expect(shouldGenerateRepoSkill(presentProfile({ contributionWorkflow: workflow }) as Extract<RepoProfile, { present: true }>)).toBe(false);
+  });
+});
+
+describe("#9671: the linked-issue trigger keys on the gate-mode enforcement authority", () => {
+  // A "requireLinkedIssue: true, policy: required" repo whose gate is only ADVISORY (the default) does NOT block a
+  // PR — the old code treated it as a strict rule anyway, contradicting the SKILL.md's own "Required: no" line.
+  const advisoryLinked = { requireLinkedIssue: true, linkedIssuePolicy: "required" as const, linkedIssueGateMode: "advisory" as const };
+  const blockLinked = { requireLinkedIssue: true, linkedIssuePolicy: "required" as const, linkedIssueGateMode: "block" as const };
+  const twoCi = [".github/workflows/a.yml", ".github/workflows/b.yml"];
+
+  it("counts the linked-issue signal only when linkedIssueGateMode is 'block' (Deliverable 1)", () => {
+    // advisory linked-issue + a single CI file => 0 real signals (the linked-issue signal must not fire).
+    expect(
+      shouldGenerateRepoSkill(presentProfile({ contributionWorkflow: contributionWorkflow({ ...advisoryLinked, ciWorkflowFiles: [".github/workflows/a.yml"] }) }) as Extract<RepoProfile, { present: true }>),
+    ).toBe(false);
+    // block linked-issue + a blocking gate => 2 signals fire.
+    expect(
+      shouldGenerateRepoSkill(presentProfile({ contributionWorkflow: contributionWorkflow({ ...blockLinked, gatePublishesCheck: true }) }) as Extract<RepoProfile, { present: true }>),
+    ).toBe(true);
+  });
+
+  it("REGRESSION (#9671): advisory-mode SKILL.md never claims a linked issue is required, and says Required: no", () => {
+    // gate + multi-stage CI reach the threshold so a body is rendered regardless of the (advisory) linked-issue signal.
+    const body = renderRepoSkillContent(presentProfile({ contributionWorkflow: contributionWorkflow({ ...advisoryLinked, gatePublishesCheck: true, ciWorkflowFiles: twoCi }) })) ?? "";
+    expect(body).not.toContain("A linked issue is required");
+    expect(body).toContain("Required: no");
+  });
+
+  it("block-mode SKILL.md states a linked issue is required AND says Required: yes (the two agree)", () => {
+    const body = renderRepoSkillContent(presentProfile({ contributionWorkflow: contributionWorkflow({ ...blockLinked, gatePublishesCheck: true, ciWorkflowFiles: twoCi }) })) ?? "";
+    expect(body).toContain("A linked issue is required");
+    expect(body).toContain("Required: yes");
+  });
+
+  it("does not reach the 2-of-3 threshold on advisory linked-issue + multi-stage CI alone (Deliverable 4)", () => {
+    expect(
+      shouldGenerateRepoSkill(presentProfile({ contributionWorkflow: contributionWorkflow({ ...advisoryLinked, ciWorkflowFiles: twoCi }) }) as Extract<RepoProfile, { present: true }>),
+    ).toBe(false);
   });
 });
 
@@ -93,7 +133,8 @@ describe("renderRepoSkillContent (#3001)", () => {
     expect(content).toContain("name: contributing-to-widgets");
     expect(content).toContain("# Contributing to widgets");
     expect(content).toContain("CI publishes a required check before a pull request can merge.");
-    expect(content).toContain('A linked issue is required, with a "required" policy.');
+    expect(content).toContain("A linked issue is required to merge");
+    expect(content).toContain('gate is in "block" mode');
     expect(content).toContain("2 CI workflow files run on a pull request.");
     expect(content).toContain("Build: `npm run build`");
     expect(content).toContain("Test: `npm run test`");
@@ -122,23 +163,24 @@ describe("renderRepoSkillContent (#3001)", () => {
 
   it("omits the gate-check reason line when the trigger fires via linked-issue + multi-stage CI alone (no blocking gate)", () => {
     const profile = presentProfile({
-      contributionWorkflow: contributionWorkflow({ gatePublishesCheck: false, requireLinkedIssue: true, linkedIssuePolicy: "preferred", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }),
+      contributionWorkflow: contributionWorkflow({ gatePublishesCheck: false, requireLinkedIssue: true, linkedIssuePolicy: "preferred", linkedIssueGateMode: "block", ciWorkflowFiles: [".github/workflows/a.yml", ".github/workflows/b.yml"] }),
     });
     const content = renderRepoSkillContent(profile);
     expect(content).not.toBeNull();
     expect(content).not.toContain("CI publishes a required check");
-    expect(content).toContain('A linked issue is required, with a "preferred" policy.');
+    expect(content).toContain("A linked issue is required to merge");
+    expect(content).toContain('gate is in "block" mode');
     expect(content).toContain("2 CI workflow files run on a pull request.");
   });
 
   it("omits the multi-stage-CI reason line when the trigger fires via gate + strict linked issue alone (single CI file)", () => {
     const profile = presentProfile({
-      contributionWorkflow: contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", ciWorkflowFiles: [".github/workflows/ci.yml"] }),
+      contributionWorkflow: contributionWorkflow({ gatePublishesCheck: true, requireLinkedIssue: true, linkedIssuePolicy: "required", linkedIssueGateMode: "block", ciWorkflowFiles: [".github/workflows/ci.yml"] }),
     });
     const content = renderRepoSkillContent(profile);
     expect(content).not.toBeNull();
     expect(content).toContain("CI publishes a required check before a pull request can merge.");
-    expect(content).toContain('A linked issue is required, with a "required" policy.');
+    expect(content).toContain("A linked issue is required to merge");
     expect(content).not.toContain("CI workflow files run on a pull request.");
   });
 

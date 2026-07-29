@@ -21,10 +21,12 @@ function hasBlockingGate(contributionWorkflow: RepoProfileContributionWorkflow):
   return contributionWorkflow.gatePublishesCheck;
 }
 
-/** A repo that both requires a linked issue AND has a policy stricter than "optional" has a real, non-obvious
- *  admission rule worth writing down -- mirrors the mismatch repo-policy-readiness.ts already treats as notable. */
+/** A repo whose linked-issue gate actually BLOCKS a PR has a real, non-obvious admission rule worth writing down.
+ *  #9671: key on `linkedIssueGateMode === "block"` -- the documented enforcement authority (repo-profile.ts:68-70)
+ *  -- not on `requireLinkedIssue`/`linkedIssuePolicy`, which alone do NOT block (advisory is the default mode), so
+ *  a repo requiring a linked issue only advisorily is not a strict rule. Matches repo-doc-render.ts:106. */
 function hasStrictLinkedIssueRule(contributionWorkflow: RepoProfileContributionWorkflow): boolean {
-  return contributionWorkflow.requireLinkedIssue && contributionWorkflow.linkedIssuePolicy !== "optional";
+  return contributionWorkflow.linkedIssueGateMode === "block";
 }
 
 function hasMultiStageCi(contributionWorkflow: RepoProfileContributionWorkflow): boolean {
@@ -70,7 +72,7 @@ export function repoSkillFilePath(repoFullName: string): string {
 function renderTriggerReasons(contributionWorkflow: RepoProfileContributionWorkflow): string {
   const reasons: string[] = [];
   if (hasBlockingGate(contributionWorkflow)) reasons.push("- CI publishes a required check before a pull request can merge.");
-  if (hasStrictLinkedIssueRule(contributionWorkflow)) reasons.push(`- A linked issue is required, with a "${contributionWorkflow.linkedIssuePolicy}" policy.`);
+  if (hasStrictLinkedIssueRule(contributionWorkflow)) reasons.push(`- A linked issue is required to merge — the linked-issue gate is in "${contributionWorkflow.linkedIssueGateMode}" mode.`);
   if (hasMultiStageCi(contributionWorkflow)) reasons.push(`- ${contributionWorkflow.ciWorkflowFiles.length} CI workflow files run on a pull request.`);
   return reasons.join("\n");
 }

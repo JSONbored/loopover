@@ -46,12 +46,15 @@ async function seedRepoDocGenerationConfig(env: ReturnType<typeof createTestEnv>
   await upsertRepoFocusManifest(env, repoFullName, { repoDocGeneration: { enabled: true, ...overrides } });
 }
 
-// #3001: shouldGenerateRepoSkill needs 2 of 3 named signals. Seeds a strict linked-issue rule (settings +
-// manifest) and 2 CI workflow files -- both in the SAME upsertRepoFocusManifest call as repoDocGeneration, since
-// a second separate call would replace rather than merge with the first.
+// #3001: shouldGenerateRepoSkill needs 2 of 3 named signals. Seeds a strict linked-issue rule (a BLOCKING
+// linkedIssueGateMode -- the enforcement authority hasStrictLinkedIssueRule keys on since #9671, not merely
+// requireLinkedIssue+policy) and 2 CI workflow files -- the manifest fields go in the SAME upsertRepoFocusManifest
+// call as repoDocGeneration, since a second separate call would replace rather than merge with the first.
 async function seedSkillTriggerRepo(env: ReturnType<typeof createTestEnv>, repoFullName: string, scope: string[] = ["agents", "skills"], overrides: { allowOverwriteExisting?: boolean } = {}): Promise<void> {
-  await upsertRepositorySettings(env, { repoFullName, requireLinkedIssue: true });
-  await upsertRepoFocusManifest(env, repoFullName, { linkedIssuePolicy: "required", repoDocGeneration: { enabled: true, scope, ...overrides } });
+  await upsertRepositorySettings(env, { repoFullName, requireLinkedIssue: true, linkedIssueGateMode: "block" });
+  // The manifest's `gate.linkedIssue` is the authority resolveEffectiveSettings maps to linkedIssueGateMode, which
+  // hasStrictLinkedIssueRule keys on since #9671 -- set it to "block" so the strict-linked-issue signal fires.
+  await upsertRepoFocusManifest(env, repoFullName, { gate: { linkedIssue: "block" }, linkedIssuePolicy: "required", repoDocGeneration: { enabled: true, scope, ...overrides } });
   await seedChunk(env, ".github/workflows/ci.yml", "name: CI\non: push\n");
   await seedChunk(env, ".github/workflows/lint.yml", "name: Lint\non: push\n");
 }

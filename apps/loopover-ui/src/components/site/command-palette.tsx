@@ -94,11 +94,16 @@ export function CommandPalette({ items = DEFAULT_ITEMS }: { items?: PaletteItem[
     return items.filter((i) => `${i.label} ${i.group ?? ""}`.toLowerCase().includes(term));
   }, [q, items]);
 
-  // The highlighted result resets whenever the filtered set changes or the palette re-opens, so a
-  // stale index from a previous, longer list can never point past the current end.
-  useEffect(() => {
+  // The highlighted result resets whenever the filtered set changes or the palette re-opens, so a stale
+  // index from a previous, longer list can never point past the current end. Adjusted during render
+  // (React's documented pattern for reacting to changed inputs) rather than from an effect (#9588): the
+  // reset lands in the same commit as the new list, so no frame ever renders the old index against it.
+  const resetKey = `${open}:${filtered.length}:${filtered.map((i) => i.to).join("\u0000")}`;
+  const [highlightResetKey, setHighlightResetKey] = useState(resetKey);
+  if (highlightResetKey !== resetKey) {
+    setHighlightResetKey(resetKey);
     setHighlightedIndex(0);
-  }, [filtered, open]);
+  }
 
   function selectItem(item: PaletteItem | undefined) {
     if (!item) return;

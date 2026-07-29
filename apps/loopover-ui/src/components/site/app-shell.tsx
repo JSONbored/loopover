@@ -14,7 +14,7 @@ import {
   Workflow,
 } from "lucide-react";
 import type { ComponentType } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
 import { PREVIEW_SESSION_ALLOWED, useSession } from "@/lib/api/session";
 import { describeApiStatus, pingHealth, useApiStatus } from "@/lib/api/status";
@@ -34,6 +34,24 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar";
 import { LoopOverMark } from "./mark";
+
+/** The sidebar's persisted open/closed state, read straight from its cookie. A primitive snapshot, so it
+ *  is referentially stable for `useSyncExternalStore` by construction. Defaults to open when unset. */
+function readSidebarCookie(): boolean | undefined {
+  const match = document.cookie.match(/(?:^|; )sidebar_state=([^;]+)/);
+  return match ? match[1] === "true" : true;
+}
+
+/** No cookie exists during server render or the hydration pass; `undefined` is what the gate below keys on. */
+function readNoSidebarCookie(): boolean | undefined {
+  return undefined;
+}
+
+/** The cookie is written by the sidebar itself and never changes underneath this component, so there is
+ *  nothing to subscribe to -- the same posture the mount effect this replaces already had. */
+function subscribeToSidebarCookie(): () => void {
+  return () => {};
+}
 import { StatusPill, type Status } from "./control-primitives";
 import { LoadingState } from "./state-views";
 import { cn } from "@/lib/utils";
@@ -103,12 +121,15 @@ export function AppShell() {
   const loc = useLocation();
   const navigate = useNavigate();
   const routerState = useRouterState();
-  const [sidebarOpen, setSidebarOpen] = useState<boolean | undefined>(undefined);
-
-  useEffect(() => {
-    const m = document.cookie.match(/(?:^|; )sidebar_state=([^;]+)/);
-    setSidebarOpen(m ? m[1] === "true" : true);
-  }, []);
+  // The sidebar's persisted state lives in a cookie -- an external store, so it is READ as one (#9588)
+  // rather than copied into state by a mount effect. The server snapshot stays `undefined`, which is what
+  // the hydration gate below already keys on, so the rendered output is unchanged; the difference is that
+  // the real value is available on the first client render instead of one cascading render later.
+  const sidebarOpen = useSyncExternalStore(
+    subscribeToSidebarCookie,
+    readSidebarCookie,
+    readNoSidebarCookie,
+  );
 
   // Preview deploys: when this is a preview build (VITE_PREVIEW) and the URL carries `?preview=1`, start
   // the synthetic demo session automatically once hydration confirms there's no real session. This lets the

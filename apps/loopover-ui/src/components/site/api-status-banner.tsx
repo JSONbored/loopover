@@ -43,12 +43,9 @@ export function ApiStatusBanner() {
   const visibleKey = severity ? `${connection}:${status}` : null;
   const dismissed = visibleKey !== null && dismissedKey === visibleKey;
 
-  // If status changes to a new failure mode, un-dismiss.
-  useEffect(() => {
-    if (visibleKey && dismissedKey && dismissedKey !== visibleKey) {
-      setDismissedKey(null);
-    }
-  }, [visibleKey, dismissedKey]);
+  // A new failure mode un-dismisses the banner by DERIVATION: `dismissed` above compares the stored key
+  // against the current one, so a stale key already reads as not-dismissed (#9588). The effect that used to
+  // null it out changed no rendered output -- it only scrubbed state nothing consulted.
 
   if (!severity || dismissed) return null;
 

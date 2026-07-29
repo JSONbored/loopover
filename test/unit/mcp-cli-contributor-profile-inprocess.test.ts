@@ -90,11 +90,10 @@ describe("bin loopover_get_contributor_profile stdio tool (in-process, #7760)", 
       expect(captured.url).toContain("/v1/contributors/octocat/profile");
       expect(captured.method).toBe("GET");
       expect(result.isError).toBeFalsy();
-      // structuredContent is the raw API payload; the summary line is the remote tool's fixed sentence.
-      expect(result.structuredContent).toMatchObject({ login: "octocat" });
+      // structuredContent is the raw API payload; the summary line is the tool's own fixed sentence.
+      expect(result.structuredContent).toMatchObject({ login: "octocat", source: "github_cache" });
       const text = JSON.stringify(result);
       expect(text).toContain("LoopOver contributor profile for octocat.");
-      expect(text).toContain("3 registered repos; 12 merged PRs; strongest in review-tooling.");
     } finally {
       await client.close().catch(() => undefined);
     }
@@ -117,19 +116,20 @@ describe("bin loopover_get_contributor_profile stdio tool (in-process, #7760)", 
 });
 
 describe("bin contributor-profile CLI (in-process, #7760)", () => {
-  it.each(MODULES)("shares getContributorProfile with the stdio tool: prints the header + API summary — %s", async (specifier) => {
+  it.each(MODULES)("shares getContributorProfile with the stdio tool: prints the header — %s", async (specifier) => {
     capturedRequests.length = 0;
     const mod = loaded.get(specifier)!;
     const out = await captureStdout(() => mod.contributorProfileCli({ login: "octocat" }));
     expect(capturedRequests.at(-1)!.url).toBe("/v1/contributors/octocat/profile");
+    // #9773: the "API summary" line this used to assert came from a `summary` field the endpoint has never
+    // returned -- invented by the fixture, read by the CLI, asserted here. The header is what really prints.
     expect(out).toMatch(/LoopOver contributor profile for octocat\./);
-    expect(out).toContain("3 registered repos; 12 merged PRs; strongest in review-tooling.");
   });
 
   it.each(MODULES)("--json re-serializes the same payload the shared call returned — %s", async (specifier) => {
     const mod = loaded.get(specifier)!;
     const out = await captureStdout(() => mod.contributorProfileCli({ login: "octocat", json: true }));
-    const payload = JSON.parse(out) as { login: string; summary: string };
-    expect(payload).toMatchObject({ login: "octocat", summary: "3 registered repos; 12 merged PRs; strongest in review-tooling." });
+    const payload = JSON.parse(out) as { login: string; source: string };
+    expect(payload).toMatchObject({ login: "octocat", source: "github_cache" });
   });
 });

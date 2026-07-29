@@ -6,7 +6,16 @@ import { closeSync, constants as fsConstants, existsSync, fstatSync, mkdirSync, 
 import { homedir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CLI_RESPONSE_SCHEMAS, type ApiResponse, type ValidatedApiPath } from "@loopover/contract/api-schemas";
+import {
+  CLI_RESPONSE_SCHEMAS,
+  type ApiResponse,
+  type ApiRequestBody,
+  type MatchApiCall,
+  type ParameterisedApiResponse,
+  type ValidatedApiPath,
+} from "@loopover/contract/api-schemas";
+import type { LoopoverConfig } from "@loopover/contract/cli-config";
+import { validateFocusManifestSchema } from "@loopover/contract/api-requests";
 import {
   CLIENT_HOSTS,
   CLIENT_HOST_SPEC,
@@ -355,6 +364,28 @@ const CLI_FLAG_SPEC = {
 } as const satisfies Record<string, "repeatable" | "boolean">;
 
 export { CLI_FLAG_SPEC };
+
+/** The flags CLI_FLAG_SPEC marks as repeatable -- each accumulates into an array. */
+type RepeatableFlag = { [K in keyof typeof CLI_FLAG_SPEC]: (typeof CLI_FLAG_SPEC)[K] extends "repeatable" ? K : never }[keyof typeof CLI_FLAG_SPEC];
+/** The flags CLI_FLAG_SPEC marks as boolean -- present means true unless `=false`/`=` disables it. */
+type BooleanFlag = { [K in keyof typeof CLI_FLAG_SPEC]: (typeof CLI_FLAG_SPEC)[K] extends "boolean" ? K : never }[keyof typeof CLI_FLAG_SPEC];
+
+/**
+ * What `parseOptions` produces (#9773).
+ *
+ * The known flags carry the type CLI_FLAG_SPEC declares for them, so a handler that reads `options.issue`
+ * as a string rather than an array is a compile error. The index signature is not a loophole -- the parser
+ * genuinely accepts any `--flag`, building the key from the argument itself, so a closed record would be a
+ * lie. What it is NOT is `any`: an unlisted flag is `string | boolean`, which still has to be narrowed
+ * before it can be used as either.
+ */
+export type CliOptions = {
+  [K in RepeatableFlag]?: string[];
+} & {
+  [K in BooleanFlag]?: boolean;
+} & {
+  [flag: string]: string | boolean | string[] | undefined;
+};
 const REPEATABLE_FLAGS = new Set(Object.entries(CLI_FLAG_SPEC).filter(([, kind]) => kind === "repeatable").map(([flag]) => flag));
 const BOOLEAN_FLAGS = new Set(Object.entries(CLI_FLAG_SPEC).filter(([, kind]) => kind === "boolean").map(([flag]) => flag));
 const COMPLETION_SHELLS = ["bash", "zsh", "fish", "powershell"];
@@ -549,7 +580,7 @@ type ClaimLedgerModule = {
   };
 };
 
-async function resolveLedgerClaimStatus(repoFullName: any, issueNumber: any) {
+async function resolveLedgerClaimStatus(repoFullName: string | undefined, issueNumber: number | undefined) {
   if (!repoFullName || !issueNumber) return null;
   let claimLedgerModule: ClaimLedgerModule;
   try {
@@ -889,7 +920,7 @@ function registerStdioTool<TInput>(
 registerStdioTool(
   "loopover_get_repo_context",
   async ({ owner, repo }: z.infer<typeof GetRepoContextInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver repo intelligence.", await apiGet(`${prefix}/intelligence`));
   },
 );
@@ -897,7 +928,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_pr_reviewability",
   async ({ owner, repo, number }: z.infer<typeof GetPrReviewabilityInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver PR reviewability.", await apiGet(`${prefix}/pulls/${number}/reviewability`));
   },
 );
@@ -905,7 +936,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_pr_maintainer_packet",
   async ({ owner, repo, number }: z.infer<typeof GetPrMaintainerPacketInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver PR maintainer packet.", await apiGet(`${prefix}/pulls/${number}/maintainer-packet`));
   },
 );
@@ -918,7 +949,7 @@ registerStdioTool(
   async ({ owner, repo, number, login }: z.infer<typeof GetPrAiReviewFindingsInput>) => {
     const authorLogin = login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
     if (!authorLogin) throw new Error("No GitHub login: pass `login`, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult(
       "LoopOver PR AI-review findings.",
       await apiGet(`${prefix}/pulls/${number}/ai-review-findings?login=${encodeURIComponent(authorLogin)}`),
@@ -929,7 +960,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_maintainer_noise",
   async ({ owner, repo }: z.infer<typeof GetMaintainerNoiseInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver maintainer noise report.", await apiGet(`${prefix}/maintainer-noise`));
   },
 );
@@ -943,7 +974,7 @@ registerStdioTool(
     const query = new URLSearchParams();
     if (since !== undefined) query.set("since", String(since));
     if (limit !== undefined) query.set("limit", String(limit));
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult(`LoopOver agent audit feed for ${owner}/${repo}.`, await apiGet(`${prefix}/agent/audit-feed${query.size > 0 ? `?${query}` : ""}`));
   },
 );
@@ -954,7 +985,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_refresh_repo_docs",
   async ({ owner, repo }: z.infer<typeof RefreshRepoDocsInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult(`LoopOver repo-doc refresh for ${owner}/${repo}.`, await apiPost(`${prefix}/repo-docs/refresh`, {}));
   },
 );
@@ -962,7 +993,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_ams_miner_cohort",
   async ({ owner, repo }: z.infer<typeof GetAmsMinerCohortInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver AMS miner cohort.", await apiGet(`${prefix}/ams-miner-cohort`));
   },
 );
@@ -973,7 +1004,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_repo_focus_manifest",
   async ({ owner, repo }: z.infer<typeof GetRepoFocusManifestInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver focus manifest.", await apiGet(`${prefix}/focus-manifest`));
   },
 );
@@ -985,7 +1016,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_repo_onboarding_pack",
   async ({ owner, repo, refresh }: z.infer<typeof GetRepoOnboardingPackInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const query = refresh === true ? "?refresh=true" : "";
     return toolResult(
       `LoopOver onboarding pack preview for ${owner}/${repo} (preview-only, not published).`,
@@ -1000,7 +1031,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_activation_preview",
   async ({ owner, repo }: z.infer<typeof GetActivationPreviewInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver activation preview.", await apiGet(`${prefix}/activation-preview`));
   },
 );
@@ -1008,7 +1039,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_live_gate_thresholds",
   async ({ owner, repo }: z.infer<typeof GetLiveGateThresholdsInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver live gate thresholds.", await apiGet(`${prefix}/live-gate-thresholds`));
   },
 );
@@ -1016,7 +1047,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_gate_config_effective",
   async ({ owner, repo }: z.infer<typeof GetGateConfigEffectiveInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver effective gate config.", await apiGet(`${prefix}/gate-config/effective`));
   },
 );
@@ -1024,7 +1055,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_issue_quality",
   async ({ owner, repo }: z.infer<typeof GetIssueQualityInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver issue-quality report.", await apiGet(`${prefix}/issue-quality`));
   },
 );
@@ -1032,7 +1063,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_registration_readiness",
   async ({ owner, repo }: z.infer<typeof GetRegistrationReadinessInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver registration-readiness report.", await apiGet(`${prefix}/registration-readiness`));
   },
 );
@@ -1040,7 +1071,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_config_recommendation",
   async ({ owner, repo }: z.infer<typeof GetConfigRecommendationInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver config recommendation.", await apiGet(`${prefix}/gittensor-config-recommendation`));
   },
 );
@@ -1077,7 +1108,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_validate_linked_issue",
   async ({ owner, repo, issueNumber, plannedChange }: z.infer<typeof ValidateLinkedIssueInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const body = { issueNumber, ...(plannedChange ? { plannedChange } : {}) };
     return toolResult("LoopOver linked-issue validation.", await apiPost(`${prefix}/validate-linked-issue`, body));
   },
@@ -1086,7 +1117,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_check_before_start",
   async ({ owner, repo, issueNumber, title, plannedPaths }: z.infer<typeof CheckBeforeStartInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const body = {
       ...(issueNumber != null ? { issueNumber } : {}),
       ...(title ? { title } : {}),
@@ -1285,7 +1316,7 @@ registerStdioTool(
       ...(input.body !== undefined ? { body: input.body } : {}),
       ...(input.labels !== undefined ? { labels: input.labels } : {}),
       ...(input.linkedIssues !== undefined ? { linkedIssues: input.linkedIssues } : {}),
-      ...(input.changedPaths !== undefined ? { changedFiles: input.changedPaths.map((path: any) => ({ path })) } : {}),
+      ...(input.changedPaths !== undefined ? { changedFiles: input.changedPaths.map((path: string) => ({ path })) } : {}),
     };
     const result = await apiPost("/v1/local/branch-analysis", body);
     return toolResult(`LoopOver predicted gate for ${input.owner}/${input.repo}.`, result.predictedGate);
@@ -1304,7 +1335,7 @@ registerStdioTool(
       ...(input.body !== undefined ? { body: input.body } : {}),
       ...(input.labels !== undefined ? { labels: input.labels } : {}),
       ...(input.linkedIssues !== undefined ? { linkedIssues: input.linkedIssues } : {}),
-      ...(input.changedPaths !== undefined ? { changedFiles: input.changedPaths.map((path: any) => ({ path })) } : {}),
+      ...(input.changedPaths !== undefined ? { changedFiles: input.changedPaths.map((path: string) => ({ path })) } : {}),
     };
     const result = await apiPost("/v1/local/branch-analysis", body);
     // #9587 declared predictedGate with a real schema, so this is typed straight off the response now.
@@ -1373,7 +1404,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_label_audit",
   async ({ owner, repo }: z.infer<typeof GetLabelAuditInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const intelligence = await apiGet(`${prefix}/intelligence`);
     return toolResult("LoopOver label audit.", {
       repoFullName: intelligence?.repoFullName ?? `${owner}/${repo}`,
@@ -1389,7 +1420,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_maintainer_lane",
   async ({ owner, repo }: z.infer<typeof GetMaintainerLaneInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const intelligence = await apiGet(`${prefix}/intelligence`);
     return toolResult("LoopOver maintainer lane.", {
       repoFullName: intelligence?.repoFullName ?? `${owner}/${repo}`,
@@ -1402,7 +1433,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_burden_forecast",
   async ({ owner, repo }: z.infer<typeof GetBurdenForecastInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     const intelligence = await apiGet(`${prefix}/intelligence`);
     return toolResult("LoopOver burden forecast.", {
       repoFullName: intelligence?.repoFullName ?? `${owner}/${repo}`,
@@ -1418,7 +1449,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_get_repo_outcome_patterns",
   async ({ owner, repo }: z.infer<typeof GetRepoOutcomePatternsInput>) => {
-    const prefix = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+    const prefix: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
     return toolResult("LoopOver repo outcome patterns.", await apiGet(`${prefix}/outcome-patterns`));
   },
 );
@@ -1823,7 +1854,15 @@ registerStdioTool(
 // from there) -- no new HTTP paths, and no behaviour the CLI doesn't already have.
 
 /** `/v1/repos/:owner/:repo` for a tool's owner+repo input, matching maintainCli's own repoBase. */
-function toolRepoBase(owner: any, repo: any) {
+/**
+ * The per-repo base path (#9773).
+ *
+ * The return type is a TEMPLATE-LITERAL type, not `string`. That is what lets `apiGet(`${toolRepoBase(o, r)}/settings`)`
+ * still resolve to `/v1/repos/{owner}/{repo}/settings` and pick up that route's published response schema --
+ * a plain `string` return erases the path at the type level, which is why every payload built on this helper
+ * fell through to the untyped overload.
+ */
+function toolRepoBase(owner: string, repo: string): `/v1/repos/${string}/${string}` {
   return `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
 }
 
@@ -2692,15 +2731,20 @@ function printMaintainHelp() {
 
 // #784 maintainer CLI controls — thin proxies over the agent approval-queue API (#779) and the maintainer
 // settings kill-switch (#130). The API enforces maintainer authorization; the CLI never decides locally.
-export async function maintainCli(args: any) {
+export async function maintainCli(args: readonly string[]) {
   const subcommand = args[0];
   if (!subcommand || subcommand === "--help" || subcommand === "help") return printMaintainHelp();
   const positional = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
   const options = parseOptions(args.slice(1));
   const repoFullName = options.repo;
-  if (!repoFullName || !repoFullName.includes("/")) throw new Error("Pass --repo owner/repo.");
-  const [owner, repo] = repoFullName.split("/", 2);
-  const repoBase = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  // #9773: `typeof`, not truthiness. A bare `--repo` with no value parses to `true`, which passed the old
+  // `!repoFullName` guard and then threw `repoFullName.includes is not a function` -- an unhandled
+  // TypeError where the usage error was intended. The `any` on this parameter is what hid it.
+  if (typeof repoFullName !== "string" || !repoFullName.includes("/")) throw new Error("Pass --repo owner/repo.");
+  // The defaults never fire: the guard proved the string contains a "/". They exist because
+  // noUncheckedIndexedAccess types a destructured split as possibly-undefined.
+  const [owner = "", repo = ""] = repoFullName.split("/", 2);
+  const repoBase: `/v1/repos/${string}/${string}` = `/v1/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
   const queueBase = `${repoBase}/agent/pending-actions`;
   const emit = (payload: unknown, line: string) => {
     if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -2757,7 +2801,7 @@ export async function maintainCli(args: any) {
     if (!actionClass || !pullArg) {
       throw new Error("Usage: loopover-mcp maintain propose <action-class> <pull-number> --repo owner/repo [--reason ...] [--label ...] [--review-body ...] [--merge-method merge|squash|rebase] [--close-comment ...].");
     }
-    if (!PROPOSE_ACTION_CLASSES.includes(actionClass)) throw new Error(`Unknown action class: ${actionClass}. Use ${PROPOSE_ACTION_CLASSES.join(", ")}.`);
+    if (!isOneOf(PROPOSE_ACTION_CLASSES, actionClass)) throw new Error(`Unknown action class: ${actionClass}. Use ${PROPOSE_ACTION_CLASSES.join(", ")}.`);
     const pullNumber = Number(pullArg);
     if (!Number.isInteger(pullNumber) || pullNumber <= 0) throw new Error(`Invalid pull number: ${pullArg}. Pass a positive integer.`);
     const payload = await apiPost(
@@ -2780,8 +2824,8 @@ export async function maintainCli(args: any) {
     const action = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
     const level = args[2] && !args[2].startsWith("--") ? args[2] : undefined;
     if (!action || !level) throw new Error("Usage: loopover-mcp maintain set-level <action> <level> --repo owner/repo.");
-    if (!MAINTAIN_ACTION_CLASSES.includes(action)) throw new Error(`Unknown action: ${action}. Use ${MAINTAIN_ACTION_CLASSES.join(", ")}.`);
-    if (!MAINTAIN_AUTONOMY_LEVELS.includes(level)) throw new Error(`Unknown level: ${level}. Use ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}.`);
+    if (!isOneOf(MAINTAIN_ACTION_CLASSES, action)) throw new Error(`Unknown action: ${action}. Use ${MAINTAIN_ACTION_CLASSES.join(", ")}.`);
+    if (!isOneOf(MAINTAIN_AUTONOMY_LEVELS, level)) throw new Error(`Unknown level: ${level}. Use ${MAINTAIN_AUTONOMY_LEVELS.join(", ")}.`);
     // Read-merge-write so one class is updated without clearing the others.
     const current = await apiGet(`${repoBase}/settings`);
     const autonomy = { ...(current.autonomy ?? {}), [action]: level };
@@ -3018,7 +3062,7 @@ function cliCommandHandlers(): Record<CliCommand, (args: string[]) => unknown> {
   };
 }
 
-async function runCli(args: any) {
+async function runCli(args: readonly string[]) {
   const command = args[0];
   if (command === undefined || command === "--help" || command === "help") return printHelp();
   // Aliases kept from the old dispatch chain: they are spellings, not commands, so they live here
@@ -3044,8 +3088,8 @@ async function analyzeOrPreflightCli(command: "analyze-branch" | "preflight", re
   const result = await analyzeCurrentBranch({
     login: contributorLogin,
     cwd: options.cwd,
-    repoFullName: options.repo,
-    baseRef: options.base,
+    repoFullName: optionText(options.repo),
+    baseRef: optionText(options.base),
     title: options.title,
     body: options.body,
     labels: options.label,
@@ -3077,7 +3121,7 @@ async function analyzeOrPreflightCli(command: "analyze-branch" | "preflight", re
 
 // Render the report-shaped branch analysis (next actions, plus score blockers for analyze-branch) as
 // aligned monospace tables when `--format table` is passed. Default and `--json` output are untouched.
-function writeBranchAnalysisTable(result: any, command: any) {
+function writeBranchAnalysisTable(result: any, command: string) {
   const analysis = result.analysis;
   const actionRows = (analysis.nextActions ?? []).map((action: any) => ({
     action: action.actionKind ?? "—",
@@ -3109,19 +3153,19 @@ function printReviewPrHelp() {
   );
 }
 
-async function reviewPrCli(options: any) {
+async function reviewPrCli(options: CliOptions) {
   if (options.help === true) return printReviewPrHelp();
   const contributorLogin = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!contributorLogin) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
-  let prBody = options.body;
-  if (options.bodyFile) prBody = readCliTextFile(options.bodyFile, "Body");
+  let prBody = optionText(options.body);
+  if (options.bodyFile) prBody = readCliTextFile(optionText(options.bodyFile) ?? "", "Body");
   const commitMessages = Array.isArray(options.commit) ? options.commit : options.commit ? [options.commit] : undefined;
   const linkedIssue = parsePositiveIntegerOption(options.linkedIssue, "--linked-issue");
   const payload = await reviewLocalPr({
     login: contributorLogin,
     cwd: options.cwd,
-    repoFullName: options.repo,
-    baseRef: options.base,
+    repoFullName: optionText(options.repo),
+    baseRef: optionText(options.base),
     title: options.title,
     body: prBody,
     labels: options.label,
@@ -3146,7 +3190,7 @@ async function reviewPrCli(options: any) {
 // special file (FIFO, device) can be swapped in between the two calls, letting the earlier
 // isFile()/size validation apply to a different, unvalidated file than the one actually read.
 // O_NOFOLLOW makes a symlinked path fail to open outright instead of silently following it.
-function readCliTextFile(path: any, label: any) {
+function readCliTextFile(path: string, label: any) {
   let fd;
   try {
     fd = openSync(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
@@ -3190,13 +3234,13 @@ function printLintPrTextHelp() {
   );
 }
 
-async function lintPrTextCli(args: any) {
+async function lintPrTextCli(args: readonly string[]) {
   if (!args.length || args[0] === "--help" || args[0] === "help") return printLintPrTextHelp();
   const options = parseOptions(args);
   const commitMessages = Array.isArray(options.commit) ? options.commit : options.commit ? [options.commit] : undefined;
-  let prBody = options.body;
+  let prBody = optionText(options.body);
   if (options.bodyFile) {
-    prBody = readCliTextFile(options.bodyFile, "Body");
+    prBody = readCliTextFile(optionText(options.bodyFile) ?? "", "Body");
   }
   const linkedIssue = parsePositiveIntegerOption(options.linkedIssue, "--linked-issue");
   const payload = await apiPost("/v1/lint/pr-text", {
@@ -3244,15 +3288,20 @@ function printValidateConfigHelp() {
   );
 }
 
-async function validateConfigCli(args: any) {
+async function validateConfigCli(args: readonly string[]) {
   if (!args.length || args[0] === "--help" || args[0] === "help") return printValidateConfigHelp();
   const options = parseOptions(args);
   if (!options.file) throw new Error("Pass --file <path> to the manifest to validate.");
-  const content = readCliTextFile(options.file, "Manifest");
-  const source = options.source;
-  if (source !== undefined && !["repo_file", "api_record", "none"].includes(String(source))) {
-    throw new Error("--source must be one of: repo_file, api_record, none");
+  const content = readCliTextFile(optionText(options.file) ?? "", "Manifest");
+  // #9773: parsed against the CONTRACT's own enum rather than a restated list, so the accepted values and
+  // the error naming them both come from the schema the route validates with -- and the parsed result
+  // narrows, which a `.includes()` guard never did. That is why the request body could carry a free string
+  // where the API accepts three literals.
+  const parsedSource = validateFocusManifestSchema.shape.source.safeParse(optionText(options.source));
+  if (!parsedSource.success) {
+    throw new Error(`--source must be one of: ${validateFocusManifestSchema.shape.source.unwrap().options.join(", ")}`);
   }
+  const source = parsedSource.data;
   const payload = await apiPost("/v1/validate/focus-manifest", {
     content,
     ...(source !== undefined ? { source } : {}),
@@ -3301,11 +3350,11 @@ function parseChangedFileSpec(raw: any) {
   return entry;
 }
 
-async function slopRiskCli(args: any) {
+async function slopRiskCli(args: readonly string[]) {
   if (!args.length || args[0] === "--help" || args[0] === "help") return printSlopRiskHelp();
   const options = parseOptions(args);
-  let description = options.description ?? options.body;
-  const descriptionFile = options.descriptionFile ?? options.bodyFile;
+  let description = optionText(options.description) ?? optionText(options.body);
+  const descriptionFile = optionText(options.descriptionFile) ?? optionText(options.bodyFile);
   if (descriptionFile) {
     description = readCliTextFile(descriptionFile, "Description");
   }
@@ -3342,7 +3391,7 @@ function printImprovementPotentialHelp() {
   );
 }
 
-async function improvementPotentialCli(args: any) {
+async function improvementPotentialCli(args: readonly string[]) {
   // #6748: shell CLI mirror of loopover_check_improvement_potential, matching slopRiskCli's HTTP-proxy pattern
   // (the pure builder lives in src/signals/improvement.ts, not yet an @loopover/engine export for in-process use).
   if (!args.length || args[0] === "--help" || args[0] === "help") return printImprovementPotentialHelp();
@@ -3387,12 +3436,12 @@ function printIssueSlopHelp() {
   );
 }
 
-async function issueSlopCli(args: any) {
+async function issueSlopCli(args: readonly string[]) {
   if (!args.length || args[0] === "--help" || args[0] === "help") return printIssueSlopHelp();
   const options = parseOptions(args);
   let body = normalizeOptionalStringOption(options.body);
   if (options.bodyFile) {
-    body = readCliTextFile(options.bodyFile, "Body");
+    body = readCliTextFile(optionText(options.bodyFile) ?? "", "Body");
   }
   const title = normalizeOptionalStringOption(options.title);
   const payload = await apiPost("/v1/lint/issue-slop", {
@@ -3443,9 +3492,9 @@ function printContributorProfileHelp() {
 // because the top-level `profile` command already manages MCP client profiles.
 // #7760: exported (like maintainCli) so an in-process test can drive it directly -- the subprocess CLI harness
 // v8 can't instrument, so the shared getContributorProfile call below is graded through this in-process entry.
-export async function contributorProfileCli(options: any) {
+export async function contributorProfileCli(options: CliOptions) {
   if (options.help === true) return printContributorProfileHelp();
-  const login = options.login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = optionText(options.login) ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
   // #7760: shared with the loopover_get_contributor_profile stdio tool so the endpoint path lives in one place.
   const payload = await getContributorProfile(login);
@@ -3454,15 +3503,16 @@ export async function contributorProfileCli(options: any) {
 `);
     return;
   }
+  // #9773: a `payload.summary` line used to follow this one. ContributorProfile has never carried a
+  // summary -- not the github-cache shape, not the gittensor one -- so `if (payload.summary)` was never
+  // true and the line could not print. Typing the response is what made that visible.
   process.stdout.write(`LoopOver contributor profile for ${login}.
-`);
-  if (payload.summary) process.stdout.write(`${sanitizePlainTextTerminalOutput(payload.summary)}
 `);
 }
 
-async function decisionPackCli(options: any) {
+async function decisionPackCli(options: CliOptions) {
   if (options.help === true) return printDecisionPackHelp();
-  const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   const payload = await getDecisionPackWithCache(login);
   if (options.json) {
@@ -3490,9 +3540,9 @@ function printMonitorOpenPrsHelp() {
   );
 }
 
-async function monitorOpenPrsCli(options: any) {
+async function monitorOpenPrsCli(options: CliOptions) {
   if (options.help === true) return printMonitorOpenPrsHelp();
-  const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   const payload = await getOpenPrMonitor(login);
   if (options.json) {
@@ -3524,9 +3574,9 @@ function printPrOutcomesHelp() {
   );
 }
 
-async function prOutcomesCli(options: any) {
+async function prOutcomesCli(options: CliOptions) {
   if (options.help === true) return printPrOutcomesHelp();
-  const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   const limitRaw = options.limit;
   let limit;
@@ -3564,12 +3614,16 @@ function printExplainReviewRiskHelp() {
   );
 }
 
-async function explainReviewRiskCli(options: any) {
+async function explainReviewRiskCli(options: CliOptions) {
   if (options.help === true) return printExplainReviewRiskHelp();
-  const repoFullName = options.repoFullName ?? options.repo;
+  const repoFullName = optionText(options.repoFullName) ?? optionText(options.repo);
   if (!repoFullName || !String(repoFullName).includes("/")) throw new Error("Pass --repo owner/repo or --repoFullName owner/repo.");
-  if (!options.title) throw new Error("Pass --title <text>.");
-  const contributorLogin = options.login ?? options.contributorLogin;
+  const title = optionText(options.title);
+  if (!title) throw new Error("Pass --title <text>.");
+  // #9773: `options.login` unwrapped here sent boolean `true` to the API as the contributor login, and a
+  // bare `--title` sent `true` as the title -- the same class this sweep fixes everywhere else, missed on
+  // the first pass because these flow into an untyped request body rather than into a `string` parameter.
+  const contributorLogin = optionText(options.login) ?? optionText(options.contributorLogin);
   const labels = Array.isArray(options.label) ? options.label : options.label ? [options.label] : undefined;
   const changedFiles = Array.isArray(options.changedFile) ? options.changedFile : options.changedFile ? [options.changedFile] : undefined;
   const linkedIssues = Array.isArray(options.issue)
@@ -3582,14 +3636,14 @@ async function explainReviewRiskCli(options: any) {
     "/v1/preflight/review-risk",
     stripUndefined({
       repoFullName,
-      title: options.title,
+      title,
       contributorLogin,
-      body: options.body,
+      body: optionText(options.body),
       labels,
       changedFiles,
       linkedIssues: linkedIssues && linkedIssues.length > 0 ? linkedIssues : undefined,
       tests,
-      authorAssociation: options.authorAssociation,
+      authorAssociation: optionText(options.authorAssociation),
     }),
   );
   if (options.json) {
@@ -3616,9 +3670,9 @@ function printNotificationsHelp() {
 
 // #6745: CLI mirror of loopover_list_notifications. Login resolves from --login / the active session /
 // LOOPOVER_LOGIN / GITHUB_LOGIN, like the sibling contributor commands.
-async function notificationsCli(options: any) {
+async function notificationsCli(options: CliOptions) {
   if (options.help === true) return printNotificationsHelp();
-  const login = options.login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = optionText(options.login) ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
   const payload = await getNotifications(login);
   if (options.json) {
@@ -3636,8 +3690,8 @@ async function notificationsCli(options: any) {
 // #7763: shared REST dispatch for a contributor's issue-watch subscriptions, reused by the `watch` CLI and the
 // loopover_watch_issues stdio tool so there is no duplicated HTTP logic. action maps list=GET, watch=POST,
 // unwatch=DELETE on the /v1/contributors/:login/watches route family (the same routes the CLI already hit).
-function watchIssuesRequest(login: any, action: any, repoFullName?: any, labels?: any) {
-  const base = `/v1/contributors/${encodeURIComponent(login)}/watches`;
+function watchIssuesRequest(login: string, action: any, repoFullName?: any, labels?: any) {
+  const base: `/v1/contributors/${string}/watches` = `/v1/contributors/${encodeURIComponent(login)}/watches`;
   if (action === "watch") return apiPost(base, { repoFullName, ...(labels && labels.length > 0 ? { labels } : {}) });
   if (action === "unwatch") return apiDelete(base, { repoFullName });
   return apiGet(base);
@@ -3647,12 +3701,12 @@ function watchIssuesRequest(login: any, action: any, repoFullName?: any, labels?
 // route family. The MCP tool's action enum maps to subcommands here: list=GET, add=POST, remove=DELETE.
 // Exported (like maintainCli, #7764) so an in-process test can cover the shared watchIssuesRequest call sites
 // that a subprocess spawn can't instrument (#7763).
-export async function watchCli(args: any) {
+export async function watchCli(args: readonly string[]) {
   const subcommand = args[0];
   if (!subcommand || subcommand === "--help" || subcommand === "help") return printWatchHelp();
   const positional = args[1] && !args[1].startsWith("--") ? args[1] : undefined;
   const options = parseOptions(args.slice(1));
-  const login = options.login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = optionText(options.login) ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
   // The API chooses `changed` / repo / label text, so the plain-text path is sanitized (#6261); `login` is the
   // user's own value.
@@ -3727,9 +3781,9 @@ function printNotificationsReadHelp() {
 
 // #6745: CLI mirror of loopover_mark_notifications_read. Repeated --id flags collect into an ids array; omitting
 // them marks every delivered notification read (mirrors the route's absent-body behavior).
-async function notificationsReadCli(options: any) {
+async function notificationsReadCli(options: CliOptions) {
   if (options.help === true) return printNotificationsReadHelp();
-  const login = options.login ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = optionText(options.login) ?? activeProfile.session?.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!login) throw new Error("Pass --login <github-login>, log in with `loopover-mcp login`, or set LOOPOVER_LOGIN.");
   const ids = Array.isArray(options.id) ? options.id : options.id ? [options.id] : undefined;
   const payload = await postMarkNotificationsRead(login, ids);
@@ -3753,13 +3807,18 @@ function printRepoDecisionHelp() {
   );
 }
 
-async function repoDecisionCli(options: any) {
+async function repoDecisionCli(options: CliOptions) {
   if (options.help === true) return printRepoDecisionHelp();
-  const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+  const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
   if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
   const repoFullName = options.repo;
-  if (!repoFullName || !repoFullName.includes("/")) throw new Error("Pass --repo owner/repo.");
-  const [owner, repo] = repoFullName.split("/", 2);
+  // #9773: `typeof`, not truthiness. A bare `--repo` with no value parses to `true`, which passed the old
+  // `!repoFullName` guard and then threw `repoFullName.includes is not a function` -- an unhandled
+  // TypeError where the usage error was intended. The `any` on this parameter is what hid it.
+  if (typeof repoFullName !== "string" || !repoFullName.includes("/")) throw new Error("Pass --repo owner/repo.");
+  // The defaults never fire: the guard proved the string contains a "/". They exist because
+  // noUncheckedIndexedAccess types a destructured split as possibly-undefined.
+  const [owner = "", repo = ""] = repoFullName.split("/", 2);
   const payload = await getRepoDecisionWithCache(login, owner, repo);
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -3773,7 +3832,7 @@ async function repoDecisionCli(options: any) {
   if (payload.cache?.rerunGuidance) process.stdout.write(`Rerun when: ${sanitizePlainTextTerminalOutput(payload.cache.rerunGuidance)}\n`);
 }
 
-function runCacheCli(args: any) {
+function runCacheCli(args: readonly string[]) {
   const subcommand = args[0] ?? "help";
   if (subcommand === "--help" || subcommand === "help") return printCacheHelp();
   const options = parseOptions(args.slice(1));
@@ -3799,7 +3858,7 @@ function runCacheCli(args: any) {
   throw new Error(`Unknown cache command: ${subcommand}`);
 }
 
-async function runAgentCli(args: any) {
+async function runAgentCli(args: readonly string[]) {
   const subcommand = args[0] ?? "help";
   if (subcommand === "--help" || subcommand === "help") return printAgentHelp();
   const options = parseOptions(args.slice(1));
@@ -3808,7 +3867,7 @@ async function runAgentCli(args: any) {
     // /v1/agent/runs request shape. `objective` and `actorLogin` are non-optional in agentRunShape
     // (src/mcp/server.ts), so enforce both here, resolving --login exactly as plan/packet do. surface is "cli"
     // (not the stdio tool's "mcp") so the two entry points stay distinguishable server-side, per the issue.
-    const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+    const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
     if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
     if (!options.objective || options.objective === true) throw new Error('Pass --objective "..." to describe the run.');
     const payload = await apiPost("/v1/agent/runs", {
@@ -3816,7 +3875,7 @@ async function runAgentCli(args: any) {
       actorLogin: login,
       surface: "cli",
       target: stripUndefined({
-        repoFullName: options.repo,
+        repoFullName: optionText(options.repo),
         pullNumber: optionalInteger(options.pull),
         issueNumber: optionalInteger(Array.isArray(options.issue) ? options.issue[0] : options.issue),
       }),
@@ -3824,32 +3883,32 @@ async function runAgentCli(args: any) {
     return outputAgentPayload(payload, options, `Queued LoopOver base-agent run for ${login}.`);
   }
   if (subcommand === "plan") {
-    const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+    const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
     if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
-    const payload = await apiPost("/v1/agent/plan-next-work", stripUndefined({ login, repoFullName: options.repo, objective: options.objective, surface: "mcp" }));
+    const payload = await apiPost("/v1/agent/plan-next-work", stripUndefined({ login, repoFullName: optionText(options.repo), objective: options.objective, surface: "mcp" }));
     return outputAgentPayload(payload, options, `LoopOver agent plan: ${payload.summary ?? payload.run?.status ?? "ready"}`);
   }
   if (subcommand === "status") {
-    const runId = args[1] && !args[1].startsWith("--") ? args[1] : options.runId;
+    const runId = args[1] && !args[1].startsWith("--") ? args[1] : optionText(options.runId);
     if (!runId) throw new Error("Usage: loopover-mcp agent status <run-id>");
     const payload = await apiGet(`/v1/agent/runs/${encodeURIComponent(runId)}`);
     return outputAgentPayload(payload, options, `LoopOver agent run ${runId}: ${payload.run?.status ?? "unknown"}`);
   }
   if (subcommand === "explain") {
-    const runId = args[1] && !args[1].startsWith("--") ? args[1] : options.runId;
+    const runId = args[1] && !args[1].startsWith("--") ? args[1] : optionText(options.runId);
     if (!runId) throw new Error("Usage: loopover-mcp agent explain <run-id>");
     const payload = await apiGet(`/v1/agent/runs/${encodeURIComponent(runId)}`);
     const topAction = payload.actions?.[0] ?? null;
     return outputAgentPayload({ ...payload, topAction }, options, topAction ? `Top action: ${topAction.recommendation}` : "No top action is available yet.");
   }
   if (subcommand === "packet") {
-    const login = options.login ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
+    const login = optionText(options.login) ?? process.env.LOOPOVER_LOGIN ?? process.env.GITHUB_LOGIN;
     if (!login) throw new Error("Pass --login <github-login> or set LOOPOVER_LOGIN.");
     const payload = await agentPreparePrPacket({
       login,
       cwd: options.cwd,
-      repoFullName: options.repo,
-      baseRef: options.base,
+      repoFullName: optionText(options.repo),
+      baseRef: optionText(options.base),
       title: options.title,
       body: options.body,
       labels: options.label,
@@ -3882,6 +3941,9 @@ export { runCli };
 // The agent-run payload fields this printer reads. The /v1/agent/* runs endpoints' 200s are inline in the
 // document (#9531), so this is the CLI's own contract with what it prints -- structural, not `any`.
 type AgentRunOutputPayload = {
+  /** #9773: added by `agent explain` before printing -- a LOCAL decoration, never a server field. The type
+   *  did not allow for it, which only compiled while the payload it decorated was `any`. */
+  topAction?: AgentRunOutputAction | null | undefined;
   prPacket?: { markdown?: unknown } | null | undefined;
   actions?: Array<AgentRunOutputAction> | undefined;
   nextActions?: Array<AgentRunOutputAction> | undefined;
@@ -3928,7 +3990,7 @@ function outputAgentPayload(payload: AgentRunOutputPayload, options: { json?: bo
   }
 }
 
-function writeBranchAnalysisCli(result: any, command: any) {
+function writeBranchAnalysisCli(result: any, command: string) {
   const analysis = result.analysis;
   const intelligence = command === "preflight" ? publicSafeWorkspaceIntelligence(analysis.workspaceIntelligence) : analysis.workspaceIntelligence;
   process.stdout.write(`${analysis.summary}\n`);
@@ -4011,7 +4073,7 @@ function isUnsafePublicPacketText(value: any) {
   return /\b(reward\w*|score\w*|wallet|hotkey|coldkey|mnemonic|farming|payout|ranking|raw[-_\s]?trust|trust[-_\s]?score|private[-_\s]?reviewability|reviewability)\b|\/Users\/|\/home\/|\/tmp\/|[A-Z]:[\\/]Users[\\/]/i.test(value);
 }
 
-function printVersion(options: any) {
+function printVersion(options: CliOptions) {
   const payload = { name: packageName, version: packageVersion, apiVersion: currentApiVersion, node: process.version };
   if (options.json) {
     process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
@@ -4020,7 +4082,7 @@ function printVersion(options: any) {
   process.stdout.write(`${packageName}/${packageVersion} (api ${currentApiVersion}, node ${process.version})\n`);
 }
 
-function toolsCommand(args: any) {
+function toolsCommand(args: readonly string[]) {
   const subcommand = args[0];
   if (subcommand === "search") return toolsSearchCommand(args.slice(1));
   const options = parseOptions(args);
@@ -4056,7 +4118,7 @@ function toolsCommand(args: any) {
 // surfaces loopover_check_before_start even though "duplicate" is only in its description. Reuses
 // this CLI's existing levenshteinDistance for typo tolerance rather than pulling in a fuzzy-match
 // dependency.
-function toolsSearchCommand(args: any) {
+function toolsSearchCommand(args: readonly string[]) {
   const options = parseOptions(args);
   const query = args.find((arg: any) => !arg.startsWith("--"));
   if (!query) throw new Error("Usage: loopover-mcp tools search <query> [--json]");
@@ -4083,7 +4145,7 @@ function printToolRows(tools: any) {
 // Rank registered tools by how well they match the query, best first. A substring hit on the name beats
 // a substring hit on the description, which beats a typo-tolerant (Levenshtein) hit on any name/description
 // token; tools that match none of these are dropped. Ties break alphabetically for a stable listing.
-function searchTools(query: any) {
+function searchTools(query: string) {
   const needle = query.toLowerCase();
   const scored = [];
   for (const { name, description } of STDIO_TOOL_DESCRIPTORS) {
@@ -4094,7 +4156,7 @@ function searchTools(query: any) {
   return scored.map(({ name, description }) => ({ name, description }));
 }
 
-function scoreToolMatch(needle: any, name: any, description: any) {
+function scoreToolMatch(needle: any, name: string, description: any) {
   if (name.includes(needle)) return 0;
   if (description.includes(needle)) return 1;
   // Typo tolerance: compare the query to each name/description token, allowing a small edit distance that
@@ -4109,7 +4171,7 @@ function scoreToolMatch(needle: any, name: any, description: any) {
   return best <= budget ? 2 + best : null;
 }
 
-function completionCommand(args: any) {
+function completionCommand(args: readonly string[]) {
   const shell = args[0] && !args[0].startsWith("--") ? args[0] : undefined;
   const options = parseOptions(args.filter((arg: any) => arg.startsWith("--")));
   if (!shell) throw new Error(`Usage: loopover-mcp completion <${COMPLETION_SHELLS.join("|")}> [--json]`);
@@ -4122,7 +4184,7 @@ function completionCommand(args: any) {
   process.stdout.write(`${script}\n`);
 }
 
-function buildCompletionScript(shell: any) {
+function buildCompletionScript(shell: string) {
   const topLevel = [...Object.keys(CLI_COMMAND_SPEC), "help"];
   const withSubcommands = Object.entries(CLI_COMMAND_SPEC)
     .map(([command, entry]) => [command, entry.subcommands] as const)
@@ -4212,7 +4274,7 @@ _loopover_mcp "$@"`;
 
 function buildFishCompletion(topLevel: any, withSubcommands: any) {
   const topLevelLines = topLevel
-    .map((command: any) => `complete -c loopover-mcp -n __fish_use_subcommand -a ${command} -d 'loopover-mcp command'`)
+    .map((command: string) => `complete -c loopover-mcp -n __fish_use_subcommand -a ${command} -d 'loopover-mcp command'`)
     .join("\n");
   const subcommandLines = withSubcommands
     .map(([command, subcommands]: any) => `complete -c loopover-mcp -n '__fish_seen_subcommand_from ${command}' -a '${subcommands.join(" ")}'`)
@@ -4224,7 +4286,7 @@ ${subcommandLines}`;
 }
 
 function buildPowershellCompletion(topLevel: any, withSubcommands: any) {
-  const commandList = topLevel.map((command: any) => `'${command}'`).join(", ");
+  const commandList = topLevel.map((command: string) => `'${command}'`).join(", ");
   const subcommandEntries = withSubcommands
     .map(([command, subcommands]: any) => `    '${command}' = @(${subcommands.map((subcommand: any) => `'${subcommand}'`).join(", ")})`)
     .join("\n");
@@ -4306,8 +4368,43 @@ function printProfileHelp() {
   process.stdout.write(printableUsage("profile"));
 }
 
-function parseOptions(args: any) {
-  const options: any = {};
+/**
+ * Whether a user-supplied string is one of a closed set (#9773).
+ *
+ * A TYPE PREDICATE, so the value narrows for whatever it is passed to next. `list.includes(value)` returns
+ * a boolean and narrows nothing, which is why an action class or autonomy level still arrived at the API
+ * as a plain `string` -- the check ran, and the type system learned nothing from it.
+ */
+function isOneOf<const T extends readonly string[]>(list: T, value: string): value is T[number] {
+  return (list as readonly string[]).includes(value);
+}
+
+/**
+ * An option's value as text (#9773).
+ *
+ * A BARE flag -- `--login` with no value, or followed by another `--flag` -- parses to `true`. Reading that
+ * as the literal string "true" is how `loopover-mcp decision-pack --login` came to request a contributor
+ * NAMED "true" and report them not found, rather than telling the user they forgot the value. Absent is the
+ * honest answer, and every caller here already handles absent.
+ */
+function optionText(value: string | boolean | string[] | undefined): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * What a repeatable flag has accumulated so far.
+ *
+ * #9773: was `options[key] ?? []`, which spread whatever was there. A BARE repeatable flag (`--issue` with
+ * no value, or followed by another `--flag`) is stored as `true` by the branch below, so
+ * `loopover-mcp preflight-pr --issue --issue 5` spread `true` and threw "true is not iterable". Anything
+ * that is not already a list starts a fresh one -- the only sane reading of a bare flag carrying no value.
+ */
+function asRepeated(current: string | boolean | string[] | undefined): string[] {
+  return Array.isArray(current) ? current : [];
+}
+
+function parseOptions(args: readonly string[]): CliOptions {
+  const options: CliOptions = {};
   // Both sets come from CLI_FLAG_SPEC (#9521) -- see the kind meanings there.
   const repeatable = REPEATABLE_FLAGS;
   const booleanFlags = BOOLEAN_FLAGS;
@@ -4332,7 +4429,7 @@ function parseOptions(args: any) {
     if (equals !== -1) {
       const inlineKey = camel(arg.slice(2, equals));
       const inlineValue = arg.slice(equals + 1);
-      if (repeatable.has(inlineKey)) options[inlineKey] = [...(options[inlineKey] ?? []), inlineValue];
+      if (repeatable.has(inlineKey)) options[inlineKey] = [...asRepeated(options[inlineKey]), inlineValue];
       // Only the exact strings "false" and "" disable a boolean flag (`--json=false`,
       // `--exit-code=false`); any other value (`--json=true`, bare `--json` elsewhere) keeps the
       // flag's previous enabling behavior, so ONLY the `=false` form changes meaning.
@@ -4347,7 +4444,7 @@ function parseOptions(args: any) {
       continue;
     }
     index += 1;
-    if (repeatable.has(key)) options[key] = [...(options[key] ?? []), value];
+    if (repeatable.has(key)) options[key] = [...asRepeated(options[key]), value];
     else options[key] = value;
   }
   return options;
@@ -4357,7 +4454,7 @@ function parseOptions(args: any) {
 // array element per line (for piping into jq/log processors); `--json` (or `--format json`) keeps the
 // existing pretty object. Returns true when it emitted a machine-readable format, so the caller skips the
 // human view. Each record ends in "\n" and Node flushes stdout on exit, so piped output is not truncated.
-function emitList(options: any, items: any, pretty: any) {
+function emitList(options: CliOptions, items: any, pretty: any) {
   if (options.format === "ndjson") {
     for (const item of items) process.stdout.write(`${JSON.stringify(item)}\n`);
     return true;
@@ -4369,7 +4466,7 @@ function emitList(options: any, items: any, pretty: any) {
   return false;
 }
 
-async function login(options: any) {
+async function login(options: CliOptions) {
   const profileName = selectedProfileName(options);
   const githubToken = options.githubToken ?? process.env.GITHUB_TOKEN;
   const session = githubToken ? await apiFetch("/v1/auth/github/session", { method: "POST", body: JSON.stringify({ githubToken }) }, { auth: false }) : await loginWithDeviceFlow();
@@ -4416,7 +4513,7 @@ async function loginWithDeviceFlow() {
   throw new Error("GitHub OAuth device flow expired.");
 }
 
-async function logout(options: any) {
+async function logout(options: CliOptions) {
   const profileName = selectedProfileName(options);
   const all = options.all === true;
   const envToken = getEnvApiToken();
@@ -4444,7 +4541,7 @@ async function logout(options: any) {
 // self-hoster must explicitly enable it before anything is measured. The opt-in is a single top-level
 // `telemetryEnabled` flag persisted in the same config file `login` uses, so the choice survives across
 // CLI invocations; `status`, `doctor`, and `config` all report the current state.
-function telemetryCommand(args: any) {
+function telemetryCommand(args: readonly string[]) {
   const subcommand = args[0] ?? "status";
   const options = parseOptions(args.slice(1));
   if (subcommand === "--help" || subcommand === "help") return printTelemetryHelp();
@@ -4481,7 +4578,7 @@ flag in the same config file \`loopover-mcp login\` uses, so the choice survives
 `);
 }
 
-function profileCommand(args: any) {
+function profileCommand(args: readonly string[]) {
   const subcommand = args[0] ?? "list";
   const options = parseOptions(args.slice(1));
   if (subcommand === "--help" || subcommand === "help") return printProfileHelp();
@@ -4532,13 +4629,13 @@ function profileCommand(args: any) {
   throw new Error(`Unknown profile command: ${subcommand}`);
 }
 
-async function whoami(options: any) {
+async function whoami(options: CliOptions) {
   const payload = { ...(await apiGet("/v1/auth/session")), profile: activeProfileName };
   if (options.json) process.stdout.write(`${JSON.stringify(payload, null, 2)}\n`);
   else process.stdout.write(activeProfileName === defaultProfileName ? `${payload.login}\n` : `${payload.login} (profile ${activeProfileName})\n`);
 }
 
-async function status(options: any) {
+async function status(options: CliOptions) {
   let auth: any = { status: getApiToken() ? "token_configured" : "unauthenticated" };
   let health = null;
   if (getApiToken()) {
@@ -4600,7 +4697,7 @@ async function status(options: any) {
   }
 }
 
-async function changelog(options: any) {
+async function changelog(options: CliOptions) {
   const text = existsSync(changelogPath) ? readFileSync(changelogPath, "utf8") : "# Changelog\n\nNo packaged changelog was found.\n";
   const payload = {
     package: {
@@ -4613,9 +4710,9 @@ async function changelog(options: any) {
   else process.stdout.write(text.endsWith("\n") ? text : `${text}\n`);
 }
 
-async function doctor(options: any) {
+async function doctor(options: CliOptions) {
   const checks: any[] = [];
-  const add = (name: any, statusValue: any, detail: any, remediation?: any) =>
+  const add = (name: string, statusValue: any, detail: any, remediation?: any) =>
     checks.push(
       stripUndefined({
         name,
@@ -4706,9 +4803,9 @@ async function doctor(options: any) {
 
   try {
     const metadata = collectLocalBranchMetadata({
-      cwd: options.cwd ?? process.cwd(),
-      baseRef: options.base,
-      repoFullName: options.repo,
+      cwd: optionText(options.cwd) ?? process.cwd(),
+      baseRef: optionText(options.base),
+      repoFullName: optionText(options.repo),
       login: options.login ?? activeProfile.session?.login ?? "local",
     });
     repoFullName = metadata.repoFullName ?? repoFullName;
@@ -4904,7 +5001,7 @@ function shellArg(value: any) {
   return `'${text.replace(/'/g, `'"'"'`)}'`;
 }
 
-function initClient(options: any) {
+function initClient(options: CliOptions) {
   const client = String(options.print ?? options.client ?? "").toLowerCase() as ClientHost;
   if (!client) throw new Error(`Pass --print with one of: ${CLIENT_HOSTS.join(", ")}.`);
   if (!CLIENT_HOSTS.includes(client)) throw new Error(`Unsupported client: ${client}. Use ${CLIENT_HOSTS.join(", ")}.`);
@@ -4914,7 +5011,7 @@ function initClient(options: any) {
   if (!CONNECTION_MODES.includes(mode)) throw new Error(`Unsupported mode: ${mode}. Use ${CONNECTION_MODES.join(", ")}.`);
   if (!supportsConnectionMode(client, mode)) throw new Error(`${CLIENT_HOST_SPEC[client].title} cannot connect over the ${CONNECTION_MODE_SPEC[mode].title} mode.`);
   const modeSpec = CONNECTION_MODE_SPEC[mode];
-  const command = options.command ?? modeSpec.command ?? "loopover-mcp";
+  const command = optionText(options.command) ?? modeSpec.command ?? "loopover-mcp";
   const snippet = clientConfigSnippet(client, mode, { command });
   const agentProfile = resolveAgentProfile(options.agentProfile);
   const remoteNote = modeSpec.transport === "http" ? CLIENT_HOST_SPEC[client].remoteNote : undefined;
@@ -4957,10 +5054,10 @@ function formatAgentProfile(profile: any) {
     `Purpose: ${profile.purpose}`,
     "",
     "Recommended MCP prompts:",
-    ...profile.recommendedPrompts.map((name: any) => `- ${name}`),
+    ...profile.recommendedPrompts.map((name: string) => `- ${name}`),
     "",
     "Recommended MCP tools:",
-    ...profile.recommendedTools.map((name: any) => `- ${name}`),
+    ...profile.recommendedTools.map((name: string) => `- ${name}`),
     ...(profile.drivingLoop ? ["", "Driving loop (plan → implement → push, gate-throttled):", ...profile.drivingLoop.map((step: any, index: any) => `${index + 1}. ${step}`)] : []),
     "",
     "Safety boundaries:",
@@ -4981,20 +5078,20 @@ function getEnvApiToken() {
   return process.env.LOOPOVER_API_TOKEN ?? process.env.LOOPOVER_MCP_TOKEN ?? process.env.LOOPOVER_TOKEN;
 }
 
-function selectedProfileName(options: any = {}) {
+function selectedProfileName(options: CliOptions = {}) {
   return normalizeProfileName(options.profile ?? activeProfileName);
 }
 
-function configuredProfileToken(profileName: any, currentConfig = config) {
+function configuredProfileToken(profileName: string, currentConfig = config) {
   return currentConfig.profiles?.[profileName]?.session?.token;
 }
 
-function profileSessions(currentConfig: any = config) {
+function profileSessions(currentConfig: LoopoverConfig = config) {
   return Object.entries(currentConfig.profiles ?? {})
     .flatMap(([name, profile]: any) => (profile?.session?.token ? [{ name, session: profile.session }] : []));
 }
 
-function profilePublicState(profileName: any, currentConfig = config) {
+function profilePublicState(profileName: string, currentConfig = config) {
   const profile = currentConfig.profiles?.[profileName];
   const hasEnvToken = Boolean(getEnvApiToken());
   return {
@@ -5014,7 +5111,7 @@ function profileList(currentConfig = config) {
   return [...names].sort((left, right) => (left === currentConfig.activeProfile ? -1 : right === currentConfig.activeProfile ? 1 : left.localeCompare(right))).map((name) => profilePublicState(name, currentConfig));
 }
 
-function selectProfileName(currentConfig: any, requestedName: any) {
+function selectProfileName(currentConfig: LoopoverConfig, requestedName: any) {
   const requested = requestedName ? normalizeProfileName(requestedName) : undefined;
   if (requested) return requested;
   const configured = currentConfig?.activeProfile ? normalizeProfileName(currentConfig.activeProfile) : defaultProfileName;
@@ -5067,7 +5164,7 @@ function telemetryState(currentConfig = config) {
 // local absolute paths or token values. Distinct from `status` (health/version), `doctor`
 // (diagnostic checks), and `whoami` (session identity): this answers "what config is in effect
 // and which source supplied it?".
-function configCommand(options: any) {
+function configCommand(options: CliOptions) {
   const payload = {
     apiUrl,
     apiUrlSource: resolvedApiUrlSource(),
@@ -5105,7 +5202,7 @@ function normalizeProfileName(value: any) {
   return name;
 }
 
-function cliOptionValue(args: any, optionName: any) {
+function cliOptionValue(args: readonly string[], optionName: any) {
   const dashed = `--${optionName.replace(/[A-Z]/g, (letter: any) => `-${letter.toLowerCase()}`)}`;
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index];
@@ -5118,7 +5215,7 @@ function cliOptionValue(args: any, optionName: any) {
   return undefined;
 }
 
-function upsertProfile(currentConfig: any, profileName: any, patch: any) {
+function upsertProfile(currentConfig: LoopoverConfig, profileName: string, patch: any) {
   const now = new Date().toISOString();
   const existing = currentConfig.profiles?.[profileName] ?? {};
   const profiles = {
@@ -5134,17 +5231,17 @@ function upsertProfile(currentConfig: any, profileName: any, patch: any) {
   return normalizeConfig({ ...currentConfig, apiUrl: patch.apiUrl ?? currentConfig.apiUrl, activeProfile: profileName, profiles });
 }
 
-function ensureProfile(currentConfig: any, profileName: any, options: any = {}) {
+function ensureProfile(currentConfig: LoopoverConfig, profileName: string, options: CliOptions = {}) {
   const existing = currentConfig.profiles?.[profileName];
   const nextConfig = existing ? currentConfig : upsertProfile(currentConfig, profileName, {});
   return options.activate ? setActiveProfile(nextConfig, profileName) : nextConfig;
 }
 
-function setActiveProfile(currentConfig: any, profileName: any) {
+function setActiveProfile(currentConfig: LoopoverConfig, profileName: string) {
   return normalizeConfig({ ...currentConfig, activeProfile: profileName });
 }
 
-function clearProfileSession(currentConfig: any, profileName: any) {
+function clearProfileSession(currentConfig: LoopoverConfig, profileName: string) {
   const existing = currentConfig.profiles?.[profileName];
   if (!existing) return currentConfig;
   const profiles = {
@@ -5154,14 +5251,14 @@ function clearProfileSession(currentConfig: any, profileName: any) {
   return normalizeConfig({ ...currentConfig, profiles });
 }
 
-function clearAllProfileSessions(currentConfig: any) {
+function clearAllProfileSessions(currentConfig: LoopoverConfig) {
   const profiles = Object.fromEntries(
     Object.entries(currentConfig.profiles ?? {}).map(([name, profile]: any) => [name, stripUndefined({ ...profile, session: undefined, updatedAt: new Date().toISOString() })]),
   );
   return normalizeConfig({ ...currentConfig, profiles });
 }
 
-function removeProfile(currentConfig: any, profileName: any) {
+function removeProfile(currentConfig: LoopoverConfig, profileName: string) {
   const profiles = { ...(currentConfig.profiles ?? {}) };
   delete profiles[profileName];
   const remaining = Object.keys(profiles);
@@ -5170,23 +5267,23 @@ function removeProfile(currentConfig: any, profileName: any) {
   return normalizeConfig({ ...currentConfig, activeProfile, profiles, session });
 }
 
-function setTelemetryEnabled(currentConfig: any, enabled: any) {
+function setTelemetryEnabled(currentConfig: LoopoverConfig, enabled: any) {
   // normalizeConfig coerces this to a strict boolean and strips it when not exactly `true`, so disabling
   // removes the key entirely (default = absent) rather than persisting `telemetryEnabled: false`.
   return normalizeConfig({ ...currentConfig, telemetryEnabled: enabled === true ? true : undefined });
 }
 
-function hasPersistedConfigState(currentConfig: any) {
+function hasPersistedConfigState(currentConfig: LoopoverConfig) {
   return Boolean(currentConfig.apiUrl || currentConfig.telemetryEnabled === true || Object.keys(currentConfig.profiles ?? {}).length > 0);
 }
 
-function validationFromOptions(options: any) {
+function validationFromOptions(options: CliOptions) {
   const direct = (options.validation ?? []).map(parseValidationEntry);
   const commands = options.validationCommand ?? [];
   const statuses = options.validationStatus ?? [];
   const summaries = options.validationSummary ?? [];
   const durations = options.validationDuration ?? [];
-  const expanded = commands.map((command: any, index: any) =>
+  const expanded = commands.map((command: string, index: any) =>
     validationEntry({
       command,
       statusText: statuses[index],
@@ -5277,7 +5374,7 @@ function isValidationStatusLike(value: any) {
   );
 }
 
-function inferValidationExitCode(value: any, options: any = {}) {
+function inferValidationExitCode(value: any, options: CliOptions = {}) {
   const text = String(value ?? "").trim().toLowerCase();
   const allowBareCode = options.allowBareCode === true;
   const allowGenericStatus = options.allowGenericStatus === true;
@@ -5329,7 +5426,7 @@ function redactPrivateValidationMetrics(text: any) {
   );
 }
 
-async function getDecisionPackWithCache(login: any) {
+async function getDecisionPackWithCache(login: string) {
   try {
     const payload = await apiGet(`/v1/contributors/${encodeURIComponent(login)}/decision-pack`);
     if (isCacheableDecisionPack(payload, login)) writeDecisionPackCache(login, payload);
@@ -5342,7 +5439,7 @@ async function getDecisionPackWithCache(login: any) {
   }
 }
 
-async function getRepoDecisionWithCache(login: any, owner: any, repo: any) {
+async function getRepoDecisionWithCache(login: string, owner: string, repo: string) {
   const repoFullName = `${owner}/${repo}`;
   try {
     return await apiGet(`/v1/contributors/${encodeURIComponent(login)}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/decision`);
@@ -5368,17 +5465,17 @@ function repoDecisionToolSummary(login: string, repoFullName: string, payload: D
   return `LoopOver repo decision for ${login} in ${repoFullName}.`;
 }
 
-function getOpenPrMonitor(login: any) {
+function getOpenPrMonitor(login: string) {
   return apiGet(`/v1/contributors/${encodeURIComponent(login)}/open-pr-monitor`);
 }
 
 // #7760: single source of truth for GET /v1/contributors/:login/profile, shared by the contributor-profile CLI
 // and the loopover_get_contributor_profile stdio tool so neither duplicates the endpoint path.
-function getContributorProfile(login: any) {
+function getContributorProfile(login: string) {
   return apiGet(`/v1/contributors/${encodeURIComponent(login)}/profile`);
 }
 
-function getPrOutcomes(login: any, limit: any) {
+function getPrOutcomes(login: string, limit: any) {
   const query = new URLSearchParams();
   if (limit != null) query.set("limit", String(limit));
   const suffix = query.size > 0 ? `?${query}` : "";
@@ -5387,10 +5484,10 @@ function getPrOutcomes(login: any, limit: any) {
 
 // #6745: contributor notification feed + mark-read. `postMarkNotificationsRead` sends no ids to mark all
 // delivered notifications read, mirroring markNotificationsReadShape's optional ids.
-function getNotifications(login: any) {
+function getNotifications(login: string) {
   return apiGet(`/v1/contributors/${encodeURIComponent(login)}/notifications`);
 }
-function postMarkNotificationsRead(login: any, ids: any) {
+function postMarkNotificationsRead(login: string, ids: any) {
   return apiPost(`/v1/contributors/${encodeURIComponent(login)}/notifications/read`, ids ? { ids } : {});
 }
 
@@ -5418,20 +5515,28 @@ function decisionPackAuthCacheKey() {
   return createHash("sha256").update(token).digest("base64url");
 }
 
-function decisionPackCachePath(login: any, authCacheKey = decisionPackAuthCacheKey()) {
+function decisionPackCachePath(login: string, authCacheKey = decisionPackAuthCacheKey()) {
   if (!authCacheKey) return null;
   const key = Buffer.from(`${apiUrl}\0${currentApiVersion}\0${login.toLowerCase()}\0${authCacheKey}`).toString("base64url");
   return join(decisionPackCacheDir, `${key}.json`);
 }
 
-function writeDecisionPackCache(login: string, payload: { apiVersion?: unknown }) {
+/**
+ * #9773: `payload.apiVersion` used to be read here, and the entry's version was
+ * `typeof payload.apiVersion === "string" ? payload.apiVersion : currentApiVersion`. The decision-pack
+ * response has never carried an `apiVersion`, so that ternary always took its right arm -- which made the
+ * `entry.apiVersion !== currentApiVersion` guard immediately below it a comparison of a value with itself,
+ * and its `api_version_mismatch` result unreachable. Both are gone; the stamp is unchanged, so a cache
+ * written by an older PACKAGE version is still invalidated on read, which is what that check really does.
+ */
+function writeDecisionPackCache(login: string, payload: unknown) {
   const authCacheKey = decisionPackAuthCacheKey();
   if (!authCacheKey) return { status: "skipped", reason: "missing_auth" };
   const cachedAt = new Date().toISOString();
   const sanitizedPayload = sanitizeDecisionPackForCache(payload);
   const entry = {
     schemaVersion: decisionPackCacheSchemaVersion,
-    apiVersion: typeof payload.apiVersion === "string" ? payload.apiVersion : currentApiVersion,
+    apiVersion: currentApiVersion,
     packageVersion,
     apiUrl,
     authCacheKey,
@@ -5439,7 +5544,6 @@ function writeDecisionPackCache(login: string, payload: { apiVersion?: unknown }
     cachedAt,
     payload: sanitizedPayload,
   };
-  if (entry.apiVersion !== currentApiVersion) return { status: "skipped", reason: "api_version_mismatch" };
   const serialized = `${JSON.stringify(entry, null, 2)}\n`;
   if (Buffer.byteLength(serialized, "utf8") > decisionPackCacheMaxBytes) return { status: "skipped", reason: "too_large" };
   mkdirSync(decisionPackCacheDir, { recursive: true, mode: 0o700 });
@@ -5450,7 +5554,7 @@ function writeDecisionPackCache(login: string, payload: { apiVersion?: unknown }
   return { status: "stored", cachedAt };
 }
 
-function readDecisionPackCache(login: any) {
+function readDecisionPackCache(login: string) {
   const authCacheKey = decisionPackAuthCacheKey();
   const path = decisionPackCachePath(login, authCacheKey);
   if (!path || !existsSync(path)) return null;
@@ -5463,7 +5567,7 @@ function readDecisionPackCache(login: any) {
   }
 }
 
-function isCompatibleDecisionPackCacheEntry(entry: any, login: any, authCacheKey = decisionPackAuthCacheKey()) {
+function isCompatibleDecisionPackCacheEntry(entry: any, login: string, authCacheKey = decisionPackAuthCacheKey()) {
   return (
     entry &&
     typeof entry === "object" &&
@@ -5492,7 +5596,7 @@ function staleDecisionPackFromCache(entry: any, error: any) {
   });
 }
 
-function repoDecisionFromCachedPack(entry: any, repoFullName: any, error: any) {
+function repoDecisionFromCachedPack(entry: any, repoFullName: string, error: any) {
   const pack = staleDecisionPackFromCache(entry, error);
   const decision = cachedRepoDecision(pack, repoFullName);
   return stripUndefined({
@@ -5510,7 +5614,7 @@ function repoDecisionFromCachedPack(entry: any, repoFullName: any, error: any) {
   });
 }
 
-function cachedRepoDecision(pack: any, repoFullName: any) {
+function cachedRepoDecision(pack: any, repoFullName: string) {
   const key = repoFullName.toLowerCase();
   return pack.repoDecisions?.find((decision: any) => String(decision?.repoFullName ?? "").toLowerCase() === key) ?? null;
 }
@@ -5535,7 +5639,9 @@ function isDecisionPackCacheFallbackEligible(error: any) {
   return status === 429 || status >= 500;
 }
 
-function sanitizeDecisionPackForCache(value: any): any {
+/** Recursively redact a cached payload. Genuinely `unknown` in, `unknown` out: it walks whatever the
+ *  endpoint returned, narrowing as it goes -- which is what `any` was standing in for. */
+function sanitizeDecisionPackForCache(value: unknown): unknown {
   if (Array.isArray(value)) return value.map((entry) => sanitizeDecisionPackForCache(entry));
   if (typeof value === "string") return sanitizeCacheString(value);
   if (!value || typeof value !== "object") return value;
@@ -5634,7 +5740,7 @@ function listDecisionPackCache() {
   };
 }
 
-function findExecutable(name: any) {
+function findExecutable(name: string) {
   for (const directory of String(process.env.PATH ?? "").split(delimiter).filter(Boolean)) {
     const candidate = join(directory, name);
     if (existsSync(candidate)) return candidate;
@@ -5760,13 +5866,29 @@ function validatedPathOf(path: string): ValidatedApiPath | null {
  * would be a false claim about how much is actually validated.
  */
 async function apiGet<Path extends ValidatedApiPath>(path: Path): Promise<ApiResponse<Path>>;
-async function apiGet(path: string): Promise<any>;
+// #9773: the parameterised overload. The CLI builds these with interpolation, so the pattern is matched at
+// the TYPE level rather than by key -- `/v1/contributors/${login}/profile` resolves to the
+// `/v1/contributors/{login}/profile` schema without the call site naming it. A path matching no known
+// pattern has `MatchApiPath` = never and falls through to the untyped overload below, exactly as before.
+async function apiGet<Path extends string>(path: MatchApiCall<"GET", Path> extends never ? never : Path): Promise<ParameterisedApiResponse<"GET", Path>>;
+// The fallback REFUSES a path the typed overloads already cover (#9773). Without that exclusion a call
+// whose body or path fails the typed overload does not error -- it silently falls through to here and is
+// accepted as `unknown`, which is precisely the hole a typed body was added to close.
+async function apiGet<Path extends string>(path: Path extends ValidatedApiPath ? never : MatchApiCall<"GET", Path> extends never ? Path : never): Promise<any>;
 async function apiGet(path: string) {
   return apiFetch(path, { method: "GET" });
 }
 
-async function apiPost<Path extends ValidatedApiPath>(path: Path, body: unknown): Promise<ApiResponse<Path>>;
-async function apiPost(path: string, body: unknown): Promise<any>;
+// #9773: the body is typed too, where the document names a request schema. The CLI assembles bodies from
+// parsed options, whose values are `string | boolean | string[]` -- a bare `--login` is boolean `true` --
+// and an `unknown` body accepted every one of them silently, which is how a contributor login came to be
+// sent as `true`. Undescribed calls keep an unchecked body rather than being rejected.
+async function apiPost<Path extends ValidatedApiPath>(path: Path, body: ApiRequestBody<"POST", Path>): Promise<ApiResponse<Path>>;
+async function apiPost<Path extends string>(path: MatchApiCall<"POST", Path> extends never ? never : Path, body: ApiRequestBody<"POST", Path>): Promise<ParameterisedApiResponse<"POST", Path>>;
+async function apiPost<Path extends string>(
+  path: Path extends ValidatedApiPath ? never : MatchApiCall<"POST", Path> extends never ? Path : never,
+  body: unknown,
+): Promise<any>;
 async function apiPost(path: string, body: unknown) {
   return apiFetch(path, { method: "POST", body: JSON.stringify(body) });
 }
@@ -6219,15 +6341,15 @@ function localDiffTargetKey(branchPayload: any, baseRef: any) {
     .join(":");
 }
 
-function branchEligibilityFromOptions(options: any) {
-  const status = options.branchEligibility ?? options.branchEligibilityStatus;
-  if (!["eligible", "ineligible", "unknown"].includes(status)) return undefined;
-  const source = ["github_metadata", "local_metadata", "registry", "user_supplied"].includes(options.branchEligibilitySource) ? options.branchEligibilitySource : "user_supplied";
+function branchEligibilityFromOptions(options: CliOptions) {
+  const status = optionText(options.branchEligibility) ?? optionText(options.branchEligibilityStatus);
+  if (!status || !["eligible", "ineligible", "unknown"].includes(status)) return undefined;
+  const source = ["github_metadata", "local_metadata", "registry", "user_supplied"].includes(optionText(options.branchEligibilitySource) ?? "") ? optionText(options.branchEligibilitySource)! : "user_supplied";
   return stripUndefined({
     status,
     source,
-    reason: options.branchEligibilityReason,
-    checkedAt: options.branchEligibilityCheckedAt,
+    reason: optionText(options.branchEligibilityReason),
+    checkedAt: optionText(options.branchEligibilityCheckedAt),
     stale: optionalBoolean(options.branchEligibilityStale),
   });
 }

@@ -387,7 +387,11 @@ export async function startFixtureServer(
         JSON.stringify({
           login: decodeURIComponent(contributorProfileMatch[1]!),
           generatedAt: "2026-05-30T00:00:00.000Z",
-          summary: "3 registered repos; 12 merged PRs; strongest in review-tooling.",
+          // #9773: a `summary` used to be here. The real endpoint has never returned one -- neither
+          // ContributorProfile shape carries the field, and the string existed nowhere but this fixture --
+          // so it was an invented field the CLI then read and the test then asserted on. All three agreed
+          // with each other and none agreed with the server.
+          source: "github_cache",
         }),
       );
       return;

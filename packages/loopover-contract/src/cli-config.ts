@@ -40,13 +40,27 @@ export const PROFILE_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
 export type LoopoverConfigProfile = {
   apiUrl?: unknown;
-  session?: { token?: unknown } | null | undefined;
+  /** #9773: stamped by `loopover-mcp login` and preserved across re-logins. It was absent from this type
+   *  while the CLI read and wrote it, so nothing checked the field even existed. */
+  createdAt?: unknown;
+  session?: LoopoverConfigSession | null | undefined;
 };
+
+export type LoopoverConfigSession = { token?: unknown; createdAt?: unknown; login?: unknown };
 
 export type LoopoverConfig = {
   activeProfile?: unknown;
   profiles?: Record<string, LoopoverConfigProfile | undefined>;
   apiUrl?: unknown;
+  /**
+   * #9773: the pre-profile session and the telemetry opt-in, both still read and written by the CLI.
+   *
+   * `session` is the LEGACY single-session shape from before profiles existed -- `loopover-mcp login` on
+   * the default profile still writes it so an older CLI reading the same file keeps working, which is
+   * exactly why it cannot be dropped from the type.
+   */
+  session?: LoopoverConfigSession | null | undefined;
+  telemetryEnabled?: unknown;
 };
 
 /**

@@ -193,6 +193,57 @@ test("an empty work-unit roster reports a NULL unresolved rate, never 0 (which w
   assert.deepEqual(scoreableGroundTruths(set), []);
 });
 
+test("REGRESSION: benchmarkHorizonEnd throws a NAMED error for an unparseable frozenAt or non-finite horizonDays", () => {
+  // Fails closed as `invalid_frozen_at` rather than the bare RangeError `new Date(NaN).toISOString()` throws.
+  assert.throws(() => benchmarkHorizonEnd("not a date", 14), /invalid_frozen_at: not a date/);
+  assert.throws(() => benchmarkHorizonEnd("", 14), /invalid_frozen_at/);
+  // A non-finite horizonDays is a caller bug, not an empty benchmark — NaN and Infinity both fail closed.
+  assert.throws(() => benchmarkHorizonEnd(FROZEN, Number.NaN), /invalid_horizon_days: NaN/);
+  assert.throws(() => benchmarkHorizonEnd(FROZEN, Number.POSITIVE_INFINITY), /invalid_horizon_days/);
+});
+
+test("REGRESSION: the window guard fires from deriveBenchmarkGroundTruth before any partial result is computed", () => {
+  assert.throws(
+    () => deriveBenchmarkGroundTruth({ ...BASE, frozenAt: "not a date", workUnitIds: ["o/r#1"], events: [] }),
+    /invalid_frozen_at: not a date/,
+  );
+  assert.throws(
+    () => deriveBenchmarkGroundTruth({ ...BASE, horizonDays: Number.NaN, workUnitIds: ["o/r#1"], events: [] }),
+    /invalid_horizon_days: NaN/,
+  );
+});
+
+test("REGRESSION: a duplicated workUnitId is rejected, never silently de-duplicated into a corrupt denominator", () => {
+  assert.throws(
+    () => deriveBenchmarkGroundTruth({ ...BASE, workUnitIds: ["o/r#1", "o/r#2", "o/r#1"], events: [] }),
+    /invalid_duplicate_work_unit_id: o\/r#1/,
+  );
+});
+
+test("the guards are ADDITIVE: a valid input still yields the exact same ground-truth set", () => {
+  const set = deriveBenchmarkGroundTruth({
+    ...BASE,
+    workUnitIds: ["o/r#1", "o/r#2"],
+    events: [
+      { workUnitId: "o/r#1", action: "merge", occurredAt: at(3) },
+      { workUnitId: "o/r#2", action: "close", occurredAt: at(6), reasonClass: "spam" },
+    ],
+    reversals: [{ workUnitId: "o/r#1", kind: "reversal_reverted", occurredAt: at(8) }],
+  });
+  assert.deepEqual(set, {
+    schemaVersion: 1,
+    snapshotRef: BASE.snapshotRef,
+    horizonDays: 14,
+    frozenAt: FROZEN,
+    horizonEnd: "2026-07-15T00:00:00.000Z",
+    truths: [
+      { workUnitId: "o/r#1", outcome: "settled", action: "merge", settledAt: at(3), reversal: { kind: "reversal_reverted", occurredAt: at(8) } },
+      { workUnitId: "o/r#2", outcome: "settled", action: "close", reasonClass: "spam", settledAt: at(6), reversal: null },
+    ],
+    coverage: { workUnits: 2, scoreable: 2, unresolved: 0, unresolvedRate: 0 },
+  });
+});
+
 test("close/label parameters are dropped when the settled action is not the one they belong to", () => {
   // A malformed upstream event carrying a reasonClass on a merge must not leak it into the label.
   const set = deriveBenchmarkGroundTruth({

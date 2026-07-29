@@ -10,6 +10,7 @@
 // the two answer with different status codes. Registering them from one table keeps that pairing
 // visible instead of leaving nineteen near-identical stanzas to drift apart by hand.
 import type { OpenAPIRegistry } from "@asteasolutions/zod-to-openapi";
+import { z } from "zod";
 import { registerRouteSpec, type RouteAuth, type RouteMethod } from "./define-route";
 
 type SpecEntry = {
@@ -19,7 +20,11 @@ type SpecEntry = {
   tags: [string, ...string[]];
   summary: string;
   auth: RouteAuth;
-  responses: Record<number, { description: string }>;
+  /** Narrower path parameters than the derived string ones; only for a closed-set segment (#9707). */
+  request?: { params?: z.ZodObject };
+  /** `schema` is optional: most entries here describe a status and nothing more, but an operation that
+   *  already published a response body must not lose it on the way through the seam (#9707). */
+  responses: Record<number, { description: string; schema?: z.ZodTypeAny }>;
 };
 
 const INTERNAL_AUTH = { 401: { description: "Invalid internal token" } };
@@ -375,6 +380,201 @@ const MISC_ROUTES: SpecEntry[] = [
   },
 ];
 
+/**
+ * The five operations that declared a 401 while publishing no security scheme at all (#9707).
+ *
+ * They were legacy `registerPath` calls, and `applySecurityMetadata` only fills a stanza in when
+ * `requiresApiToken(path)` is true. That returns false for `/v1/internal/*` and for the anchor-attempt
+ * ingest -- not because either is open, but because each carries its OWN credential check. The result
+ * was the worst of both: a published 401 with no scheme that could produce it, which a generated client
+ * cannot act on and a reader cannot tell apart from a genuinely public route.
+ *
+ * Declaring `auth` here is the fix, because the stanza then DERIVES from the declaration rather than
+ * from a second path-prefix model of the same policy.
+ */
+const PROVIDER = { params: z.object({ provider: z.enum(["claude-code", "codex"]) }) };
+const CREDENTIAL_STATUS = z.union([
+  z.object({ configured: z.literal(false) }),
+  z.object({ configured: z.literal(true), provider: z.string(), last4: z.string(), updatedBy: z.string().nullable(), updatedAt: z.string() }),
+]);
+
+const CREDENTIAL_GATED: SpecEntry[] = [
+  {
+    method: "get",
+    path: "/v1/internal/provider-credentials/:provider",
+    operationId: "getInternalProviderCredentialsByProvider",
+    tags: ["Internal"],
+    summary: "Read the secret-free status of a stored instance subscription credential",
+    auth: "internal",
+    request: PROVIDER,
+    responses: {
+      200: { description: "Credential status. Never includes the credential itself.", schema: CREDENTIAL_STATUS },
+      400: { description: "Unknown provider" },
+      ...INTERNAL_AUTH,
+    },
+  },
+  {
+    method: "post",
+    path: "/v1/internal/provider-credentials/:provider",
+    operationId: "postInternalProviderCredentialsByProvider",
+    tags: ["Internal"],
+    summary: "Store or replace an instance subscription credential, encrypted at rest",
+    auth: "internal",
+    request: PROVIDER,
+    responses: {
+      200: { description: "Credential stored. Returns the secret-free status.", schema: z.record(z.string(), z.unknown()) },
+      400: { description: "Unknown provider, or a credential that is empty, padded, or not a single line" },
+      ...INTERNAL_AUTH,
+      503: { description: "TOKEN_ENCRYPTION_SECRET is not configured, so the credential cannot be stored encrypted" },
+    },
+  },
+  {
+    method: "delete",
+    path: "/v1/internal/provider-credentials/:provider",
+    operationId: "deleteInternalProviderCredentialsByProvider",
+    tags: ["Internal"],
+    summary: "Clear a stored instance subscription credential, falling back to the secret file or boot env",
+    auth: "internal",
+    request: PROVIDER,
+    responses: {
+      200: { description: "Credential cleared", schema: z.object({ configured: z.literal(false) }) },
+      400: { description: "Unknown provider" },
+      ...INTERNAL_AUTH,
+    },
+  },
+  {
+    method: "post",
+    path: "/v1/internal/bounties/import",
+    operationId: "postInternalBountiesImport",
+    tags: ["Internal"],
+    summary: "Import a bounty snapshot",
+    auth: "internal",
+    responses: { 200: { description: "Bounty snapshot imported" }, ...INTERNAL_AUTH },
+  },
+  {
+    method: "post",
+    path: "/v1/decision-ledger/anchor-attempts",
+    operationId: "reportDecisionLedgerAnchorAttempt",
+    tags: ["Public"],
+    summary: "Report one off-Worker anchoring attempt (success or failure) into the public attempt log",
+    // `orb`, not `token`: the gate is LOOPOVER_LEDGER_ANCHOR_REPORT_TOKEN, an ingest bearer that is not a
+    // LoopOver API token -- the same posture the `orb` level already exists for.
+    auth: "orb",
+    responses: {
+      200: { description: "{ recorded: true, status: 'ok' | 'failed' }" },
+      400: { description: "Unparseable body, or a report whose named field failed validation" },
+      401: { description: "Missing or wrong bearer token; also returned when no report token is configured (fails closed)" },
+      413: { description: "Body exceeded the ingest ceiling" },
+      422: {
+        description:
+          "Authenticated but unverifiable: unknown_key, bad_signature, row_not_found, or row_hash_mismatch — an `ok` report must verify against a published key AND match the live chain row",
+      },
+    },
+  },
+];
+
+/**
+ * The remaining operations that published a 401 with no scheme (#9707).
+ *
+ * The five above were the credential-gated ones. These are the rest of what the "no operation declares a
+ * 401 while stating no credential" assertion turns up, and each needed a different answer:
+ *
+ *   - The GitHub webhook IS gated, by an HMAC over the raw body, so it declares the signature scheme.
+ *   - The three device-flow entry points are how a caller OBTAINS a credential; their 401 is "that code
+ *     is not authorized", not "you forgot a token". `public` says that out loud -- an empty security array
+ *     is OpenAPI's explicit "needs no credential", which is exactly true and is not the same as silence.
+ *   - Logout acts on the caller's own session, so it declares one.
+ *   - The three job routes are gated by the /v1/internal/* middleware like every one of their siblings;
+ *     they were left behind only because they had no `/run` form to be tabled with. #9706 owns the wider
+ *     cleanup of that family (the duplicate registrations and the statuses they misreport); this moves
+ *     just the auth declaration, because the assertion above cannot pass while they stay silent.
+ */
+const AUTH_FLOW_RESPONSES = {
+  200: { description: "Auth request completed" },
+  201: { description: "Auth session created" },
+  400: { description: "Invalid auth request" },
+  401: { description: "Unauthorized" },
+  429: { description: "Rate limited" },
+};
+
+const SILENT_401: SpecEntry[] = [
+  {
+    method: "post",
+    path: "/v1/github/webhook",
+    operationId: "postGithubWebhook",
+    tags: ["Webhooks"],
+    summary: "Receive a GitHub webhook delivery",
+    auth: "webhook",
+    responses: { 202: { description: "Webhook queued" }, 401: { description: "Invalid webhook signature" } },
+  },
+  {
+    method: "post",
+    path: "/v1/auth/github/device/start",
+    operationId: "postAuthGithubDeviceStart",
+    tags: ["Auth"],
+    summary: "Start GitHub device-flow authentication",
+    auth: "public",
+    responses: AUTH_FLOW_RESPONSES,
+  },
+  {
+    method: "post",
+    path: "/v1/auth/github/device/poll",
+    operationId: "postAuthGithubDevicePoll",
+    tags: ["Auth"],
+    summary: "Poll a pending GitHub device-flow authorization",
+    auth: "public",
+    responses: AUTH_FLOW_RESPONSES,
+  },
+  {
+    method: "post",
+    path: "/v1/auth/github/session",
+    operationId: "postAuthGithubSession",
+    tags: ["Auth"],
+    summary: "Exchange a GitHub token for a LoopOver session",
+    auth: "public",
+    responses: AUTH_FLOW_RESPONSES,
+  },
+  {
+    method: "post",
+    path: "/v1/auth/logout",
+    operationId: "postAuthLogout",
+    tags: ["Auth"],
+    summary: "End the current session",
+    // `public`, not `session`: the handler revokes whatever identity the request carries and answers 200
+    // either way -- it never rejects an anonymous caller, and requiresApiToken exempts the family. Saying
+    // `session` would advertise a credential no gate demands.
+    auth: "public",
+    responses: AUTH_FLOW_RESPONSES,
+  },
+  {
+    method: "post",
+    path: "/v1/internal/jobs/build-contributor-evidence",
+    operationId: "postInternalJobsBuildContributorEvidence",
+    tags: ["Internal"],
+    summary: "Queue a contributor evidence build job",
+    auth: "internal",
+    responses: QUEUED,
+  },
+  {
+    method: "post",
+    path: "/v1/internal/jobs/build-burden-forecasts",
+    operationId: "postInternalJobsBuildBurdenForecasts",
+    tags: ["Internal"],
+    summary: "Queue a burden forecast build job",
+    auth: "internal",
+    responses: QUEUED,
+  },
+  {
+    method: "post",
+    path: "/v1/internal/jobs/repair-data-fidelity",
+    operationId: "postInternalJobsRepairDataFidelity",
+    tags: ["Internal"],
+    summary: "Queue a data fidelity repair job",
+    auth: "internal",
+    responses: QUEUED,
+  },
+];
+
 export function registerInternalAndPublicRouteSpecs(registry: OpenAPIRegistry): void {
   for (const entry of INTERNAL_AND_PUBLIC_ROUTE_SPECS) registerRouteSpec(registry, entry);
 }
@@ -386,4 +586,6 @@ export const INTERNAL_AND_PUBLIC_ROUTE_SPECS: readonly SpecEntry[] = [
   ...INTERNAL_OTHER,
   ...PUBLIC_ROUTES,
   ...MISC_ROUTES,
+  ...CREDENTIAL_GATED,
+  ...SILENT_401,
 ];

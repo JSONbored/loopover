@@ -1854,17 +1854,6 @@ export function buildOpenApiSpec() {
     },
   });
   registry.registerPath({
-    method: "post",
-    path: "/v1/github/webhook",
-    operationId: "postGithubWebhook",
-    tags: ["Webhooks"],
-    summary: "Receive a GitHub webhook delivery",
-    responses: {
-      202: { description: "Webhook queued" },
-      401: { description: "Invalid webhook signature" },
-    },
-  });
-  registry.registerPath({
     method: "get",
     path: "/v1/public/decision-ledger/verify",
     operationId: "getPublicDecisionLedgerVerify",
@@ -1921,20 +1910,6 @@ export function buildOpenApiSpec() {
     },
   });
   registry.registerPath({
-    method: "post",
-    path: "/v1/decision-ledger/anchor-attempts",
-    operationId: "reportDecisionLedgerAnchorAttempt",
-    tags: ["Public"],
-    summary: "Report one off-Worker anchoring attempt (success or failure) into the public attempt log",
-    responses: {
-      200: { description: "{ recorded: true, status: 'ok' | 'failed' }" },
-      400: { description: "Unparseable body, or a report whose named field failed validation" },
-      401: { description: "Missing or wrong bearer token; also returned when no report token is configured (fails closed)" },
-      413: { description: "Body exceeded the ingest ceiling" },
-      422: { description: "Authenticated but unverifiable: unknown_key, bad_signature, row_not_found, or row_hash_mismatch — an `ok` report must verify against a published key AND match the live chain row" },
-    },
-  });
-  registry.registerPath({
     method: "get",
     path: "/v1/public/decision-records/{owner}/{repo}/{pull}",
     operationId: "getPublicDecisionRecordsByOwnerByRepoByPull",
@@ -1980,26 +1955,6 @@ export function buildOpenApiSpec() {
       302: { description: "Completes GitHub web OAuth and redirects to the app" },
     },
   });
-  for (const [path, summary] of [
-    ["/v1/auth/github/device/start", "Start GitHub device-flow authentication"],
-    ["/v1/auth/github/device/poll", "Poll a pending GitHub device-flow authorization"],
-    ["/v1/auth/github/session", "Exchange a GitHub token for a LoopOver session"],
-    ["/v1/auth/logout", "End the current session"],
-  ] as const) {
-    registry.registerPath({
-      method: "post",
-      path,
-      ...loopOperationMeta("post", path, "Auth"),
-      summary,
-      responses: {
-        200: { description: "Auth request completed" },
-        201: { description: "Auth session created" },
-        400: { description: "Invalid auth request" },
-        401: { description: "Unauthorized" },
-        429: { description: "Rate limited" },
-      },
-    });
-  }
   registry.registerPath({
     method: "get",
     path: "/v1/auth/session",
@@ -2255,59 +2210,6 @@ export function buildOpenApiSpec() {
   // Instance subscription-CLI credentials (#9543). The response NEVER carries the credential itself --
   // only configured/last4/timestamps -- so the whole surface is safe to describe publicly.
   registry.registerPath({
-    method: "get",
-    path: "/v1/internal/provider-credentials/{provider}",
-    operationId: "getInternalProviderCredentialsByProvider",
-    tags: ["Internal"],
-    summary: "Read the secret-free status of a stored instance subscription credential",
-    request: { params: z.object({ provider: z.enum(["claude-code", "codex"]) }) },
-    responses: {
-      200: {
-        description: "Credential status. Never includes the credential itself.",
-        content: {
-          "application/json": {
-            schema: z.union([
-              z.object({ configured: z.literal(false) }),
-              z.object({ configured: z.literal(true), provider: z.string(), last4: z.string(), updatedBy: z.string().nullable(), updatedAt: z.string() }),
-            ]),
-          },
-        },
-      },
-      400: { description: "Unknown provider" },
-      401: { description: "Invalid internal token" },
-    },
-  });
-  registry.registerPath({
-    method: "post",
-    path: "/v1/internal/provider-credentials/{provider}",
-    operationId: "postInternalProviderCredentialsByProvider",
-    tags: ["Internal"],
-    summary: "Store or replace an instance subscription credential, encrypted at rest",
-    request: {
-      params: z.object({ provider: z.enum(["claude-code", "codex"]) }),
-      body: { content: { "application/json": { schema: z.object({ credential: z.string() }) } } },
-    },
-    responses: {
-      200: { description: "Credential stored. Returns the secret-free status.", content: { "application/json": { schema: z.record(z.string(), z.unknown()) } } },
-      400: { description: "Unknown provider, or a credential that is empty, padded, or not a single line" },
-      401: { description: "Invalid internal token" },
-      503: { description: "TOKEN_ENCRYPTION_SECRET is not configured, so the credential cannot be stored encrypted" },
-    },
-  });
-  registry.registerPath({
-    method: "delete",
-    path: "/v1/internal/provider-credentials/{provider}",
-    operationId: "deleteInternalProviderCredentialsByProvider",
-    tags: ["Internal"],
-    summary: "Clear a stored instance subscription credential, falling back to the secret file or boot env",
-    request: { params: z.object({ provider: z.enum(["claude-code", "codex"]) }) },
-    responses: {
-      200: { description: "Credential cleared", content: { "application/json": { schema: z.object({ configured: z.literal(false) }) } } },
-      400: { description: "Unknown provider" },
-      401: { description: "Invalid internal token" },
-    },
-  });
-  registry.registerPath({
     method: "post",
     path: "/v1/internal/jobs/refresh-registry",
     operationId: "postInternalJobsRefreshRegistry",
@@ -2369,12 +2271,9 @@ export function buildOpenApiSpec() {
     ["/v1/internal/jobs/refresh-scoring-model", "Queue a scoring model refresh job"],
     ["/v1/internal/jobs/refresh-upstream-drift", "Queue an upstream drift refresh job"],
     ["/v1/internal/jobs/file-upstream-drift-issues", "Queue a job that files upstream drift issues"],
-    ["/v1/internal/jobs/build-contributor-evidence", "Queue a contributor evidence build job"],
     ["/v1/internal/jobs/build-contributor-decision-packs", "Queue a contributor decision pack build job"],
-    ["/v1/internal/jobs/build-burden-forecasts", "Queue a burden forecast build job"],
     ["/v1/internal/jobs/generate-signal-snapshots", "Queue a signal snapshot generation job"],
     ["/v1/internal/jobs/generate-weekly-value-report", "Queue a weekly value report job"],
-    ["/v1/internal/jobs/repair-data-fidelity", "Queue a data fidelity repair job"],
   ] as const) {
     registry.registerPath({
       method: "post",
@@ -2387,17 +2286,6 @@ export function buildOpenApiSpec() {
       },
     });
   }
-  registry.registerPath({
-    method: "post",
-    path: "/v1/internal/bounties/import",
-    operationId: "postInternalBountiesImport",
-    tags: ["Internal"],
-    summary: "Import a bounty snapshot",
-    responses: {
-      200: { description: "Bounty snapshot imported" },
-      401: { description: "Invalid internal token" },
-    },
-  });
 
   // #9531: the ORB ingress, the control-panel app surface, and the per-repo key/settings routes.
   // Registered from their own module rather than inline here because each entry declares an auth
@@ -2457,11 +2345,16 @@ function applySecurityMetadata(document: GeneratedOpenApiDocument): GeneratedOpe
         scheme: "bearer",
         description: "ORB-issued instance token, minted by POST /v1/orb/token and presented by a self-hosted ORB instance on the relay endpoints. Not a LoopOver API token.",
       },
+      // #9707: the header NAME was wrong. This published `x-loopover-signature`, a string that appears
+      // nowhere else in src/ -- both webhook handlers read `x-hub-signature-256` (src/orb/webhook.ts:25,
+      // src/github/webhook.ts:101), so a client generated from this document signed the right body and
+      // sent it under a header the server never looks at, earning a 401 it could not diagnose.
       OrbWebhookSignature: {
         type: "apiKey",
         in: "header",
-        name: "x-loopover-signature",
-        description: "HMAC signature over the raw request body, verified against the instance's shared secret. The webhook carries no bearer token.",
+        name: "x-hub-signature-256",
+        description:
+          "GitHub-style HMAC-SHA256 signature over the raw request body, verified against the receiving app's own webhook secret. A webhook delivery carries no bearer token.",
       },
     },
   };

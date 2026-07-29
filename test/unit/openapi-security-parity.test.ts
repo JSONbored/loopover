@@ -12,7 +12,7 @@ import { describe, expect, it } from "vitest";
 import { buildOpenApiSpec } from "../../src/openapi/spec";
 import { requiresApiToken } from "../../src/auth/route-auth";
 
-type Operation = { security?: Array<Record<string, string[]>> };
+type Operation = { security?: Array<Record<string, string[]>>; responses?: Record<string, unknown> };
 
 function operations(): Array<{ path: string; method: string; operation: Operation }> {
   const spec = buildOpenApiSpec();
@@ -61,6 +61,26 @@ describe("OpenAPI security parity with the real gate (#9531)", () => {
       .filter(({ path, operation }) => requiresApiToken(concrete(path)) && operation.security !== undefined && operation.security.length === 0)
       .map(({ path, method }) => `${method.toUpperCase()} ${path}`);
     expect(silent).toEqual([]);
+  });
+
+  it("never declares a 401 while stating no credential at all (#9707)", () => {
+    // The class both assertions above are blind to: they filter on `operation.security` being PRESENT, so
+    // an ABSENT stanza satisfies neither. `[]` and undefined are not the same claim -- `[]` is OpenAPI's
+    // explicit "this operation needs no credential", undefined is "not stated" -- and an operation that
+    // publishes a 401 while saying nothing leaves a generated client with no credential to send and a
+    // reader unable to tell it apart from a genuinely open route.
+    const silent = operations()
+      .filter(({ operation }) => operation.responses?.["401"] !== undefined && operation.security === undefined)
+      .map(({ path, method }) => `${method.toUpperCase()} ${path}`);
+    expect(silent).toEqual([]);
+  });
+
+  it("names the header the webhook handlers actually read (#9707)", () => {
+    // This published `x-loopover-signature`, a string that appears nowhere else in src/. Both handlers
+    // read `x-hub-signature-256`, so a client generated from the document signed the right body and sent
+    // it under a header the server never looks at.
+    const document = buildOpenApiSpec() as { components?: { securitySchemes?: Record<string, { name?: string }> } };
+    expect(document.components?.securitySchemes?.OrbWebhookSignature?.name).toBe("x-hub-signature-256");
   });
 
   it("distinguishes the auth levels rather than collapsing them to one stanza", () => {

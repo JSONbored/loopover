@@ -238,6 +238,8 @@ describe("per-rule corpus commitments when no backtest run is persisted (#9805)"
 
   it("still returns [] with neither a run nor any commitment -- the #9215 rule is unchanged", async () => {
     expect(await buildEvalScoreRecordsFromRulePrecision(precisionOf([rule("ai_consensus_defect")]), ISSUED_AT)).toEqual([]);
+  });
+});
 
 // #9639 Deliverable 4: the /v1/public/eval-scores regression, pinned end to end over a real D1. The unit
 // tests above feed buildEvalScoreRecordsFromRulePrecision a hand-built PublicRulePrecision; this one starts

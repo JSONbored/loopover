@@ -54,8 +54,11 @@ COPY --from=runtime-deps /app/node_modules ./node_modules
 # @loopover/engine is constructed here directly from its own compiled output -- NOT `npm ci`'d -- because npm
 # would install every dependency the FULL package declares (@anthropic-ai/claude-agent-sdk, tree-sitter-wasms,
 # ...), regardless of which files this image actually imports. attester.js/attestation-envelope.js/
-# backtest-corpus.js's entire runtime closure is these three files plus node:crypto (verified: `grep -n
-# "^import" packages/loopover-engine/dist/calibration/*.js` -- attested-backtest-run.ts's own subpath imports,
+# backtest-corpus.js/backtest-checksum.js's entire runtime closure is these four files plus node:crypto
+# (verified: `grep -n "^import" packages/loopover-engine/dist/calibration/*.js` -- backtest-checksum.js, added
+# by #9639, compiles to a single `node:crypto` import because its only other import is type-only and erased,
+# so it widens this image's file list without widening its trusted computing base at all)
+# -- attested-backtest-run.ts's own subpath imports,
 # #9214, are what make this closure reachable without ever loading the barrel's web-tree-sitter/
 # claude-agent-sdk-carrying re-export graph in the first place). This measured image is meant to run inside
 # an eventual TEE (#8534); keeping its dependency footprint to exactly what replay needs is a real security
@@ -64,6 +67,7 @@ COPY --from=build --chown=replay-runner:replay-runner /app/packages/loopover-eng
 COPY --from=build --chown=replay-runner:replay-runner /app/packages/loopover-engine/dist/calibration/attester.js ./node_modules/@loopover/engine/dist/calibration/attester.js
 COPY --from=build --chown=replay-runner:replay-runner /app/packages/loopover-engine/dist/calibration/attestation-envelope.js ./node_modules/@loopover/engine/dist/calibration/attestation-envelope.js
 COPY --from=build --chown=replay-runner:replay-runner /app/packages/loopover-engine/dist/calibration/backtest-corpus.js ./node_modules/@loopover/engine/dist/calibration/backtest-corpus.js
+COPY --from=build --chown=replay-runner:replay-runner /app/packages/loopover-engine/dist/calibration/backtest-checksum.js ./node_modules/@loopover/engine/dist/calibration/backtest-checksum.js
 # The runner script's own sources -- listed individually (rather than `COPY scripts/`) so this image's content
 # is EXACTLY the set replay-runner-image-manifest.json enumerates under sourceFiles; adding a new script
 # dependency here without a matching manifest entry is precisely the drift `replay-runner-manifest:check` catches.

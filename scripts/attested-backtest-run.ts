@@ -30,7 +30,7 @@ import { readFileSync } from "node:fs";
 import { assembleAttestationEnvelope, createSampleAttester, type Attester } from "@loopover/engine/calibration/attester";
 import type { BacktestCase } from "@loopover/engine/calibration/backtest-corpus";
 
-import { checksumCases } from "@loopover/engine";
+import { checksumCases } from "@loopover/engine/calibration/backtest-checksum";
 import {
   attestedRunExitCode,
   buildAttestedRunAuditInsertSql,

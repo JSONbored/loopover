@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
   "baseImageRef": "node:22-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3",
-  "dockerfileSha256": "7e4d3c18fbc3a4153d7ba25e3cff8329b07fceb6a52a62350ba0f3c65f54f2ff",
-  "packageLockSha256": "050ad66cb6a9ba6cfceb6e379f59341fea11eac0bdf5ffc2cfe17febdb0d5038",
+  "dockerfileSha256": "18b434af0c6359105293a9bd6bdd890f4b5662ce72308df4bcfc3bb30ae7c1ee",
+  "packageLockSha256": "35c61915f0b21d5980f5f5aa1bff532da3d9d51c71257c8b28904f7b798e0d71",
   "sourceFiles": {
     "scripts/attested-backtest-run-core.ts": "e5f5659dc9204f9406c9874317d71cb02fd7f4c993c9f5caa92545595f522167",
-    "scripts/attested-backtest-run.ts": "0db6b462afdf80086eb68da793a6dccbe3d5751eceeb19e338d2746a1c319fa5",
-    "scripts/backtest-corpus-export-core.ts": "6a268410ea1d8041e95af345149aeb4848376c4c72127b801ee9da377b81e85e",
+    "scripts/attested-backtest-run.ts": "49e0e046e3c4882c0e4afd422a464957b6c4789bad28f5b6682afa9d534424f7",
+    "scripts/backtest-corpus-export-core.ts": "060d48a2a6073a7d859efc64c87c18ae1d3d25e06391ce94d6ed40874050b2e8",
     "scripts/snp-attester.ts": "b917e8541908150bd0c885fbe57e178247e5cd5f78f80eda7dc9e8b77da6deb3"
   },
-  "digest": "cdf7c3aaf83f814cf5b0ce37887abb264c9b5ee2d903ddb47a3d9dc60c64fa0c"
+  "digest": "5b8665f586317a0f3d77c5ac76891b4cf2ba8f1784977d268b093ce6644b2210"
 }

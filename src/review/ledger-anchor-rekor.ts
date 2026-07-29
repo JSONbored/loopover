@@ -7,10 +7,18 @@ import type { SignedLedgerAnchor } from "./ledger-anchor";
 import { anchorSigningInput } from "./ledger-anchor";
 import { recordLedgerAnchorAttempt } from "./ledger-anchor-persistence";
 
-/** Rekor shards annually and the research is explicit: do not hardcode a log URL. Configurable via env,
- *  with a fallback to the current shard as of when this was written -- an operator updates the env var at
- *  the next rotation rather than this needing a code change. */
-const DEFAULT_REKOR_SHARD_BASE_URL = "https://log2026-1.rekor.sigstore.dev";
+/** Rekor shards annually as `log<year>-<rev>.rekor.sigstore.dev` and the research is explicit: do not
+ *  hardcode a log URL. Configurable via env, so an operator updates a variable at the next rotation rather
+ *  than waiting on a release.
+ *
+ *  This default was previously `log2026-1`, a shard Sigstore has not deployed -- so it did not resolve, and
+ *  EVERY deployment that enabled anchoring without setting the env var recorded `fetch failed` forever and
+ *  published no anchor at all (#9844, found on a live self-host instance). Guessing the next shard ahead of
+ *  its deployment is worse than lagging behind it: a stale-but-real default still anchors, while a
+ *  not-yet-existent one silently anchors nothing.
+ *
+ *  So: only ever point this at a shard confirmed to be serving. When 2026-1 goes live, this moves then. */
+const DEFAULT_REKOR_SHARD_BASE_URL = "https://log2025-1.rekor.sigstore.dev";
 
 /** The exact `hashedRekordRequestV002` body Rekor v2's `POST /api/v2/log/entries` accepts. Digest and
  *  signature are both base64 per the API; `keyDetails` names the algorithm so Rekor can verify without
@@ -155,16 +163,19 @@ export async function submitToRekor(
       proofR2Key: null,
     });
   } catch (error) {
-    // Pass the raw caught value through, not a pre-stringified one -- #9271's persistence layer is the single
-    // place that normalizes an unknown error into text (Error instance vs. anything else), so this backend
-    // and every other one feed it the same undecided shape rather than each reimplementing that choice.
+    // The raw caught value still reaches the persistence layer, which stays the single place that normalizes
+    // an unknown error into text -- but it is WRAPPED so the recorded failure names the endpoint. Node's bare
+    // "fetch failed" cannot distinguish a shard hostname that does not resolve from blocked egress from a log
+    // that is down, and those have three different fixes. #9271 published these failures precisely so anyone
+    // can see anchoring is broken; a published failure that does not say what failed only half-delivers that.
+    // `cause` is preserved, so nothing a caller could previously inspect is lost.
     await recordLedgerAnchorAttempt(env, {
       payload: signed.payload,
       signature: signed.signature,
       keyId: signed.keyId,
       backend: "rekor",
       status: "failed",
-      error,
+      error: new Error(`Rekor submission to ${shardBaseUrl}/api/v2/log/entries failed: ${error instanceof Error ? error.message : String(error)}`, { cause: error }),
     });
   }
 }

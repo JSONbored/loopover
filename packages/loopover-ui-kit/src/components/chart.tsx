@@ -102,7 +102,15 @@ const ChartTooltip = RechartsPrimitive.Tooltip;
 
 const ChartTooltipContent = React.forwardRef<
   HTMLDivElement,
-  React.ComponentProps<typeof RechartsPrimitive.Tooltip> &
+  // recharts v3 (#8610) moved `payload`/`label` off Tooltip's own props -- they are read from context
+  // now -- and publishes the render-prop's shape as TooltipContentProps instead. Reading the library's
+  // exported type rather than deriving from the component keeps this correct across the next change too.
+  Partial<
+    RechartsPrimitive.TooltipContentProps<
+      RechartsPrimitive.TooltipValueType,
+      string | number
+    >
+  > &
     React.ComponentProps<"div"> & {
       hideLabel?: boolean;
       hideIndicator?: boolean;
@@ -192,7 +200,10 @@ const ChartTooltipContent = React.forwardRef<
 
               return (
                 <div
-                  key={item.dataKey}
+                  // `key` (computed above) rather than item.dataKey: v3 widened dataKey to allow a
+                  // FUNCTION accessor, which is not a valid React key. The computed string already
+                  // resolves the same identity and falls back to "value".
+                  key={key}
                   className={cn(
                     "flex w-full flex-wrap items-stretch gap-2 [&>svg]:h-2.5 [&>svg]:w-2.5 [&>svg]:text-muted-foreground",
                     indicator === "dot" && "items-center",
@@ -261,10 +272,14 @@ const ChartLegend = RechartsPrimitive.Legend;
 const ChartLegendContent = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div"> &
-    Pick<RechartsPrimitive.LegendProps, "payload" | "verticalAlign"> & {
-      hideIcon?: boolean;
-      nameKey?: string;
-    }
+    // v3 likewise reads Legend's payload from context; LegendPayload is the published entry shape.
+    {
+      payload?: ReadonlyArray<RechartsPrimitive.LegendPayload>;
+      verticalAlign?: RechartsPrimitive.LegendProps["verticalAlign"];
+    } & {
+    hideIcon?: boolean;
+    nameKey?: string;
+  }
 >(
   (
     { className, hideIcon = false, payload, verticalAlign = "bottom", nameKey },

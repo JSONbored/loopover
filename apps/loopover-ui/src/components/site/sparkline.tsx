@@ -1,4 +1,5 @@
 import { Line, LineChart, ResponsiveContainer } from "recharts";
+import type { ComponentProps } from "react";
 
 import type { TrendPoint } from "./proof-of-power-stats-model";
 
@@ -8,6 +9,11 @@ import type { TrendPoint } from "./proof-of-power-stats-model";
 // reachable from the value it sits next to and (for these two metrics) the public API response. A gap in the
 // line (a null point, e.g. a week below its own minimum-sample floor) is the correct rendering for "not enough
 // data yet" -- recharts breaks the segment there rather than drawing a fabricated straight line through it.
+
+/** The props recharts passes to a `dot` render function, taken from `Line`'s own prop type. */
+type LineDotProps = Parameters<
+  Extract<ComponentProps<typeof Line>["dot"], (props: never) => unknown>
+>[0];
 
 const SPARKLINE_WIDTH = 64;
 const SPARKLINE_HEIGHT = 28;
@@ -44,7 +50,11 @@ export function Sparkline({
             strokeWidth={2}
             strokeLinecap="round"
             strokeLinejoin="round"
-            dot={(props: { index?: number; cx?: number; cy?: number; key?: string }) => {
+            // The props are DERIVED from Line's own `dot` signature rather than re-typed by hand
+            // (#8610): recharts v3 widened `key` from `string` to React's `Key | null`, which a
+            // hand-written annotation silently disagreed with. Reading the library's type means the
+            // next such change is a compile error here instead of a drifted local copy.
+            dot={(props: LineDotProps) => {
               const { index, cx, cy, key } = props;
               if (index !== lastValueIndex || cx === undefined || cy === undefined) {
                 return <g key={key} />;

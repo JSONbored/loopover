@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0](https://github.com/JSONbored/loopover/compare/ui-kit-v1.2.0...ui-kit-v1.3.0) (2026-07-29)
+
+
+### Features
+
+* **ui-kit:** relocate streaming-text, use-streaming-text, typing-indicator from miner-ui ([#9239](https://github.com/JSONbored/loopover/issues/9239)) ([f4a0ee0](https://github.com/JSONbored/loopover/commit/f4a0ee0c23b2ec11797d07a0edf825deb53e0e75))
+
 ## [1.2.0](https://github.com/JSONbored/loopover/compare/ui-kit-v1.1.2...ui-kit-v1.2.0) (2026-07-25)
 
 

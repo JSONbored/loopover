@@ -138,9 +138,11 @@ export function countReentriesSince(eventLedger: LoopReentryEventLedger, sinceMs
 /**
  * Evaluate and (if allowed) PERFORM re-entry for one resolved outcome: reads real history to compute the
  * circuit-breaker and rate-cap tallies, consults the pure `shouldReenter` policy, and -- only when it allows --
- * dequeues the next candidate and transitions run-state to `"discovering"`. Always appends exactly one audit
- * event. Fails closed (throws) on a malformed candidate or missing required dependency, mirroring
- * `recordManagePollSnapshot`'s own validation style.
+ * dequeues the next candidate and transitions THAT candidate's run-state (`dequeued.repoFullName`, the repo about
+ * to be worked -- NOT the just-finished `repoFullName`) to `"discovering"`. When the queue is empty
+ * (`dequeued === null`) no run-state transition happens, so a finished repo is never parked at `"discovering"`.
+ * Always appends exactly one audit event. Fails closed (throws) on a malformed candidate or missing required
+ * dependency, mirroring `recordManagePollSnapshot`'s own validation style.
  */
 export function attemptLoopReentry(
   candidate: LoopReentryCandidateInput,
@@ -182,8 +184,8 @@ export function attemptLoopReentry(
   let dequeued: LoopReentryResult["dequeued"] = null;
   if (decision.reenter) {
     dequeued = portfolioQueue.dequeueNext();
-    if (runState && typeof runState.setRunState === "function") {
-      runState.setRunState(repoFullName, "discovering");
+    if (dequeued && runState && typeof runState.setRunState === "function") {
+      runState.setRunState(dequeued.repoFullName, "discovering");
     }
   }
 

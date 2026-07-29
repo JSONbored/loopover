@@ -228,6 +228,33 @@ function listSourceUrlValues(source: string, spec: ContentRepoSpec): SubmittedSo
   return values;
 }
 
+// A SCALAR source field authored as a YAML block sequence (`field:` with an empty inline value, then `- item`
+// lines) must yield one URL per item — exactly as listSourceUrlValues already does for a list field. Otherwise
+// parseSimpleFrontmatter collapses the items into one comma-joined string that `new URL()` cannot parse, so two
+// live sources hard-fail a valid submission (#9668). Returns null for every NON-sequence form (an inline
+// scalar, a flow `[a, b]` list, or a block scalar `|`/`>`), which the scalar reader already handles correctly;
+// only a bare block sequence needs the per-item split. Mirrors listSourceUrlValues' `- item` grammar.
+function scalarSequenceItems(source: string, field: string): string[] | null {
+  // State-machine over the raw block, matching listSourceUrlValues' `for..of` + `as string` style (the
+  // capture groups always participate when the regex matches, so no `?? ""` index fallbacks are needed).
+  const items: string[] = [];
+  let inSequence = false;
+  for (const line of frontmatterBlock(source).split(/\r?\n/)) {
+    if (inSequence) {
+      if (line.trim() === "") break; // a blank line ends the sequence
+      const item = /^\s*-\s*(.*?)\s*$/.exec(line);
+      if (!item) break; // the next top-level key (or any non-`-` line) ends the sequence
+      items.push(item[1] as string);
+      continue;
+    }
+    const head = /^([A-Za-z][A-Za-z0-9_]*):\s*(.*?)\s*$/.exec(line);
+    if (!head || head[1] !== field) continue;
+    if ((head[2] as string) !== "") return null; // an inline value present ⇒ scalar / flow / block-scalar header, not a bare sequence
+    inSequence = true;
+  }
+  return items.length > 0 ? items : null;
+}
+
 function isAbsoluteHttpUrl(url: string): boolean {
   try {
     const protocol = new URL(url).protocol;
@@ -244,8 +271,18 @@ export function extractSubmittedSourceUrls(
   const fields = parseSimpleFrontmatter(source);
   const urls: SubmittedSourceUrl[] = [];
   for (const field of spec.sourceUrlFields) {
-    for (const url of scalarSourceUrlValues(fields[field] || "")) {
-      urls.push({ field, url });
+    const sequenceItems = scalarSequenceItems(source, field);
+    if (sequenceItems) {
+      // One URL per block-sequence item (mirrors listSourceUrlValues), so a multi-item scalar sequence is not
+      // fused into one unparseable string; a single-item sequence still yields exactly one URL as before.
+      for (const item of sequenceItems) {
+        const url = unquoteYamlValue(item);
+        if (url) urls.push({ field, url });
+      }
+    } else {
+      for (const url of scalarSourceUrlValues(fields[field] || "")) {
+        urls.push({ field, url });
+      }
     }
   }
   urls.push(...listSourceUrlValues(source, spec));

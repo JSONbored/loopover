@@ -255,7 +255,8 @@ const REPO_ROUTES: SpecEntry[] = [
         tags: ["Repositories", "Bring your own key"],
         summary: `Report whether a ${label} key is configured for this repo (never the key itself)`,
         auth: "session",
-        responses: { 200: { description: "Key presence and metadata" }, 404: { description: "Repo not registered" }, ...SESSION_AUTH_RESPONSES },
+        // No 404 (#9709): the GET returns { configured: false } for an unregistered repo, never a 404.
+        responses: { 200: { description: "Key presence and metadata" }, ...SESSION_AUTH_RESPONSES },
       },
       {
         method: "post",
@@ -264,7 +265,8 @@ const REPO_ROUTES: SpecEntry[] = [
         tags: ["Repositories", "Bring your own key"],
         summary: `Store a ${label} key for this repo`,
         auth: "session",
-        responses: { 200: { description: "Key stored" }, 400: { description: "Malformed key" }, ...SESSION_AUTH_RESPONSES },
+        // 503 (#9709): the handler answers encryption_unavailable when TOKEN_ENCRYPTION_SECRET is unconfigured.
+        responses: { 200: { description: "Key stored" }, 400: { description: "Malformed key" }, 503: { description: "encryption_unavailable — TOKEN_ENCRYPTION_SECRET is not configured" }, ...SESSION_AUTH_RESPONSES },
       },
       {
         method: "delete",
@@ -291,7 +293,8 @@ const REPO_ROUTES: SpecEntry[] = [
         tags: ["Bring your own key", "Internal"],
         summary: `Store this repo's ${label} key from the control plane`,
         auth: "internal",
-        responses: { 200: { description: "Key stored" }, 400: { description: "Malformed key" }, ...INTERNAL_AUTH_RESPONSES },
+        // 503 (#9709): mirrors the public setter — encryption_unavailable when TOKEN_ENCRYPTION_SECRET is unset.
+        responses: { 200: { description: "Key stored" }, 400: { description: "Malformed key" }, 503: { description: "encryption_unavailable — TOKEN_ENCRYPTION_SECRET is not configured" }, ...INTERNAL_AUTH_RESPONSES },
       },
       {
         method: "delete",

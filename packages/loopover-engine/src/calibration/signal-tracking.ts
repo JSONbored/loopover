@@ -49,7 +49,21 @@ export interface SignalStore {
   recordHumanOverride(event: HumanOverrideEvent): Promise<void>;
   /** Every fired + override event for `ruleId` at or after `sinceMs` (epoch millis), oldest first. A host MAY
    *  scope this further (e.g. to one repo) internally; the interface itself is unscoped beyond `ruleId`. */
-  queryRuleHistory(ruleId: string, sinceMs: number): Promise<{ fired: RuleFiredEvent[]; overrides: HumanOverrideEvent[] }>;
+  /**
+   * Read one rule's history since `sinceMs`.
+   *
+   * `limit` bounds EACH of the two reads (#9805). It is part of the interface rather than an implementation
+   * detail because a caller that publishes the result has to know whether it saw the whole window --
+   * /v1/public/eval-corpus reported `truncated: false` over a read it could not have completed, precisely
+   * because the bound was invisible from here.
+   *
+   * `saturated` is true when either read came back AT its bound, i.e. rows were almost certainly left behind.
+   */
+  queryRuleHistory(
+    ruleId: string,
+    sinceMs: number,
+    limit?: number,
+  ): Promise<{ fired: RuleFiredEvent[]; overrides: HumanOverrideEvent[]; saturated: boolean }>;
 }
 
 /** Per-rule confusion-style report over a window: how many times it fired, how many of those got an explicit

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyPublicEvalCorpusCap,
+  buildPublicCorpusCommitments,
   checksumPublicEvalCorpus,
   loadPublicEvalCorpus,
   PUBLIC_EVAL_CORPUS_MAX_CASES,
@@ -10,7 +11,7 @@ import {
 } from "../../src/review/public-eval-corpus";
 import { canonicalJson, sha256Hex } from "../../src/review/decision-record";
 import { PUBLIC_PRECISION_WINDOW_DAYS } from "../../src/review/public-rule-precision";
-import { createSignalStore } from "../../src/review/signal-tracking-wire";
+import { createSignalStore, MAX_RULE_HISTORY_LIMIT } from "../../src/review/signal-tracking-wire";
 import { createTestEnv } from "../helpers/d1";
 
 // #9636: the anonymously-downloadable corpus. The load-bearing properties are that NOTHING identifying
@@ -205,5 +206,74 @@ describe("loadPublicEvalCorpus — end to end over the real signal tables", () =
 
   it("reports truncation honestly rather than silently trimming", async () => {
     expect((await loadPublicEvalCorpus(createTestEnv(), "r", NOW)).truncated).toBe(false);
+  });
+});
+
+// #9805: the commitment map behind /v1/public/eval-scores' fallback. Every entry must be a checksum a reader
+// can reproduce from the corpus this same deployment serves -- so the interesting cases are the ones this
+// deliberately OMITS, since a wrong entry is worse than a missing record.
+describe("buildPublicCorpusCommitments (#9805)", () => {
+  it("maps each rule to the SAME checksum /v1/public/eval-corpus publishes for it", async () => {
+    const env = createTestEnv();
+    await seedPair(env, { ruleId: "rule_a", targetKey: "acme/widgets#1", verdict: "reversed", confidence: 0.8 });
+    await seedPair(env, { ruleId: "rule_b", targetKey: "acme/widgets#2", verdict: "confirmed", confidence: 0.4 });
+
+    const commitments = await buildPublicCorpusCommitments(env, ["rule_a", "rule_b"], NOW);
+
+    // The record's commitment and the reader's download must be the same bytes, by construction.
+    expect(commitments.get("rule_a")).toBe((await loadPublicEvalCorpus(env, "rule_a", NOW)).checksum);
+    expect(commitments.get("rule_b")).toBe((await loadPublicEvalCorpus(env, "rule_b", NOW)).checksum);
+  });
+
+  it("gives two rules DIFFERENT checksums -- the per-rule bug this exists to prevent", async () => {
+    const env = createTestEnv();
+    await seedPair(env, { ruleId: "rule_a", targetKey: "acme/widgets#1", verdict: "reversed", confidence: 0.8 });
+    await seedPair(env, { ruleId: "rule_b", targetKey: "acme/widgets#2", verdict: "confirmed", confidence: 0.4 });
+
+    const commitments = await buildPublicCorpusCommitments(env, ["rule_a", "rule_b"], NOW);
+    expect(commitments.get("rule_a")).not.toBe(commitments.get("rule_b"));
+  });
+
+  it("omits a rule with an EMPTY corpus rather than mapping it to the rule-independent empty digest", async () => {
+    const env = createTestEnv();
+    const commitments = await buildPublicCorpusCommitments(env, ["never_fired"], NOW);
+    expect(commitments.has("never_fired")).toBe(false);
+    // The value it would otherwise have carried is identical for every rule and deployment.
+    expect((await loadPublicEvalCorpus(env, "never_fired", NOW)).checksum).toBe(await checksumPublicEvalCorpus([]));
+  });
+
+  it("omits a TRUNCATED corpus -- its checksum covers a prefix while the score covers the whole window", async () => {
+    // Real saturation, not a stub: MAX_RULE_HISTORY_LIMIT firings so the read comes back AT its bound, plus
+    // one override so the corpus is non-empty -- otherwise the empty check would be doing the omitting and
+    // this would prove nothing about truncation.
+    const env = createTestEnv();
+    const store = createSignalStore(env);
+    for (let i = 0; i < MAX_RULE_HISTORY_LIMIT; i += 1) {
+      await store.recordRuleFired({
+        ruleId: "busy_rule",
+        targetKey: `acme/widgets#${i}`,
+        outcome: "close",
+        occurredAt: new Date(NOW - 20_000 - i).toISOString(),
+        metadata: { confidence: 0.5 },
+      });
+    }
+    await store.recordHumanOverride({ ruleId: "busy_rule", targetKey: "acme/widgets#0", verdict: "reversed", occurredAt: new Date(NOW - 10_000).toISOString() });
+
+    const corpus = await loadPublicEvalCorpus(env, "busy_rule", NOW);
+    expect(corpus.truncated).toBe(true);
+    expect(corpus.caseCount).toBeGreaterThan(0); // so the omission below is truncation, not emptiness
+
+    expect((await buildPublicCorpusCommitments(env, ["busy_rule"], NOW)).has("busy_rule")).toBe(false);
+  }, 60_000);
+
+  it("omits a rule whose corpus read FAILED, because that degrades to an empty corpus", async () => {
+    const broken = createTestEnv();
+    broken.DB = { prepare: () => { throw new Error("boom"); } } as never;
+    expect((await buildPublicCorpusCommitments(broken, ["rule_a"], NOW)).size).toBe(0);
+  });
+
+  it("returns an empty map for no rules, without touching the database", async () => {
+    const env = createTestEnv();
+    expect((await buildPublicCorpusCommitments(env, [], NOW)).size).toBe(0);
   });
 });

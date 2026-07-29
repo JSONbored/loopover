@@ -69,6 +69,15 @@ function toHumanOverrideEvent(ruleId: string, row: { targetKey: string | null; m
  *  are NOT fail-open the same way: a read error propagates, since a caller computing a precision report needs
  *  to know its input is incomplete rather than silently scoring against a partial (possibly empty) history.
  */
+/** listAuditEventsByType's own default, restated so callers that do not pass a limit keep today's behaviour
+ *  explicitly rather than by inheritance (#9805). */
+export const DEFAULT_RULE_HISTORY_LIMIT = 500;
+
+/** The most rows one queryRuleHistory read can return: listAuditEventsByType hard-clamps its limit to this,
+ *  so asking for more silently yields this many. Anything built on top of a rule-history read is bounded by
+ *  it, and a cap declared ABOVE it can never be the thing that actually truncates. */
+export const MAX_RULE_HISTORY_LIMIT = 2_000;
+
 export function createSignalStore(env: Env): SignalStore {
   return {
     async recordRuleFired(event: RuleFiredEvent): Promise<void> {
@@ -93,15 +102,28 @@ export function createSignalStore(env: Env): SignalStore {
         createdAt: event.occurredAt || nowIso(),
       }).catch(() => undefined);
     },
-    async queryRuleHistory(ruleId: string, sinceMs: number): Promise<{ fired: RuleFiredEvent[]; overrides: HumanOverrideEvent[] }> {
+    // #9805: `limit` is explicit rather than left to listAuditEventsByType's default of 500. The published
+    // corpus needs to know whether it saw the WHOLE window, and a caller that cannot choose the bound cannot
+    // tell a complete read from a truncated one. Defaulted so every existing caller is byte-identical.
+    //
+    // `saturated` is the honest signal: the row count came back exactly at the bound, so there are almost
+    // certainly more rows the caller did not see. It is deliberately not "did we hit MAX_CASES" -- the read
+    // bound is what actually limits the corpus, and conflating the two is how /v1/public/eval-corpus came to
+    // report `truncated: false` over a read it could not have completed.
+    async queryRuleHistory(
+      ruleId: string,
+      sinceMs: number,
+      limit: number = DEFAULT_RULE_HISTORY_LIMIT,
+    ): Promise<{ fired: RuleFiredEvent[]; overrides: HumanOverrideEvent[]; saturated: boolean }> {
       const sinceIso = new Date(sinceMs).toISOString();
       const [firedRows, overrideRows] = await Promise.all([
-        listAuditEventsByType(env, ruleFiredEventType(ruleId), sinceIso),
-        listAuditEventsByType(env, humanOverrideEventType(ruleId), sinceIso),
+        listAuditEventsByType(env, ruleFiredEventType(ruleId), sinceIso, limit),
+        listAuditEventsByType(env, humanOverrideEventType(ruleId), sinceIso, limit),
       ]);
       return {
         fired: firedRows.map((row) => toRuleFiredEvent(ruleId, row)),
         overrides: overrideRows.map((row) => toHumanOverrideEvent(ruleId, row)),
+        saturated: firedRows.length >= limit || overrideRows.length >= limit,
       };
     },
   };

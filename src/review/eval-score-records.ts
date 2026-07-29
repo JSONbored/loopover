@@ -76,6 +76,18 @@ async function finalizeRecord(input: EvalScoreRecordDigestInput): Promise<EvalSc
  * a record whose commitments cannot be independently re-derived (no corpus checksum to point at) is not
  * publishable, so this deliberately emits nothing rather than a record with a placeholder commitment.
  *
+ * #9805: when no backtest run is persisted, the commitment falls back to `corpusChecksumByRuleId` -- the
+ * checksum of the corpus `/v1/public/eval-corpus` publishes for that same rule, over the same window. That is
+ * not a placeholder standing in for a real commitment: it is a hash over an artifact the reader can download
+ * and re-hash themselves, which is exactly what the `reproducible` trust tier asserts. It exists because a
+ * deployment with review execution retired (the hosted Worker: see src/index.ts) never persists a backtest
+ * run at all, so the entire surface was empty while a complete, downloadable corpus sat behind the next
+ * endpoint over.
+ *
+ * The commitment is resolved PER RULE, not once for the whole batch. Each rule's score is computed over its
+ * own corpus, so stamping one checksum across every record would have every record but one committing to a
+ * different rule's cases -- latent today only because a single rule clears the publication floor.
+ *
  * Also returns an empty array when the run's checksum is {@link EMPTY_CORPUS_CHECKSUM}. A hash over zero
  * cases is the same 32 bytes for every rule, every window, and every deployment, so it points at nothing a
  * consumer could re-derive the scores from -- it is a placeholder commitment wearing a real hash's clothes,
@@ -90,14 +102,31 @@ async function finalizeRecord(input: EvalScoreRecordDigestInput): Promise<EvalSc
  * concept here, so `0` is the correct value, not a masked null). PURE -- no IO, no clock (the caller
  * supplies `issuedAt`).
  */
-export async function buildEvalScoreRecordsFromRulePrecision(precision: PublicRulePrecision, issuedAt: string): Promise<EvalScoreRecord[]> {
-  if (!precision.latestBacktestRun) return [];
-  const { corpusChecksum } = precision.latestBacktestRun;
-  if (corpusChecksum === EMPTY_CORPUS_CHECKSUM) return [];
+export async function buildEvalScoreRecordsFromRulePrecision(
+  precision: PublicRulePrecision,
+  issuedAt: string,
+  // #9805: per-rule fallback commitments, supplied by the caller so this module stays PURE. Only rules whose
+  // published corpus is a usable commitment belong in here -- the route drops empty and truncated ones before
+  // building it, because a truncated corpus's checksum covers a subset of the cases the score covers.
+  corpusChecksumByRuleId: ReadonlyMap<string, string> = new Map(),
+): Promise<EvalScoreRecord[]> {
+  // A persisted backtest run still wins where one exists, so a deployment that executes reviews keeps exactly
+  // today's behaviour and this change cannot silently move a self-host commitment.
+  const runChecksum =
+    precision.latestBacktestRun && precision.latestBacktestRun.corpusChecksum !== EMPTY_CORPUS_CHECKSUM
+      ? precision.latestBacktestRun.corpusChecksum
+      : null;
   const windowStart = new Date(Date.parse(issuedAt) - precision.windowDays * 24 * 60 * 60 * 1000).toISOString();
 
+  // A rule with no usable commitment is OMITTED rather than published with a placeholder -- the #9215
+  // requirement this module has always enforced, now applied per rule instead of to the whole batch.
+  const publishable = precision.rules.flatMap((row) => {
+    const corpusChecksum = runChecksum ?? corpusChecksumByRuleId.get(row.ruleId) ?? null;
+    return corpusChecksum === null || corpusChecksum === EMPTY_CORPUS_CHECKSUM ? [] : [{ row, corpusChecksum }];
+  });
+
   const records = await Promise.all(
-    precision.rules.map((row) =>
+    publishable.map(({ row, corpusChecksum }) =>
       finalizeRecord({
         schemaVersion: EVAL_SCORE_RECORD_SCHEMA_VERSION,
         subject: { kind: "agent", id: ORB_GATE_SUBJECT_ID },

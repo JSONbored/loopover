@@ -100,3 +100,73 @@ describe("GET /v1/public/eval-scores (#9266, epic #8534, spec #9215)", () => {
     expect(await res.json()).toEqual({ records: [] });
   });
 });
+
+// #9805 Deliverable 5: the reader's ACTUAL workflow, end to end over both public routes. Everything else in
+// this file feeds the builder a seeded backtest-run row; this one has no persisted run at all -- the hosted
+// topology, where review execution is retired -- and checks that what /v1/public/eval-scores commits to is
+// byte-identical to what /v1/public/eval-corpus serves.
+describe("a stranger can tie a record to the corpus they downloaded (#9805)", () => {
+  beforeEach(() => {
+    clearPublicStatsManifestOverrideCacheForTest();
+  });
+
+  async function seedDecidedCorpus(env: Env, ruleId: string, count: number): Promise<void> {
+    const store = createSignalStore(env);
+    for (let i = 0; i < count; i += 1) {
+      await store.recordRuleFired({
+        ruleId,
+        targetKey: `acme/widgets#${i + 1}`,
+        outcome: "close",
+        occurredAt: new Date(NOW - 5000 - i).toISOString(),
+        metadata: { confidence: 0.4 + (i % 5) * 0.1 },
+      });
+      await store.recordHumanOverride({
+        ruleId,
+        targetKey: `acme/widgets#${i + 1}`,
+        verdict: i % 4 === 0 ? "reversed" : "confirmed",
+        occurredAt: new Date(NOW - 1000 - i).toISOString(),
+      });
+    }
+  }
+
+  it("REGRESSION: publishes records with NO persisted backtest run, each committing to the corpus the other route serves", async () => {
+    const env = createTestEnv();
+    env.LOOPOVER_PUBLIC_STATS = "true";
+    await seedDecidedCorpus(env, "ai_consensus_defect", 20);
+
+    const app = createApp();
+    const scores = await (await app.request("/v1/public/eval-scores", {}, env)).json<{ records: EvalScoreRecord[] }>();
+    expect(scores.records).toHaveLength(1);
+
+    // Exactly what the walkthrough tells a reader to do: download the corpus, hash it, compare.
+    const corpus = await (await app.request("/v1/public/eval-corpus?ruleId=ai_consensus_defect", {}, env)).json<{ checksum: string; caseCount: number; truncated: boolean }>();
+    expect(corpus.caseCount).toBe(20);
+    expect(corpus.truncated).toBe(false);
+    expect(scores.records[0]!.commitments.corpusChecksum).toBe(corpus.checksum);
+
+    // And the record still commits to its own content, so the freeze point cannot be swapped undetected.
+    const { recordDigest, ...rest } = scores.records[0]!;
+    expect(await contentDigest(rest)).toBe(recordDigest);
+    expect(scores.records[0]!.subject.id).toBe(ORB_GATE_SUBJECT_ID);
+  });
+
+  it("publishes nothing for a rule with no corpus, rather than a record a reader could not check", async () => {
+    const env = createTestEnv();
+    env.LOOPOVER_PUBLIC_STATS = "true";
+    // Overrides only: `decided` counts them via SQL, so the rule reaches rulePrecision -- but with no firings
+    // there are no labeled cases, so there is no corpus to commit to. This is the exact shape that would
+    // otherwise publish a record against the rule-independent empty-corpus digest.
+    const store = createSignalStore(env);
+    for (let i = 0; i < 20; i += 1) {
+      await store.recordHumanOverride({
+        ruleId: "ai_consensus_defect",
+        targetKey: `acme/widgets#${i + 1}`,
+        verdict: "confirmed",
+        occurredAt: new Date(NOW - 1000 - i).toISOString(),
+      });
+    }
+
+    const res = await createApp().request("/v1/public/eval-scores", {}, env);
+    expect(await res.json<{ records: EvalScoreRecord[] }>()).toEqual({ records: [] });
+  });
+});

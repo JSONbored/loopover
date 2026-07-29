@@ -234,7 +234,11 @@ const PUBLIC_ROUTES: SpecEntry[] = [
     tags: ["Public"],
     summary: "Return a shields.io-compatible badge payload for a repo",
     auth: "public",
-    responses: { 200: { description: "Badge payload" } },
+    responses: {
+      200: { description: "Badge payload" },
+      404: { description: "The repo has no public badge (unknown, private, uninstalled, or badgeEnabled off)" },
+      503: { description: "The badge data could not be loaded (a transient loader failure, short-cached)" },
+    },
   },
   {
     method: "get",
@@ -243,7 +247,11 @@ const PUBLIC_ROUTES: SpecEntry[] = [
     tags: ["Public"],
     summary: "Return a rendered SVG badge for a repo",
     auth: "public",
-    responses: { 200: { description: "SVG badge" } },
+    responses: {
+      200: { description: "SVG badge" },
+      404: { description: "The repo has no public badge (unknown, private, uninstalled, or badgeEnabled off)" },
+      503: { description: "The badge data could not be loaded (a transient loader failure, short-cached)" },
+    },
   },
   {
     method: "get",

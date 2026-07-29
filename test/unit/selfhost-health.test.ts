@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createD1Adapter, nodeSqliteDriver } from "../../src/selfhost/d1-adapter";
 import {
   backupAcknowledgedGaugeValue,
+  browserAuthHeaders,
   browserEndpointReadinessProbe,
   buildHealthBody,
   codexAuthReadinessProbe,
@@ -541,5 +542,56 @@ describe("browserEndpointReadinessProbe (#9487)", () => {
     ok = true;
     await expect(probe!.check()).resolves.toBe(true);
     expect(calls).toBe(2);
+  });
+});
+
+describe("browser_endpoint authenticates (#9487 follow-up)", () => {
+  const TOKENED = "ws://browserless:3000?token=secret-value";
+
+  it("REGRESSION: a tokened browserless answers 401 unauthenticated — the probe must send credentials", async () => {
+    // The live failure: browserless v2 started with a TOKEN (the documented way) 401s an unauthenticated
+    // /json/version, so browser_endpoint reported false forever while capture worked fine. Readiness that
+    // cannot pass on a healthy backend trains operators to ignore readiness.
+    const seen: Array<{ url: string; headers?: Record<string, string> }> = [];
+    const probe = browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: TOKENED }, (url, init) => {
+      seen.push({ url, headers: init?.headers });
+      // Model the real server: 401 unless credentials are presented.
+      return Promise.resolve({ ok: init?.headers?.Authorization === "Bearer secret-value" });
+    });
+    expect(await probe?.check()).toBe(true);
+    expect(seen[0]?.headers).toEqual({ Authorization: "Bearer secret-value" });
+  });
+
+  it("INVARIANT: the token never appears in the probe URL, only in the header", () => {
+    // The original code dropped the query string for a good reason -- a token in a URL leaks through access
+    // logs and error messages that echo it. The fix must keep that property while still authenticating.
+    const headers = browserAuthHeaders(TOKENED);
+    expect(headers).toEqual({ headers: { Authorization: "Bearer secret-value" } });
+    const seen: string[] = [];
+    browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: TOKENED }, (url) => {
+      seen.push(url);
+      return Promise.resolve({ ok: true });
+    })?.check();
+    expect(seen[0]).toBe("http://browserless:3000/json/version");
+    expect(seen[0]).not.toContain("secret-value");
+    expect(seen[0]).not.toContain("token");
+  });
+
+  it("an endpoint with NO token sends no Authorization header", () => {
+    expect(browserAuthHeaders("ws://browserless:3000")).toBeUndefined();
+  });
+
+  it("an unparseable endpoint yields no headers rather than throwing", () => {
+    expect(browserAuthHeaders("not a url")).toBeUndefined();
+  });
+
+  it("wss maps to https and still carries the header", () => {
+    const seen: Array<{ url: string; headers?: Record<string, string> }> = [];
+    browserEndpointReadinessProbe({ BROWSER_WS_ENDPOINT: "wss://remote.example:443?token=t" }, (url, init) => {
+      seen.push({ url, headers: init?.headers });
+      return Promise.resolve({ ok: true });
+    })?.check();
+    expect(seen[0]?.url).toBe("https://remote.example/json/version");
+    expect(seen[0]?.headers).toEqual({ Authorization: "Bearer t" });
   });
 });

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { SlopDuplicateTrendCard } from "@/components/site/app-panels/slop-duplicate-trend-card";
 import {
+  chartValuesForSeries,
   latestWeekWithSignal,
   type MaintainerSlopDuplicateTrend,
   type SlopDuplicateTrendWeek,
@@ -35,7 +36,8 @@ describe("SlopDuplicateTrendCard", () => {
     expect(screen.getByText(/latest: 25%/i)).toBeTruthy();
     expect(screen.getByText(/fresh snapshot/i)).toBeTruthy();
     expect(screen.getByText(/generated/i)).toBeTruthy();
-    expect(screen.getAllByLabelText("Trend chart")).toHaveLength(2);
+    expect(screen.getByLabelText("Slop flag rate trend")).toBeTruthy();
+    expect(screen.getByLabelText("Duplicate flag rate trend")).toBeTruthy();
   });
 
   it("shows a one-series-empty branch when only duplicate samples exist", () => {
@@ -54,7 +56,8 @@ describe("SlopDuplicateTrendCard", () => {
       />,
     );
     expect(screen.getByText("No slop-flag samples in the snapshot window yet.")).toBeTruthy();
-    expect(screen.getByLabelText("Trend chart")).toBeTruthy();
+    expect(screen.getByLabelText("Duplicate flag rate trend")).toBeTruthy();
+    expect(screen.queryByLabelText("Slop flag rate trend")).toBeNull();
     expect(screen.getByText(/latest: 50%/i)).toBeTruthy();
   });
 
@@ -81,7 +84,8 @@ describe("SlopDuplicateTrendCard", () => {
         /Queue-health snapshot history will appear here after signal snapshot jobs run/i,
       ),
     ).toBeTruthy();
-    expect(screen.queryByLabelText("Trend chart")).toBeNull();
+    expect(screen.queryByLabelText("Slop flag rate trend")).toBeNull();
+    expect(screen.queryByLabelText("Duplicate flag rate trend")).toBeNull();
     // The header action slot (freshness pill + generated-at stamp) renders in every state (#6175).
     expect(screen.getByText("fresh snapshot")).toBeTruthy();
   });
@@ -191,5 +195,28 @@ describe("latestWeekWithSignal", () => {
     weeks.length = 2; // trailing hole — scanned first, must be skipped, not crashed on
     expect(latestWeekWithSignal(weeks, "slop")?.weekStart).toBe("2026-06-02");
     expect(latestWeekWithSignal(weeks, "duplicate")?.weekStart).toBe("2026-06-02");
+  });
+});
+
+describe("chartValuesForSeries", () => {
+  const week = (
+    weekStart: string,
+    slopFlagRatePct: number | null,
+    duplicateFlagRatePct: number | null,
+  ): SlopDuplicateTrendWeek => ({
+    weekStart,
+    slopFlagRatePct,
+    slopBandLabel: slopFlagRatePct === null ? null : "low",
+    duplicateFlagRatePct,
+  });
+
+  it("preserves a null slop rate as null instead of substituting 0", () => {
+    const weeks = [week("2026-06-02", null, 25), week("2026-06-09", 10, 20)];
+    expect(chartValuesForSeries(weeks, "slop")).toEqual([null, 10]);
+  });
+
+  it("preserves a null duplicate rate as null instead of substituting 0", () => {
+    const weeks = [week("2026-06-02", 40, null), week("2026-06-09", 30, 20)];
+    expect(chartValuesForSeries(weeks, "duplicate")).toEqual([null, 20]);
   });
 });

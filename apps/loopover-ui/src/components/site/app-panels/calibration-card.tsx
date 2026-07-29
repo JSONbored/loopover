@@ -71,7 +71,12 @@ export function CalibrationCard({ calibration }: { calibration: GateCalibration 
               </span>
             </div>
             <div className="mt-3 h-24 w-full">
-              <TrendChart values={trendValues} height={96} showAxis />
+              <TrendChart
+                values={trendValues}
+                height={96}
+                showAxis
+                label="Kept-rate curve by confidence band"
+              />
             </div>
           </div>
 

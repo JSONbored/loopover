@@ -122,8 +122,33 @@ describe("calibrationStatus", () => {
 });
 
 describe("calibrationTrendValues", () => {
-  it("maps null keptRate bins to 0 for the chart axis", () => {
-    expect(calibrationTrendValues(emptyBins())).toEqual([0, 0, 0, 0, 0]);
+  it("preserves null keptRate bins as null so TrendChart renders a gap", () => {
+    expect(calibrationTrendValues(emptyBins())).toEqual([null, null, null, null, null]);
+  });
+
+  it("preserves a mix of null and numeric bins in order", () => {
+    expect(
+      calibrationTrendValues([
+        {
+          label: "50–60%",
+          minConfidence: 0.5,
+          maxConfidence: 0.6,
+          sampleSize: 0,
+          keptCount: 0,
+          revertedCount: 0,
+          keptRate: null,
+        },
+        {
+          label: "90–100%",
+          minConfidence: 0.9,
+          maxConfidence: 1,
+          sampleSize: 2,
+          keptCount: 2,
+          revertedCount: 0,
+          keptRate: 0.8,
+        },
+      ]),
+    ).toEqual([null, 80]);
   });
 
   it("scales kept rates to percentage points for TrendChart", () => {
@@ -255,5 +280,6 @@ describe("CalibrationCard", () => {
     expect(screen.getByText(/Raise confidenceFloor 0.9 → 0.94/)).toBeTruthy();
     expect(screen.getByText("70–80%")).toBeTruthy();
     expect(screen.getByText("90–100%")).toBeTruthy();
+    expect(screen.getByLabelText("Kept-rate curve by confidence band")).toBeTruthy();
   });
 });

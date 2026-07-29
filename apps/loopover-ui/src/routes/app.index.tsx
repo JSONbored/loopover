@@ -580,7 +580,7 @@ export function SparkStat({
               {hint && <div className="mt-0.5 text-token-xs text-muted-foreground">{hint}</div>}
             </div>
             <div className="h-10 w-24 shrink-0 opacity-90">
-              <TrendChart values={values} height={40} />
+              <TrendChart values={values} height={40} label={`${label} trend`} />
             </div>
           </div>
         </div>

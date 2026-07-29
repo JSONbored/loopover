@@ -350,7 +350,7 @@ export function ProductAnalytics() {
                     <span className="font-mono text-mint">{signal.value}</span>
                   </div>
                   <div className="mt-3 h-20 w-full">
-                    <TrendChart values={signal.spark} height={80} />
+                    <TrendChart values={signal.spark} height={80} label={`${signal.label} trend`} />
                   </div>
                 </div>
               ))}

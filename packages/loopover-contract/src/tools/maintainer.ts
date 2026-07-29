@@ -487,7 +487,7 @@ export const getFleetAnalyticsTool = defineTool({
   name: "loopover_get_fleet_analytics",
   title: "Get fleet analytics",
   description: "Operator-only: aggregated gate-calibration analytics across the self-host fleet -- median merge/close precision, false-positive + reversal rates, cycle-time percentiles, and per-instance outliers. Measurement only.",
-  category: "maintainer",
+  category: "fleet",
   auth: "operator",
   locality: "remote",
   availability: "both",

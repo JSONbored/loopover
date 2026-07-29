@@ -1,5 +1,6 @@
 import { PostHog } from "posthog-node";
 import {
+  buildLegacyToolCallProperties,
   buildMcpToolCallProperties,
   buildUsageEventProperties,
   getToolContract,
@@ -68,13 +69,8 @@ export async function recordMcpToolCall(options: RecordMcpToolCallOptions, event
     client.capture({
       distinctId: MCP_TELEMETRY_DISTINCT_ID,
       event: LEGACY_MCP_TOOL_CALL_EVENT,
-      // Exactly the #6228 allowlist -- nothing more.
-      properties: {
-        tool: event.tool,
-        caller_type: event.callerType ?? "local",
-        ok: event.ok,
-        duration_ms: event.durationMs,
-      },
+      // Exactly the #6228 allowlist -- enforced by the shared builder's signature (#9521).
+      properties: buildLegacyToolCallProperties({ tool: event.tool, callerType: event.callerType ?? "local", ok: event.ok, durationMs: event.durationMs }),
       // No IP-based geo enrichment: the event is anonymous fleet telemetry, not a user location.
       disableGeoip: true,
     });

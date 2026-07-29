@@ -263,3 +263,28 @@ export function resolveErrorCode(error: unknown): McpTelemetryErrorCode {
 /** The category a tool reports when the registry has no entry for it -- which the contract validator
  *  (#9520) makes impossible, but telemetry must never throw on the path it instruments. */
 export const UNKNOWN_TOOL_CATEGORY: ToolCategory | "unknown" = "unknown";
+
+/** The LEGACY per-call event both pre-#9525 telemetry modules emit (`mcp_tool_call`, #6228). Kept
+ *  alongside the new pair because operators' dashboards read it; see the stdio module's notes. */
+export const LEGACY_MCP_TOOL_CALL_EVENT = "mcp_tool_call";
+
+/**
+ * The COMPLETE property list of the legacy event (#6228's allowlist), single-sourced (#9521).
+ *
+ * Until this constant existed the list lived three times -- src/mcp/telemetry.ts,
+ * packages/loopover-mcp/lib/telemetry.ts, and the stdio README's prose table -- with nothing
+ * holding them together. Both modules now build the event through
+ * {@link buildLegacyToolCallProperties}, and the README table is generated from this array.
+ */
+export const LEGACY_MCP_TELEMETRY_PROPERTY_KEYS = ["tool", "caller_type", "ok", "duration_ms"] as const;
+
+/** The one way to build the legacy event's properties: the shape IS the allowlist, so a caller
+ *  cannot smuggle in a fifth field -- there is nowhere in the signature to put it. */
+export function buildLegacyToolCallProperties(event: {
+  tool: string;
+  callerType: "remote" | "local";
+  ok: boolean;
+  durationMs: number;
+}): Record<(typeof LEGACY_MCP_TELEMETRY_PROPERTY_KEYS)[number], string | boolean | number> {
+  return { tool: event.tool, caller_type: event.callerType, ok: event.ok, duration_ms: event.durationMs };
+}

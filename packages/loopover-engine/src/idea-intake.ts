@@ -10,6 +10,7 @@ import {
   type FeasibilityGateInput,
   type FeasibilityVerdict,
 } from "./feasibility.js";
+import { isValidRepoSegment } from "./repo-segment.js";
 
 // Intake bounds — mirror the manifest text-slot handling (focus-manifest.ts): a renter's freeform text is
 // length-capped so one submission can never dominate a public surface.
@@ -85,6 +86,19 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+/** Resolve an existing-repo target from its "owner/name" string, applying the same split-and-guard as
+ *  repo-clone.ts's normalizeRepoFullName (exactly two valid segments, so a "."/".." traversal is rejected).
+ *  Pushes `target_repo_malformed` and returns undefined on a bad slug. Shared by the bare-string wire form
+ *  and the canonical `{ kind: "existing", repo }` object shape (#9609). */
+function resolveExistingTarget(repo: string, errors: string[]): IdeaTarget | undefined {
+  const [owner, name, extra] = repo.split("/");
+  if (!owner || !name || extra !== undefined || !isValidRepoSegment(owner) || !isValidRepoSegment(name)) {
+    errors.push("target_repo_malformed");
+    return undefined;
+  }
+  return { kind: "existing", repo };
+}
+
 /** Validate + normalize a raw renter submission (spec §1). Returns every failure at once (never folds with
  *  `??`/`||`) so a caller can surface all problems in one pass rather than one-at-a-time. */
 export function validateIdeaSubmission(raw: unknown): IdeaValidationResult {
@@ -101,10 +115,19 @@ export function validateIdeaSubmission(raw: unknown): IdeaValidationResult {
   // `go`). A `{ kind: "provision" }` object requests a not-yet-created repo (#7589). Anything else is missing.
   let resolvedTarget: IdeaTarget | undefined;
   if (isNonEmptyString(input.targetRepo)) {
-    if (/^[A-Za-z0-9._-]+\/[A-Za-z0-9._-]+$/.test(input.targetRepo)) resolvedTarget = { kind: "existing", repo: input.targetRepo };
-    else errors.push("target_repo_malformed");
-  } else if (typeof input.targetRepo === "object" && input.targetRepo !== null && (input.targetRepo as Record<string, unknown>).kind === "provision") {
-    resolvedTarget = { kind: "provision" };
+    // Back-compat wire form: a bare "owner/name" string.
+    resolvedTarget = resolveExistingTarget(input.targetRepo, errors);
+  } else if (typeof input.targetRepo === "object" && input.targetRepo !== null) {
+    // The canonical IdeaTarget object shapes -- including `{ kind: "existing", repo }`, the exact shape this
+    // validator itself returns, so a value it produced (or any TS caller writing against the exported
+    // IdeaSubmission type) round-trips back through it (#9609). `{ kind: "provision" }` requests a
+    // not-yet-created repo (#7589).
+    const target = input.targetRepo as Record<string, unknown>;
+    if (target.kind === "provision") {
+      resolvedTarget = { kind: "provision" };
+    } else if (target.kind === "existing" && isNonEmptyString(target.repo)) {
+      resolvedTarget = resolveExistingTarget(target.repo, errors);
+    } else errors.push("target_repo_required");
   } else errors.push("target_repo_required");
 
   const constraints = input.constraints;

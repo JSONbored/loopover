@@ -99,3 +99,59 @@ test("every step is recorded in call order for white-box assertions", async () =
   );
   assert.deepEqual(driver.calls[0], { step: "fundPool", poolId: "pool-1", amount: 500 });
 });
+
+test("record -> reverse -> record: a redelivery after a reversal is a no-op, never a second debit", async () => {
+  const driver = createFakeSettlementBackendDriver();
+  const event = eventFor({ amount: 100 });
+  await driver.fundPool("pool-1", 500);
+
+  await driver.recordPayoutEligibleEvent(event); // balance 400
+  await driver.reversePayout(event, "refund"); // balance 500
+  // The event was ever-recorded, so a redelivered webhook must not re-decrement the pool.
+  await driver.recordPayoutEligibleEvent(event);
+  assert.equal(await driver.getPoolBalance("pool-1"), 500);
+
+  // The public balances view mirrors what getPoolBalance reports.
+  assert.equal(driver.balances.get("pool-1"), 500);
+  // Every invocation is still logged, including the no-op redelivery.
+  assert.deepEqual(
+    driver.calls.map((c) => c.step),
+    ["fundPool", "recordPayoutEligibleEvent", "reversePayout", "recordPayoutEligibleEvent"],
+  );
+});
+
+test("reversePayout credits back the recorded amount, not the amount on the reversal call", async () => {
+  const driver = createFakeSettlementBackendDriver();
+  await driver.fundPool("pool-1", 500);
+
+  await driver.recordPayoutEligibleEvent(eventFor({ amount: 100 }));
+  assert.equal(await driver.getPoolBalance("pool-1"), 400);
+
+  // Same event key (amount is deliberately not part of it) but a wildly different amount: the credit must be
+  // the 100 that was actually decremented, restoring exactly the pre-record balance — not pre + 1,000,000.
+  await driver.reversePayout(eventFor({ amount: 1_000_000 }), "refund");
+  assert.equal(await driver.getPoolBalance("pool-1"), 500);
+
+  // The call log still records the reversal's amount exactly as passed by the caller.
+  assert.deepEqual(driver.calls.at(-1), { step: "reversePayout", poolId: "pool-1", amount: 1_000_000 });
+});
+
+test("recordPayoutEligibleEvent on a reversed event does not re-add its key to settledEventKeys", async () => {
+  const driver = createFakeSettlementBackendDriver();
+  const event = eventFor({ amount: 100 });
+  await driver.fundPool("pool-1", 500);
+
+  await driver.recordPayoutEligibleEvent(event);
+  await driver.reversePayout(event, "dispute");
+  await driver.recordPayoutEligibleEvent(event);
+  assert.equal(driver.settledEventKeys.has("pool-1|acme/widgets|42|dev"), false);
+  assert.equal(driver.settledEventKeys.size, 0);
+});
+
+test("recordPayoutEligibleEvent on a never-funded pool decrements from the 0 an unfunded pool reads as", async () => {
+  const driver = createFakeSettlementBackendDriver();
+
+  await driver.recordPayoutEligibleEvent(eventFor({ amount: 100 }));
+  assert.equal(await driver.getPoolBalance("pool-1"), -100);
+  assert.ok(driver.settledEventKeys.has("pool-1|acme/widgets|42|dev"));
+});

@@ -1,4 +1,5 @@
 import { PostHog } from "posthog-node";
+import { buildLegacyToolCallProperties } from "@loopover/contract";
 
 // MCP telemetry wrapper (#6235, foundation of #6228). A thin, typed seam around the PostHog Node SDK so the
 // rest of this MCP-telemetry work has ONE place to record a tool call — no other module ever constructs a raw
@@ -68,13 +69,9 @@ export async function recordMcpToolCall(env: McpTelemetryEnv, event: McpToolCall
     client.capture({
       distinctId: MCP_TELEMETRY_DISTINCT_ID,
       event: MCP_TOOL_CALL_EVENT,
-      // Exactly the #6228 allowlist — nothing more.
-      properties: {
-        tool: event.tool,
-        caller_type: event.callerType,
-        ok: event.ok,
-        duration_ms: event.durationMs,
-      },
+      // Exactly the #6228 allowlist — enforced by the shared builder's signature (#9521), so this
+      // module can no longer drift from the stdio one or the generated README table.
+      properties: buildLegacyToolCallProperties(event),
       // No IP-based geo enrichment: the event is anonymous fleet telemetry, not a user location.
       disableGeoip: true,
     });

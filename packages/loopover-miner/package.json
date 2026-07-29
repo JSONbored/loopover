@@ -43,7 +43,7 @@
     "benchmark": "node --experimental-strip-types scripts/benchmark.ts",
     "cross-repo-eval": "node --experimental-strip-types scripts/cross-repo-evaluation.ts",
     "build": "npm run build:tsc && npm run build:verify",
-    "build:tsc": "tsc -p tsconfig.json",
+    "build:tsc": "node -e \"require('node:fs').rmSync('.tsbuildinfo',{force:true})\" && tsc -p tsconfig.json",
     "build:verify": "node --experimental-strip-types scripts/check-syntax.ts"
   },
   "dependencies": {

@@ -20,11 +20,9 @@ import {
   buildClearedBrowserSessionCookie,
   buildClearedGitHubOAuthStateCookie,
   buildGitHubOAuthStateCookie,
-  createOpaqueToken,
   extractBearerToken,
   extractBrowserSessionToken,
   extractCookieValue,
-  hashToken,
   isAuthorizedGitHubSessionLogin,
   isMcpReadRepoAllowed,
   isMcpReadUnscoped,
@@ -156,6 +154,8 @@ import { requestAprRepoTransfer } from "../orb/apr-repo-transfer";
 import { handleOrbIngest, readOrbIngestBody } from "../orb/ingest";
 import { handleAmsIngest } from "../ams/ingest";
 import { handleOrbWebhook } from "../orb/webhook";
+import { listFleetInstallations, listFleetInstances, registerFleetInstallation, registerFleetInstance } from "../orb/fleet-admin";
+import { pushFleetConfig } from "../orb/fleet-config-push";
 import { backfillOrbInstallations } from "../orb/installations";
 import { handleOrbOAuthCallback } from "../orb/oauth";
 import {
@@ -168,9 +168,7 @@ import {
   revokeOrbEnrollment,
 } from "../orb/broker";
 import {
-  enqueueConfigPushRelay,
   MAX_ORB_RELAY_REGISTER_BODY_BYTES,
-  pruneRelayPending,
   pullRelayPending,
   readOrbRelayRegisterBody,
   registerValidatedOrbRelay,
@@ -2214,49 +2212,7 @@ export function createApp() {
     const body = await c.req.json().catch(() => null);
     const parsed = configPushSchema.safeParse(body);
     if (!parsed.success) return c.json({ error: "invalid_config_push", issues: parsed.error.issues }, 400);
-    const { installationIds, ...payload } = parsed.data;
-    // #7611 review fix: prune ONCE for the whole request, not once per target -- enqueueConfigPushRelay no
-    // longer prunes itself (see its own doc comment) precisely so a 500-installation fan-out below can't turn
-    // into 500 redundant global TTL-prune scans/deletes against the shared orb_relay_pending table.
-    await pruneRelayPending(c.env);
-    // #8880: isolate each per-installation enqueue. A bare Promise.all let one target's throw abort the whole
-    // fan-out -- the audit event AND the response for the other ~499 installations were silently dropped, and
-    // there was no route-level try/catch to salvage them. Catch each target's failure inside its own fan-out
-    // task (mirroring pollPendingAprRepoTransfers' per-item isolation in src/orb/apr-repo-transfer.ts) so one
-    // bad row can't sink the batch, audit each failure so it is never silently swallowed, and still report the
-    // successful targets plus the partial failure to the caller.
-    const settled = await Promise.all(
-      installationIds.map(async (installationId): Promise<{ installationId: number; error?: string }> => {
-        try {
-          await enqueueConfigPushRelay(c.env, installationId, payload);
-          return { installationId };
-        } catch (error) {
-          return { installationId, error: errorMessage(error) };
-        }
-      }),
-    );
-    const failedInstallationIds: number[] = [];
-    for (const result of settled) {
-      if (result.error !== undefined) {
-        failedInstallationIds.push(result.installationId);
-        await recordAuditEvent(c.env, {
-          eventType: "operator.config_push_target_failed",
-          actor: identity.actor,
-          targetKey: `config_push#${parsed.data.pushId}#${result.installationId}`,
-          outcome: "error",
-          metadata: { installationId: result.installationId, pushId: parsed.data.pushId, message: result.error },
-        });
-      }
-    }
-    const succeededCount = installationIds.length - failedInstallationIds.length;
-    await recordAuditEvent(c.env, {
-      eventType: "operator.config_push_enqueued",
-      actor: identity.actor,
-      targetKey: `config_push#${parsed.data.pushId}`,
-      outcome: failedInstallationIds.length > 0 ? "error" : "completed",
-      metadata: { installationCount: installationIds.length, succeededCount, failedCount: failedInstallationIds.length, capability: payload.capability ?? null },
-    });
-    return c.json({ ok: true, pushId: parsed.data.pushId, installationCount: installationIds.length, succeededCount, failedInstallationIds });
+    return c.json(await pushFleetConfig(c.env, identity.actor, parsed.data));
   });
 
   // #5672 post-merge incident report, internal-operator side: same reporting path as the repo-scoped customer
@@ -4715,15 +4671,7 @@ export function createApp() {
   });
 
   app.get("/v1/internal/orb/instances", async (c) => {
-    const rows = await c.env.DB
-      .prepare(
-        `SELECT i.instance_id AS instanceId, i.registered AS registered, i.first_seen_at AS firstSeenAt,
-                i.last_seen_at AS lastSeenAt, i.registered_at AS registeredAt,
-                (SELECT COUNT(*) FROM orb_signals s WHERE s.instance_id = i.instance_id) AS signalCount
-         FROM orb_instances i ORDER BY i.last_seen_at DESC`,
-      )
-      .all<{ instanceId: string; registered: number; firstSeenAt: string; lastSeenAt: string; registeredAt: string | null; signalCount: number }>();
-    return c.json({ instances: (rows.results ?? []).map((r) => ({ ...r, registered: r.registered === 1 })) });
+    return c.json(await listFleetInstances(c.env));
   });
 
   // Opt an instance into (or out of) fleet calibration. Body: { instanceId, registered? } (registered
@@ -4738,19 +4686,7 @@ export function createApp() {
     const payload = (await c.req.json().catch(() => null)) as { instanceId?: unknown; registered?: unknown } | null;
     const instanceId = typeof payload?.instanceId === "string" ? payload.instanceId : "";
     if (!instanceId) return c.json({ error: "instanceId required" }, 400);
-    const registered = payload?.registered === false ? 0 : 1;
-    const instanceSecret = registered === 1 ? createOpaqueToken("orbis") : null;
-    const instanceSecretHash = instanceSecret ? await hashToken(instanceSecret) : null;
-    await c.env.DB
-      .prepare(
-        `INSERT INTO orb_instances (instance_id, registered, registered_at, ingest_secret_hash) VALUES (?, ?, CURRENT_TIMESTAMP, ?)
-         ON CONFLICT(instance_id) DO UPDATE SET registered = excluded.registered,
-           registered_at = CASE WHEN excluded.registered = 1 THEN CURRENT_TIMESTAMP ELSE NULL END,
-           ingest_secret_hash = CASE WHEN excluded.registered = 1 THEN excluded.ingest_secret_hash ELSE orb_instances.ingest_secret_hash END`,
-      )
-      .bind(instanceId, registered, instanceSecretHash)
-      .run();
-    return c.json({ instanceId, registered: registered === 1, ...(instanceSecret ? { instanceSecret } : {}) });
+    return c.json(await registerFleetInstance(c.env, { instanceId, ...(payload?.registered === false ? { registered: false } : {}) }));
   });
 
   // Central Orb GitHub App installation registry — the onboarding gate. Every installation the Orb App webhook
@@ -4764,16 +4700,7 @@ export function createApp() {
   // JOIN: each installation has at most a handful of enrollment rows, so this stays cheap without reshaping the
   // one-row-per-installation result set a GROUP BY would require.
   app.get("/v1/internal/orb/installations", async (c) => {
-    const rows = await c.env.DB
-      .prepare(
-        `SELECT installation_id AS installationId, account_login AS accountLogin, account_type AS accountType,
-                repository_selection AS repositorySelection, registered, suspended_at AS suspendedAt,
-                removed_at AS removedAt, first_seen_at AS firstSeenAt, last_event_at AS lastEventAt,
-                (SELECT COUNT(*) FROM orb_enrollments oe WHERE oe.installation_id = orb_github_installations.installation_id AND oe.state = 'enrolled' AND oe.revoked_at IS NULL) AS liveEnrollmentCount
-         FROM orb_github_installations ORDER BY last_event_at DESC`,
-      )
-      .all<{ installationId: number; accountLogin: string | null; accountType: string | null; repositorySelection: string | null; registered: number; suspendedAt: string | null; removedAt: string | null; firstSeenAt: string; lastEventAt: string; liveEnrollmentCount: number }>();
-    return c.json({ installations: (rows.results ?? []).map((r) => ({ ...r, registered: r.registered === 1 })) });
+    return c.json(await listFleetInstallations(c.env));
   });
 
   // Opt an installation into (or out of) the registry. Body: { installationId, registered? } (registered defaults
@@ -4784,11 +4711,9 @@ export function createApp() {
     const payload = (await c.req.json().catch(() => null)) as { installationId?: unknown; registered?: unknown } | null;
     const installationId = Number(payload?.installationId);
     if (!Number.isInteger(installationId) || installationId <= 0) return c.json({ error: "installationId required" }, 400);
-    const existing = await c.env.DB.prepare("SELECT installation_id FROM orb_github_installations WHERE installation_id = ?").bind(installationId).first();
-    if (!existing) return c.json({ error: "installation_not_found" }, 404);
-    const registered = payload?.registered === false ? 0 : 1;
-    await c.env.DB.prepare("UPDATE orb_github_installations SET registered = ?, self_enrollment_disabled = ? WHERE installation_id = ?").bind(registered, registered === 1 ? 0 : 1, installationId).run();
-    return c.json({ installationId, registered: registered === 1 });
+    const result = await registerFleetInstallation(c.env, { installationId, ...(payload?.registered === false ? { registered: false } : {}) });
+    if ("error" in result) return c.json(result, 404);
+    return c.json(result);
   });
 
   // Operator-triggered reconciliation of the installation registry against GitHub's authoritative install list —

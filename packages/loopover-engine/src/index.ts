@@ -183,8 +183,11 @@ export * from "./calibration/provider-track-record.js";
 export * from "./calibration/reliability-curve.js";
 export * from "./calibration/attestation-envelope.js";
 export * from "./calibration/attester.js";
+export * from "./calibration/candidate-sandbox.js";
 export * from "./calibration/benchmark-proposal.js";
 export * from "./calibration/benchmark-ground-truth.js";
+export * from "./calibration/benchmark-score.js";
+export * from "./calibration/benchmark-anti-overfit.js";
 export {
   GOVERNOR_LEDGER_EVENT_TYPES,
   normalizeGovernorLedgerEvent,
@@ -192,6 +195,7 @@ export {
   type GovernorLedgerEventType,
   type NormalizedGovernorLedgerEvent,
 } from "./governor-ledger.js";
+export { REPO_SEGMENT_PATTERN, isValidRepoSegment } from "./repo-segment.js";
 export {
   MINER_TELEMETRY_EVENT_TYPES,
   MINER_TELEMETRY_OUTCOME_BUCKETS,

@@ -27,7 +27,12 @@ export default defineConfig({
       // first, it silently intercepted "@loopover/contract/tools" too and rewrote it to a bogus
       // "<index.ts path>/tools" that resolved nowhere. Confirmed by reproducing the failure with a
       // throwaway probe test before reordering, not assumed from reading Vite's docs alone.
+      "@loopover/contract/enums": new URL("./packages/loopover-contract/src/enums.ts", import.meta.url).pathname,
       "@loopover/contract/tools": new URL("./packages/loopover-contract/src/tools/index.ts", import.meta.url).pathname,
+      "@loopover/contract/cli-config": new URL("./packages/loopover-contract/src/cli-config.ts", import.meta.url).pathname,
+      "@loopover/contract/orb-broker": new URL("./packages/loopover-contract/src/orb-broker.ts", import.meta.url).pathname,
+      "@loopover/contract/api-schemas": new URL("./packages/loopover-contract/src/api-schemas.ts", import.meta.url).pathname,
+      "@loopover/contract/public-api": new URL("./packages/loopover-contract/src/public-api.ts", import.meta.url).pathname,
       "@loopover/contract": new URL("./packages/loopover-contract/src/index.ts", import.meta.url).pathname,
     },
   },
@@ -77,9 +82,12 @@ export default defineConfig({
         // export the way bin/loopover-miner-mcp.ts already was.
         "packages/loopover-miner/bin/**/*.ts",
         "packages/discovery-index/src/**/*.ts",
-        // @loopover/contract is pure schema + pure projection functions with no I/O of any kind, imported
-        // in-process by test/unit/contract-*.test.ts -- fully unit-coverable, so it is graded like any
-        // other src surface rather than exempted.
+        // @loopover/contract is schema + pure projection functions, imported in-process by
+        // test/unit/contract-*.test.ts -- fully unit-coverable, so it is graded like any other src
+        // surface rather than exempted. Two modules now reach past pure projection: orb-broker.ts makes
+        // the broker exchange both the Worker and the miner used to hand-copy, and local-config.ts owns
+        // the CLI-config policy (its fs stays in the callers, injected). Both take their fetch/IO seams
+        // as parameters, so they stay unit-coverable at 100% branch -- see #9521.
         "packages/loopover-contract/src/**/*.ts",
         // All 5 packages/loopover-mcp/lib/*.ts files (format-table/local-branch/redact-local-path/
         // telemetry/cli-error) are imported in-process by test/unit/*.test.ts (cli-error's own

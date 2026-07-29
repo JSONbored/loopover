@@ -255,3 +255,45 @@ test("createKvTenantRegistry: an unrelated tenant's installation-index entry SUR
   assert.equal(kv.store.get("installation:555"), "tenant:orb:newcomer");
   assert.equal((await registry.getByOrbInstallationId(555))?.tenant.name, "newcomer");
 });
+
+// #9613: the fake used to answer getByOrbInstallationId with a linear scan of `records` in Map insertion
+// order (first-inserted-wins) while the KV registry resolves through its last-writer-wins installation
+// index -- so for #9143's duplicated-installation scenario the two implementations returned OPPOSITE
+// tenants, and http-app.test.ts (which injects the fake) asserted inverted routing/409 semantics.
+test("createFakeTenantRegistry: an unrelated tenant's installation-index entry SURVIVES a stale record's later re-creation/teardown upsert (#9143)", async () => {
+  const registry = createFakeTenantRegistry();
+
+  // Tenant "old" claimed installation 555 at creation, then failed -- its record still carries the ID.
+  await registry.upsert({ ...recordFor("old", "orb", "failed"), orbInstallationId: 555 });
+  // A brand-new tenant legitimately re-claims installation 555: last writer wins, exactly like KV.
+  await registry.upsert({ ...recordFor("newcomer", "orb", "active"), orbInstallationId: 555 });
+  assert.equal((await registry.getByOrbInstallationId(555))?.tenant.name, "newcomer");
+
+  // "old" is later torn down with no orbInstallationId: the compare-and-delete rule sees the index no
+  // longer points at "old" and leaves newcomer's live pointer alone.
+  await registry.upsert(recordFor("old", "orb", "torn down"));
+  assert.equal((await registry.getByOrbInstallationId(555))?.tenant.name, "newcomer");
+});
+
+test("createFakeTenantRegistry: re-linking a tenant to a different installation ID clears the stale index entry", async () => {
+  const registry = createFakeTenantRegistry();
+  await registry.upsert({ ...recordFor("acme"), orbInstallationId: 555 });
+
+  await registry.upsert({ ...recordFor("acme"), orbInstallationId: 777 });
+
+  assert.equal(await registry.getByOrbInstallationId(555), undefined);
+  assert.equal((await registry.getByOrbInstallationId(777))?.tenant.name, "acme");
+
+  // Re-upserting with the SAME installation ID (state-only change) leaves the pointer in place.
+  await registry.upsert({ ...recordFor("acme", "orb", "torn down"), orbInstallationId: 777 });
+  assert.equal((await registry.getByOrbInstallationId(777))?.state, "torn down");
+});
+
+test("createFakeTenantRegistry: unlinking a tenant's installation ID (upsert without it) clears the stale index entry", async () => {
+  const registry = createFakeTenantRegistry();
+  await registry.upsert({ ...recordFor("acme"), orbInstallationId: 555 });
+
+  await registry.upsert(recordFor("acme"));
+
+  assert.equal(await registry.getByOrbInstallationId(555), undefined);
+});

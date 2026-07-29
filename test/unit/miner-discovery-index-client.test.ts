@@ -9,6 +9,7 @@ vi.mock("../../packages/loopover-miner/lib/logger.js", () => ({
   getLogger: () => logSpy,
 }));
 
+import { normalizeDiscoveryIndexRequest } from "../../packages/loopover-engine/src/index";
 import {
   DISCOVERY_INDEX_URL_FLAG,
   DISCOVERY_PLANE_FLAG,
@@ -71,7 +72,7 @@ describe("queryDiscoveryIndex (#7168)", () => {
   it("posts the normalized query and returns the normalized response when enabled", async () => {
     const fetchImpl = vi.fn(async (url: string, init: RequestInit) => {
       expect(url).toBe("https://discovery.example.internal/v1/discovery-index/query");
-      expect(JSON.parse(String(init.body))).toMatchObject({ repos: ["a/b"] });
+      expect(JSON.parse(String(init.body))).toMatchObject({ contractVersion: 1, repos: ["a/b"] });
       return Response.json({
         contractVersion: 1,
         candidates: [
@@ -94,6 +95,31 @@ describe("queryDiscoveryIndex (#7168)", () => {
     const response = await queryDiscoveryIndex({ repos: ["a/b"] }, { env: ENABLED_ENV, fetchImpl });
     expect(response.candidates).toHaveLength(1);
     expect(response.candidates[0]).toMatchObject({ repoFullName: "a/b", issueNumber: 1 });
+  });
+
+  it("sends the contract version with the query fields at the top level, in a body the server-side parse round-trips (#9615)", async () => {
+    let sentBody: unknown;
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      sentBody = JSON.parse(String(init.body));
+      return Response.json({ contractVersion: 1, candidates: [], nextCursor: null });
+    });
+    await queryDiscoveryIndex({ repos: ["a/b"], searchTerms: [" help wanted "] }, { env: ENABLED_ENV, fetchImpl });
+
+    expect(sentBody).toEqual({
+      contractVersion: 1,
+      repos: ["a/b"],
+      orgs: [],
+      searchTerms: ["help wanted"],
+      limit: 50,
+      cursor: null,
+    });
+    // The server parses this exact body with normalizeDiscoveryIndexRequest (top-level fields, #9615):
+    // the widened body round-trips to the same normalized query the client computed, with no warning.
+    const reparsed = normalizeDiscoveryIndexRequest(sentBody);
+    expect(reparsed.warnings).toEqual([]);
+    expect(reparsed.request.query).toEqual(
+      normalizeDiscoveryIndexRequest({ repos: ["a/b"], searchTerms: [" help wanted "] }).request.query,
+    );
   });
 
   it("fails open (returns empty) on a non-ok response or a thrown error", async () => {

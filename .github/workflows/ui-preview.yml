@@ -79,6 +79,10 @@ jobs:
       # away the result. `npx turbo run build --filter=@loopover/ui` replaces the last two `ui:build`
       # steps (`extension:build && miner-extension:build && ui build` already covered by
       # @loopover/ui#build's own turbo.json dependsOn) and skips ui-miner entirely.
+      # @loopover/contract joins the engine filter because `ui:openapi` imports src/openapi/schemas.ts,
+      # which re-exports the public-API response schemas from @loopover/contract/public-api (#9282/#9521).
+      # Without it this step failed with ERR_MODULE_NOT_FOUND on dist/public-api.js -- the contract was
+      # never built here at all, only in the CI workflow's own steps.
       - name: Build UI
         env:
           VITE_LOOPOVER_API_ORIGIN: https://api.loopover.ai
@@ -87,7 +91,7 @@ jobs:
           # production build (ui-deploy.yml) does NOT set this, so the escape hatch is dead-code-eliminated
           # from prod. (#authed-route-preview)
           VITE_PREVIEW: "1"
-        run: npm run ui:kit:build && npx turbo run build --filter=@loopover/engine && npm run ui:openapi && npx turbo run build --filter=@loopover/ui
+        run: npm run ui:kit:build && npx turbo run build --filter=@loopover/engine --filter=@loopover/contract && npm run ui:openapi && npx turbo run build --filter=@loopover/ui
 
       # Deploys stay best-effort when the Cloudflare secrets aren't configured (Reviewbot shows
       # before-only) — mirrors ui-preview-deploy.yml's guard.
@@ -177,7 +181,7 @@ jobs:
         env:
           VITE_LOOPOVER_API_ORIGIN: https://api.loopover.ai
           VITE_PREVIEW: "1"
-        run: npm run ui:kit:build && npx turbo run build --filter=@loopover/engine && npm run ui:openapi && npx turbo run build --filter=@loopover/ui
+        run: npm run ui:kit:build && npx turbo run build --filter=@loopover/engine --filter=@loopover/contract && npm run ui:openapi && npx turbo run build --filter=@loopover/ui
 
       # The trusted deploy workflow downloads this by name + run-id. It contains only the built bundle
       # (server/ + client/) — no secrets, no source needed downstream.

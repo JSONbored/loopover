@@ -233,6 +233,14 @@ declare global {
     /** Override the Orb broker base URL the self-host client calls (default https://api.loopover.ai);
      *  point at a private loopover deployment if you self-host the broker too. */
     ORB_BROKER_URL?: string;
+    /** The hosted control plane's tenant-provisioning API base URL (#9522). Set ONLY on the cloud
+     *  deployment that administers hosted tenants; unset everywhere else, which makes the
+     *  loopover_tenant_* MCP tools report `configured: false` rather than erroring. */
+    LOOPOVER_CONTROL_PLANE_URL?: string;
+    /** Admin Bearer credential for the control plane's `/v1/tenants/*` routes (#9522) -- an ADMIN token,
+     *  distinct from any tenant's own per-instance secret. Both this and the URL must be set for the
+     *  tenant tools to do anything. (A secret — never commit a real value.) */
+    LOOPOVER_CONTROL_PLANE_ADMIN_TOKEN?: string;
     /** The retired review App's own credentials. Optional: that App has been fully deleted — cloud no longer
      *  mints tokens or verifies check-run ownership with it (review execution is self-host-only now, brokered
      *  through the Orb App above). Kept optional (not removed) so a self-hoster running their OWN App under

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "license": "AGPL-3.0-only",
   "type": "module",
-  "description": "Single zod source of truth for LoopOver's MCP tool and API contracts — schemas, tool metadata, and the projections every server and client derives from.",
+  "description": "Single zod source of truth for LoopOver's MCP tool and API contracts \u2014 schemas, tool metadata, and the projections every server and client derives from.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/JSONbored/loopover.git",
@@ -43,19 +43,36 @@
       "types": "./dist/agent-specs.d.ts",
       "default": "./dist/agent-specs.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./cli-config": {
+      "types": "./dist/cli-config.d.ts",
+      "default": "./dist/cli-config.js"
+    },
+    "./orb-broker": {
+      "types": "./dist/orb-broker.d.ts",
+      "default": "./dist/orb-broker.js"
+    },
+    "./public-api": {
+      "types": "./dist/public-api.d.ts",
+      "default": "./dist/public-api.js"
+    },
+    "./api-schemas": {
+      "types": "./dist/api-schemas.d.ts",
+      "default": "./dist/api-schemas.js"
+    }
   },
   "files": [
     "dist",
     "CHANGELOG.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "node -e \"require('node:fs').rmSync('.tsbuildinfo',{force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260724.1",
     "typescript": "^5.9.3"
   },
   "engines": {

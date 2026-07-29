@@ -165,12 +165,13 @@ export function codexAuthReadinessProbe(
  */
 export function browserEndpointReadinessProbe(
   env: Record<string, string | undefined>,
-  fetchImpl: (url: string) => Promise<{ ok: boolean }>,
+  fetchImpl: (url: string, init?: { headers: Record<string, string> }) => Promise<{ ok: boolean }>,
   cacheMs = 30_000,
 ): ReadinessProbe | null {
   const endpoint = (env.BROWSER_WS_ENDPOINT ?? "").trim();
   if (!endpoint) return null;
   const versionUrl = browserVersionUrl(endpoint);
+  const auth = browserAuthHeaders(endpoint);
   // A configured-but-unparseable endpoint is a real misconfiguration, and one the ordinary capture path would
   // only surface as a per-shot render failure. Fail readiness closed rather than skipping the probe.
   if (versionUrl === null) return { name: "browser_endpoint", check: () => Promise.resolve(false) };
@@ -183,7 +184,7 @@ export function browserEndpointReadinessProbe(
       const now = Date.now();
       if (cached !== undefined && now < cachedUntil) return Promise.resolve(cached);
       if (inFlight) return inFlight;
-      inFlight = fetchImpl(versionUrl)
+      inFlight = fetchImpl(versionUrl, auth)
         .then((response) => response.ok)
         .catch(() => false)
         .then((ok) => {
@@ -200,8 +201,9 @@ export function browserEndpointReadinessProbe(
 }
 
 /** The `http(s)://<host>/json/version` sibling of a `ws(s)://` browserless endpoint, or null when the
- *  configured value is not a parseable ws/wss URL. Query strings (browserless carries `?token=`) are dropped:
- *  the version endpoint needs no auth and the token must never end up in a probe URL that could be logged. */
+ *  configured value is not a parseable ws/wss URL. The query string (browserless carries `?token=`) is
+ *  dropped so the token can never end up in a probe URL that might be logged -- it travels as an
+ *  Authorization header instead, see browserAuthHeaders. */
 function browserVersionUrl(endpoint: string): string | null {
   try {
     const url = new URL(endpoint);
@@ -209,6 +211,32 @@ function browserVersionUrl(endpoint: string): string | null {
     return `${url.protocol === "wss:" ? "https:" : "http:"}//${url.host}/json/version`;
   } catch {
     return null;
+  }
+}
+
+/**
+ * `Authorization: Bearer <token>` for a browserless endpoint that carries `?token=`, or no headers when it
+ * does not.
+ *
+ * REGRESSION THIS FIXES: the probe originally dropped the query string and sent nothing, on the stated
+ * assumption that `/json/version` needs no auth. It does. A browserless started with a TOKEN answers 401 to
+ * an unauthenticated `/json/version` (verified against browserless v2 / Chrome 149 on the live ORB), so
+ * `browser_endpoint` reported false forever on every deployment that runs it the recommended way -- readiness
+ * permanently not-ready, container permanently unhealthy, while screenshot capture worked perfectly. A probe
+ * that cannot pass when the thing it probes is healthy is worse than no probe: it trains operators to ignore
+ * readiness.
+ *
+ * The header, not the query param, keeps the original privacy intent intact: the token still never appears in
+ * the URL, so it cannot leak through a logged request line, a proxy access log, or an error message that
+ * echoes the URL.
+ */
+export function browserAuthHeaders(endpoint: string): { headers: Record<string, string> } | undefined {
+  try {
+    const token = new URL(endpoint).searchParams.get("token");
+    return token ? { headers: { Authorization: `Bearer ${token}` } } : undefined;
+  } catch {
+    // An unparseable endpoint already fails the probe closed via browserVersionUrl; nothing to add here.
+    return undefined;
   }
 }
 

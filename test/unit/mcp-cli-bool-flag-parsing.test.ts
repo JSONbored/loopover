@@ -157,3 +157,60 @@ describe("a flag given with no value (#9773)", () => {
     await expect(withEnv({ ...AUTHED, LOOPOVER_LOGIN: undefined, GITHUB_LOGIN: undefined }, () => captureStdout(() => mod.runCli(["decision-pack", "--login"])))).rejects.toThrow(/--login/);
   });
 });
+
+// #9773 follow-up: the same class, at the four sites the first sweep missed. A review found one of them
+// (`explain-review-risk --login`); these are the rest of the family, each reachable by a plausible typo.
+//
+// The two query-shaping cases assert on the URL the CLI actually requests, which is the only place the
+// difference between "absent" and "the literal true" is observable.
+describe("a flag given with no value, everywhere else it is read (#9773)", () => {
+  /** Run with `fetch` stubbed, and return every URL the CLI asked for. */
+  async function requestedUrls(args: string[], env: Record<string, string | undefined>): Promise<string[]> {
+    const urls: string[] = [];
+    const stub = vi.fn(async (input: unknown) => {
+      urls.push(String(input));
+      return new Response(JSON.stringify({ audit: [], events: [], overall: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    vi.stubGlobal("fetch", stub);
+    try {
+      await withEnv(env, () => captureStdout(() => mod.runCli(args))).catch(() => undefined);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    return urls;
+  }
+
+  it("asks for a login on analyze-branch when the bare flag has no env fallback", async () => {
+    // Was: `login: true` sent to the branch-analysis route -- neither a login nor an error a user could act
+    // on. Absent means absent, so the usual "pass it or set the env var" error is what they get.
+    await expect(
+      withEnv({ ...AUTHED, LOOPOVER_LOGIN: undefined, GITHUB_LOGIN: undefined }, () =>
+        captureStdout(() => mod.runCli(["analyze-branch", "--login", "--repo", "acme/widgets"])),
+      ),
+    ).rejects.toThrow(/--login/);
+  });
+
+  it("asks for a login on review-pr when the bare flag has no env fallback", async () => {
+    await expect(
+      withEnv({ ...AUTHED, LOOPOVER_LOGIN: undefined, GITHUB_LOGIN: undefined }, () =>
+        captureStdout(() => mod.runCli(["review-pr", "--login", "--repo", "acme/widgets", "--pull", "1"])),
+      ),
+    ).rejects.toThrow(/--login/);
+  });
+
+  it("does not read a bare --limit as the number 1", async () => {
+    // `Number(true)` is 1, so `--limit` with no value silently capped the audit at a single row instead of
+    // leaving the server's own default in place.
+    const urls = await requestedUrls(["maintain", "selftune-audit", "--repo", "owner/repo", "--limit", "--json"], AUTHED);
+    expect(urls.some((url) => url.includes("/selftune/overrides/audit"))).toBe(true);
+    expect(urls.find((url) => url.includes("/selftune/overrides/audit"))).not.toContain("limit=");
+  });
+
+  it("does not send the literal string \"true\" as an audit-feed query value", async () => {
+    // `String(options.since)` on a bare `--since` sent `?since=true`, which the route reads as a cursor.
+    const urls = await requestedUrls(["maintain", "audit-feed", "--repo", "owner/repo", "--since", "--json"], AUTHED);
+    const feed = urls.find((url) => url.includes("/agent/audit-feed"));
+    expect(feed).toBeTruthy();
+    expect(feed).not.toContain("since=");
+  });
+});

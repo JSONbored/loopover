@@ -2133,6 +2133,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   if (gate.dryRun !== null) out.dryRun = gate.dryRun;
   if (gate.premergeContentRecheck !== null) out.premergeContentRecheck = gate.premergeContentRecheck;
   if (gate.requireFreshRebaseWindowMinutes !== null) out.requireFreshRebaseWindow = gate.requireFreshRebaseWindowMinutes;
+  if (gate.priorityEligibilityWindowMinutes !== null) out.priorityEligibilityWindow = gate.priorityEligibilityWindowMinutes;
   if (gate.staleBaseAheadByThreshold !== null) out.staleBaseAheadByThreshold = gate.staleBaseAheadByThreshold;
   if (gate.claMode !== null) out.claMode = gate.claMode;
   if (gate.claConsentPhrase !== null || gate.claCheckRunName !== null || gate.claCheckRunAppSlug !== null) {

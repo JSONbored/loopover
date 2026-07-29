@@ -2,7 +2,7 @@
 //
 // Every branch of the evaluator, both sides of every fallback: the rule holds a PR only when it can prove
 // the PR arrived inside the window, and opens for everything else.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_PRIORITY_ELIGIBILITY_WINDOW_MINUTES,
   MAX_PRIORITY_ELIGIBILITY_WINDOW_MINUTES,
@@ -12,6 +12,7 @@ import {
   priorityEligibleAt,
   resolvePriorityEligibilityHold,
 } from "../../src/review/priority-eligibility-window";
+import { createTestEnv } from "../helpers/d1";
 
 const LABELED_AT = "2026-07-29T12:00:00.000Z";
 /** The default window's boundary, to the millisecond. */
@@ -103,7 +104,7 @@ describe("priority eligibility window (#9738)", () => {
 // The impure half: which linked issue is consulted, and every way the resolution declines to hold.
 describe("resolvePriorityEligibilityHold (#9738)", () => {
   const base = {
-    env: {},
+    env: {} as never,
     repoFullName: "owner/repo",
     prCreatedAt: "2026-07-29T12:00:30.000Z",
     windowMinutes: 30,
@@ -162,6 +163,24 @@ describe("resolvePriorityEligibilityHold (#9738)", () => {
     expect(hold, "label matching is case-insensitive").toBeDefined();
   });
 
+  it("defaults to the REAL GraphQL reader when the caller injects none", async () => {
+    // The production call site passes facts only. If the default were missing (or silently a no-op), the
+    // rule would never hold anything in production while every injected-fetcher test kept passing.
+    let asked: string | undefined;
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      asked = typeof init?.body === "string" ? String(JSON.parse(init.body).query) : undefined;
+      return Response.json({
+        data: { repository: { issue: { timelineItems: { nodes: [{ createdAt: LABELED_AT, label: { name: "gittensor:priority" } }] } } } },
+      });
+    });
+
+    const hold = await resolvePriorityEligibilityHold({ ...base, env: createTestEnv(), linkedIssues: [7] });
+
+    expect(asked, "it really went to GitHub's GraphQL API").toContain("LABELED_EVENT");
+    expect(hold?.reason).toContain("#7");
+    vi.unstubAllGlobals();
+  });
+
   it("FAILS OPEN on everything it cannot establish", async () => {
     const never = async () => LABELED_AT;
     const cases: Array<[string, Parameters<typeof resolvePriorityEligibilityHold>[0]]> = [
@@ -171,7 +190,6 @@ describe("resolvePriorityEligibilityHold (#9738)", () => {
       ["no PR timestamp", { ...base, prCreatedAt: null, linkedIssues: [1], fetchLabeledAt: never }],
       ["no token", { ...base, token: undefined, linkedIssues: [1], fetchLabeledAt: never }],
       ["no label configured", { ...base, priorityLabel: undefined, linkedIssues: [1], fetchLabeledAt: never }],
-      ["no fetcher", { ...base, linkedIssues: [1] }],
       ["label never applied", { ...base, linkedIssues: [1], fetchLabeledAt: async () => null }],
       ["fetch throws", { ...base, linkedIssues: [1], fetchLabeledAt: async () => { throw new Error("GitHub 502"); } }],
     ];

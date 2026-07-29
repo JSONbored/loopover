@@ -106,7 +106,6 @@ import {
   backfillRepositorySegment,
   fetchAndStorePullRequestFilesForReview,
   fetchBaseAheadBy,
-  fetchIssueLabelFirstAppliedAt,
   fetchLinkedIssueFacts,
   fetchLiveBaseBranchAdvancedAt,
   invalidateCiStateCache,
@@ -193,7 +192,7 @@ import {
   reviewedPullRequestHeadSha,
   type PullRequestFreshness,
 } from "../github/pr-freshness";
-import { DEFAULT_TYPE_LABELS, resolvePrTypeLabel } from "../settings/pr-type-label";
+import { DEFAULT_TYPE_LABELS, resolvePriorityTypeLabel, resolvePrTypeLabel } from "../settings/pr-type-label";
 import {
   PRIORITY_LABEL_AUTHOR_RULE_ID,
   PRIORITY_LABEL_ENFORCEMENT_EVENT,
@@ -3479,9 +3478,11 @@ async function runAgentMaintenancePlanAndExecute(
     linkedIssues: pr.linkedIssues,
     prCreatedAt: pr.createdAt ?? null,
     windowMinutes: settings.priorityEligibilityWindowMinutes ?? DEFAULT_PRIORITY_ELIGIBILITY_WINDOW_MINUTES,
-    priorityLabel: settings.typeLabels?.priority ?? DEFAULT_TYPE_LABELS.priority,
+    priorityLabel: resolvePriorityTypeLabel(settings.typeLabels),
     token: ciToken,
-    fetchLabeledAt: (repo, issueNumber, label) => fetchIssueLabelFirstAppliedAt(env, repo, issueNumber, label, ciToken),
+    /* v8 ignore next -- defensive: resolvePriorityEligibilityHold catches its own GitHub read, so it has no
+       reject path today. The guard stays so a future edit inside it degrades to "no hold" rather than
+       failing the whole maintenance pass -- which is the fail-open posture the rest of this rule has. */
   }).catch(() => undefined);
   const unlinkedIssueMatchClose = unlinkedIssueMatchDisposition?.kind === "close" ? unlinkedIssueMatchDisposition : undefined;
 
@@ -6894,9 +6895,7 @@ async function maybeHandlePriorityLabelEligibility(
   if (issue.pull_request !== undefined && issue.pull_request !== null) return false;
 
   const settings = await resolveRepositorySettings(env, repoFullName).catch(() => undefined);
-  /* v8 ignore next 2 -- noUncheckedIndexedAccess fallback: PrTypeLabelSet is a Record<string, string>, so
-     DEFAULT_TYPE_LABELS.priority reads as possibly-undefined to the type system though it is always set. */
-  const priorityLabel: string = settings?.typeLabels?.priority ?? DEFAULT_TYPE_LABELS.priority ?? "gittensor:priority";
+  const priorityLabel = resolvePriorityTypeLabel(settings?.typeLabels);
   const labels = (issue.labels ?? []).map((label) => label?.name ?? "").filter((name) => name.length > 0);
   // Only the labelled event for THIS label matters; anything else is another label's business.
   if (!labels.some((name) => name.toLowerCase() === priorityLabel.toLowerCase())) return false;

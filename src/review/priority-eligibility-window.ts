@@ -1,3 +1,5 @@
+import { fetchIssueLabelFirstAppliedAt } from "../github/backfill";
+
 // Priority-issue eligibility window (#9738).
 //
 // `gittensor:priority` carries the highest payout, so assignment fairness matters most there. First-come
@@ -95,14 +97,15 @@ export function priorityEligibleAt(labeledAt: string | null, windowMinutes: numb
  * issues waits for the later of them -- linking a second issue can never be a way to skip the first's window.
  */
 export async function resolvePriorityEligibilityHold(input: {
-  env: unknown;
+  env: Env;
   repoFullName: string;
   linkedIssues: readonly number[] | null | undefined;
   prCreatedAt: string | null;
   windowMinutes: number;
   priorityLabel: string | undefined;
   token: string | undefined;
-  /** Injected so this is testable without a network; defaults to the real GraphQL read. */
+  /** Overridable so this is testable without a network. Defaults to the real GraphQL read, so the
+   *  production caller passes facts only and never has to re-wire the reader. */
   fetchLabeledAt?: (repoFullName: string, issueNumber: number, label: string) => Promise<string | null>;
   /** The linked issues' labels, when the caller already has them -- saves a read for the common case where
    *  no linked issue carries the priority label at all. */
@@ -116,8 +119,10 @@ export async function resolvePriorityEligibilityHold(input: {
   const priorityLabel = input.priorityLabel;
   if (!priorityLabel) return undefined;
   const wanted = priorityLabel.toLowerCase();
-  const fetchLabeledAt = input.fetchLabeledAt;
-  if (!fetchLabeledAt) return undefined;
+  // The real reader is the default: the caller supplies facts (env, repo, token) and never re-wires it.
+  const fetchLabeledAt =
+    input.fetchLabeledAt ??
+    ((repoFullName, issueNumber, label) => fetchIssueLabelFirstAppliedAt(input.env, repoFullName, issueNumber, label, input.token));
 
   for (const issueNumber of issues) {
     const known = input.issueLabels?.get(issueNumber);

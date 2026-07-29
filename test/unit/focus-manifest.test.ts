@@ -6477,3 +6477,41 @@ describe("an explicitly-undefined manifest setting does not punch a hole in the 
     expect(resolveEffectiveSettings({ typeLabelsEnabled: false } as RepositorySettings, manifestWithSettings({ typeLabelsEnabled: true })).typeLabelsEnabled).toBe(true);
   });
 });
+
+describe("gate.priorityEligibilityWindow priority-issue eligibility config (#9738)", () => {
+  it("parses gate.priorityEligibilityWindow, sets present, round-trips, and resolves into effective settings", () => {
+    const m = parseFocusManifest({ gate: { priorityEligibilityWindow: 45 } });
+    expect(m.gate.priorityEligibilityWindowMinutes).toBe(45);
+    expect(m.gate.present).toBe(true);
+    expect(gateConfigToJson(m.gate)).toMatchObject({ priorityEligibilityWindow: 45 });
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, m);
+    expect(eff.priorityEligibilityWindowMinutes).toBe(45);
+  });
+
+  it("defaults to unset/undefined when omitted — byte-identical to today", () => {
+    const m = parseFocusManifest({});
+    expect(m.gate.priorityEligibilityWindowMinutes).toBeNull();
+    const eff = resolveEffectiveSettings({} as unknown as RepositorySettings, m);
+    expect(eff.priorityEligibilityWindowMinutes).toBeUndefined();
+  });
+
+  it("accepts 0 as an explicit OFF rather than treating it as absent", () => {
+    // 0 disables the rule; if it were dropped as falsy, a repo that deliberately turned the window off
+    // would silently inherit the 30-minute default instead.
+    const m = parseFocusManifest({ gate: { priorityEligibilityWindow: 0 } });
+    expect(m.gate.priorityEligibilityWindowMinutes).toBe(0);
+    expect(resolveEffectiveSettings({} as unknown as RepositorySettings, m).priorityEligibilityWindowMinutes).toBe(0);
+  });
+
+  it("warns and drops a fractional, negative, or out-of-range value rather than silently coercing it", () => {
+    for (const value of [2.5, -1, 1441]) {
+      const parsed = parseFocusManifest({ gate: { priorityEligibilityWindow: value } });
+      expect(parsed.gate.priorityEligibilityWindowMinutes, String(value)).toBeNull();
+      expect(parsed.warnings.some((w) => /gate\.priorityEligibilityWindow/i.test(w)), String(value)).toBe(true);
+    }
+  });
+
+  it("accepts the maximum exactly, so the bound is inclusive", () => {
+    expect(parseFocusManifest({ gate: { priorityEligibilityWindow: 1440 } }).gate.priorityEligibilityWindowMinutes).toBe(1440);
+  });
+});

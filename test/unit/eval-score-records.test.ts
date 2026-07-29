@@ -21,8 +21,8 @@ const ISSUED_AT = "2026-07-27T12:00:00.000Z";
 const PRECISION_WITH_FREEZE_POINT: PublicRulePrecision = {
   windowDays: 90,
   rules: [
-    { ruleId: "ai_consensus_defect", decided: 25, confirmed: 20, precision: 0.8 },
-    { ruleId: "sparse_rule", decided: 9, confirmed: 9, precision: null },
+    { ruleId: "ai_consensus_defect", decided: 25, confirmed: 20, precision: 0.8, unrecognized: 0 },
+    { ruleId: "sparse_rule", decided: 9, confirmed: 9, precision: null, unrecognized: 0 },
   ],
   reversals: { reopened: 2, reverted: 1, superseded: 3 },
   latestBacktestRun: { corpusChecksum: "abc123def456", at: "2026-07-27T10:00:00.000Z" },
@@ -99,7 +99,7 @@ describe("buildEvalScoreRecordsFromRulePrecision (#9266)", () => {
     // than a hardcoded constant. Previously EVERY record published null, including the 25-decided one above,
     // so a validator re-deriving decided/(decided+abstained) per #9215 computed 1 and disagreed with the field.
     const records = await buildEvalScoreRecordsFromRulePrecision(
-      { ...PRECISION_WITH_FREEZE_POINT, rules: [{ ruleId: "never_fired", decided: 0, confirmed: 0, precision: null }] },
+      { ...PRECISION_WITH_FREEZE_POINT, rules: [{ ruleId: "never_fired", decided: 0, confirmed: 0, precision: null, unrecognized: 0 }] },
       ISSUED_AT,
     );
     expect(records).toHaveLength(1);
@@ -207,8 +207,7 @@ describe("per-rule corpus commitments when no backtest run is persisted (#9805)"
     reversals: { reopened: 0, reverted: 0, superseded: 0 },
     latestBacktestRun,
   });
-  const rule = (ruleId: string): PublicRulePrecision["rules"][number] =>
-    ({ ruleId, decided: 40, confirmed: 25, precision: 0.625 }) as PublicRulePrecision["rules"][number];
+  const rule = (ruleId: string): PublicRulePrecision["rules"][number] => ({ ruleId, decided: 40, confirmed: 25, precision: 0.625, unrecognized: 0 });
 
   it("REGRESSION: publishes a record per rule instead of [], committing to that rule's published corpus", async () => {
     const records = await buildEvalScoreRecordsFromRulePrecision(

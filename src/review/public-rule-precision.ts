@@ -41,6 +41,10 @@ export type PublicRulePrecisionRow = {
   confirmed: number;
   /** confirmed / decided, rounded to 3 decimals; null below {@link PUBLIC_PRECISION_MIN_DECIDED}. */
   precision: number | null;
+  /** Overrides whose `$.verdict` was missing or neither `'reversed'` nor `'confirmed'` -- excluded from
+   *  `decided` and `confirmed` (and so never inflates `precision` or clears the sample floor), but surfaced
+   *  as a data-quality signal rather than silently dropped. */
+  unrecognized: number;
 };
 
 export type PublicRulePrecision = {
@@ -79,10 +83,12 @@ export const NON_ATTRIBUTABLE_OVERRIDE_PROVENANCES = ["slop_replay_backfill_v1"]
 export async function loadPublicRulePrecision(env: Env, nowMs: number = Date.now()): Promise<PublicRulePrecision> {
   const sinceIso = new Date(nowMs - PUBLIC_PRECISION_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString();
 
-  const overrideRows = await safeAll<{ rule_id: string; decided: number; reversed: number }>(
+  const overrideRows = await safeAll<{ rule_id: string; confirmed: number; reversed: number; unrecognized: number }>(
     env,
-    `SELECT substr(event_type, ${HUMAN_OVERRIDE_EVENT_TYPE_PREFIX.length + 1}) AS rule_id, COUNT(*) AS decided,
-            SUM(CASE WHEN json_extract(metadata_json, '$.verdict') = 'reversed' THEN 1 ELSE 0 END) AS reversed
+    `SELECT substr(event_type, ${HUMAN_OVERRIDE_EVENT_TYPE_PREFIX.length + 1}) AS rule_id,
+            SUM(CASE WHEN json_extract(metadata_json, '$.verdict') = 'confirmed' THEN 1 ELSE 0 END) AS confirmed,
+            SUM(CASE WHEN json_extract(metadata_json, '$.verdict') = 'reversed' THEN 1 ELSE 0 END) AS reversed,
+            SUM(CASE WHEN json_extract(metadata_json, '$.verdict') NOT IN ('confirmed', 'reversed') OR json_extract(metadata_json, '$.verdict') IS NULL THEN 1 ELSE 0 END) AS unrecognized
        FROM audit_events
       WHERE event_type LIKE '${HUMAN_OVERRIDE_EVENT_TYPE_PREFIX}%' AND created_at >= ?
         AND COALESCE(json_extract(metadata_json, '$.provenance'), '') NOT IN (${NON_ATTRIBUTABLE_OVERRIDE_PROVENANCES.map((tag) => `'${tag}'`).join(", ")})
@@ -91,15 +97,19 @@ export async function loadPublicRulePrecision(env: Env, nowMs: number = Date.now
   );
   const rules: PublicRulePrecisionRow[] = overrideRows
     .map((row) => {
-      /* v8 ignore next 2 -- SUM(CASE) over a GROUP BY always yields a defined integer; the ?? guards a
+      /* v8 ignore next -- SUM(CASE) over a GROUP BY always yields a defined integer; the ?? guards a
        * future query-shape change, mirroring loadOverrideDayRows' identical note. */
+      const confirmed = row.confirmed ?? 0;
+      /* v8 ignore next */
       const reversed = row.reversed ?? 0;
-      const decided = row.decided;
-      const confirmed = decided - reversed;
+      /* v8 ignore next */
+      const unrecognized = row.unrecognized ?? 0;
+      const decided = confirmed + reversed;
       return {
         ruleId: row.rule_id,
         decided,
         confirmed,
+        unrecognized,
         precision: decided >= PUBLIC_PRECISION_MIN_DECIDED ? Math.round((confirmed / decided) * 1000) / 1000 : null,
       };
     })

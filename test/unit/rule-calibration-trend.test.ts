@@ -25,28 +25,55 @@ describe("buildCalibrationTrend (#8113)", () => {
       // A second day in the SAME week — must accumulate.
       { ruleId: "linked_issue_scope_mismatch", day: priorMonday, fired: 2 },
     ];
-    const overrides: OverrideDayRow[] = [{ ruleId: "linked_issue_scope_mismatch", day: priorMonday, confirmed: 3, reversed: 1 }];
+    const overrides: OverrideDayRow[] = [
+      { ruleId: "linked_issue_scope_mismatch", day: priorMonday, confirmed: 3, reversed: 1, unrecognized: 0 },
+    ];
     const trend = buildCalibrationTrend(fired, overrides, [], NOW, 2);
     expect(trend.rules).toHaveLength(1);
     const [rule] = trend.rules;
     expect(rule!.ruleId).toBe("linked_issue_scope_mismatch");
     expect(rule!.weeks).toEqual([
-      { weekStart: priorMonday, fired: 6, confirmed: 3, reversed: 1, precisionPct: 75 },
-      { weekStart: currentMonday, fired: 0, confirmed: null, reversed: null, precisionPct: null },
+      { weekStart: priorMonday, fired: 6, confirmed: 3, reversed: 1, precisionPct: 75, unrecognized: 0 },
+      { weekStart: currentMonday, fired: 0, confirmed: null, reversed: null, precisionPct: null, unrecognized: 0 },
     ]);
   });
 
   it("keeps a week's verdict split null below MIN_CALIBRATION_TREND_SAMPLE decided — unknown never fakes 0 or 100", () => {
-    const overrides: OverrideDayRow[] = [{ ruleId: "duplicate_pr_risk", day: currentMonday, confirmed: MIN_CALIBRATION_TREND_SAMPLE - 1, reversed: 0 }];
+    const overrides: OverrideDayRow[] = [
+      { ruleId: "duplicate_pr_risk", day: currentMonday, confirmed: MIN_CALIBRATION_TREND_SAMPLE - 1, reversed: 0, unrecognized: 0 },
+    ];
     const trend = buildCalibrationTrend([], overrides, [], NOW, 1);
-    expect(trend.rules[0]!.weeks[0]).toEqual({ weekStart: currentMonday, fired: 0, confirmed: null, reversed: null, precisionPct: null });
+    expect(trend.rules[0]!.weeks[0]).toEqual({
+      weekStart: currentMonday,
+      fired: 0,
+      confirmed: null,
+      reversed: null,
+      precisionPct: null,
+      unrecognized: 0,
+    });
   });
 
   it("creates a rule bucket from an override-only history (no firings recorded in the window)", () => {
-    const overrides: OverrideDayRow[] = [{ ruleId: "missing_linked_issue", day: currentMonday, confirmed: 2, reversed: 2 }];
+    const overrides: OverrideDayRow[] = [{ ruleId: "missing_linked_issue", day: currentMonday, confirmed: 2, reversed: 2, unrecognized: 0 }];
     const trend = buildCalibrationTrend([], overrides, [], NOW, 1);
     expect(trend.rules[0]!.weeks[0]!.precisionPct).toBe(50);
     expect(trend.rules[0]!.weeks[0]!.fired).toBe(0);
+  });
+
+  it("REGRESSION (#9640): counts a missing/unrecognized $.verdict as unrecognized, excluded from decided/confirmed", () => {
+    const overrides: OverrideDayRow[] = [
+      { ruleId: "linked_issue_scope_mismatch", day: currentMonday, confirmed: 9, reversed: 1, unrecognized: 5 },
+    ];
+    const trend = buildCalibrationTrend([], overrides, [], NOW, 1);
+    // Below the fix, decided would have been 15 (confirmed folded the 5 unrecognized rows in) and precision 0.933.
+    expect(trend.rules[0]!.weeks[0]).toEqual({
+      weekStart: currentMonday,
+      fired: 0,
+      confirmed: 9,
+      reversed: 1,
+      precisionPct: 90,
+      unrecognized: 5,
+    });
   });
 
   it("sorts rules by ruleId for byte-stable output", () => {
@@ -64,7 +91,7 @@ describe("buildCalibrationTrend (#8113)", () => {
       { ruleId: "r", day: outside, fired: 5 },
       { ruleId: "r", day: "not-a-day", fired: 5 },
     ];
-    const overrides: OverrideDayRow[] = [{ ruleId: "r", day: future, confirmed: 5, reversed: 5 }];
+    const overrides: OverrideDayRow[] = [{ ruleId: "r", day: future, confirmed: 5, reversed: 5, unrecognized: 0 }];
     const runs: BacktestRunDayRow[] = [{ day: "junk", regressed: 1, improved: 1, unchanged: 1 }];
     const trend = buildCalibrationTrend(fired, overrides, runs, NOW, 2);
     expect(trend.rules).toEqual([]);
@@ -154,7 +181,7 @@ describe("loadCalibrationTrend (#8113)", () => {
     const trend = await loadCalibrationTrend(env, NOW);
     const rule = trend.rules.find((entry) => entry.ruleId === "linked_issue_scope_mismatch");
     const priorWeek = rule!.weeks.find((week) => week.weekStart === priorMonday);
-    expect(priorWeek).toEqual({ weekStart: priorMonday, fired: 1, confirmed: 3, reversed: 1, precisionPct: 75 });
+    expect(priorWeek).toEqual({ weekStart: priorMonday, fired: 1, confirmed: 3, reversed: 1, precisionPct: 75, unrecognized: 0 });
     const runWeek = trend.backtestRuns.find((week) => week.weekStart === priorMonday);
     expect(runWeek).toEqual({ weekStart: priorMonday, runs: 3, regressed: 1, improved: 1, unchanged: 1 });
   });

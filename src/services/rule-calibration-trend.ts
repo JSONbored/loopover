@@ -33,6 +33,9 @@ export type CalibrationRuleTrendWeek = {
   confirmed: number | null;
   reversed: number | null;
   precisionPct: number | null;
+  /** Overrides whose `$.verdict` was missing or neither `'reversed'` nor `'confirmed'` -- a data-quality
+   *  signal, always visible regardless of the publication floor (never folded into `confirmed`). */
+  unrecognized: number;
 };
 
 export type CalibrationRuleTrend = { ruleId: string; weeks: CalibrationRuleTrendWeek[] };
@@ -51,7 +54,7 @@ export type CalibrationTrendReport = {
 };
 
 export type FiredDayRow = { ruleId: string; day: string; fired: number };
-export type OverrideDayRow = { ruleId: string; day: string; confirmed: number; reversed: number };
+export type OverrideDayRow = { ruleId: string; day: string; confirmed: number; reversed: number; unrecognized: number };
 export type BacktestRunDayRow = { day: string; regressed: number; improved: number; unchanged: number };
 
 const MS_PER_WEEK = 7 * 86_400_000;
@@ -84,11 +87,11 @@ export function buildCalibrationTrend(
   const currentStartMs = Date.parse(isoWeekStart(nowMs));
   const oldestStartMs = currentStartMs - (weeks - 1) * MS_PER_WEEK;
 
-  const ruleBuckets = new Map<string, Array<{ fired: number; confirmed: number; reversed: number }>>();
+  const ruleBuckets = new Map<string, Array<{ fired: number; confirmed: number; reversed: number; unrecognized: number }>>();
   const bucketsFor = (ruleId: string) => {
     const existing = ruleBuckets.get(ruleId);
     if (existing) return existing;
-    const created = Array.from({ length: weeks }, () => ({ fired: 0, confirmed: 0, reversed: 0 }));
+    const created = Array.from({ length: weeks }, () => ({ fired: 0, confirmed: 0, reversed: 0, unrecognized: 0 }));
     ruleBuckets.set(ruleId, created);
     return created;
   };
@@ -103,6 +106,7 @@ export function buildCalibrationTrend(
     const bucket = bucketsFor(row.ruleId)[offset]!;
     bucket.confirmed += row.confirmed;
     bucket.reversed += row.reversed;
+    bucket.unrecognized += row.unrecognized;
   }
 
   const runBuckets = Array.from({ length: weeks }, () => ({ regressed: 0, improved: 0, unchanged: 0 }));
@@ -128,6 +132,7 @@ export function buildCalibrationTrend(
           confirmed: publishable ? bucket.confirmed : null,
           reversed: publishable ? bucket.reversed : null,
           precisionPct: publishable ? roundPct(bucket.confirmed / decided) : null,
+          unrecognized: bucket.unrecognized,
         };
       }),
     }));
@@ -161,19 +166,28 @@ async function loadFiredDayRows(env: Env, sinceIso: string): Promise<FiredDayRow
  *  recordHumanOverride writes it) — bucketed by the override's OWN created_at: this trend reports how humans
  *  are judging a rule's calls per decision week (see the module doc's precision-semantics note). */
 async function loadOverrideDayRows(env: Env, sinceIso: string): Promise<OverrideDayRow[]> {
-  const rows = await safeAll<{ rule_id: string; day: string; confirmed: number; reversed: number }>(
+  const rows = await safeAll<{ rule_id: string; day: string; confirmed: number; reversed: number; unrecognized: number }>(
     env,
     `SELECT substr(event_type, ${HUMAN_OVERRIDE_EVENT_TYPE_PREFIX.length + 1}) AS rule_id, date(created_at) AS day,
-            SUM(CASE WHEN json_extract(metadata_json, '$.verdict') = 'reversed' THEN 0 ELSE 1 END) AS confirmed,
-            SUM(CASE WHEN json_extract(metadata_json, '$.verdict') = 'reversed' THEN 1 ELSE 0 END) AS reversed
+            SUM(CASE WHEN json_extract(metadata_json, '$.verdict') = 'confirmed' THEN 1 ELSE 0 END) AS confirmed,
+            SUM(CASE WHEN json_extract(metadata_json, '$.verdict') = 'reversed' THEN 1 ELSE 0 END) AS reversed,
+            SUM(CASE WHEN json_extract(metadata_json, '$.verdict') NOT IN ('confirmed', 'reversed') OR json_extract(metadata_json, '$.verdict') IS NULL THEN 1 ELSE 0 END) AS unrecognized
        FROM audit_events
       WHERE event_type LIKE '${HUMAN_OVERRIDE_EVENT_TYPE_PREFIX}%' AND created_at >= ?
       GROUP BY rule_id, day`,
     sinceIso,
   );
-  /* v8 ignore next 2 -- SUM(CASE ...) over a GROUP BY always yields a defined integer, never SQL NULL; the ?? 0
-   * fallbacks guard a future query-shape change, mirroring loadOrbDayRows' identical note. */
-  return rows.map((row) => ({ ruleId: row.rule_id, day: row.day, confirmed: row.confirmed ?? 0, reversed: row.reversed ?? 0 }));
+  return rows.map((row) => ({
+    ruleId: row.rule_id,
+    day: row.day,
+    /* v8 ignore next -- SUM(CASE ...) over a GROUP BY always yields a defined integer, never SQL NULL; the
+     * ?? 0 fallbacks guard a future query-shape change, mirroring loadOrbDayRows' identical note. */
+    confirmed: row.confirmed ?? 0,
+    /* v8 ignore next */
+    reversed: row.reversed ?? 0,
+    /* v8 ignore next */
+    unrecognized: row.unrecognized ?? 0,
+  }));
 }
 
 /** Day-bucketed backtest runs across BOTH sibling event types, verdict read from the persisted

@@ -1911,6 +1911,32 @@ export function buildOpenApiSpec() {
   });
   registry.registerPath({
     method: "get",
+    path: "/v1/public/repos/{owner}/{repo}/proof",
+    operationId: "getPublicRepoProof",
+    tags: ["Public"],
+    summary: "Public proof summary for one repo — ledger status, anchor, calibration with coverage and interval, sample records",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: { description: "ProofSummary. Any accuracy figure carries its coverage AND a Wilson confidence interval; below the sample floor it is an explicit `insufficient_data` state, never a bare percentage. Carries the verification-boundary statement in the payload" },
+      404: { description: "The proof page is disabled fleet-wide, or this repo has opted out" },
+      503: { description: "Composition failed — no partial or fabricated summary is served" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
+    path: "/v1/public/repos/{owner}/{repo}/proof-badge.svg",
+    operationId: "getPublicRepoProofBadge",
+    tags: ["Public"],
+    summary: "README badge for the proof page — reports the ledger's state, never a bare accuracy percentage",
+    request: { params: z.object({ owner: z.string(), repo: z.string() }) },
+    responses: {
+      200: { description: "SVG badge" },
+      404: { description: "Disabled or opted out — still an SVG (a neutral 'unavailable' badge), so a README never shows a broken image" },
+      503: { description: "Same neutral SVG on an internal error" },
+    },
+  });
+  registry.registerPath({
+    method: "get",
     path: "/v1/public/decision-ledger/anchor-payload",
     operationId: "getPublicDecisionLedgerAnchorPayload",
     tags: ["Public"],

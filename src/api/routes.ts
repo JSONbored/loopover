@@ -306,6 +306,8 @@ import { isRagEnabled } from "../review/rag-wire";
 import { loadDecisionLedgerTip, loadPublicDecisionRecord, loadPublicLedgerRow, verifyDecisionLedger } from "../review/decision-record";
 import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
 import { anchorSigningInput, buildLedgerAnchorPayload, currentAnchorKey, parseAnchorPublicKeys, publicAnchorStatus, signLedgerAnchorPayload } from "../review/ledger-anchor";
+import { resolveProofPage } from "../review/proof-summary";
+import { renderProofBadgeSvg } from "./proof-badge";
 import { ingestBittensorAnchorReport, parseBittensorAnchorReport } from "../review/ledger-anchor-bittensor";
 import { loadPublicLedgerAnchors } from "../review/ledger-anchor-persistence";
 import { getPublicStats, isPublicStatsEnabled, resolvePublicStatsManifestOverride } from "../review/public-stats";
@@ -1364,6 +1366,41 @@ export function createApp() {
         }),
       }),
     });
+  });
+
+  // #9569: the public proof page's data, and its README badge. Read-only over the SAME public sources the
+  // standalone endpoints already serve -- no new verification mechanism and no new SQL surface.
+  //
+  // Both handlers are thin renderers over ONE resolver (resolveProofPage): the gate, the read and the
+  // failure outcome are decided there, so the page and the badge cannot disagree about whether a repo is
+  // published. That is not a stylistic preference -- the gate previously lived inline in both bodies and
+  // exactly one of them was wired to the per-repo opt-out.
+  const proofPageDeps = {
+    loadManifest: loadRepoFocusManifest,
+    verifyLedger: (env: Env) => verifyDecisionLedger(env),
+    loadAnchors: (env: Env) => loadPublicLedgerAnchors(env, { limit: 20 }),
+  };
+
+  app.get("/v1/public/repos/:owner/:repo/proof", async (c) => {
+    const result = await resolveProofPage(c.env, `${c.req.param("owner")}/${c.req.param("repo")}`, proofPageDeps);
+    if (result.status === "disabled") return c.json({ error: "not_found" }, 404);
+    c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
+    return c.json(result.summary);
+  });
+
+  // The badge deliberately reports the LEDGER's state rather than an accuracy percentage: a badge is a
+  // one-glance claim, and an accuracy number without the interval that makes it honest (which does not fit
+  // in a badge) is exactly the bare scalar the proof summary refuses to publish. A disabled repo renders
+  // the neutral badge rather than an error -- a broken image in a README is worse than an honest one.
+  app.get("/v1/public/repos/:owner/:repo/proof-badge.svg", async (c) => {
+    c.header("Content-Type", "image/svg+xml; charset=utf-8");
+    const result = await resolveProofPage(c.env, `${c.req.param("owner")}/${c.req.param("repo")}`, proofPageDeps);
+    if (result.status === "disabled") {
+      c.header("Cache-Control", "public, max-age=300");
+      return c.body(renderProofBadgeSvg(null), 404);
+    }
+    c.header("Cache-Control", "public, max-age=600, stale-while-revalidate=86400");
+    return c.body(renderProofBadgeSvg(result.summary));
   });
 
   // #9277 (epic #9267): the current tip's SIGNED checkpoint, for the operator's off-Worker Bittensor

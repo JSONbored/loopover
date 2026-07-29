@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createTestEnv } from "../helpers/d1";
 import { decideLedgerAnchorSchedule, LEDGER_ANCHOR_SEQ_THRESHOLD, resolveGitAnchorTarget, runScheduledLedgerAnchor } from "../../src/review/ledger-anchor-scheduler";
-import { buildDecisionRecord, contentDigest, persistDecisionRecord } from "../../src/review/decision-record";
+import { buildDecisionRecord, contentDigest, loadDecisionLedgerTip, persistDecisionRecord } from "../../src/review/decision-record";
 import { loadPublicLedgerAnchors } from "../../src/review/ledger-anchor-persistence";
 import { computeAnchorKeyId, type SignedLedgerAnchor } from "../../src/review/ledger-anchor";
 
@@ -175,6 +175,52 @@ describe("runScheduledLedgerAnchor (#9274)", () => {
     await runScheduledLedgerAnchor(env, { isHourly: true }, { submitRekor });
     const { anchors } = await loadPublicLedgerAnchors(env, { backend: "git" });
     expect(anchors).toEqual([]);
+  });
+
+  // #9646: the required-success backend list must come from the backends this tick will ACTUALLY attempt.
+  // Insert an anchor row for the tip's exact row_hash at a given backend/status.
+  const recordAnchor = async (env: Env, rowHash: string, backend: string, status: "ok" | "failed") => {
+    await env.DB.prepare(
+      "INSERT INTO decision_ledger_anchors (id, seq, row_hash, payload_json, signature, key_id, backend, status, created_at) VALUES (?, 1, ?, '{}', 'sig', 'k1', ?, ?, ?)",
+    )
+      .bind(`${backend}-${status}-${Math.random()}`, rowHash, backend, status, new Date().toISOString())
+      .run();
+  };
+
+  it("REGRESSION: with submitGit omitted, a tip already anchored to rekor stays quiet — no re-anchor, submitRekor called zero times (#9646)", async () => {
+    const { env } = await keyedEnv();
+    await seedOneDecision(env);
+    const tip = await loadDecisionLedgerTip(env);
+    await recordAnchor(env, tip.rowHash, "rekor", "ok");
+    const submitRekor = vi.fn().mockResolvedValue(undefined);
+    // git unconfigured (submitGit omitted): rekor is the ONLY required backend, and it is already ok.
+    const decision = await runScheduledLedgerAnchor(env, { isHourly: true }, { submitRekor });
+    expect(decision).toEqual({ shouldAnchor: false, reason: "unchanged" });
+    expect(submitRekor).not.toHaveBeenCalled();
+  });
+
+  it("still retries when the rekor row is FAILED, even with submitGit omitted (#9646)", async () => {
+    const { env } = await keyedEnv();
+    await seedOneDecision(env);
+    const tip = await loadDecisionLedgerTip(env);
+    await recordAnchor(env, tip.rowHash, "rekor", "failed");
+    const submitRekor = vi.fn().mockResolvedValue(undefined);
+    const decision = await runScheduledLedgerAnchor(env, { isHourly: true }, { submitRekor });
+    expect(decision).toEqual({ shouldAnchor: true, reason: "retry_unanchored" });
+    expect(submitRekor).toHaveBeenCalledTimes(1);
+  });
+
+  it("still requires git when submitGit IS wired: rekor ok but git missing → retries and both submitters run (#9646)", async () => {
+    const { env } = await keyedEnv();
+    await seedOneDecision(env);
+    const tip = await loadDecisionLedgerTip(env);
+    await recordAnchor(env, tip.rowHash, "rekor", "ok"); // rekor done, git has no ok row
+    const submitRekor = vi.fn().mockResolvedValue(undefined);
+    const submitGit = vi.fn().mockResolvedValue(undefined);
+    const decision = await runScheduledLedgerAnchor(env, { isHourly: true }, { submitRekor, submitGit });
+    expect(decision).toEqual({ shouldAnchor: true, reason: "retry_unanchored" });
+    expect(submitRekor).toHaveBeenCalledTimes(1);
+    expect(submitGit).toHaveBeenCalledTimes(1);
   });
 
   it("skips entirely (no signing attempted) when the published key set has no unambiguous current key", async () => {

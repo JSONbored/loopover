@@ -85,9 +85,14 @@ export type LedgerAnchorSchedulerDeps = {
  * a total anchoring failure cannot propagate anywhere. Returns the scheduling decision so a caller/test can
  * observe WHY nothing happened, without needing a second query.
  */
-/** #9489: the backends whose success actually matters for "is this tip anchored". `ots` is tracked-but-not-
- *  built (#9267), so requiring it would make every tip permanently unanchored. */
-const ANCHOR_BACKENDS_REQUIRING_SUCCESS = ["rekor", "git"] as const;
+/** #9489/#9646: the backends whose success actually matters for "is this tip anchored" — computed from the
+ *  backends this tick will ACTUALLY attempt, not a fixed constant. `rekor` always; `git` only when a git
+ *  submitter is configured (deps.submitGit non-null), so an unconfigured git backend cannot leave a
+ *  fully-rekor-anchored quiet tip permanently "missing git" and re-anchoring every hourly tick. `ots` is
+ *  tracked-but-not-built (#9267), so requiring it would make every tip permanently unanchored. */
+function requiredSuccessBackends(deps: LedgerAnchorSchedulerDeps): LedgerAnchorBackend[] {
+  return deps.submitGit ? ["rekor", "git"] : ["rekor"];
+}
 
 export async function runScheduledLedgerAnchor(env: Env, options: { isHourly: boolean; now?: string }, deps: LedgerAnchorSchedulerDeps = {}): Promise<LedgerAnchorScheduleDecision> {
   const now = options.now ?? nowIso();
@@ -98,7 +103,7 @@ export async function runScheduledLedgerAnchor(env: Env, options: { isHourly: bo
   // which backend wrote it.
   /* v8 ignore next -- fail-open: an unreadable anchors table degrades to "nothing known to be missing", i.e.
      exactly the pre-#9489 scheduling behaviour, rather than forcing an anchor on every tick. */
-  const unanchoredBackends = await anchorBackendsMissingForRowHash(env, tip.rowHash, ANCHOR_BACKENDS_REQUIRING_SUCCESS).catch(() => []);
+  const unanchoredBackends = await anchorBackendsMissingForRowHash(env, tip.rowHash, requiredSuccessBackends(deps)).catch(() => []);
   const decision = decideLedgerAnchorSchedule({
     isHourly: options.isHourly,
     currentTip: tip,

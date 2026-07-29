@@ -71,6 +71,34 @@ describe("handleOrbIngest()", () => {
     expect(await col(db, "b3", "gate_reasoncode_bucket")).toBeNull();
   });
 
+  it("regression (#9642): whitelists gate_verdict to merge/close/hold — an off-vocabulary value within the length cap is stored as null", async () => {
+    const db = makeDb();
+    // "Merge"/"banana" clear the length check but are not GateAction literals; unvalidated, foldInstance would
+    // mis-bucket them into `holds` and understate the published fleet coverage.
+    await ingest(db, [
+      ev({ pr_hash: "gv1", gate_verdict: "close" }),
+      ev({ pr_hash: "gv2", gate_verdict: "hold" }),
+      ev({ pr_hash: "gv3", gate_verdict: "Merge" }),
+      ev({ pr_hash: "gv4", gate_verdict: "banana" }),
+    ]);
+    expect(await col(db, "gv1", "gate_verdict")).toBe("close");
+    expect(await col(db, "gv2", "gate_verdict")).toBe("hold");
+    expect(await col(db, "gv3", "gate_verdict")).toBeNull();
+    expect(await col(db, "gv4", "gate_verdict")).toBeNull();
+  });
+
+  it("regression (#9642): whitelists gate_reasoncode_bucket to bucketReasonCode's vocabulary — an off-vocabulary value is stored as null", async () => {
+    const db = makeDb();
+    await ingest(db, [
+      ev({ pr_hash: "rc1", gate_reasoncode_bucket: "policy_action" }),
+      ev({ pr_hash: "rc2", gate_reasoncode_bucket: "other" }),
+      ev({ pr_hash: "rc3", gate_reasoncode_bucket: "made_up_bucket" }),
+    ]);
+    expect(await col(db, "rc1", "gate_reasoncode_bucket")).toBe("policy_action");
+    expect(await col(db, "rc2", "gate_reasoncode_bucket")).toBe("other");
+    expect(await col(db, "rc3", "gate_reasoncode_bucket")).toBeNull();
+  });
+
   it("clamps time_to_close_ms: valid kept; absent / <1s / >1y → null", async () => {
     const db = makeDb();
     await ingest(db, [

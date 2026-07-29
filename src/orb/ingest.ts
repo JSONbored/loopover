@@ -12,6 +12,24 @@ const MAX_BUCKET_CHARS = 64;
 const MAX_VERDICT_CHARS = 32;
 const VALID_OUTCOMES = new Set(["merged", "closed"]);
 const VALID_REVERSALS = new Set(["none", "reopened", "reverted", "superseded"]);
+// gate_verdict is read downstream as a CLOSED enum by exact equality (analytics.ts foldInstance branches on
+// "merge"/"close"); an off-vocabulary value would silently fall into `holds` and understate published coverage.
+// It is the honest writer's GateAction vocabulary (parity.ts): merge | close | hold.
+const VALID_VERDICTS = new Set(["merge", "close", "hold"]);
+// gate_reasoncode_bucket is compared against "policy_action" downstream; the writer (bucketReasonCode,
+// orb-collector.ts) emits exactly these nine literals. Anything else is coerced to null (foldInstance already
+// treats null as a normal quality verdict), so an older/buggier registered instance cannot poison its coverage.
+const VALID_REASONCODE_BUCKETS = new Set([
+  "none",
+  "policy_action",
+  "issue_policy",
+  "duplicate_risk",
+  "slop_advisory",
+  "ai_quality",
+  "author_policy",
+  "ci_readiness",
+  "other",
+]);
 const MIN_CYCLE_MS = 1_000; // <1s is implausible
 const MAX_CYCLE_MS = 31_536_000_000; // >1y is implausible
 
@@ -200,10 +218,10 @@ export async function handleOrbIngest(body: string, db: D1Database, presentedIns
           instance_id,
           event.repo_hash,
           event.pr_hash,
-          typeof event.gate_verdict === "string" && event.gate_verdict.length <= MAX_VERDICT_CHARS ? event.gate_verdict : null,
+          typeof event.gate_verdict === "string" && event.gate_verdict.length <= MAX_VERDICT_CHARS && VALID_VERDICTS.has(event.gate_verdict) ? event.gate_verdict : null,
           event.outcome,
           reversal,
-          typeof event.gate_reasoncode_bucket === "string" && event.gate_reasoncode_bucket.length <= MAX_BUCKET_CHARS ? event.gate_reasoncode_bucket : null,
+          typeof event.gate_reasoncode_bucket === "string" && event.gate_reasoncode_bucket.length <= MAX_BUCKET_CHARS && VALID_REASONCODE_BUCKETS.has(event.gate_reasoncode_bucket) ? event.gate_reasoncode_bucket : null,
           clampCycleMs(event.time_to_close_ms),
           typeof event.decision_timestamp === "string" ? event.decision_timestamp : null,
           typeof event.outcome_timestamp === "string" ? event.outcome_timestamp : null,

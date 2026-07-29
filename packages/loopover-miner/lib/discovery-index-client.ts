@@ -100,7 +100,11 @@ export async function queryDiscoveryIndex(
       {
         method: "POST",
         headers: { "content-type": "application/json", ...authHeaders(env) },
-        body: JSON.stringify(request.query),
+        // #9615: send the whole normalized request -- the contract version WITH the query -- flattened to
+        // one level, because the server parses this body with normalizeDiscoveryIndexRequest, which reads
+        // the query fields (and the declared contractVersion) off the top level. Nesting the query under a
+        // `query` key would make the version travel but the query invisible to the server's parse.
+        body: JSON.stringify({ contractVersion: request.contractVersion, ...request.query }),
       },
       { timeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS },
     );

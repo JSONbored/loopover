@@ -219,3 +219,32 @@ describe("repo-segment path safety in candidate normalization (#9610)", () => {
     expect(normalized?.repo).toBe("repo");
   });
 });
+
+describe("contractVersion skew warnings (#9615)", () => {
+  it("warns with the exact request-side message on a mismatched declared version, still emitting version 1", () => {
+    const parsed = normalizeDiscoveryIndexRequest({ contractVersion: 99, repos: ["a/b"] });
+    expect(parsed.warnings).toContain("DiscoveryIndexRequest declared contractVersion 99; this build speaks 1.");
+    expect(parsed.request.contractVersion).toBe(1);
+    expect(parsed.request.query.repos).toEqual(["a/b"]);
+  });
+
+  it("warns with the exact response-side message on a mismatched declared version, still emitting version 1", () => {
+    const parsed = normalizeDiscoveryIndexResponse({ contractVersion: 99, candidates: [] });
+    expect(parsed.warnings).toContain("DiscoveryIndexResponse declared contractVersion 99; this build speaks 1.");
+    expect(parsed.response.contractVersion).toBe(1);
+  });
+
+  it("stays silent when the declared version is absent or not a number (tolerant-parser convention)", () => {
+    expect(normalizeDiscoveryIndexRequest({ repos: ["a/b"] }).warnings).toEqual([]);
+    expect(normalizeDiscoveryIndexRequest({ contractVersion: "1", repos: ["a/b"] }).warnings).toEqual([]);
+    expect(normalizeDiscoveryIndexResponse({ candidates: [] }).warnings).toEqual([]);
+    expect(normalizeDiscoveryIndexResponse({ contractVersion: "1", candidates: [] }).warnings).toEqual([]);
+  });
+
+  it("stays silent on a matching declared version and still returns the candidates", () => {
+    const parsed = normalizeDiscoveryIndexResponse({ contractVersion: 1, candidates: [VALID_CANDIDATE] });
+    expect(parsed.warnings).toEqual([]);
+    expect(parsed.response.candidates.map((candidate) => candidate.repoFullName)).toEqual(["owner/repo"]);
+    expect(normalizeDiscoveryIndexRequest({ contractVersion: 1, repos: ["a/b"] }).warnings).toEqual([]);
+  });
+});

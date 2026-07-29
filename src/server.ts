@@ -887,6 +887,26 @@ async function main(): Promise<void> {
   } as unknown as Env;
   markEnvReady();
 
+  // #deploy-orphaned-reviews: heal rows this very restart orphaned, BEFORE any webhook can bounce off them.
+  // Fail-safe: a failure here must never block boot -- the 10-minute reconciliation sweep remains the backstop.
+  try {
+    const { terminalizeActiveReviewsFromBeforeBoot } = await import("./db/repositories");
+    const healed = await terminalizeActiveReviewsFromBeforeBoot(env, new Date().toISOString());
+    for (const row of healed) {
+      console.warn(
+        JSON.stringify({
+          level: "warn",
+          event: "active_review_boot_orphan_terminalized",
+          repo: row.repoFullName,
+          pr: row.pullNumber,
+        }),
+      );
+    }
+  } catch (error) {
+    console.error(JSON.stringify({ level: "error", event: "active_review_boot_sweep_failed", message: String(error).slice(0, 200) }));
+  }
+
+
   // Fleet-mode credential resolution (#9543): registered HERE, after `env` is fully constructed, because the
   // lookup needs the DB binding -- src/selfhost/ai.ts must never import the DB layer itself, so the closure is
   // injected instead. Safe to register after createSelfHostAi() above: the resolver is only ever invoked at

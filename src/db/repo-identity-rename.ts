@@ -41,6 +41,7 @@ import {
   githubRateLimitObservations,
   issues,
   issueWatchSubscriptions,
+  linkedIssueClaims,
   notificationDeliveries,
   productUsageEvents,
   pullRequestDetailSyncState,
@@ -606,4 +607,42 @@ export async function renameRepositoryIdentity(env: Env, oldFullName: string, ne
     .update(auditEvents)
     .set({ targetKey: sql`replace(${auditEvents.targetKey}, ${oldFullName}, ${newFullName})` })
     .where(sql`${auditEvents.targetKey} like ${`%${oldFullName}%`}`);
+
+  // linkedIssueClaims: PK (repo_full_name, pull_number, issue_number) -- a stray new-name row can collide, so
+  // fold-then-rename exactly as pullRequests/issues do, keeping the pre-existing old-name row's claimed_at (#9650).
+  const collidingClaimKeys = (
+    await db.select({ pullNumber: linkedIssueClaims.pullNumber, issueNumber: linkedIssueClaims.issueNumber }).from(linkedIssueClaims).where(eq(linkedIssueClaims.repoFullName, oldFullName))
+  ).map((row) => `${row.pullNumber}:${row.issueNumber}`);
+  if (collidingClaimKeys.length > 0) {
+    await db
+      .delete(linkedIssueClaims)
+      .where(and(eq(linkedIssueClaims.repoFullName, newFullName), sql`(${linkedIssueClaims.pullNumber} || ':' || ${linkedIssueClaims.issueNumber}) in ${collidingClaimKeys}`));
+  }
+  await db.update(linkedIssueClaims).set({ repoFullName: newFullName }).where(eq(linkedIssueClaims.repoFullName, oldFullName));
+
+  // bountyLifecycleEvents: PK is surrogate `id`, no unique constraint on repo_full_name -- plain rename, same
+  // as orb_webhook_events above (#9650).
+  await env.DB.prepare("UPDATE bounty_lifecycle_events SET repo_full_name = ? WHERE repo_full_name = ?").bind(newFullName, oldFullName).run();
+
+  // webhookEvents: PK is delivery_id; repository_full_name is nullable with no unique constraint -- plain
+  // rename (#9650).
+  await env.DB.prepare("UPDATE webhook_events SET repository_full_name = ? WHERE repository_full_name = ?").bind(newFullName, oldFullName).run();
+
+  // scorePreviews: PK is surrogate `id`, no unique constraint on repo_full_name -- plain rename (#9650).
+  await env.DB.prepare("UPDATE score_previews SET repo_full_name = ? WHERE repo_full_name = ?").bind(newFullName, oldFullName).run();
 }
+
+/** Tables carrying a repo-identity column that renameRepositoryIdentity DELIBERATELY does not rename -- the
+ *  reasons are the prose block above. The completeness drift guard in repo-identity-rename.test.ts asserts
+ *  every schema.ts table with a repo_full_name/repository_full_name column is either renamed here or listed
+ *  here, so the list can never silently drift again (#9650). */
+export const RENAME_OUT_OF_SCOPE_TABLES: ReadonlySet<string> = new Set([
+  "ai_review_cache",
+  "ai_slop_cache",
+  "linked_issue_satisfaction_cache",
+  "grounding_file_content_cache",
+  "impact_map_query_cache",
+  "review_targets",
+  "repo_chunks",
+  "upstream_source_snapshots",
+]);

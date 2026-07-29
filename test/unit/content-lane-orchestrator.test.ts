@@ -138,6 +138,50 @@ describe("runSurfaceReview (deterministic + decisive: merge/close, rarely manual
     expect((await review([PROVIDER], badProvider))?.verdict).toBe("close");
   });
 
+  // REGRESSION (#9666): a standalone provider-file PR (no entry file riding along) used to skip the base read
+  // entirely and auto-decide off head alone — so an EDIT to an already-registered provider (repointing
+  // website_url, swapping name, etc.) would merge or close just like a genuine debut, even though the identical
+  // edit riding alongside an entry file was already held for a human by the companion guard above. The standalone
+  // path must apply the exact same guard: a non-null base means this isn't a debut, so route to manual.
+  it("routes a standalone provider EDIT (non-null base) to MANUAL — same guard the companion path already applies", async () => {
+    const calls: string[] = [];
+    const editedProvider: Record<string, string | null> = {
+      [`head:${PROVIDER}`]: JSON.stringify({ provider: { id: "acme", name: "Acme", website_url: "https://acme.example" } }),
+      [`base:${PROVIDER}`]: JSON.stringify({ provider: { id: "acme", name: "Acme", website_url: "https://old.example" } }),
+    };
+    const r = await runSurfaceReview(METAGRAPHED_LANE_SPEC, {
+      changedFiles: [PROVIDER],
+      loadFile: (path, ref) => {
+        calls.push(`${ref}:${path}`);
+        return Promise.resolve(editedProvider[`${ref}:${path}`] ?? null);
+      },
+    });
+    expect(r).toEqual({
+      verdict: "manual",
+      summary:
+        "Registry submission's provider companion already exists in the registry — this isn't a debut provider, so it needs a human to review the edit alongside the entry.",
+    });
+    // Both refs must be requested for the SAME call — head/base fetched concurrently via Promise.all, not
+    // sequentially (a base-first sequential fetch would be a wasted round-trip on the common debut case).
+    expect(calls.sort()).toEqual([`base:${PROVIDER}`, `head:${PROVIDER}`]);
+  });
+
+  it("still merges a genuine debut standalone provider (null base) and closes an invalid debut — unchanged by the new base read", async () => {
+    const calls: string[] = [];
+    const okProvider = (path: string, ref: "head" | "base") => {
+      calls.push(`${ref}:${path}`);
+      return Promise.resolve(ref === "head" ? JSON.stringify({ provider: { id: "acme", name: "Acme", website_url: "https://acme.example" } }) : null);
+    };
+    const mergeResult = await runSurfaceReview(METAGRAPHED_LANE_SPEC, { changedFiles: [PROVIDER], loadFile: okProvider });
+    expect(mergeResult?.verdict).toBe("merge");
+    // Both head and base were requested even though base resolved to null (a genuine debut) — the concurrent
+    // fetch always happens; it's the RESULT that's null, not a skipped call.
+    expect(calls.sort()).toEqual([`base:${PROVIDER}`, `head:${PROVIDER}`]);
+
+    const badProvider = { [`head:${PROVIDER}`]: JSON.stringify({ provider: { name: "Acme", website_url: "https://acme.example" } }) };
+    expect((await review([PROVIDER], badProvider))?.verdict).toBe("close");
+  });
+
   it("merges a clean single append of a valid entry", async () => {
     const r = await review([SUBNET], { [`head:${SUBNET}`]: doc([existing, newEntry]), [`base:${SUBNET}`]: doc([existing]) });
     expect(r?.verdict).toBe("merge");
@@ -577,6 +621,22 @@ describe("runSurfaceReview (deterministic + decisive: merge/close, rarely manual
       verdict: "manual",
       summary: "No validator is configured for this registry's provider submissions — routing to review.",
     });
+  });
+
+  it("the no-validator short-circuit for a standalone provider runs BEFORE any fetch — zero loadFile calls", async () => {
+    const calls: string[] = [];
+    const r = await runSurfaceReview(UNVALIDATED_SPEC, {
+      changedFiles: [PROVIDER],
+      loadFile: (path, ref) => {
+        calls.push(`${ref}:${path}`);
+        return Promise.resolve(null);
+      },
+    });
+    expect(r).toEqual({
+      verdict: "manual",
+      summary: "No validator is configured for this registry's provider submissions — routing to review.",
+    });
+    expect(calls).toEqual([]);
   });
 });
 

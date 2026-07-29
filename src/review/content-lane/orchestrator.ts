@@ -331,7 +331,13 @@ export async function runSurfaceReview(spec: RegistryLaneSpec, input: SurfaceRev
     if (!assessProvider) {
       return { verdict: "manual", summary: NO_VALIDATOR_PROVIDER_SUMMARY };
     }
-    const headRaw = await input.loadFile(directFile, "head");
+    const [headRaw, baseRaw] = await Promise.all([input.loadFile(directFile, "head"), input.loadFile(directFile, "base")]);
+    // Same debut-vs-edit distinction the companion path applies below (see the base-presence check further down):
+    // a non-null base means this standalone provider file already exists in the registry, so editing it is a
+    // materially different, more sensitive shape that needs a human, not the automatic debut merge/close flow.
+    if (baseRaw !== null) {
+      return { verdict: "manual", summary: NON_DEBUT_COMPANION_SUMMARY };
+    }
     return fromProvider(assessProvider(safeParseJson(headRaw), input.opts));
   }
   // A companion provider file with no configured validator can never be judged, whatever the entry itself turns

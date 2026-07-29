@@ -14,30 +14,46 @@ its checksum, replay the same scorer over it, and compare what you get against w
 Everything below runs read-only against a corpus export and pure functions from `@loopover/engine`.
 Nothing posts anywhere, and nothing needs a LoopOver API key.
 
-<Callout variant="warn">
-  **Step 1 is not yet runnable by a stranger.** Exporting the corpus reads the deployment's own
-  database — with `--remote` that means the operator's Cloudflare D1, which needs *their* Cloudflare
-  credentials, not a LoopOver key. So today steps 1–3 are reproducible by an operator or by anyone
-  running a self-host deployment against their own data, and step 4 is the part a third party can
-  check unauthenticated. No anonymous corpus download exists yet; until one does, this page marks
-  each step with who can actually run it rather than implying everyone can run all of them.
+<Callout variant="note">
+  **Every step below is runnable by a stranger.** The corpus download needs no credentials of any
+  kind. It is *redacted*, and deliberately so: `targetKey` — the `owner/repo#number` a case came from
+  — is dropped outright rather than hashed, since `scoreBacktest` never reads it and a hash would
+  still be a stable per-PR identifier. Metadata is narrowed to the single `confidence` field the
+  shipped classifier reads, and timestamps are truncated to the day. What you lose is the ability to
+  point at *which* pull request a case was; what you keep is every input the scorer actually
+  consumes. The operator CLI further down is still there for anyone running their own deployment
+  against their own database.
 </Callout>
 
 For the wider contract — every claim, its artifact, and its trust assumption, including the ones you
 cannot check — see [what you can verify](/docs/what-you-can-verify).
 
-## 1. Export the corpus snapshot *(operator / self-host)*
+## 1. Download the corpus *(anyone)*
 
-Every rule's fired/override history exports as a versioned, checksummed JSON snapshot
-([backtest &amp; calibration](/docs/backtest-calibration) explains how that history is recorded).
-`--remote` shells out to `wrangler d1 execute … --remote`, so it reads the deployed database and
-requires that deployment's own Cloudflare credentials:
+One rule's labeled fired/override history, over the same trailing window the fairness report covers,
+as a checksummed JSON document ([backtest &amp; calibration](/docs/backtest-calibration) explains how
+that history is recorded):
+
+```bash
+curl -s "https://api.loopover.ai/v1/public/eval-corpus?ruleId=ai_consensus_defect" > corpus.json
+```
+
+`ruleId` is required — a corpus only means anything for one rule, and the rule ids are the ones the
+[fairness report](/fairness) lists. Each case carries `ruleId`, `outcome`, `label`, day-truncated
+`firedAt`/`decidedAt`, and `metadata.confidence` when the firing recorded one. `caseCount` and
+`truncated` describe the array; `truncated` is `true` only if a rule ever exceeds the published cap,
+and it is reported rather than hidden.
+
+### Operator / self-host: the same corpus, unredacted
+
+Running your own deployment, the CLI reads your own database and keeps the target keys:
 
 ```bash
 npx tsx scripts/backtest-corpus-export.ts --rule-id linked_issue_scope_mismatch --output corpus.json --remote
 ```
 
-On a self-host deployment, point the same CLI at your own Postgres instead:
+`--remote` shells out to `wrangler d1 execute … --remote`, so it needs that deployment's own
+Cloudflare credentials. On a self-host deployment, point the same CLI at your own Postgres instead:
 
 ```bash
 npx tsx scripts/backtest-corpus-export.ts --rule-id linked_issue_scope_mismatch --output corpus.json --pg "$DATABASE_URL"
@@ -50,23 +66,38 @@ covered — re-exporting that rule over the same window reproduces the same chec
 It is one run's freeze point, not a per-rule commitment for every rule on the report, so compare it
 against an export of the rule the run actually covered.
 
-## 2. Verify the checksum *(anyone, given a snapshot)*
+## 2. Verify the checksum *(anyone)*
 
-The manifest is self-verifying: recompute the hash over its own `cases` array and compare it to
-the recorded `checksum`. The canonicalization lives in `scripts/backtest-corpus-export-core.ts`
-(`buildBacktestCorpusManifest`), so the check is one short script:
+The document is self-verifying: recompute the hash over its own `cases` array and compare it to the
+recorded `checksum`. **This step deliberately imports nothing from LoopOver** — canonical JSON is
+eight lines, and a verification that runs our code to check our numbers is not much of a check:
 
 ```bash
-node --experimental-strip-types -e '
-import { readFileSync } from "node:fs";
-import { buildBacktestCorpusManifest } from "./scripts/backtest-corpus-export-core.ts";
-const saved = JSON.parse(readFileSync("corpus.json", "utf8"));
-const recomputed = buildBacktestCorpusManifest(saved.ruleId, saved.cases);
-console.log(recomputed.checksum === saved.checksum ? "checksum OK" : "CHECKSUM MISMATCH");
+node -e '
+const { createHash } = require("node:crypto");
+const canonical = (v) =>
+  Array.isArray(v) ? `[${v.map(canonical).join(",")}]`
+  : v && typeof v === "object" ? `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(",")}}`
+  : JSON.stringify(v);
+const saved = JSON.parse(require("node:fs").readFileSync("corpus.json", "utf8"));
+const recomputed = createHash("sha256").update(canonical(saved.cases)).digest("hex");
+console.log(recomputed === saved.checksum ? "checksum OK" : "CHECKSUM MISMATCH");
 '
 ```
 
-## 3. Replay the scorer *(anyone, given a snapshot)*
+The rule is: recursively sort object keys, drop all insignificant whitespace, leave array order
+alone (order is meaning there), then SHA-256 the UTF-8 bytes. That is the same canonicalization
+every other digest in this system uses, including each EvalScoreRecord's `recordDigest`.
+
+<Callout variant="note">
+  The **operator** export from step 1 uses a different, older canonicalization
+  (`buildBacktestCorpusManifest` in `scripts/backtest-corpus-export-core.ts`: shallow key-sort, then
+  `JSON.stringify` the array). The two checksums are therefore not comparable, by design — each one
+  commits to the artifact it ships with. Verify the downloaded document with the snippet above, and
+  the CLI export with `buildBacktestCorpusManifest`.
+</Callout>
+
+## 3. Replay the scorer *(anyone)*
 
 The published precision comes from the same pure functions any Node script can import:
 `scoreBacktest` replays a classifier over the labeled cases, and `compareBacktestScores` applies

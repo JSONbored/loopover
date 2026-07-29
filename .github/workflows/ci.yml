@@ -44,6 +44,7 @@ jobs:
       mcpCliHarness: ${{ steps.filter.outputs.mcpCliHarness }}
       engine: ${{ steps.filter.outputs.engine }}
       discoveryIndex: ${{ steps.filter.outputs.discoveryIndex }}
+      cocoDev: ${{ steps.filter.outputs.cocoDev }}
       miner: ${{ steps.filter.outputs.miner }}
       minerTestHarness: ${{ steps.filter.outputs.minerTestHarness }}
       rees: ${{ steps.filter.outputs.rees }}
@@ -198,6 +199,14 @@ jobs:
             discoveryIndex:
               - 'packages/discovery-index/**'
               - 'package-lock.json'
+            # coco-dev-versions:check reads only k8s/coco-dev/versions.json and
+            # k8s/coco-dev/kbs/base/kustomization.yaml (plus its own script) -- no src/, test/ or package
+            # path a broader filter covers, and nothing under .github/workflows/** references k8s at all,
+            # so without this dedicated filter a version bump to only one of the two files would re-trigger
+            # no job. Its check step below gates on this output plus the push clause.
+            cocoDev:
+              - 'k8s/coco-dev/**'
+              - 'scripts/check-coco-dev-versions*.ts'
             # 6 of the 7 MCP CLI-cluster test files, and ONLY these 6, are truly self-contained w.r.t. root
             # src/**: verified by direct-import inspection that test/unit/mcp-cli-*.test.ts (5 files) and
             # their shared test/unit/support/mcp-cli-harness.ts import nothing but node:* builtins + vitest,
@@ -400,6 +409,23 @@ jobs:
       - name: Dead source-file check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run dead-source-files:check
+      # Same local-only-until-now gap as the drift checks above: check-import-specifiers.ts (#9221) was wired
+      # into `npm run test:ci` but no CI job ran it, so a relative-import specifier drifting from the per-zone
+      # convention could land with zero CI signal -- which is exactly how #9240 and #9249 reached main after
+      # the guard shipped. The checker scans BUNDLER_ROOTS (src/scripts/test) and NODENEXT_ROOTS (packages),
+      # so it's gated on `backend` (covers src/test/scripts) plus every filter that covers a packages/*
+      # workspace: mcp, engine, miner, discoveryIndex.
+      - name: Import-specifier drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.discoveryIndex == 'true' }}
+        run: npm run import-specifiers:check
+      # Same local-only-until-now gap as the drift checks above: check-coco-dev-versions.ts's own header
+      # claims a version bump made in only one of k8s/coco-dev/versions.json and
+      # k8s/coco-dev/kbs/base/kustomization.yaml "fails CI", but it was wired into `npm run test:ci` only --
+      # no CI job ran it, so the two could silently diverge and ship a KBS deploy whose recorded version
+      # manifest doesn't match. Gated on the dedicated `cocoDev` filter above (nothing else covers k8s/).
+      - name: Coco-dev versions drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.cocoDev == 'true' }}
+        run: npm run coco-dev-versions:check
       # #9499: an agent-regate-pr producer that omits prCreatedAt does not merely lose the oldest-first
       # ordering, it INVERTS it -- the legacy sort fallback places such a job ahead of every real PR. Five of
       # eight producers had drifted that way before this check existed.

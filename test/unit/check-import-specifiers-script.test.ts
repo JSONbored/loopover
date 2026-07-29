@@ -131,4 +131,14 @@ describe("check-import-specifiers script", () => {
     expect(multi.map((v) => v.file)).toEqual(["src/a.ts", "src/z.ts", "src/z.ts"]);
     expect(multi.map((v) => v.specifier)).toEqual(["./c.js", "./a.js", "./b.js"]);
   });
+
+  // Most important regression test in this file: the real tree, scanned with NO injected
+  // listSourceFiles/readFile, must have zero import-specifier violations. Mirrors
+  // check-coverage-bolt-on-filenames-script.test.ts:51 and validate-no-hand-written-js.test.ts:80 -- the
+  // real gate run against the real tree, so a drift fails here too, not only in the dedicated test:ci /
+  // ci.yml step. Until this existed the guard was local-only, and #9240 and #9249 are two separate drifts
+  // that reached main after #9221 shipped the guard because nothing enforced it on the PR that introduced them.
+  it("the real repo has zero import-specifier violations (regression guard for #9240/#9249)", () => {
+    expect(findImportSpecifierViolations()).toEqual([]);
+  });
 });

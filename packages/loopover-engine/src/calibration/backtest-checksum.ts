@@ -23,11 +23,14 @@ import type { BacktestCase } from "./backtest-corpus.js";
 /** Canonicalize one case (sort keys) so property-order differences don't change the checksum -- same technique
  *  as scripts/export-d1-core.ts's canonicalizeRow. */
 function canonicalizeCase(backtestCase: BacktestCase): Record<string, unknown> {
-  /* v8 ignore next -- the comparator's `0` arm is unreachable: Object.entries yields each key once, so the
-   * two keys handed to a sort comparator are never equal. Kept anyway because a comparator that cannot
-   * return 0 is not a total order, and rewriting it to drop the arm would be a worse function for a branch
-   * counter's benefit. Every reachable arm (a < b, a > b) is exercised by the property-order test. */
-  return Object.fromEntries(Object.entries(backtestCase).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  // Sorted with the DEFAULT comparator over the keys, not a hand-written `a < b ? -1 : a > b ? 1 : 0`. For
+  // strings the two give the identical total order -- the pinned digest in this module's two test suites is
+  // what proves the output did not move -- but the hand-written form carries an equality arm that
+  // Object.keys can never trigger, since it yields each key exactly once. An unreachable branch cannot be
+  // tested, so it either sits uncovered or needs an ignore pragma; not writing it beats both. (The pragma
+  // was also flag-dependent: vitest's v8 provider honoured it, the engine package's own coverage did not.)
+  const source = backtestCase as unknown as Record<string, unknown>;
+  return Object.fromEntries(Object.keys(source).sort().map((key) => [key, source[key]]));
 }
 
 /** Deterministic SHA-256 over the canonicalized cases -- mirrors scripts/export-d1-core.ts's checksumRows

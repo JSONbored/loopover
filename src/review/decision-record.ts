@@ -50,7 +50,7 @@ import { errorMessage, nowIso } from "../utils/json";
 import { retentionCutoffIsoForTable } from "../db/retention";
 
 /** Bump when the record's FIELD SET changes meaning — consumers compare records only within a version. */
-export const DECISION_RECORD_SCHEMA_VERSION = "5"; // v5 (#8834): + aiAgreement (inter-run agreement folded with the verbalized confidence); v4 (#9124/#9135): configDigest digests the resolved policy (+ settingsDigest split out), promptDigest digests the actual sent prompt, modelId -> modelIds (real identities), ciState populated, + divertedByHoldout; v3 (#8962): + salvageability {score, factors}; v2 (#8834): + aiConfidence, model/prompt commitments
+export const DECISION_RECORD_SCHEMA_VERSION = "6"; // v6 (#9743): + findingsCount, so "findings raised per PR" is derivable from the LEDGER rather than from the AI review cache (which is keyed for reuse, not anchored, and so cannot back a reproducibility claim); v5 (#8834): + aiAgreement (inter-run agreement folded with the verbalized confidence); v4 (#9124/#9135): configDigest digests the resolved policy (+ settingsDigest split out), promptDigest digests the actual sent prompt, modelId -> modelIds (real identities), ciState populated, + divertedByHoldout; v3 (#8962): + salvageability {score, factors}; v2 (#8834): + aiConfidence, model/prompt commitments
 
 /**
  * Canonical JSON: recursively key-sorted, no insignificant whitespace — the ONE serialization every digest
@@ -146,13 +146,19 @@ export type DecisionRecord = {
    *  records disagree on outcome. false for every decision the holdout never touched, including every
    *  decision recorded before #9135 shipped (via `buildDecisionRecord`'s normalization below). */
   divertedByHoldout: boolean;
+  /** #9743: how many findings this evaluation actually raised (blockers + warnings). Recorded HERE so the
+   *  per-author-class parity rollups are reproducible from the anchored ledger alone -- the AI review cache
+   *  also holds findings, but it is keyed for reuse rather than anchored, so counting from it would make a
+   *  published fairness number unverifiable. Null for a caller that has no findings to report (a policy
+   *  close, an update_branch), which is distinct from a genuine zero. */
+  findingsCount: number | null;
   decidedAt: string;
 };
 
 /** Assemble the record and its own content digest. PURE given pre-computed digests. Normalizes the
  *  optional-shaped caller fields (undefined -> null) HERE so call sites carry no fallback arms of their own. */
 export async function buildDecisionRecord(
-  input: Omit<DecisionRecord, "schemaVersion" | "decidedAt" | "gatePack" | "ciState" | "baseSha" | "aiConfidence" | "aiAgreement" | "salvageability" | "settingsDigest" | "divertedByHoldout"> & {
+  input: Omit<DecisionRecord, "schemaVersion" | "decidedAt" | "gatePack" | "ciState" | "baseSha" | "aiConfidence" | "aiAgreement" | "salvageability" | "settingsDigest" | "divertedByHoldout" | "findingsCount"> & {
     decidedAt?: string;
     gatePack?: string | null | undefined;
     ciState?: string | null | undefined;
@@ -162,6 +168,7 @@ export async function buildDecisionRecord(
     salvageability?: { score: number; factors: string[] } | null | undefined;
     settingsDigest?: string | null | undefined;
     divertedByHoldout?: boolean | undefined;
+    findingsCount?: number | null | undefined;
   },
 ): Promise<{ record: DecisionRecord; recordDigest: string }> {
   const record: DecisionRecord = {
@@ -176,6 +183,11 @@ export async function buildDecisionRecord(
     salvageability: input.salvageability ?? null,
     settingsDigest: input.settingsDigest ?? null,
     divertedByHoldout: input.divertedByHoldout ?? false,
+    // Non-negative integer or null; a fractional or negative count is a caller bug, not a fact to publish.
+    findingsCount:
+      typeof input.findingsCount === "number" && Number.isInteger(input.findingsCount) && input.findingsCount >= 0
+        ? input.findingsCount
+        : null,
   };
   return { record, recordDigest: await contentDigest(record) };
 }
@@ -328,10 +340,10 @@ export async function persistDecisionRecord(
       const id = priorCount === 0 ? baseId : `${baseId}:rev${priorCount + 1}`;
       try {
         await env.DB.prepare(
-          `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at, reevaluation_reason, supersedes_record_id, reevaluation_actor)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at, reevaluation_reason, supersedes_record_id, reevaluation_actor, findings_count)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-          .bind(id, record.repoFullName.slice(0, 200), record.pullNumber, record.headSha, record.action, record.reasonCode.slice(0, 200), recordDigest, canonicalJson(record), record.decidedAt, reevaluated?.reason ?? null, reevaluated?.supersedesRecordId ?? null, reevaluated?.actor ?? null)
+          .bind(id, record.repoFullName.slice(0, 200), record.pullNumber, record.headSha, record.action, record.reasonCode.slice(0, 200), recordDigest, canonicalJson(record), record.decidedAt, reevaluated?.reason ?? null, reevaluated?.supersedesRecordId ?? null, reevaluated?.actor ?? null, record.findingsCount ?? null)
           .run();
       } catch (error) {
         if (attempt >= attempts) throw error;

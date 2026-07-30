@@ -130,6 +130,33 @@ this site, so fetch it absolutely — a bare `/v1/public/stats` resolves against
 curl -s "https://api.loopover.ai/v1/public/stats" | jq '.rulePrecision'
 ```
 
+### Re-evaluation counts and author-class parity
+
+The same endpoint publishes `reviewParity` (#9743): how often a verdict was re-evaluated and why, and
+whether a pull request faced the same scrutiny regardless of who wrote it.
+
+```bash
+curl -s "https://api.loopover.ai/v1/public/stats" | jq '.reviewParity'
+```
+
+Every figure in that block is computed from `decision_records` alone — the anchored ledger — so you can
+recompute all of it from an export without trusting this endpoint. The definitions are published beside
+the code that implements them, in `src/review/review-parity-rollups.ts`. The three that are easy to get
+wrong, and that are therefore stated explicitly:
+
+- **`verdicts` counts evaluations, not pull requests.** A repeat evaluation of the same head SHA is its
+  own ledger row, which is exactly what `reviewsPerPr` divides out.
+- **`findingsPerPr` excludes verdicts that recorded no finding count**, rather than averaging them in as
+  zero. `findingsBasis` beside it is the coverage the mean was earned at — a mean over 3 of 400 verdicts
+  is not the same claim as a mean over 400.
+- **Author class is GitHub's own `author_association`**, not a list this project maintains. A PR whose
+  association was never recorded is reported as `unknown` in its own bucket rather than folded into
+  either side, because folding it would bias the exact comparison being published.
+
+A rate over an empty window is `null`, never `0` — "nothing was held" and "nothing was measured" are
+different claims, and the fairness report renders the second as *measured zero* with its window rather
+than as a reassuring number.
+
 The same per-rule numbers are also published as digest-committed
 [EvalScoreRecords](/docs/what-you-can-verify), each independently re-derivable without trusting the
 transport — recompute `recordDigest` over the record's own remaining fields and compare:

@@ -13,6 +13,7 @@ import { isScreenshotsEnabled } from "../review/visual-wire";
 import { buildFindingTaxonomyDocument } from "../review/finding-taxonomy";
 import { buildEnrichmentAnalyzersTaxonomyDocument } from "../review/enrichment-analyzers-taxonomy";
 import { deliveryIdFor } from "../queue/delivery-id";
+import { loadReviewParityRollups } from "../review/review-parity-rollups";
 import {
   GITHUB_OAUTH_STATE_COOKIE,
   authenticateInternalToken,
@@ -671,7 +672,7 @@ export function createApp() {
     const publicStatsManifestOverride = await resolvePublicStatsManifestOverride(c.env);
     if (!isPublicStatsEnabled(c.env, publicStatsManifestOverride)) return c.json({ error: "not_found" }, 404);
     try {
-      const [stats, accuracyTrend, fleetAccuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision] = await Promise.all([
+      const [stats, accuracyTrend, fleetAccuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision, reviewParity] = await Promise.all([
         getPublicStats(c.env),
         loadPublicAccuracyTrend(c.env),
         // #9676: the fleet-population sibling of the series above. Deliberately a SECOND series rather than a
@@ -683,9 +684,13 @@ export function createApp() {
         // #8230: measured per-rule precision + the reproducibility freeze point. Same flag, same cache,
         // same one-surface posture as the sibling trends.
         loadPublicRulePrecision(c.env),
+        // #9743: re-evaluation counts by declared reason, and the per-author-class parity rollups. Computed
+        // from `decision_records` alone so an outsider holding the ledger export can recompute every figure
+        // -- the definitions live beside the code in review-parity-rollups.ts.
+        loadReviewParityRollups(c.env),
       ]);
       c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-      return c.json({ ...stats, accuracyTrend, fleetAccuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision });
+      return c.json({ ...stats, accuracyTrend, fleetAccuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision, reviewParity });
     } catch {
       return c.json({ error: "public_stats_unavailable" }, 503);
     }

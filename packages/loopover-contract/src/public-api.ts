@@ -30,6 +30,50 @@ export const PublicRulePrecisionSchema = z.object({
 
 export type PublicRulePrecision = z.infer<typeof PublicRulePrecisionSchema>;
 
+/**
+ * Re-evaluation counts and per-author-class review-parity rollups (#9743).
+ *
+ * Every figure is computed from `decision_records` alone -- the anchored ledger -- so a reader can
+ * recompute all of it from an export. The definitions live beside the implementation in
+ * src/review/review-parity-rollups.ts and are restated in the verifier walkthrough; the three that are easy
+ * to misread are called out on the fields themselves below.
+ */
+export const ParityRollupSchema = z.object({
+  authorClass: z.enum(["maintainer", "contributor", "unknown"]),
+  /** EVALUATIONS, not pull requests: a repeat evaluation of one head SHA is its own ledger row. */
+  verdicts: z.number(),
+  pullRequests: z.number(),
+  reviewsPerPr: z.number().nullable(),
+  /** Mean over verdicts that RECORDED a count; verdicts with none are excluded rather than averaged in
+   *  as zero. Read it together with `findingsBasis`. */
+  findingsPerPr: z.number().nullable(),
+  /** The coverage `findingsPerPr` was earned at -- a mean over 3 of 400 verdicts is not the same claim
+   *  as a mean over 400. */
+  findingsBasis: z.number(),
+  closeRate: z.number().nullable(),
+  holdRate: z.number().nullable(),
+});
+
+export const ReviewParitySchema = z.object({
+  windowStart: z.string(),
+  windowEnd: z.string(),
+  verdicts: z.number(),
+  reevaluations: z.number(),
+  /** Null when the window holds no verdicts -- an undefined ratio, never a reassuring 0%. */
+  reevaluationRatePct: z.number().nullable(),
+  byReason: z.array(
+    z.object({
+      reason: z.string(),
+      count: z.number(),
+      /** Share of ALL verdicts, not of re-evaluations: the latter always sums to 100% and says nothing
+       *  about how often re-evaluation happens at all. */
+      shareOfVerdictsPct: z.number().nullable(),
+    }),
+  ),
+  byAuthorClass: z.array(ParityRollupSchema),
+  byProject: z.array(z.object({ project: z.string(), byAuthorClass: z.array(ParityRollupSchema) })),
+});
+
 export const PublicStatsSchema = z.object({
   generatedAt: z.string(),
   updatedAt: z.string(),
@@ -49,6 +93,7 @@ export const PublicStatsSchema = z.object({
   }),
   weekly: z.object({ reviewed: z.number(), merged: z.number() }),
   rulePrecision: PublicRulePrecisionSchema,
+  reviewParity: ReviewParitySchema,
   byProject: z.array(
     z.object({
       project: z.string(),
@@ -140,3 +185,5 @@ export const PublicStatsSchema = z.object({
 });
 
 export type PublicStats = z.infer<typeof PublicStatsSchema>;
+export type ReviewParity = z.infer<typeof ReviewParitySchema>;
+export type ParityRollup = z.infer<typeof ParityRollupSchema>;

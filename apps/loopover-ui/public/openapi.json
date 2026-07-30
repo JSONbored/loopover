@@ -828,6 +828,177 @@
                 "accuracyPct"
               ]
             }
+          },
+          "reviewParity": {
+            "type": "object",
+            "properties": {
+              "windowStart": {
+                "type": "string"
+              },
+              "windowEnd": {
+                "type": "string"
+              },
+              "verdicts": {
+                "type": "number"
+              },
+              "reevaluations": {
+                "type": "number"
+              },
+              "reevaluationRatePct": {
+                "type": "number",
+                "nullable": true
+              },
+              "byReason": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "reason": {
+                      "type": "string"
+                    },
+                    "count": {
+                      "type": "number"
+                    },
+                    "shareOfVerdictsPct": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "reason",
+                    "count",
+                    "shareOfVerdictsPct"
+                  ]
+                }
+              },
+              "byAuthorClass": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "authorClass": {
+                      "type": "string",
+                      "enum": [
+                        "maintainer",
+                        "contributor",
+                        "unknown"
+                      ]
+                    },
+                    "verdicts": {
+                      "type": "number"
+                    },
+                    "pullRequests": {
+                      "type": "number"
+                    },
+                    "reviewsPerPr": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "findingsPerPr": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "findingsBasis": {
+                      "type": "number"
+                    },
+                    "closeRate": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "holdRate": {
+                      "type": "number",
+                      "nullable": true
+                    }
+                  },
+                  "required": [
+                    "authorClass",
+                    "verdicts",
+                    "pullRequests",
+                    "reviewsPerPr",
+                    "findingsPerPr",
+                    "findingsBasis",
+                    "closeRate",
+                    "holdRate"
+                  ]
+                }
+              },
+              "byProject": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "project": {
+                      "type": "string"
+                    },
+                    "byAuthorClass": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "authorClass": {
+                            "type": "string",
+                            "enum": [
+                              "maintainer",
+                              "contributor",
+                              "unknown"
+                            ]
+                          },
+                          "verdicts": {
+                            "type": "number"
+                          },
+                          "pullRequests": {
+                            "type": "number"
+                          },
+                          "reviewsPerPr": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "findingsPerPr": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "findingsBasis": {
+                            "type": "number"
+                          },
+                          "closeRate": {
+                            "type": "number",
+                            "nullable": true
+                          },
+                          "holdRate": {
+                            "type": "number",
+                            "nullable": true
+                          }
+                        },
+                        "required": [
+                          "authorClass",
+                          "verdicts",
+                          "pullRequests",
+                          "reviewsPerPr",
+                          "findingsPerPr",
+                          "findingsBasis",
+                          "closeRate",
+                          "holdRate"
+                        ]
+                      }
+                    }
+                  },
+                  "required": [
+                    "project",
+                    "byAuthorClass"
+                  ]
+                }
+              }
+            },
+            "required": [
+              "windowStart",
+              "windowEnd",
+              "verdicts",
+              "reevaluations",
+              "reevaluationRatePct",
+              "byReason",
+              "byAuthorClass",
+              "byProject"
+            ]
           }
         },
         "required": [
@@ -836,6 +1007,7 @@
           "totals",
           "weekly",
           "rulePrecision",
+          "reviewParity",
           "byProject",
           "fleetAccuracy",
           "accuracyTrend",

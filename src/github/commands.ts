@@ -25,6 +25,7 @@ import {
 } from "../signals/engine";
 import { isFailingCheckSummary } from "../signals/check-summary";
 import { buildMaintainerNoiseReport, type MaintainerNoiseReport } from "../signals/reward-risk";
+import { MAINTAINER_AUTHOR_ASSOCIATIONS } from "./author-association";
 
 const PUBLIC_MENTION_COMMAND_CATALOG = [
   { id: "help", title: "LoopOver command help", description: "Show public-safe @loopover command help." },
@@ -175,7 +176,7 @@ export type AgentCommandFeedbackContext = {
 const COMMANDS = new Set<LoopOverMentionCommandName>(LOOPOVER_MENTION_COMMAND_CATALOG.map((command) => command.id));
 const ACTION_COMMANDS = new Set<LoopOverActionCommandName>(LOOPOVER_ACTION_COMMANDS);
 const MAINTAINER_QUEUE_DIGEST_COMMANDS = new Set<MaintainerQueueDigestCommandName>(MAINTAINER_QUEUE_DIGEST_COMMAND_CATALOG.map((command) => command.id));
-const MAINTAINER_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+const MAINTAINER_ASSOCIATIONS = new Set(MAINTAINER_AUTHOR_ASSOCIATIONS);
 const AGENT_COMMAND_FEEDBACK_MARKER = "gittensory-agent-command-answer";
 
 const COMMAND_TITLES = Object.fromEntries(LOOPOVER_MENTION_COMMAND_CATALOG.map((command) => [command.id, command.title])) as Record<LoopOverMentionCommandName, string>;

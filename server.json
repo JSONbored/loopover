@@ -6,7 +6,7 @@
     "url": "https://github.com/JSONbored/loopover",
     "source": "github"
   },
-  "version": "3.15.2",
+  "version": "3.17.0",
   "remotes": [
     {
       "type": "streamable-http",
@@ -17,7 +17,7 @@
     {
       "registry_type": "npm",
       "identifier": "@loopover/mcp",
-      "version": "3.15.2",
+      "version": "3.17.0",
       "transport": {
         "type": "stdio"
       }

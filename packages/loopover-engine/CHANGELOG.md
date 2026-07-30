@@ -1,5 +1,37 @@
 # Changelog
 
+## [3.17.0](https://github.com/JSONbored/loopover/compare/engine-v3.16.1...engine-v3.17.0) (2026-07-30)
+
+
+### Features
+
+* **benchmark:** anti-overfit controls — repo-level seeded split, caps, rotation ([#9263](https://github.com/JSONbored/loopover/issues/9263)) ([#9600](https://github.com/JSONbored/loopover/issues/9600)) ([9942512](https://github.com/JSONbored/loopover/commit/9942512579e77c4d4738eab933db50443a60b59e))
+* **benchmark:** maintainer action-space schema and proposal validator ([#9260](https://github.com/JSONbored/loopover/issues/9260)) ([#9595](https://github.com/JSONbored/loopover/issues/9595)) ([b543e1e](https://github.com/JSONbored/loopover/commit/b543e1e843c714f833bca08d1dd3367277f171be))
+* **benchmark:** multi-class proposal scorer on the shared primitives ([#9262](https://github.com/JSONbored/loopover/issues/9262)) ([#9599](https://github.com/JSONbored/loopover/issues/9599)) ([534dfd5](https://github.com/JSONbored/loopover/commit/534dfd5ed9e1d30dd88f0df1edfb44f84dacfb9c))
+* **benchmark:** reversal-aware realized-history ground truth ([#9261](https://github.com/JSONbored/loopover/issues/9261)) ([#9598](https://github.com/JSONbored/loopover/issues/9598)) ([1819298](https://github.com/JSONbored/loopover/commit/181929802929e3ac171ddd11ec6045034e00de50))
+* **benchmark:** untrusted candidate sandbox policy and fail-closed run verdict ([#9264](https://github.com/JSONbored/loopover/issues/9264)) ([#9606](https://github.com/JSONbored/loopover/issues/9606)) ([3200abc](https://github.com/JSONbored/loopover/commit/3200abc89a854f50aff0ea72cbe11b38d4f7afb7))
+* **gate:** choose provider, model, effort and self-consistency runs — per repo, and escalated on guarded paths ([#9821](https://github.com/JSONbored/loopover/issues/9821)) ([a65655c](https://github.com/JSONbored/loopover/commit/a65655c9e289175dadab0112b8ffa2d821963a3d))
+* **gate:** gate.ignoredCheckRuns — exclude a third-party check from CI resolution entirely ([#9813](https://github.com/JSONbored/loopover/issues/9813)) ([84c2462](https://github.com/JSONbored/loopover/commit/84c2462357ca109c5f3f0eea28c1c45d36e03378))
+* **proof:** public per-repo proof summary, endpoint and README badge ([#9569](https://github.com/JSONbored/loopover/issues/9569)) ([#9608](https://github.com/JSONbored/loopover/issues/9608)) ([7ffb51e](https://github.com/JSONbored/loopover/commit/7ffb51eb4a437a8bb1c352efa5b19a981c1d230b))
+
+
+### Fixes
+
+* **ci:** normalize committed CRLF to LF and name the failure for what it is ([#9799](https://github.com/JSONbored/loopover/issues/9799)) ([ee98373](https://github.com/JSONbored/loopover/commit/ee98373cd29d368fbf4f1774bcec76f544597cf9))
+* **engine:** accept the { kind: 'existing', repo } IdeaTarget shape in validateIdeaSubmission ([#9634](https://github.com/JSONbored/loopover/issues/9634)) ([c086363](https://github.com/JSONbored/loopover/commit/c086363b791a99779eebe8024a742e83b7ca5152))
+* **engine:** drop opportunity-metadata's blanket v8-ignore directives and branch-cover the scoring logic they hid ([#9635](https://github.com/JSONbored/loopover/issues/9635)) ([61ab43e](https://github.com/JSONbored/loopover/commit/61ab43ef0e86c19f0c90fe9a40e31fdcb6427dec)), closes [#9616](https://github.com/JSONbored/loopover/issues/9616)
+* **engine:** guard benchmark ground-truth against invalid window and duplicate roster ([#9882](https://github.com/JSONbored/loopover/issues/9882)) ([300c381](https://github.com/JSONbored/loopover/commit/300c38144b2dc3c95441fc303f96d231e2f0fc90)), closes [#9644](https://github.com/JSONbored/loopover/issues/9644)
+* **engine:** isolate getTenantConfig reads and normalize tenant config ([#9614](https://github.com/JSONbored/loopover/issues/9614)) ([#9627](https://github.com/JSONbored/loopover/issues/9627)) ([676ba3c](https://github.com/JSONbored/loopover/commit/676ba3c184bf2acf1fc9cd8bb0a08fc428286f4c))
+* **engine:** keep renderRepoMap's output within maxOutputChars including the marker ([#9633](https://github.com/JSONbored/loopover/issues/9633)) ([d997bac](https://github.com/JSONbored/loopover/commit/d997baca02de15de83083c272dffc93acd420405))
+* **engine:** share governor-ledger's repo-segment guard with the three normalizers that skipped it ([#9625](https://github.com/JSONbored/loopover/issues/9625)) ([8e3e4f5](https://github.com/JSONbored/loopover/commit/8e3e4f5d710c19287afd01e1f530c891b07e000d)), closes [#9610](https://github.com/JSONbored/loopover/issues/9610)
+* **engine:** surface discovery-index contract-version skew and actually send the version on the query wire ([#9631](https://github.com/JSONbored/loopover/issues/9631)) ([80827df](https://github.com/JSONbored/loopover/commit/80827dfed397bc0e4a657dfb4e71414125975601)), closes [#9615](https://github.com/JSONbored/loopover/issues/9615)
+* **engine:** validate the repo and PR number behind buildResultsPayload's customer link ([#9611](https://github.com/JSONbored/loopover/issues/9611)) ([#9632](https://github.com/JSONbored/loopover/issues/9632)) ([5aa94b7](https://github.com/JSONbored/loopover/commit/5aa94b771b6bc20a943157c1c15b26b158a0a3af))
+* **eval:** commit each published score to the corpus a reader can download ([#9811](https://github.com/JSONbored/loopover/issues/9811)) ([bcdd2f8](https://github.com/JSONbored/loopover/commit/bcdd2f8285b21fa5ad4c52e20efa44f16e77947f)), closes [#9805](https://github.com/JSONbored/loopover/issues/9805)
+* **eval:** stamp the in-Worker threshold backtest with its corpus freeze point ([#9804](https://github.com/JSONbored/loopover/issues/9804)) ([2755994](https://github.com/JSONbored/loopover/commit/2755994cdf3b1d0887fffe6d7d7bc354b6093e2a))
+* **openapi:** declare the predictedGate/dataQuality fields branch-analysis actually returns ([#9531](https://github.com/JSONbored/loopover/issues/9531)) ([#9587](https://github.com/JSONbored/loopover/issues/9587)) ([a858cbc](https://github.com/JSONbored/loopover/commit/a858cbc31beb99644f6c3c2995a4f80ed583eea9))
+* **routing:** impose a total order on the reviewer-vote read so latest-vote-wins is deterministic ([#9885](https://github.com/JSONbored/loopover/issues/9885)) ([e3247ed](https://github.com/JSONbored/loopover/commit/e3247ed8d19305f2c3eee7a79195639f4d47cce7)), closes [#9638](https://github.com/JSONbored/loopover/issues/9638)
+* **signals:** unify the test-evidence code-path predicate as isTestableCodePath ([#9906](https://github.com/JSONbored/loopover/issues/9906)) ([cb167ba](https://github.com/JSONbored/loopover/commit/cb167ba3cb878a6e9cf2e37507e1c06d1e7cc641)), closes [#9696](https://github.com/JSONbored/loopover/issues/9696)
+
 ## [3.15.2](https://github.com/JSONbored/loopover/compare/engine-v3.15.1...engine-v3.15.2) (2026-07-27)
 
 

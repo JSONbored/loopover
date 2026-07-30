@@ -468,6 +468,22 @@ describe("ledger-anchor configuration preflight (#9769)", () => {
     expect(waiverProblems({ LOOPOVER_LEDGER_CONTENT_WAIVER: "5-257:pre-9123 record overwrite" })).toEqual([]);
   });
 
+  // #9933: same class again for the sibling UNCHAINED waiver -- a value that parses to nothing is worse than
+  // an unset one, because the operator believes the orphans are declared.
+  const unchainedProblems = (env: Record<string, string | undefined>) =>
+    preflightEnv({ ...base, ...env }).problems.filter((p: SelfHostPreflightProblem) => p.var === "LOOPOVER_LEDGER_UNCHAINED_WAIVER");
+
+  it("flags a set-but-unparseable unchained waiver, which would otherwise waive nothing in silence", () => {
+    const problems = unchainedProblems({ LOOPOVER_LEDGER_UNCHAINED_WAIVER: "2026-07-04T00:00:00Z..2026-07-25T00:00:00Z|231" }); // no reason
+    expect(problems).toHaveLength(1);
+    expect(problems[0]!.message).toContain("NOTHING is waived");
+  });
+
+  it("stays silent for an unset unchained waiver (opt-in) and for a well-formed one", () => {
+    expect(unchainedProblems({})).toEqual([]);
+    expect(unchainedProblems({ LOOPOVER_LEDGER_UNCHAINED_WAIVER: "2026-07-04T00:00:00Z..2026-07-25T00:00:00Z|231|historical failed appends" })).toEqual([]);
+  });
+
   it("INVARIANT: anchoring is opt-in — configuring none of it is never a problem", () => {
     expect(preflightEnv(base)).toEqual({ ok: true, problems: [] });
   });

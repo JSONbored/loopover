@@ -5,6 +5,7 @@ import {
   contentDigest,
   DECISION_RECORD_SCHEMA_VERSION,
   parseLedgerContentWaiver,
+  parseLedgerUnchainedWaiver,
   persistDecisionRecord,
   deriveReevaluationReason,
   REEVALUATION_REASON_BY_ORIGIN,
@@ -396,7 +397,7 @@ describe("decision ledger (#8837)", () => {
   it("verifying a completely empty ledger returns ok:true with a zero tip, and skips the tail-truncation check (nothing to anchor against yet)", async () => {
     const env = createTestEnv();
     const verified = await verifyDecisionLedger(env);
-    expect(verified).toEqual({ ok: true, checked: 0, nextAfterSeq: null, tipSeq: 0, tipHash: LEDGER_GENESIS_HASH, totalCount: 0, prunedRecords: 0, contentMismatches: 0, waivedContentMismatches: 0, contentWaiver: null });
+    expect(verified).toEqual({ ok: true, checked: 0, nextAfterSeq: null, tipSeq: 0, tipHash: LEDGER_GENESIS_HASH, totalCount: 0, prunedRecords: 0, contentMismatches: 0, waivedContentMismatches: 0, contentWaiver: null, waivedUnchainedRecords: 0, unchainedWaiver: null });
   });
 
   it("TAIL TRUNCATION now breaks verify instead of passing clean (#9122): dropping the newest ledger rows leaves an orphaned decision_records tail", async () => {
@@ -651,6 +652,98 @@ describe("verifier vs absence (#9474 pruned records, #9489 grace + interior orph
     expect(verified).toMatchObject({ ok: true, checked: 2, prunedRecords: 0 });
     expect(verified.break).toBeUndefined();
   });
+    const orphanAt = async (env: Env, id: string, at: Date) =>
+      env.DB.prepare(
+        "INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at) SELECT ?, repo_full_name, 99, head_sha, action, reason_code, record_digest, record_json, ? FROM decision_records LIMIT 1",
+      )
+        .bind(id, at.toISOString())
+        .run();
+    // A window that brackets daysAgo(2) but excludes daysAgo(1), so "inside" vs "outside" is unambiguous.
+    const window = (max: number) => `${daysAgo(3).toISOString()}..${daysAgo(1.5).toISOString()}|${max}|historical failed appends`;
+
+    it("REGRESSION: a declared interior orphan no longer fails the chain, and is disclosed rather than hidden", async () => {
+      // Without this the production ORB sat permanently ok:false on 231 orphans from an already-fixed bug --
+      // and a permanently-red integrity endpoint cannot report a NEW failed append, which is the whole point.
+      const env = createTestEnv({ LOOPOVER_LEDGER_UNCHAINED_WAIVER: window(5) });
+      await persistAt(env, 1, daysAgo(3));
+      await persistAt(env, 3, daysAgo(1));
+      await orphanAt(env, "declared-orphan", daysAgo(2));
+
+      const verified = await verifyDecisionLedger(env);
+
+      expect(verified.ok).toBe(true);
+      expect(verified.break).toBeUndefined();
+      expect(verified.waivedUnchainedRecords).toBe(1);
+      expect(verified.unchainedWaiver).toMatchObject({ maxRecords: 5, reason: "historical failed appends" });
+    });
+
+    it("INVARIANT: one more orphan than declared makes the WHOLE waiver stop applying -- new damage cannot hide behind an old declaration", async () => {
+      // The property that makes a time-bounded waiver as tight as a seq-bounded one. Declaring 1 and finding 2
+      // must go red, not waive one and quietly report the other.
+      const env = createTestEnv({ LOOPOVER_LEDGER_UNCHAINED_WAIVER: window(1) });
+      await persistAt(env, 1, daysAgo(3));
+      await persistAt(env, 3, daysAgo(1));
+      await orphanAt(env, "declared-orphan", daysAgo(2));
+      await orphanAt(env, "undeclared-orphan", daysAgo(2.5));
+
+      const verified = await verifyDecisionLedger(env);
+
+      expect(verified.ok).toBe(false);
+      expect(verified.waivedUnchainedRecords).toBe(0);
+      expect(verified.break).toMatchObject({ kind: "unchained_record" });
+    });
+
+    it("INVARIANT: an orphan OUTSIDE the declared window is still reported", async () => {
+      const env = createTestEnv({ LOOPOVER_LEDGER_UNCHAINED_WAIVER: window(50) });
+      await persistAt(env, 1, daysAgo(5));
+      await persistAt(env, 3, daysAgo(0.5));
+      await orphanAt(env, "outside-orphan", daysAgo(1));
+
+      const verified = await verifyDecisionLedger(env);
+
+      expect(verified.ok).toBe(false);
+      expect(verified.break).toEqual({ kind: "unchained_record", atSeq: 2, recordId: "outside-orphan" });
+    });
+
+    it("INVARIANT: a truncated TAIL is never waivable, even squarely inside the window", async () => {
+      // short_tail is the attack signature itself -- a record newer than the verified tip with no chain entry.
+      // The waiver may only ever excuse INTERIOR orphans.
+      const env = createTestEnv({ LOOPOVER_LEDGER_UNCHAINED_WAIVER: window(50) });
+      await persistAt(env, 1, daysAgo(3));
+      await orphanAt(env, "tail-orphan", daysAgo(2));
+
+      const verified = await verifyDecisionLedger(env);
+
+      expect(verified.ok).toBe(false);
+      expect(verified.break).toMatchObject({ kind: "short_tail" });
+    });
+
+    it("INVARIANT: no waiver configured is byte-identical to before -- the mechanism is inert unless declared", async () => {
+      const env = createTestEnv();
+      await persistAt(env, 1, daysAgo(3));
+      await persistAt(env, 3, daysAgo(1));
+      await orphanAt(env, "interior-orphan", daysAgo(2));
+
+      const verified = await verifyDecisionLedger(env);
+
+      expect(verified.ok).toBe(false);
+      expect(verified.waivedUnchainedRecords).toBe(0);
+      expect(verified.unchainedWaiver).toBeNull();
+      expect(verified.break).toEqual({ kind: "unchained_record", atSeq: 2, recordId: "interior-orphan" });
+    });
+
+    it("INVARIANT: a MALFORMED waiver waives nothing -- fail closed, never fail open", async () => {
+      const env = createTestEnv({ LOOPOVER_LEDGER_UNCHAINED_WAIVER: "garbage" });
+      await persistAt(env, 1, daysAgo(3));
+      await persistAt(env, 3, daysAgo(1));
+      await orphanAt(env, "interior-orphan", daysAgo(2));
+
+      const verified = await verifyDecisionLedger(env);
+
+      expect(verified.ok).toBe(false);
+      expect(verified.unchainedWaiver).toBeNull();
+    });
+
 });
 
 // #9850: a content mismatch used to ABORT verification, so one unreconcilable row was a denial-of-
@@ -757,6 +850,56 @@ describe("parseLedgerContentWaiver (#9850)", () => {
   it("fails CLOSED on anything malformed, so a typo can never widen an exclusion", () => {
     for (const bad of [undefined, "", "   ", "all:r", "5..257:r", "1e3-2e3:r", "-5--1:r"]) {
       expect(parseLedgerContentWaiver(bad)).toBeNull();
+    }
+  });
+});
+
+describe("parseLedgerUnchainedWaiver (#9933)", () => {
+  const ok = "2026-07-04T00:00:00Z..2026-07-25T00:00:00Z|231|historical failed appends, fixed";
+
+  it("parses an absolute range, a declared count, and a reason", () => {
+    expect(parseLedgerUnchainedWaiver(ok)).toEqual({
+      fromIso: "2026-07-04T00:00:00.000Z",
+      toIso: "2026-07-25T00:00:00.000Z",
+      maxRecords: 231,
+      reason: "historical failed appends, fixed",
+    });
+  });
+
+  it("keeps a reason containing pipes intact -- only the first two fields are structural", () => {
+    expect(parseLedgerUnchainedWaiver("2026-07-04T00:00:00Z..2026-07-25T00:00:00Z|5|a|b|c")).toMatchObject({ reason: "a|b|c" });
+  });
+
+  it("REQUIRES a reason -- you cannot waive silently", () => {
+    for (const bad of ["2026-07-04T00:00:00Z..2026-07-25T00:00:00Z|5|", "2026-07-04T00:00:00Z..2026-07-25T00:00:00Z|5|   "]) {
+      expect(parseLedgerUnchainedWaiver(bad)).toBeNull();
+    }
+  });
+
+  it("REQUIRES both bounds and a count -- an open-ended waiver is a blanket exemption wearing a range's clothes", () => {
+    for (const bad of [
+      "2026-07-04T00:00:00Z|5|r",
+      "..2026-07-25T00:00:00Z|5|r",
+      "2026-07-04T00:00:00Z..|5|r",
+      "2026-07-04T00:00:00Z..2026-07-25T00:00:00Z|r",
+    ]) {
+      expect(parseLedgerUnchainedWaiver(bad)).toBeNull();
+    }
+  });
+
+  it("rejects a descending range, which is a mistake rather than an intent", () => {
+    expect(parseLedgerUnchainedWaiver("2026-07-25T00:00:00Z..2026-07-04T00:00:00Z|5|r")).toBeNull();
+  });
+
+  it("rejects a non-positive or non-integer count -- 0 waives nothing while looking like a declaration", () => {
+    for (const bad of ["...|0|r", "...|-3|r", "...|2.5|r", "...|12abc|r", "...|many|r"]) {
+      expect(parseLedgerUnchainedWaiver(bad.replace("...", "2026-07-04T00:00:00Z..2026-07-25T00:00:00Z"))).toBeNull();
+    }
+  });
+
+  it("fails CLOSED on anything malformed, so a typo can never widen an exclusion", () => {
+    for (const bad of [undefined, "", "   ", "all|5|r", "not-a-date..also-not|5|r", "2026-07-04T00:00:00Z-2026-07-25T00:00:00Z|5|r"]) {
+      expect(parseLedgerUnchainedWaiver(bad)).toBeNull();
     }
   });
 });

@@ -620,6 +620,65 @@ export function parseLedgerContentWaiver(raw: string | undefined): LedgerContent
   return { fromSeq, toSeq, reason };
 }
 
+export type LedgerUnchainedWaiver = { fromIso: string; toIso: string; maxRecords: number; reason: string };
+
+/**
+ * PURE. Parse `LOOPOVER_LEDGER_UNCHAINED_WAIVER`, format `<fromIso>..<toIso>|<maxRecords>|<reason>`.
+ *
+ * WHY A SECOND WAIVER (#9933). `unchained_record` means a decision_records row exists that no ledger row ever
+ * vouched for -- the failed-append signature. The content waiver above deliberately cannot cover it (property
+ * 4: chain findings are never waivable), which is right for tampering but leaves a bounded, already-fixed
+ * historical failure permanently red. Measured on the production ORB: 231 orphans between 2026-07-04 and
+ * 2026-07-24 and NONE since, against an otherwise structurally perfect chain. A permanently-red integrity
+ * endpoint is the worst possible signal, because "red" stops distinguishing old damage from a real failed
+ * append tomorrow -- the precise thing this check exists to catch.
+ *
+ * WHY TIME-BOUNDED, given parseLedgerContentWaiver's property 1 says NOT to be. That rule is about boundaries
+ * that MOVE: a relative window ("the last 30 days") silently swallows new damage as the clock advances. Both
+ * bounds here are ABSOLUTE instants, so the interval is exactly as fixed as a seq range -- only an explicit
+ * edit widens it. Seq is not available as an alternative in any case: an orphan is defined by having no ledger
+ * row, so it has no sequence number to name.
+ *
+ * `maxRecords` closes the remaining gap that a seq range gets for free. A seq interval names a fixed number of
+ * rows; a time interval names a fixed span that could in principle come to contain MORE orphans than the
+ * operator counted. Declaring the count means a new failed append backdated into the window cannot hide behind
+ * the declaration: the moment the real count exceeds what was declared, the waiver stops applying entirely and
+ * the endpoint goes red. Fail-closed in the same direction as everything else here.
+ *
+ * The other three properties are unchanged and enforced below: both ends required, a reason is mandatory, and
+ * only the INTERIOR `unchained_record` kind is declarable -- `short_tail` (a record newer than the verified
+ * tip with no chain entry) stays unwaivable, because a truncated tail is exactly the attack this defends.
+ *
+ * Pipe-delimited rather than colon-delimited purely because ISO-8601 instants contain colons; a colon split
+ * could not tell the range from the reason.
+ *
+ * Returns null on anything malformed -- fail CLOSED, waiving nothing. preflight.ts surfaces the malformed
+ * value rather than leaving it silently inert.
+ */
+export function parseLedgerUnchainedWaiver(raw: string | undefined): LedgerUnchainedWaiver | null {
+  if (!raw) return null;
+  const parts = raw.split("|");
+  if (parts.length < 3) return null;
+  const [rangePart, countPart, ...reasonParts] = parts;
+  const reason = reasonParts.join("|").trim();
+  if (reason === "") return null;
+  // `parts.length >= 3` above already guarantees both indices, and the regex guarantees its own groups, so
+  // these are asserted rather than defaulted -- a `?? ""` fallback here would only add an arm no input can
+  // reach. Number()/Date.parse() of a genuinely bad value still lands on the NaN guard below.
+  const match = /^\s*(\S+)\s*\.\.\s*(\S+)\s*$/.exec(rangePart!);
+  if (!match) return null;
+  const fromMs = Date.parse(match[1]!);
+  const toMs = Date.parse(match[2]!);
+  // A descending or unparseable range is a mistake, not an intent.
+  if (Number.isNaN(fromMs) || Number.isNaN(toMs) || toMs < fromMs) return null;
+  // Must be a positive integer: "0" waives nothing while looking like a declaration, and a fractional or
+  // negative count is a typo. Number() rather than parseInt so "12abc" is rejected instead of read as 12.
+  const maxRecords = Number(countPart!.trim());
+  if (!Number.isInteger(maxRecords) || maxRecords < 1) return null;
+  // Normalized to ISO so the published value is unambiguous regardless of how the operator wrote it.
+  return { fromIso: new Date(fromMs).toISOString(), toIso: new Date(toMs).toISOString(), maxRecords, reason };
+}
+
 export async function verifyDecisionLedger(
   env: Env,
   afterSeq = 0,
@@ -637,6 +696,11 @@ export async function verifyDecisionLedger(
    *  contentMismatches, so "83 rows are excused" can never read as "83 rows are fine". */
   waivedContentMismatches: number;
   contentWaiver: LedgerContentWaiver | null;
+  /** #9933: orphaned records inside the declared unchained waiver -- counted and published separately, never
+   *  folded into a clean result's silence, so "231 records were never chained" can never read as "nothing to
+   *  see here". 0 when no waiver is configured or none fell inside it. */
+  waivedUnchainedRecords: number;
+  unchainedWaiver: LedgerUnchainedWaiver | null;
   break?: LedgerBreak;
 }> {
   const bounded = Math.max(1, Math.min(1000, limit));
@@ -662,6 +726,9 @@ export async function verifyDecisionLedger(
   let waivedContentMismatches = 0;
   let firstContentMismatch: LedgerBreak | null = null;
   const contentWaiver = parseLedgerContentWaiver(env.LOOPOVER_LEDGER_CONTENT_WAIVER);
+  // #9933: the sibling declaration for orphaned (never-appended) records -- see parseLedgerUnchainedWaiver.
+  const unchainedWaiver = parseLedgerUnchainedWaiver(env.LOOPOVER_LEDGER_UNCHAINED_WAIVER);
+  let waivedUnchainedRecords = 0;
   const decisionRecordsPruneCutoff = retentionCutoffIsoForTable("decision_records");
   const [totalRow, globalTip, prior] = await Promise.all([
     env.DB.prepare("SELECT COUNT(*) AS n FROM decision_ledger").first<{ n: number }>(),
@@ -674,7 +741,7 @@ export async function verifyDecisionLedger(
   const tipSeq = globalTip?.seq ?? 0;
   const tipHash = globalTip?.rowHash ?? LEDGER_GENESIS_HASH;
   // `== null` deliberately: D1 drivers disagree on .first() returning null vs undefined for no-row.
-  if (afterSeq > 0 && prior == null) return { ok: false, checked: 0, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, break: { kind: "sequence_gap", atSeq: afterSeq, expectedSeq: afterSeq } };
+  if (afterSeq > 0 && prior == null) return { ok: false, checked: 0, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, waivedUnchainedRecords, unchainedWaiver, break: { kind: "sequence_gap", atSeq: afterSeq, expectedSeq: afterSeq } };
   let prevHash = prior?.rowHash ?? LEDGER_GENESIS_HASH;
   let expectedSeq = afterSeq + 1;
   const { results } = await env.DB.prepare(
@@ -700,10 +767,10 @@ export async function verifyDecisionLedger(
   // from) so a call that finds ZERO new rows still has an anchor to reconcile against.
   let lastVerifiedCreatedAt = prior?.createdAt ?? null;
   for (const row of results) {
-    if (row.seq !== expectedSeq) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, break: { kind: "sequence_gap", atSeq: row.seq, expectedSeq } };
-    if (row.prevHash !== prevHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, break: { kind: "predecessor_mismatch", atSeq: row.seq } };
+    if (row.seq !== expectedSeq) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, waivedUnchainedRecords, unchainedWaiver, break: { kind: "sequence_gap", atSeq: row.seq, expectedSeq } };
+    if (row.prevHash !== prevHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, waivedUnchainedRecords, unchainedWaiver, break: { kind: "predecessor_mismatch", atSeq: row.seq } };
     const recomputed = await ledgerRowHash(prevHash, { seq: row.seq, recordId: row.recordId, recordDigest: row.recordDigest, createdAt: row.createdAt });
-    if (recomputed !== row.rowHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, break: { kind: "row_hash_mismatch", atSeq: row.seq } };
+    if (recomputed !== row.rowHash) return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, waivedUnchainedRecords, unchainedWaiver, break: { kind: "row_hash_mismatch", atSeq: row.seq } };
     // #9078: the promised record/ledger reconciliation — a row_hash chained cleanly can still commit to a
     // digest whose CONTENT has since been rewritten (or whose preimage is simply gone). Neither is visible to
     // the chain-only checks above, since those only ever compare ledger rows against each other.
@@ -721,7 +788,7 @@ export async function verifyDecisionLedger(
       if (decisionRecordsPruneCutoff !== null && row.createdAt < decisionRecordsPruneCutoff) {
         prunedRecords += 1;
       } else {
-        return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, break: { kind: "missing_record", atSeq: row.seq, recordId: row.recordId } };
+        return { ok: false, checked, nextAfterSeq: null, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, waivedUnchainedRecords, unchainedWaiver, break: { kind: "missing_record", atSeq: row.seq, recordId: row.recordId } };
       }
     } else {
       let recomputedContentDigest: string | null = null;
@@ -777,11 +844,39 @@ export async function verifyDecisionLedger(
   // the RECORD row, and this reconciliation only ever reports records that still exist.
   if (nextAfterSeq === null && lastVerifiedCreatedAt !== null) {
     const graceCutoffIso = new Date(Date.parse(nowIso()) - LEDGER_APPEND_GRACE_MS).toISOString();
-    const orphan = await env.DB.prepare(
-      "SELECT id, created_at AS createdAt FROM decision_records r WHERE r.created_at <= ? AND NOT EXISTS (SELECT 1 FROM decision_ledger l WHERE l.record_id = r.id) ORDER BY r.created_at DESC LIMIT 1",
-    )
-      .bind(graceCutoffIso)
-      .first<{ id: string; createdAt: string }>();
+    // #9933: count what the declared waiver actually covers BEFORE deciding anything. The count is the guard
+    // that makes a time-bounded waiver as tight as a seq-bounded one: declaring 231 means a 232nd orphan
+    // appearing inside the same window -- a new failed append, or one backdated into it -- cannot hide behind
+    // the declaration. Over the declared maximum, the waiver stops applying in full and every orphan is
+    // reported again, rather than waiving the first N and quietly reporting the rest.
+    //
+    // Every waiver predicate carries `created_at <= lastVerifiedCreatedAt` -- the INTERIOR test. Excluding the
+    // window without it silently waived a short_tail sitting inside the window, i.e. exactly the truncated-tail
+    // attack the docs promise is unwaivable. Encoding "interior" in the SQL rather than checking it afterwards
+    // keeps the count and the break search agreeing on which rows the waiver covers.
+    if (unchainedWaiver !== null) {
+      const covered = await env.DB.prepare(
+        "SELECT COUNT(*) AS n FROM decision_records r WHERE r.created_at >= ? AND r.created_at <= ? AND r.created_at <= ? AND r.created_at <= ? AND NOT EXISTS (SELECT 1 FROM decision_ledger l WHERE l.record_id = r.id)",
+      )
+        .bind(unchainedWaiver.fromIso, unchainedWaiver.toIso, lastVerifiedCreatedAt, graceCutoffIso)
+        .first<{ n: number }>();
+      /* v8 ignore next -- defensive, mirroring the totalCount read above: a bare COUNT(*) always returns
+       * exactly one row (even {n: 0} against an empty table), so the fallback only satisfies .first<T>()'s
+       * optional-by-signature TS return type. */
+      const coveredCount = covered?.n ?? 0;
+      if (coveredCount <= unchainedWaiver.maxRecords) waivedUnchainedRecords = coveredCount;
+    }
+    // Orphans inside an APPLIED waiver are excluded from the break search; everything else is reported exactly
+    // as before. A waiver that failed its count guard applies to nothing, so the window is not excluded here.
+    const waiverApplies = unchainedWaiver !== null && waivedUnchainedRecords > 0;
+    const orphan = await (waiverApplies
+      ? env.DB.prepare(
+          "SELECT id, created_at AS createdAt FROM decision_records r WHERE r.created_at <= ? AND NOT (r.created_at >= ? AND r.created_at <= ? AND r.created_at <= ?) AND NOT EXISTS (SELECT 1 FROM decision_ledger l WHERE l.record_id = r.id) ORDER BY r.created_at DESC LIMIT 1",
+        ).bind(graceCutoffIso, unchainedWaiver.fromIso, unchainedWaiver.toIso, lastVerifiedCreatedAt)
+      : env.DB.prepare(
+          "SELECT id, created_at AS createdAt FROM decision_records r WHERE r.created_at <= ? AND NOT EXISTS (SELECT 1 FROM decision_ledger l WHERE l.record_id = r.id) ORDER BY r.created_at DESC LIMIT 1",
+        ).bind(graceCutoffIso)
+    ).first<{ id: string; createdAt: string }>();
     // `== null` deliberately: D1 drivers disagree on .first() returning null vs undefined for no-row.
     if (orphan != null) {
       return {
@@ -795,9 +890,14 @@ export async function verifyDecisionLedger(
         contentMismatches,
         waivedContentMismatches,
         contentWaiver,
+        waivedUnchainedRecords,
+        unchainedWaiver,
         break:
           orphan.createdAt > lastVerifiedCreatedAt
-            ? { kind: "short_tail", atSeq: expectedSeq - 1 }
+            ? // A truncated TAIL is never waivable -- see parseLedgerUnchainedWaiver. The waiver's window can
+              // only ever exclude interior orphans, and this arm is reached only for a record newer than the
+              // verified tip, which is the attack signature itself.
+              { kind: "short_tail", atSeq: expectedSeq - 1 }
             : { kind: "unchained_record", atSeq: expectedSeq - 1, recordId: orphan.id },
       };
     }
@@ -805,9 +905,9 @@ export async function verifyDecisionLedger(
   // A content mismatch is still a FAILED verification -- the scan continuing does not soften the verdict, it
   // only stops one bad row from hiding every row after it. The first is reported as `break` exactly as before.
   if (firstContentMismatch !== null) {
-    return { ok: false, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, break: firstContentMismatch };
+    return { ok: false, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, waivedUnchainedRecords, unchainedWaiver, break: firstContentMismatch };
   }
-  return { ok: true, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver };
+  return { ok: true, checked, nextAfterSeq, tipSeq, tipHash, totalCount, prunedRecords, contentMismatches, waivedContentMismatches, contentWaiver, waivedUnchainedRecords, unchainedWaiver };
 }
 
 /** One ledger row, exactly as chained -- the shape `GET /v1/public/decision-ledger/row/:seq` returns. */

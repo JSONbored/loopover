@@ -5663,6 +5663,12 @@ describe("regenerated public-safe summary (#9809)", () => {
   // regeneration improves that text WITHOUT widening what is publishable -- the rewrite faces the identical
   // sanitizer, and anything that does not survive falls back to the fixed sentence.
   const withheldNarrative = "The ranking weights are recomputed and the reward payout shifts accordingly.";
+
+  // The provider-path cases below stub global fetch. Without this, the stub leaks into whatever file the
+  // worker runs next -- it took out selfhost-metrics.test.ts in a full run while passing in isolation.
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
   const modelReview = (over: Partial<Record<string, unknown>> = {}) =>
     ({ assessment: withheldNarrative, blockers: [], nits: [], suggestions: [], confidence: 0.9, inlineFindings: [], ...over }) as never;
 

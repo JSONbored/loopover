@@ -25,12 +25,10 @@ export default tseslint.config(
       // because they flagged 24 pre-existing files. #9588 fixed them: purity, refs and static-components are
       // now clean and back at error, where the recommended preset puts them.
       //
-      // set-state-in-effect stays at warn for ONE remaining site: docs-toc reads its headings out of the
-      // rendered DOM. Sourcing them from the compiled MDX `toc` instead is the real fix, but the component
-      // lives in the docs LAYOUT while that data lives in the child route -- and it also serves docs pages
-      // that are not MDX at all and so have no compiled toc. That is its own change, tracked in #9872;
-      // every other call site in this app is already clean.
-      "react-hooks/set-state-in-effect": "warn",
+      // set-state-in-effect is at ERROR as of #9872, which removed the last site: docs-toc built its rail
+      // by scanning the rendered DOM and reading the result into state from an effect. It now renders the
+      // page's compiled MDX `toc`, so there is nothing to discover and nothing to set.
+      "react-hooks/set-state-in-effect": "error",
       "no-restricted-imports": [
         "error",
         {

@@ -2806,3 +2806,47 @@ describe("priority-eligibility hold (#9738)", () => {
     expect(plan).toContain("merge");
   });
 });
+
+describe("manual-review release must not fire while a hold is still live (#9939 follow-up)", () => {
+  // #9942 added the release guarded on `manualHoldReason === null`, and its comment stated that no add site
+  // could be live at that point. That ternary only covers the guardrail hit, unverified CI, an
+  // action_required conclusion and a not-review-good verdict. Every would-MERGE hold fires on `reviewGood`
+  // with a SUCCESS conclusion -- exactly when manualHoldReason is null -- so the release stripped the label
+  // while the hold was still standing. That label is what the executor checks to DENY merge and approve.
+  const held = (over: Partial<AgentActionPlanInput>) =>
+    planAgentMaintenanceActions(
+      input({
+        conclusion: "success",
+        autonomy: { merge: "auto", review_state_label: "auto" },
+        manualReviewLabelAppliedSha: "abc123",
+        pr: { labels: [AGENT_LABEL_NEEDS_REVIEW], mergeableState: "clean" },
+        ...over,
+      }),
+    );
+
+  const releases = (actions: PlannedAgentAction[]) =>
+    actions.some((a) => a.actionClass === "label" && a.label === AGENT_LABEL_NEEDS_REVIEW && a.labelOp === "remove");
+
+  const liveHolds: Array<[string, Partial<AgentActionPlanInput>]> = [
+    ["a migration collision", { migrationCollisionHold: { reason: "collides with main", comment: "rebase" } }],
+    ["an unlinked-issue match hold", { unlinkedIssueMatchHold: { reason: "matches an unlinked issue", comment: "c" } }],
+    ["a priority-eligibility hold", { priorityEligibilityHold: { reason: "outside the priority window", comment: "c" } }],
+    ["an unlinked-issue close", { unlinkedIssueMatchClose: { reason: "unlinked close", comment: "c" } }],
+    ["an unstable merge state", { pr: { labels: [AGENT_LABEL_NEEDS_REVIEW], mergeableState: "unstable" } }],
+  ];
+
+  for (const [name, over] of liveHolds) {
+    it(`keeps the label while ${name} is live`, () => {
+      expect(releases(held(over))).toBe(false);
+    });
+  }
+
+  it("still releases when nothing at all holds the PR — the #9935 case this must not regress", () => {
+    // The counterweight: making the guard too broad would silently restore the one-way latch #9942 fixed.
+    expect(releases(held({}))).toBe(true);
+  });
+
+  it("still refuses to touch a label with no recorded provenance", () => {
+    expect(releases(held({ manualReviewLabelAppliedSha: null }))).toBe(false);
+  });
+});

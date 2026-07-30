@@ -20,7 +20,10 @@ process evolves — edits to those files improve both Claude Code and Codex.
    a valid linked issue is **auto-MERGED**. So make it perfect before you push.
 2. **99% patch coverage, branch-counted.** Aim for **100% of every changed line *and branch*** — test
    both sides of every `??` / ternary / `&&` (a `SUM()` can return `NULL`, so the nullish arm is real),
-   plus invariant tests and a regression test for every fix. Only `src/**` is measured by Codecov.
+   plus invariant tests and a regression test for every fix. Codecov measures `src/**` **and**
+   `packages/loopover-engine/src/**` — and the engine's lines are credited by two uploads whose hits are
+   unioned, so an engine change tested only from root `test/**` can still fail the patch gate. Add the test
+   to `packages/loopover-engine/test/**` too; see the Codecov section of `reference.md`.
 3. **The whole local gate must be green:** `npm run test:ci` (+ `npm audit --audit-level=moderate`).
    Measure coverage **unsharded** with `npm run test:coverage` (CI shards + merges, so a single shard
    under-reports).

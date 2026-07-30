@@ -4343,9 +4343,16 @@ function printHelp() {
   // construction, which the old hand-written string provably did not guarantee -- it had already
   // dropped commands. `--stdio` is the one non-command entry, listed first because it is the mode
   // MCP clients launch.
-  const usageLines = ["--stdio", ...Object.values(CLI_COMMAND_SPEC).flatMap((entry) => entry.usage)]
-    .map((line) => `  loopover-mcp ${line}`.replace("loopover-mcp --stdio", "loopover-mcp --stdio"))
-    .join("\n");
+  const usageLines = ["--stdio", ...Object.values(CLI_COMMAND_SPEC).flatMap((entry) => entry.usage)].map((line) => `  loopover-mcp ${line}`).join("\n");
+  // Also DERIVED (#9860): the commands that default `--login` from the environment. This was a hand-typed
+  // prose list and had already drifted -- it omitted contributor-profile, explain-review-risk and watch, all
+  // of which take `--login` and resolve it through the same `resolveLogin` fallback. Every command declaring
+  // `--login` in its usage resolves it that way, so the usage table is the fact to read rather than a second
+  // list to keep in step with it.
+  const loginDefaulting = Object.entries(CLI_COMMAND_SPEC)
+    .filter(([, entry]) => entry.usage.some((usage) => usage.includes("--login")))
+    .map(([name]) => name)
+    .join(", ");
   process.stdout.write(`Usage:
 ${usageLines}
 
@@ -4354,7 +4361,7 @@ ${usageLines}
   LOOPOVER_PROFILE
   LOOPOVER_CONFIG_PATH or LOOPOVER_CONFIG_DIR
   LOOPOVER_API_TOKEN, LOOPOVER_MCP_TOKEN, LOOPOVER_TOKEN, or a session from loopover-mcp login
-  LOOPOVER_LOGIN or GITHUB_LOGIN (default --login for analyze-branch, preflight, review-pr, decision-pack, repo-decision, monitor-open-prs, pr-outcomes, notifications, notifications-read, and agent plan/packet)
+  LOOPOVER_LOGIN or GITHUB_LOGIN (default --login for ${loginDefaulting})
   GITHUB_TOKEN for non-interactive login bootstrap
   GITTENSOR_SCORE_PREVIEW_CMD
   GITTENSOR_ROOT

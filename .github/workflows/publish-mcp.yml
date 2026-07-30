@@ -153,7 +153,11 @@ jobs:
           PACK_JSON="$(npm pack --workspace @loopover/mcp --pack-destination "$RUNNER_TEMP" --json)"
           TARBALL="$(node -e 'const fs=require("fs"); const input=fs.readFileSync(0,"utf8"); process.stdout.write(JSON.parse(input)[0].filename)' <<< "$PACK_JSON")"
           TARBALL_PATH="$RUNNER_TEMP/$TARBALL"
-          UNEXPECTED_FILES="$(tar -tzf "$TARBALL_PATH" | grep -Ev '^(package/(bin|lib|scripts)/.+|package/(package.json|README.md|CHANGELOG.md|LICENSE))$' || true)"
+          # Allowlist mirrors packages/loopover-mcp/package.json's own `files`: the package ships COMPILED
+          # output under dist/ (its `bin` entries are dist/bin/*.js), plus the runtime scripts/ it declares.
+          # `bin|lib` here described a pre-dist source layout the package has not had for some time -- the
+          # mismatch stayed invisible only because the build step above failed first, so packing never ran.
+          UNEXPECTED_FILES="$(tar -tzf "$TARBALL_PATH" | grep -Ev '^(package/(dist|scripts)/.+|package/(package.json|README.md|CHANGELOG.md|LICENSE))$' || true)"
           if [ -n "$UNEXPECTED_FILES" ]; then
             printf '%s\n' "$UNEXPECTED_FILES"
             echo "Unexpected file in package tarball"

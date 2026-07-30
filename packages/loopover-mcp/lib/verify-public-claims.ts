@@ -179,11 +179,31 @@ export async function checkCorpusCommitments(
 export async function checkAnchorCheckpoint(
   checkpoint: { signed?: unknown; signingInput?: unknown } | undefined,
   keys: readonly AnchorPublicKey[],
+  ledger?: { totalCount?: unknown } | undefined,
 ): Promise<ClaimResult> {
   const claim = "The current signed ledger checkpoint verifies offline against a published key";
   const id = "anchor-checkpoint";
   if (checkpoint === undefined || !isSignedAnchor(checkpoint.signed)) {
-    return { id, claim, status: "skip", detail: "no signed checkpoint published (anchor signing not configured, or the ledger is empty)" };
+    // #9940: an EMPTY ledger and a misconfigured signer used to produce the same sentence, and the
+    // difference is the whole diagnosis. This surface holding no decisions is not a verifiability failure
+    // -- there is nothing to anchor -- whereas decisions with no signing key is a real gap. Conflating them
+    // sent me down the wrong path on a live deployment: I read "not configured" and went looking for a
+    // missing secret, when the deployment simply had no ledger and the anchoring worked fine elsewhere.
+    const totalCount = typeof ledger?.totalCount === "number" ? ledger.totalCount : null;
+    if (totalCount === 0) {
+      return {
+        id,
+        claim,
+        status: "skip",
+        detail: "this deployment's decision ledger is EMPTY (0 records), so there is nothing to anchor — check the deployment that actually records decisions, via --base-url",
+      };
+    }
+    return {
+      id,
+      claim,
+      status: "skip",
+      detail: totalCount === null ? "no signed checkpoint published, and the ledger size is unknown" : `no signed checkpoint published, though the ledger holds ${totalCount} record(s) — anchor signing looks unconfigured here`,
+    };
   }
   const signed = checkpoint.signed;
   if (keys.length === 0) {

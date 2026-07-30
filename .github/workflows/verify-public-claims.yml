@@ -1,0 +1,157 @@
+# Nightly anonymous verification (#9724, epic #9722).
+#
+# LoopOver publishes fairness claims and tells a stranger they can check them without asking permission. This
+# job IS that stranger, on a schedule. It runs the verifier PUBLISHED ON NPM against PRODUCTION with no
+# credentials of any kind, so a regression in the public verification path is caught by us within a cycle
+# instead of by an outside reader whenever they happen to look.
+#
+# THE PUBLISHED TOOL, NOT THE ONE IN THIS TREE. `npx -p @loopover/mcp` deliberately resolves the release on npm
+# rather than building from the checkout. What is being asserted is "an outsider succeeds today", and an
+# outsider has the published CLI -- so a fix that is merged but unpublished must NOT turn this green. #9962 is
+# exactly that failure: the shipped verifier asked `/v1/public/eval-corpus?rule_id=`, the route reads `ruleId`,
+# every corpus fetch 400'd, and the tool reported production as unverifiable while production was fine. Both
+# sides were individually tested and individually correct. Only running the real pair catches it.
+#
+# NO CREDENTIALS ON THE VERIFY STEP. The job-level permission is `contents: read`, and the verify step is given
+# no token in its environment at all -- `issues: write` and the token live only on the step that files the
+# tracking issue, after verification is finished. A verifier that runs with repo credentials is not reproducing
+# an outsider's view, and could pass on access a stranger does not have.
+#
+# TWO SURFACES, because they hold different things (#9940): `api.loopover.ai` serves aggregate stats and
+# eval-score records, while the anchored decision ledger lives on the Orb at `shots.loopover.ai`. Checking only
+# one leaves the other free to regress silently, so both are verified and reported independently.
+name: Verify Public Claims
+
+on:
+  schedule:
+    # 04:12 UTC. Off the hour on purpose: the top of the hour is the busiest slot on GitHub's shared scheduler
+    # and the most likely to be delayed or dropped, which for a nightly is a silently skipped check.
+    - cron: "12 4 * * *"
+  workflow_dispatch:
+    inputs:
+      api-base-url:
+        description: "Base URL for the aggregate/eval surface"
+        required: false
+        default: "https://api.loopover.ai"
+      orb-base-url:
+        description: "Base URL for the anchored decision ledger"
+        required: false
+        default: "https://shots.loopover.ai"
+      dry-run:
+        description: "Report the verdict without filing, updating or closing the tracking issue"
+        required: false
+        default: "false"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verify-public-claims
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      issues: write
+    env:
+      API_BASE_URL: ${{ inputs.api-base-url || 'https://api.loopover.ai' }}
+      ORB_BASE_URL: ${{ inputs.orb-base-url || 'https://shots.loopover.ai' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+
+      # No `npm ci`: this step must not depend on the repository's own dependency tree, because a stranger has
+      # none. `npx -p @loopover/mcp` fetches the published package exactly as the docs tell a reader to.
+      - name: Verify published claims anonymously
+        id: verify
+        run: |
+          # No `set -e`: a failing claim exits the verifier non-zero, and that is a RESULT to be captured and
+          # reported, not a reason to abort before the tracking issue is filed.
+          set -uo pipefail
+          run_surface() {
+            base="$1"
+            out="$2"
+            echo "::group::loopover-verify --base-url $base"
+            # `code` is assigned on its OWN line. `local code=$?` / `code=$(...)` would capture the assignment's
+            # own status instead of the command's, quietly making every run look like a clean exit 0.
+            npx --yes -p @loopover/mcp loopover-verify --base-url "$base" --json > "$out" 2>"$out.err"
+            code=$?
+            echo "$code" > "$out.code"
+            cat "$out"
+            # stderr matters most when stdout is unparseable -- that is the "the verifier itself broke" case,
+            # and it is the one where the JSON report cannot explain anything.
+            if [ -s "$out.err" ]; then echo "--- stderr ---"; cat "$out.err"; fi
+            echo "exit=$code"
+            echo "::endgroup::"
+          }
+          run_surface "$API_BASE_URL" api.json
+          run_surface "$ORB_BASE_URL" orb.json
+          # The script appends VERIFY_OK, VERIFY_SUMMARY and the heredoc-delimited body to $GITHUB_OUTPUT
+          # itself, as one write. Wrapping its stdout in a heredoc here instead would interleave the two
+          # writers and bury VERIFY_OK inside the body block.
+          npx --yes tsx scripts/verify-public-claims-report.ts \
+            "public API" "$API_BASE_URL" "$(cat api.json.code)" api.json \
+            "Orb ledger" "$ORB_BASE_URL" "$(cat orb.json.code)" orb.json
+
+      - name: Report verdict
+        run: |
+          {
+            echo "### Anonymous verification — ${{ steps.verify.outputs.VERIFY_SUMMARY }}"
+            echo ""
+            echo "- \`${{ env.API_BASE_URL }}\`"
+            echo "- \`${{ env.ORB_BASE_URL }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Open-or-update on failure, close on recovery. ONE issue, found by exact title, so a persistent outage
+      # is a single tracked thing rather than a nightly pile -- and so recovery has something unambiguous to
+      # close. This step is the only one holding a token.
+      - name: File or close the tracking issue
+        if: ${{ inputs.dry-run != 'true' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VERIFY_OK: ${{ steps.verify.outputs.VERIFY_OK }}
+          VERIFY_BODY: ${{ steps.verify.outputs.body }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TITLE: "verifiability: the nightly anonymous verification run is failing"
+        run: |
+          set -euo pipefail
+          existing=$(gh issue list --state open --search "\"$TITLE\" in:title" --json number,title \
+            --jq "map(select(.title == env.TITLE)) | .[0].number // empty")
+          if [ "$VERIFY_OK" = "true" ]; then
+            if [ -n "$existing" ]; then
+              gh issue comment "$existing" --body "Recovered. The nightly anonymous verification run is green again as of [this run]($RUN_URL); closing automatically."
+              gh issue close "$existing" --reason completed
+              echo "Closed #$existing on recovery."
+            else
+              echo "Green, and nothing was open. Nothing to do."
+            fi
+            exit 0
+          fi
+          body="$VERIFY_BODY
+
+          [Failing run]($RUN_URL)"
+          if [ -n "$existing" ]; then
+            # Comment rather than overwrite the body: the history of WHICH claims failed on WHICH night is the
+            # most useful thing on a flapping issue, and rewriting the body destroys it.
+            gh issue comment "$existing" --body "$body"
+            echo "::error::Anonymous verification is failing -- updated #$existing."
+          else
+            gh issue create --title "$TITLE" --label maintainer-only --assignee JSONbored --body "$body"
+            echo "::error::Anonymous verification is failing -- tracking issue filed."
+          fi
+
+      # Last, so the issue is always filed or closed even when the job is about to go red. A red run with no
+      # issue would be a monitor that notices a problem and then drops it.
+      - name: Fail the run when a claim failed
+        if: ${{ steps.verify.outputs.VERIFY_OK != 'true' }}
+        run: |
+          echo "::error::One or more published claims could not be verified anonymously."
+          exit 1

@@ -121,3 +121,5 @@ export const PUBLIC_SURFACE_SKIP_REASONS = [
 export const MAX_CONTRIBUTOR_OPEN_ITEM_CAP = 100;
 /** src/settings/agent-actions.ts -- keeps the review-nag lookback from overflowing Date arithmetic. */
 export const MAX_REVIEW_NAG_COOLDOWN_DAYS = 365;
+/** src/review/priority-eligibility-window.ts (#9738) -- one day, the longest an eligibility hold may last. */
+export const MAX_PRIORITY_ELIGIBILITY_WINDOW_MINUTES = 24 * 60;

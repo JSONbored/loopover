@@ -1,4 +1,4 @@
-import { PUBLIC_LOCAL_PATH_INLINE } from "../signals/redaction";
+import { PUBLIC_LOCAL_PATH_INLINE, PUBLIC_TOKEN_INLINE } from "../signals/redaction";
 import type { ScoreGateDelta, ScorePreviewResult } from "../scoring/preview";
 
 // This endpoint (POST /v1/scoring/explain-breakdown, gated by requireContributorAccess) is authenticated and
@@ -12,11 +12,18 @@ import type { ScoreGateDelta, ScorePreviewResult } from "../scoring/preview";
 // computed, structured score data (numbers and gate deltas), so the only genuine residual risk is an
 // accidentally-embedded token or local filesystem path -- keep just that minimal safety net rather than the
 // full gittensor-economic-vocabulary substitution.
-const TOKEN_OR_PATH_PATTERN = new RegExp(`\\bgithub_pat_[A-Za-z0-9_]+|\\bgh[pousr]_[A-Za-z0-9_]+|(?:${PUBLIC_LOCAL_PATH_INLINE})\\S+`, "gi");
+// #9697: token alternatives compose from the canonical PUBLIC_TOKEN_INLINE — one shared source across all five
+// public surfaces, so none can drift and miss a prefix (this surface's old hand-written list also missed the
+// gts_/orbenr_/orbsec_/glpat-/sk-/xox prefixes the sibling surfaces caught); the local-path alternatives compose
+// from PUBLIC_LOCAL_PATH_INLINE. Module-local /g const is safe here — .replace resets lastIndex after each call.
+const TOKEN_OR_PATH_PATTERN = new RegExp(`\\b(?:${PUBLIC_TOKEN_INLINE})[A-Za-z0-9_]+|(?:${PUBLIC_LOCAL_PATH_INLINE})\\S+`, "gi");
 
 function sanitizeScoreBreakdownText(value: string): string {
   return value.replace(TOKEN_OR_PATH_PATTERN, "<redacted>");
 }
+
+/** Test-only handle on the surface's token/path scrubber (mirrors control-panel-roles' internals export). */
+export const __scoreBreakdownInternals = { sanitizeScoreBreakdownText };
 
 export type ScoreMultiplierBand = "full" | "reduced" | "neutral" | "blocked";
 

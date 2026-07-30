@@ -1,5 +1,5 @@
 import type { AgentActionBlockerCategory, AgentActionExplanationCard, AgentActionRecord } from "../types";
-import { PUBLIC_LOCAL_PATH_INLINE } from "../signals/redaction";
+import { PUBLIC_LOCAL_PATH_INLINE, PUBLIC_TOKEN_INLINE } from "../signals/redaction";
 
 type AgentActionExplanationInput = Pick<
   AgentActionRecord,
@@ -10,9 +10,11 @@ const BLOCKER_CATEGORY_ORDER: AgentActionBlockerCategory[] = ["branch", "account
 const PUBLIC_FORBIDDEN_PATTERN =
   /\b(wallets?|hotkeys?|coldkeys?|seed phrases?|mnemonics?|private keys?|raw[-_\s]?trust scores?|trust scores?|private reviewability|reviewability internals?|private scoreability|scoreability|projected scores?|score(?:d|s|ability)?|public score estimates?|estimated scores?|score estimates?|score previews?|reward estimates?|payouts?|farming|reward optimization|private rankings?)\b/gi;
 const PUBLIC_SCORE_DELTA_PATTERN = /\b(?:projected\s+)?score\w*(?:\s+\w+){0,4}\s+[-+]?\d+(?:\.\d+)?\s*->\s*[-+]?\d+(?:\.\d+)?\b/gi;
-// Token alternatives stay local; the local-path alternatives compose from the canonical PUBLIC_LOCAL_PATH_INLINE
-// in redaction.ts (adds the previously-missed /root/ and /var/, plus the forward-slash Windows form C:/Users/).
-const TOKEN_OR_PATH_PATTERN = new RegExp(`\\bgithub_pat_[A-Za-z0-9_]+|\\bgh[pousr]_[A-Za-z0-9_]+|(?:${PUBLIC_LOCAL_PATH_INLINE})\\S+`, "gi");
+// #9697: token alternatives compose from the canonical PUBLIC_TOKEN_INLINE — one shared source across all five
+// public surfaces so none can drift (this surface's old hand-written list missed the
+// gts_/orbenr_/orbsec_/glpat-/sk-/xox prefixes the sibling surfaces caught); the local-path alternatives compose
+// from PUBLIC_LOCAL_PATH_INLINE.
+const TOKEN_OR_PATH_PATTERN = new RegExp(`\\b(?:${PUBLIC_TOKEN_INLINE})[A-Za-z0-9_]+|(?:${PUBLIC_LOCAL_PATH_INLINE})\\S+`, "gi");
 
 export function withAgentActionExplanationCard(action: AgentActionRecord): AgentActionRecord {
   return { ...action, explanationCard: buildAgentActionExplanationCard(action) };
@@ -118,6 +120,9 @@ function categorizeBlocker(blocker: string): AgentActionBlockerCategory {
   if (/maintainer|friction|intake|label|policy/.test(value)) return "maintainer";
   return "unknown";
 }
+
+/** Test-only handle on the surface's public-text sanitizer (mirrors control-panel-roles' internals export). */
+export const __agentActionExplanationCardInternals = { sanitizePublicCardText };
 
 function sanitizePublicCardText(value: string): string {
   return compactText(value)

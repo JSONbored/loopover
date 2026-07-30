@@ -367,6 +367,31 @@ describe("miner dashboard recommendation metadata", () => {
     expect(JSON.stringify(enriched?.rerunReasons)).not.toContain(fakeSecret);
   });
 
+  // REGRESSION (#9697): ghs_ is the GitHub App INSTALLATION token this Worker mints on every pass. The old
+  // hand-written list matched only ghp_, so this exact prefix passed through verbatim to a public dashboard
+  // string. The unified PUBLIC_TOKEN_INLINE's `gh[pousr]_` class closes that gap.
+  it("REGRESSION (#9697): redacts a ghs_ installation token from rerun reasons", () => {
+    const installationToken = `ghs_${"a".repeat(24)}`;
+    const current = decisionPack({
+      generatedAt: "2026-06-02T00:00:00.000Z",
+      topActions: [action()],
+      actionPortfolio: {
+        topActions: [
+          {
+            repoFullName: "JSONbored/loopover",
+            actionKind: "open_new_direct_pr",
+            rerunWhen: `Rerun once the installation token ${installationToken} has rotated.`,
+          },
+        ],
+      },
+    });
+
+    const [enriched] = buildMinerDashboardNextActions(current);
+    const repoStateReasons = enriched?.rerunReasons.find((group) => group.group === "repo_state")?.reasons.join(" ") ?? "";
+    expect(repoStateReasons).toContain("private context");
+    expect(JSON.stringify(enriched?.rerunReasons)).not.toContain(installationToken);
+  });
+
   it("selects the previous ready decision-pack snapshot", () => {
     const current = decisionPack({ generatedAt: "2026-06-02T00:00:00.000Z" });
     const previous = decisionPack({ generatedAt: "2026-06-01T00:00:00.000Z" });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildWeeklyValueReport, formatWeeklyValueReportMarkdown, generateWeeklyValueReport } from "../../src/services/weekly-value-report";
+import { __weeklyValueReportInternals, buildWeeklyValueReport, formatWeeklyValueReportMarkdown, generateWeeklyValueReport } from "../../src/services/weekly-value-report";
 import type {
   InstallationHealthRecord,
   InstallationRecord,
@@ -209,6 +209,30 @@ describe("weekly value reports", () => {
     // Both keys collapse to the same placeholder, so they aggregate into a single redacted row.
     expect(report.operatorDetails?.topRepos).toEqual(expect.arrayContaining([{ key: "<redacted-path>", count: 2 }]));
     expect(JSON.stringify(report)).not.toMatch(/\/root\/work|\/var\/folders/);
+  });
+
+  it.each([
+    ["ghp_", `ghp_${"A".repeat(24)}`],
+    ["gho_", `gho_${"A".repeat(24)}`],
+    ["ghu_", `ghu_${"A".repeat(24)}`],
+    ["ghs_", `ghs_${"A".repeat(24)}`],
+    ["ghr_", `ghr_${"A".repeat(24)}`],
+    ["github_pat_", `github_pat_${"A".repeat(24)}`],
+    ["gts_", `gts_${"A".repeat(24)}`],
+    ["orbenr_", `orbenr_${"A".repeat(24)}`],
+    ["orbsec_", `orbsec_${"A".repeat(24)}`],
+    ["glpat-", `glpat-${"A".repeat(24)}`],
+    ["sk-", `sk-${"A".repeat(24)}`],
+    ["xoxb-", `xoxb-${"A".repeat(24)}`],
+  ])("REGRESSION (#9697): sanitizeReportText redacts a %s token (unified PUBLIC_TOKEN_INLINE)", (_prefix, token) => {
+    const { sanitizeReportText } = __weeklyValueReportInternals;
+    const out = sanitizeReportText(`repo ${token}`);
+    expect(out).toContain("<redacted-token>");
+    expect(out).not.toContain(token);
+  });
+
+  it("leaves non-token report text unmodified (#9697)", () => {
+    expect(__weeklyValueReportInternals.sanitizeReportText("JSONbored/loopover")).toBe("JSONbored/loopover");
   });
 
   it("redacts Slack bot tokens in operator rollup dimensions", () => {

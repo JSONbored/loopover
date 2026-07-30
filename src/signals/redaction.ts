@@ -44,6 +44,25 @@ export const PUBLIC_LOCAL_PATH_PREFIX_PATTERN = new RegExp(String.raw`^(?:${PUBL
 
 export const PUBLIC_UNSAFE_PATTERN = new RegExp(String.raw`\b(${PUBLIC_UNSAFE_TERMS})\b|${PUBLIC_LOCAL_PATH_INLINE}`, "i");
 
+// #9697: the canonical PUBLIC token-prefix vocabulary (alternation source only — no flags, no `\b` anchors, no
+// trailing token-body class), the credential analogue of `PUBLIC_UNSAFE_TERMS` / `PUBLIC_LOCAL_PATH_INLINE`.
+// Every public surface that scrubs a leaked credential composes from this one source, so a surface cannot drift
+// and miss a prefix — the concrete gap that motivated this: `ghs_`, the GitHub App INSTALLATION token this
+// Worker mints on every pass, was passing through three surfaces that only matched `ghp_`. `gh[pousr]_` is the
+// correct GitHub class (the same one `src/review/secret-patterns.ts` uses), covering ghp_/gho_/ghu_/ghs_/ghr_
+// at once. Adding a new provider's prefix here updates every surface at once.
+export const PUBLIC_TOKEN_INLINE = String.raw`gh[pousr]_|github_pat_|gts_|orbenr_|orbsec_|glpat-|sk-|xox[baprs]-`;
+
+/**
+ * A FRESH `/g` token scrubber for `.replace()` surfaces that swap a leaked credential for a placeholder: a prefix
+ * from `PUBLIC_TOKEN_INLINE` plus its opaque token body (`[A-Za-z0-9_=-]{8,}`, anchored on a word boundary).
+ * Returns a NEW `RegExp` on every call so no module-level `/g` object (and its `lastIndex`) is ever shared across
+ * call sites — a shared stateful global would carry `lastIndex` between surfaces and skip matches.
+ */
+export function publicTokenPattern(): RegExp {
+  return new RegExp(String.raw`\b(?:${PUBLIC_TOKEN_INLINE})[A-Za-z0-9_=-]{8,}`, "g");
+}
+
 /** True iff `text` contains nothing that must stay private — i.e. it is safe to surface on a public GitHub surface. */
 export function isPublicSafeText(text: string): boolean {
   return !PUBLIC_UNSAFE_PATTERN.test(text);

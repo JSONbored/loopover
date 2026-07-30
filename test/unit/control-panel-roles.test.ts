@@ -80,6 +80,31 @@ describe("control panel role summaries", () => {
     expect(sanitizeRoleText("see C:\\Users\\me\\repo")).toBe("see <redacted-path>");
   });
 
+  it.each([
+    ["ghp_", `ghp_${"A".repeat(24)}`],
+    ["gho_", `gho_${"A".repeat(24)}`],
+    ["ghu_", `ghu_${"A".repeat(24)}`],
+    ["ghs_", `ghs_${"A".repeat(24)}`],
+    ["ghr_", `ghr_${"A".repeat(24)}`],
+    ["github_pat_", `github_pat_${"A".repeat(24)}`],
+    ["gts_", `gts_${"A".repeat(24)}`],
+    ["orbenr_", `orbenr_${"A".repeat(24)}`],
+    ["orbsec_", `orbsec_${"A".repeat(24)}`],
+    ["glpat-", `glpat-${"A".repeat(24)}`],
+    ["sk-", `sk-${"A".repeat(24)}`],
+    ["xoxb-", `xoxb-${"A".repeat(24)}`],
+  ])("REGRESSION (#9697): sanitizeRoleText redacts a %s token (unified PUBLIC_TOKEN_INLINE)", (_prefix, token) => {
+    const { sanitizeRoleText } = __controlPanelRolesInternals;
+    const out = sanitizeRoleText(`role evidence ${token} note`);
+    expect(out).toContain("<redacted-token>");
+    expect(out).not.toContain(token);
+  });
+
+  it("leaves non-token role evidence text unmodified (#9697)", () => {
+    const { sanitizeRoleText } = __controlPanelRolesInternals;
+    expect(sanitizeRoleText("collaborator on JSONbored/loopover since May")).toBe("collaborator on JSONbored/loopover since May");
+  });
+
   it("recognizes account installations even before an owned repo is cached", () => {
     const summary = buildControlPanelRoleSummary({
       login: "repo-owner",

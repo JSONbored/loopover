@@ -1,6 +1,6 @@
 import type { ContributorDecisionPack } from "./decision-pack";
 import type { SignalSnapshotRecord } from "../types";
-import { PUBLIC_LOCAL_PATH_INLINE } from "../signals/redaction";
+import { PUBLIC_LOCAL_PATH_INLINE, publicTokenPattern } from "../signals/redaction";
 
 export type MinerDashboardSignalGroup = "repo_state" | "contributor_state" | "validation_state" | "policy_context";
 export type MinerDashboardChangeStatus = "new" | "changed" | "unchanged";
@@ -46,7 +46,6 @@ const FORBIDDEN_PUBLIC_TEXT =
 // Compose the roots from the canonical PUBLIC_LOCAL_PATH_INLINE in redaction.ts (so this surface cannot drift)
 // while preserving this surface's own trailing class and its case-sensitive `/g` (Windows form via `[A-Z]`).
 const LOCAL_PATH = new RegExp(`(?:${PUBLIC_LOCAL_PATH_INLINE})[^\\s,;:)]+`, "g");
-const FORBIDDEN_TOKEN = /\b(?:ghp_|github_pat_|gts_|orbenr_|orbsec_|glpat-|sk-)[A-Za-z0-9_=-]{8,}/g;
 
 export function previousDecisionPackFromSnapshots(currentPack: ContributorDecisionPack, snapshots: SignalSnapshotRecord[]): ContributorDecisionPack | undefined {
   const current = asRecord(currentPack);
@@ -386,7 +385,7 @@ function numberValue(record: DashboardRecord | undefined, key: string): number |
 function sanitizePublicText(value: string): string {
   return value
     .replace(LOCAL_PATH, "[local path]")
-    .replace(FORBIDDEN_TOKEN, "private context")
+    .replace(publicTokenPattern(), "private context")
     .replace(FORBIDDEN_PUBLIC_TEXT, "private context")
     .replace(/\s+/g, " ")
     .trim();

@@ -34,8 +34,14 @@ const maintainerRole: RoleContext = {
   guidance: "maintainer",
 };
 
+// #9955: anchored to ONE instant for the whole file. Re-reading Date.now() per call makes timestamps
+// within a single fixture mutually inconsistent by however long elapsed between the calls, which is a
+// real race wherever the code under test compares them against a boundary derived from one of them --
+// it cost a false-positive red CI on #9950, on a PR that changed nothing but a workflow file.
+const FIXTURE_NOW_MS = Date.now();
+
 function daysAgo(days: number): string {
-  return new Date(Date.now() - days * 86_400_000).toISOString();
+  return new Date(FIXTURE_NOW_MS - days * 86_400_000).toISOString();
 }
 
 function pr(overrides: Partial<PullRequestRecord> & Pick<PullRequestRecord, "number">): PullRequestRecord {

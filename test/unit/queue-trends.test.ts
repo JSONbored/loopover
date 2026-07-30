@@ -289,6 +289,21 @@ function queueHealthSnapshot(id: string, daysAgo: number, values: { openPrs: num
   };
 }
 
+// #9955: ONE instant for the whole file. Calling Date.now() per invocation made timestamps within a single
+// test mutually inconsistent by however long elapsed between the calls -- and buildWindow anchors on the
+// LATEST snapshot, not on wall-clock:
+//
+//   targetMs = latestMs - windowDays * day
+//   baseline = newest snapshot with fetchedAt <= targetMs
+//
+// So when `atDaysAgo(0)` was evaluated at T0 and `atDaysAgo(7)` a moment later at T1, the "7 days ago"
+// snapshot landed at T1 - 7d, which is NEWER than the target T0 - 7d. No baseline is found, every window
+// reports "unavailable", and the assertion fails. It passed only when both calls hit the same millisecond.
+// Reproduced deterministically with a 2ms offset; observed for real on #9950, a PR that changed nothing but
+// a workflow file. Under one-shot review a false red is not a re-run away from fine -- it auto-closes correct
+// contributor work -- so a timing-dependent fixture is a gate correctness problem, not just CI noise.
+const FIXTURE_NOW_MS = Date.now();
+
 function atDaysAgo(daysAgo: number): string {
-  return new Date(Date.now() - daysAgo * 24 * 60 * 60 * 1000).toISOString();
+  return new Date(FIXTURE_NOW_MS - daysAgo * 24 * 60 * 60 * 1000).toISOString();
 }

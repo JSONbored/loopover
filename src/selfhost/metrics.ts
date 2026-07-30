@@ -133,6 +133,7 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_ai_review_non_cacheable_total", { help: "AI reviews skipped by cacheability rules.", type: "counter" }],
   ["loopover_ai_review_force_bypass_total", { help: "AI review cache force-bypass events.", type: "counter" }],
   ["loopover_ai_review_inconclusive_total", { help: "AI review inconclusive outcomes.", type: "counter" }],
+  ["loopover_ai_review_summary_regenerated_total", { help: "Public-safe summary regenerations on the withheld-narrative branch, by outcome (#9809): `published` when the rewrite survived the sanitizer, `fallback` when the fixed sentence was kept. Both are counted -- an all-fallback result must not look the same as the feature never firing.", type: "counter" }],
   ["loopover_ai_review_unpublishable_blocker_total", { help: "AI reviews where a reviewer named a real blocker whose title could not be published, so the verdict held instead of passing (#9460).", type: "counter" }],
   ["loopover_ai_review_onmerge_clamped_total", { help: "AI review on-merge mode clamp events.", type: "counter" }],
   ["loopover_ai_review_model_fallback_total", { help: "AI review model fallback attempts by primary and fallback model.", type: "counter" }],

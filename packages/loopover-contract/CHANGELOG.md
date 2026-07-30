@@ -1,5 +1,18 @@
 # Changelog
 
+## [3.18.0](https://github.com/JSONbored/loopover/compare/contract-v3.17.0...contract-v3.18.0) (2026-07-30)
+
+
+### Features
+
+* **fairness:** one-command public verifier + published methodology page ([#9941](https://github.com/JSONbored/loopover/issues/9941)) ([bae7b2f](https://github.com/JSONbored/loopover/commit/bae7b2ffa79102fe1f8ecbd2030c1edc0c3d31d7))
+* **gate:** add the block tier, so an enforcing screenshot gate holds a PR instead of destroying it ([#9964](https://github.com/JSONbored/loopover/issues/9964)) ([3ed97dc](https://github.com/JSONbored/loopover/commit/3ed97dc707d551cb20f2a042e58ab344865f7c6e)), closes [#9881](https://github.com/JSONbored/loopover/issues/9881)
+
+
+### Fixes
+
+* **contract:** restate MAX_PRIORITY_ELIGIBILITY_WINDOW_MINUTES so the generated schemas compile ([#9936](https://github.com/JSONbored/loopover/issues/9936)) ([edf7b37](https://github.com/JSONbored/loopover/commit/edf7b37762e7d9232e8a93e17c271f6074e73067))
+
 ## [3.17.0](https://github.com/JSONbored/loopover/compare/contract-v0.1.0...contract-v3.17.0) (2026-07-30)
 
 

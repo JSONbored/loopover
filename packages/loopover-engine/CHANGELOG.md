@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.18.0](https://github.com/JSONbored/loopover/compare/engine-v3.17.0...engine-v3.18.0) (2026-07-30)
+
+
+### Features
+
+* **gate:** add the block tier, so an enforcing screenshot gate holds a PR instead of destroying it ([#9964](https://github.com/JSONbored/loopover/issues/9964)) ([3ed97dc](https://github.com/JSONbored/loopover/commit/3ed97dc707d551cb20f2a042e58ab344865f7c6e)), closes [#9881](https://github.com/JSONbored/loopover/issues/9881)
+
+
+### Fixes
+
+* **gate:** never close a PR for visual evidence the pipeline cannot produce ([#9881](https://github.com/JSONbored/loopover/issues/9881)) ([#9934](https://github.com/JSONbored/loopover/issues/9934)) ([31b29da](https://github.com/JSONbored/loopover/commit/31b29da7858f2879d0de8dc242e1c07a4e30536d))
+
 ## [3.17.0](https://github.com/JSONbored/loopover/compare/engine-v3.16.1...engine-v3.17.0) (2026-07-30)
 
 

@@ -5,6 +5,26 @@
 ### Fixes
 - Blunt slop-risk / issue-slop REST + CLI to match the MCP tools (#6990) (#7052)
 
+## [3.18.0](https://github.com/JSONbored/loopover/compare/mcp-v3.17.0...mcp-v3.18.0) (2026-07-30)
+
+
+### Features
+
+* **fairness:** one-command public verifier + published methodology page ([#9941](https://github.com/JSONbored/loopover/issues/9941)) ([bae7b2f](https://github.com/JSONbored/loopover/commit/bae7b2ffa79102fe1f8ecbd2030c1edc0c3d31d7))
+
+
+### Fixes
+
+* **fairness:** make the anchored ledger publicly verifiable, and stop misreporting an empty one ([#9959](https://github.com/JSONbored/loopover/issues/9959)) ([8291893](https://github.com/JSONbored/loopover/commit/829189341e42d9753a305cca66939abeb77ca152))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.17.0 to ^3.18.0
+    * @loopover/engine bumped from ^3.17.0 to ^3.18.0
+
 ## [3.17.0](https://github.com/JSONbored/loopover/compare/mcp-v3.15.2...mcp-v3.17.0) (2026-07-30)
 
 

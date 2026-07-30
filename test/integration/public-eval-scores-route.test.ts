@@ -12,11 +12,21 @@ const NOW = Date.parse("2026-07-27T12:00:00.000Z");
 async function seedConfirmedPrecisionData(env: Env): Promise<void> {
   const store = createSignalStore(env);
   for (let i = 0; i < 20; i += 1) {
+    const occurredAt = new Date(NOW - 1000 - i).toISOString();
+    // #9966 made the DOWNLOADABLE corpus the only commitment source, so a record is publishable only where
+    // /v1/public/eval-corpus can actually serve the cases behind it. That corpus is built from rule-FIRED
+    // events joined to their overrides, and this fixture recorded only the overrides -- so it produced a
+    // 0-case corpus, no commitment, and no record, which is why this suite went red on main.
+    //
+    // Seeding both halves restores what the fixture was always meant to represent: 20 decided cases a reader
+    // can download and re-hash. Asserting `records: []` instead would have kept the suite green while
+    // silently dropping the recordDigest-recomputability check these tests exist for.
+    await store.recordRuleFired({ ruleId: "ai_consensus_defect", targetKey: `acme/widgets#${i + 1}`, outcome: "close", occurredAt });
     await store.recordHumanOverride({
       ruleId: "ai_consensus_defect",
       targetKey: `acme/widgets#${i + 1}`,
       verdict: i < 16 ? "confirmed" : "reversed",
-      occurredAt: new Date(NOW - 1000 - i).toISOString(),
+      occurredAt,
     });
   }
   await recordAuditEvent(env, {
@@ -59,7 +69,14 @@ describe("GET /v1/public/eval-scores (#9266, epic #8534, spec #9215)", () => {
     // coverage is 1, not null: abstained is structurally 0 for this work-unit kind, so the record's own
     // decided/(decided+abstained) is fully determined and the published field states it (#9643).
     expect(record?.score).toEqual({ decided: 20, confirmed: 16, precision: 0.8, recall: null, coverage: 1, abstained: 0 });
-    expect(record?.commitments.corpusChecksum).toBe("freeze-point-checksum");
+    // #9966: the commitment is the checksum of the corpus a reader can DOWNLOAD, not the persisted backtest
+    // run's freeze point. That is the whole point of the change -- a commitment must name bytes someone can
+    // fetch and re-hash. Asserted against what /v1/public/eval-corpus actually serves rather than a literal,
+    // so the two surfaces cannot drift apart while both still look correct in isolation.
+    const corpusRes = await createApp().request("/v1/public/eval-corpus?ruleId=ai_consensus_defect", {}, env);
+    const corpus = (await corpusRes.json()) as { checksum: string; caseCount: number };
+    expect(corpus.caseCount).toBe(20);
+    expect(record?.commitments.corpusChecksum).toBe(corpus.checksum);
     expect(record?.subject).toEqual({ kind: "agent", id: ORB_GATE_SUBJECT_ID });
 
     const { recordDigest, ...rest } = record as EvalScoreRecord;

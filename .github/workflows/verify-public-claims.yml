@@ -97,7 +97,12 @@ jobs:
           # The script appends VERIFY_OK, VERIFY_SUMMARY and the heredoc-delimited body to $GITHUB_OUTPUT
           # itself, as one write. Wrapping its stdout in a heredoc here instead would interleave the two
           # writers and bury VERIFY_OK inside the body block.
-          npx --yes tsx scripts/verify-public-claims-report.ts \
+          #
+          # `node --experimental-strip-types`, not `npx tsx`: this file is OURS and already checked out, so
+          # fetching an unpinned TypeScript runner from the registry to read it would add a second unvetted
+          # runtime dependency to a job whose one intentional unpinned fetch is the published verifier itself.
+          # Same invocation `npm run actionlint` already uses for its own TS script.
+          node --experimental-strip-types scripts/verify-public-claims-report.ts \
             "public API" "$API_BASE_URL" "$(cat api.json.code)" api.json \
             "Orb ledger" "$ORB_BASE_URL" "$(cat orb.json.code)" orb.json
 

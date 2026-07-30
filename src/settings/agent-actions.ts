@@ -1286,12 +1286,30 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   //
   // `manualReviewLabelAppliedSha` is the missing provenance. Non-null means the PLANNER applied it, so the
   // planner may take it back; null means a human applied it (or it predates the column) and it is left
-  // strictly alone. Guarded on `manualHoldReason === null`, i.e. NO reason wants a hold this pass -- which is
-  // why this cannot lift a label applied for reason A just because reason B cleared. Deliberately not scoped
-  // to the recorded head: a rebase that resolves the cause is the single most common way a hold goes stale,
-  // and refusing to lift it there would leave the exact #9935 case unfixed.
-  if (
+  // strictly alone. Deliberately not scoped to the recorded head: a rebase that resolves the cause is the
+  // single most common way a hold goes stale, and refusing to lift it there would leave the #9935 case unfixed.
+  //
+  // `manualHoldReason === null` alone is NOT "nothing wants a hold". That ternary covers the guardrail hit,
+  // unverified CI, an action_required conclusion and a not-review-good verdict -- but every one of the
+  // would-MERGE holds in sections 1c-1g below fires on `reviewGood` with a SUCCESS conclusion, which is
+  // precisely when manualHoldReason is null. Releasing on it alone therefore stripped the label while a
+  // migration collision, an unlinked-issue match, a priority-eligibility hold, an unlinked-issue close or an
+  // unstable merge state was still live -- and that label is the exact thing the executor checks to deny
+  // merge and approve, so removing it removes the enforcement for the hold that is still standing.
+  //
+  // `noManualReviewHoldWanted` is the complete condition: every reason that would ADD this label, in one
+  // place, so a new hold added below cannot silently fail to suppress the release.
+  const noManualReviewHoldWanted =
     manualHoldReason === null &&
+    input.migrationCollisionHold === undefined &&
+    input.unlinkedIssueMatchHold === undefined &&
+    input.priorityEligibilityHold === undefined &&
+    input.unlinkedIssueMatchClose === undefined &&
+    !mergeableStateUnstable &&
+    !heldForManualReview &&
+    !mergeTerminallyBlocked;
+  if (
+    noManualReviewHoldWanted &&
     labels.manualReview !== null &&
     input.manualReviewLabelAppliedSha != null &&
     hasLabel(input.pr.labels, labels.manualReview)

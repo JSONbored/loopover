@@ -10,7 +10,7 @@ import { z } from "zod";
 
 import { checkBeforeStartSchema, slopRiskSchema, validateFocusManifestSchema, validateLinkedIssueSchema } from "./api-requests.js";
 import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS } from "./enums.js";
-import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP, MAX_REVIEW_NAG_COOLDOWN_DAYS } from "./limits.js";
+import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP, MAX_PRIORITY_ELIGIBILITY_WINDOW_MINUTES, MAX_REVIEW_NAG_COOLDOWN_DAYS } from "./limits.js";
 
 export const FindingSchema = z
   .object({
@@ -465,6 +465,8 @@ export const RepositorySettingsSchema = z
     gateDryRun: z.boolean().optional(),
     premergeContentRecheck: z.boolean().optional(),
     requireFreshRebaseWindowMinutes: z.number().int().positive().nullable().optional(),
+    // #9738: non-negative, not positive -- 0 is the documented way to turn the window off.
+    priorityEligibilityWindowMinutes: z.number().int().min(0).max(MAX_PRIORITY_ELIGIBILITY_WINDOW_MINUTES).nullable().optional(),
     staleBaseAheadByThreshold: z.number().int().positive().nullable().optional(),
     mergeReadinessGateMode: z.enum(["off", "advisory", "block"]),
     manifestPolicyGateMode: z.enum(["off", "advisory", "block"]),

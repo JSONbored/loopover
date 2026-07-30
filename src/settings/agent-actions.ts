@@ -462,6 +462,12 @@ export type AgentActionPlanInput = {
   // it. Same risk profile as the two holds above -- SUPPRESSES the merge (folded into `heldForManualReview`),
   // never closes, and clears itself once the window passes with no action from the contributor.
   priorityEligibilityHold?: { reason: string; comment: string } | undefined;
+  // #9881: the screenshot-table gate is configured to BLOCK and this PR carries no visual evidence. Same risk
+  // profile as the holds above -- SUPPRESSES the merge, never closes. It exists because `close` and
+  // `advisory` were the only options: a one-shot pipeline has no "changes requested, try again" for
+  // contributor work, so an enforcing gate destroyed PRs that had simply not attached screenshots yet, and
+  // the contributor cannot reopen. Clears itself the moment evidence appears (a table, or a bot capture).
+  screenshotEvidenceHold?: { reason: string; comment: string } | undefined;
   // Same guardrail as unlinkedIssueMatchHold, but for a CONFIRMED REPEAT by the same contributor (tracked via
   // audit_events, see resolveUnlinkedIssueMatchDisposition) -- a second occurrence is no longer a coincidence
   // worth a human's benefit of the doubt, so this closes the PR one-shot instead of holding it. Deliberately
@@ -1153,6 +1159,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     migrationCollisionHold: input.migrationCollisionHold !== undefined,
     unlinkedIssueMatchHold: input.unlinkedIssueMatchHold !== undefined,
     priorityEligibilityHold: input.priorityEligibilityHold !== undefined,
+    screenshotEvidenceHold: input.screenshotEvidenceHold !== undefined,
     advisoryCheckHold: input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0,
     // Deliberately conjoined with "nothing else adverse": an unstable state is only attributed to the ignore
     // list when our own aggregate found NO failing check of any kind. If some other non-required check is
@@ -1304,6 +1311,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     input.migrationCollisionHold === undefined &&
     input.unlinkedIssueMatchHold === undefined &&
     input.priorityEligibilityHold === undefined &&
+    input.screenshotEvidenceHold === undefined &&
     input.unlinkedIssueMatchClose === undefined &&
     !mergeableStateUnstable &&
     !heldForManualReview &&
@@ -1367,6 +1375,22 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // 1d-priority) priority-eligibility hold (#9738) — mirrors 1d exactly. The PR is EARLY, not wrong: it is
   // held with a neutral comment naming the moment work opens, and nothing else about it changes. The label
   // is the same generic manual-review one, so the hold is visible on the surfaces a maintainer already reads.
+  // #9881: the merge-authorized fallback, mirroring priorityEligibilityHold's directly below. A repo that
+  // enables merge autonomy WITHOUT review_state_label gets no disposition label from the ternary above, so
+  // without this the block tier would suppress the merge and say nothing at all -- a silent stall, which is
+  // the failure mode this tier exists to replace. Skipped when the ternary already planned the label
+  // (hasLabelOrPlanned), so the two never double-add.
+  if (reviewGood && input.screenshotEvidenceHold !== undefined && labels.manualReview !== null && acting("merge") && !hasLabelOrPlanned(input.pr.labels, actions, labels.manualReview)) {
+    actions.push({
+      actionClass: "label",
+      autonomyClass: "merge",
+      requiresApproval: approval("merge"),
+      reason: `verdict=${conclusion}; ${input.screenshotEvidenceHold.reason}`,
+      label: labels.manualReview,
+      labelOp: "add",
+      comment: sanitizePublicComment(input.screenshotEvidenceHold.comment),
+    });
+  }
   if (reviewGood && input.priorityEligibilityHold !== undefined && labels.manualReview !== null && acting("merge") && !hasLabelOrPlanned(input.pr.labels, actions, labels.manualReview)) {
     actions.push({
       actionClass: "label",
@@ -1463,22 +1487,33 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
         requiresApproval: approval("review_state_label"),
         reason,
         label,
-        // Only the migration-collision hold and the unlinked-issue-match hold carry a comment here — the
-        // guardrail/ready/changes labels never did and still don't (comment stays undefined, matching the
-        // pre-#2550 shape exactly). Migration-collision takes priority when both are somehow true (matches
-        // the label-priority choice above). unlinkedIssueMatchViolated is excluded here too: its own CLOSE
-        // action already carries the full closeComment, so this label needs no separate comment.
-        ...(!linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && reviewGood && input.migrationCollisionHold !== undefined
-          ? { comment: sanitizePublicComment(input.migrationCollisionHold.comment) }
-          : !linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && reviewGood && input.unlinkedIssueMatchHold !== undefined
-            ? { comment: sanitizePublicComment(input.unlinkedIssueMatchHold.comment) }
-            : !linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && reviewGood && input.unlinkedIssueMatchClose !== undefined
-              ? { comment: sanitizePublicComment(input.unlinkedIssueMatchClose.comment) }
-              : !linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && reviewGood && input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0
-                ? { comment: sanitizePublicComment(advisoryHoldComment(input.advisoryCheckHold)) }
-                : !linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && reviewGood && mergeableStateUnstable
-                  ? { comment: sanitizePublicComment(mergeUnstableHoldComment(input.nonRequiredCheckFailures)) }
-                  : {}),
+        // Only a HOLD carries a comment here — the guardrail/ready/changes labels never did and still don't
+        // (comment stays undefined, matching the pre-#2550 shape). Priority follows the label choice above.
+        //
+        // The eligibility guard is evaluated ONCE rather than repeated per arm: a linked-issue close in
+        // flight and an unlinked-issue-match close each already carry their own full message, and a
+        // not-review-good PR is not being held for any of these reasons. Restating it inside every arm (as
+        // this chain did) made each copy structurally unreachable-false, because reaching a later arm already
+        // proved the earlier one's identical guard true.
+        ...(!linkedIssueCloseInFlight && !unlinkedIssueMatchViolated && reviewGood
+          ? input.migrationCollisionHold !== undefined
+            ? { comment: sanitizePublicComment(input.migrationCollisionHold.comment) }
+            : input.unlinkedIssueMatchHold !== undefined
+              ? { comment: sanitizePublicComment(input.unlinkedIssueMatchHold.comment) }
+              : input.unlinkedIssueMatchClose !== undefined
+                ? { comment: sanitizePublicComment(input.unlinkedIssueMatchClose.comment) }
+                : input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0
+                  ? { comment: sanitizePublicComment(advisoryHoldComment(input.advisoryCheckHold)) }
+                  : // #9881: the block tier's point is that the hold is ACTIONABLE -- "held, not closed, here
+                    // is what is missing". The disposition already emits the manual-review label for it, so
+                    // the message belongs on THAT action; a competing second add would be skipped by
+                    // hasLabelOrPlanned and the contributor would get a bare label with no reason.
+                    input.screenshotEvidenceHold !== undefined
+                    ? { comment: sanitizePublicComment(input.screenshotEvidenceHold.comment) }
+                    : mergeableStateUnstable
+                      ? { comment: sanitizePublicComment(mergeUnstableHoldComment(input.nonRequiredCheckFailures)) }
+                      : {}
+          : {}),
       });
     }
     // Stale disposition-label cleanup (#stale-disposition-label-cleanup): the review-state labels below

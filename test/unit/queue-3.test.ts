@@ -2706,6 +2706,67 @@ describe("queue processors", () => {
     expect(expiredAudit?.n).toBe(1);
   });
 
+  // #9881: `block` is the middle tier. `close` destroys a contributor PR that simply has not attached
+  // screenshots yet -- unrecoverable, since they cannot reopen -- and `advisory` enforces nothing at all.
+  it("screenshot-table gate (#9881): action=block HOLDS the PR with a reason instead of closing it", async () => {
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem() });
+    const seen = { closed: false, merged: false, labels: [] as string[], comments: [] as string[] };
+    env.JOBS = { async send() {} } as unknown as Queue;
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto", label: "auto", merge: "auto" } });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", screenshotTableGate: { enabled: true, action: "block", whenLabels: ["visual"] }, reviewCheckMode: "required" } }, "repo_file");
+    await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", {
+      number: 74, title: "Update the app index route", state: "open", user: { login: "visual-contributor" },
+      head: { sha: "vis74" }, labels: [{ name: "visual" }], body: "Changed the route layout, no table here.",
+    });
+
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/74/files")) return Response.json([{ filename: "apps/loopover-ui/src/routes/app.index.tsx", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/74/reviews")) return Response.json([{ state: "APPROVED", user: { login: "JSONbored" }, submitted_at: "2026-07-30T10:00:00Z" }]);
+      if (url === "https://api.github.com/graphql") return Response.json({ data: { repository: { pullRequest: { reviewDecision: "APPROVED" } } } });
+      // A REAL required context (matching the status stub below): an empty list makes CI "resolved but
+      // unverifiable", which is itself a hold reason and would mask the block tier under a different one.
+      if (url.includes("/branches/")) return Response.json({ contexts: ["ci/build"] });
+      if (url.includes("/pulls/74/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/74") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ number: 74, state: "closed" }); }
+      if (url.includes("/pulls/74/merge")) { seen.merged = true; return Response.json({ merged: true }); }
+      if (url.endsWith("/pulls/74")) return Response.json({ number: 74, state: "open", user: { login: "visual-contributor" }, head: { sha: "vis74" }, mergeable_state: "clean" });
+      if (url.includes("/commits/vis74/status")) return Response.json({ state: "success", statuses: [{ context: "ci/build", state: "success", description: "ok" }] });
+      if (url.includes("/commits/vis74/check-runs")) return Response.json({ total_count: 1, check_runs: [{ name: "ci/build", status: "completed", conclusion: "success" }] });
+      if (url.includes("/commits/vis74/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/74/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/74/comments") && method === "POST") { seen.comments.push(String(JSON.parse(String(init?.body ?? "{}")).body ?? "")); return Response.json({ id: 1 }); }
+      if (url.includes("/issues/74/comments")) return Response.json([]);
+      if (url.endsWith("/labels") && method === "POST") { seen.labels.push(...(JSON.parse(String(init?.body ?? "{}")).labels ?? [])); return Response.json([]); }
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 907 }, { status: 201 });
+      if (url.includes("/check-runs/907") && method === "PATCH") return Response.json({ id: 907 });
+      return new Response("not found", { status: 404 });
+    });
+
+    await processJob(env, { type: "agent-regate-pr", deliveryId: "screenshot-block-tier", repoFullName: "JSONbored/gittensory", prNumber: 74, installationId: 123, force: true });
+
+    // The load-bearing distinction from `close`: the PR survives, and it is not merged either.
+    expect(seen.closed).toBe(false);
+    expect(seen.merged).toBe(false);
+    const closeAudit = await env.DB.prepare("select count(*) as n from audit_events where event_type = 'agent.action.close'").first<{ n: number }>();
+    expect(closeAudit?.n).toBe(0);
+    // The PR is parked for review rather than silently ignored.
+    expect(seen.labels.join(",")).toContain("manual-review");
+    // The hold's MESSAGE is asserted in agent-actions.test.ts (#9881) rather than here, and deliberately so:
+    // every sibling hold (priorityEligibilityHold, migrationCollisionHold, advisoryCheckHold) is gated on
+    // `reviewGood`, which a bare regate cannot reach -- it skips the AI review, so the gate conclusion is
+    // `neutral`. Driving a full AI-review pass here to re-assert one string would test the harness, not the
+    // tier. What only the pipeline can prove is this: a violated `block` gate reaches a real decision and the
+    // PR still exists afterwards.
+  });
+
   describe("live migrations/** collision recheck (#2550)", () => {
     // Full merge-eligible stub set (clean + green + approved), reused across scenarios — a positive test proves
     // the collision hold actually suppresses what would otherwise merge; a negative test proves the check

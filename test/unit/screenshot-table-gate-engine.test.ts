@@ -220,6 +220,10 @@ describe("normalizeScreenshotTableGateConfig", () => {
 
   it("rejects an invalid action with a warning, falling back to close", () => {
     const warnings: string[] = [];
+    // #9881: "block" is a REAL action now -- the middle tier between destroying the PR and enforcing nothing.
+    // Pinned here beside the rejected values so a future tightening of the enum cannot silently drop it.
+    expect(normalizeScreenshotTableGateConfig({ action: "block" }, []).action).toBe("block");
+    expect(normalizeScreenshotTableGateConfig({ action: "advisory" }, []).action).toBe("advisory");
     expect(normalizeScreenshotTableGateConfig({ action: "delete" }, warnings).action).toBe("close");
     expect(warnings.some((w) => w.includes("action"))).toBe(true);
   });

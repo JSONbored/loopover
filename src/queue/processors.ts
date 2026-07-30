@@ -2807,6 +2807,7 @@ function buildAgentMaintenancePlanInput(args: {
   migrationCollisionHold: AgentActionPlanInput["migrationCollisionHold"];
   unlinkedIssueMatchHold: AgentActionPlanInput["unlinkedIssueMatchHold"];
   priorityEligibilityHold: AgentActionPlanInput["priorityEligibilityHold"];
+  screenshotEvidenceHold: AgentActionPlanInput["screenshotEvidenceHold"];
   aiReviewLowConfidenceHold: AgentActionPlanInput["aiReviewLowConfidenceHold"];
   unlinkedIssueMatchClose: AgentActionPlanInput["unlinkedIssueMatchClose"];
   liveMergeState: string | undefined;
@@ -2847,6 +2848,7 @@ function buildAgentMaintenancePlanInput(args: {
     migrationCollisionHold,
     unlinkedIssueMatchHold,
     priorityEligibilityHold,
+    screenshotEvidenceHold,
     aiReviewLowConfidenceHold,
     unlinkedIssueMatchClose,
     liveMergeState,
@@ -2936,6 +2938,7 @@ function buildAgentMaintenancePlanInput(args: {
     ...(migrationCollisionHold !== undefined ? { migrationCollisionHold } : {}),
     ...(unlinkedIssueMatchHold !== undefined ? { unlinkedIssueMatchHold } : {}),
     ...(priorityEligibilityHold !== undefined ? { priorityEligibilityHold } : {}),
+    ...(screenshotEvidenceHold !== undefined ? { screenshotEvidenceHold } : {}),
     ...(aiReviewLowConfidenceHold !== undefined ? { aiReviewLowConfidenceHold } : {}),
     ...(unlinkedIssueMatchClose !== undefined ? { unlinkedIssueMatchClose } : {}),
     manualReviewLockContentionResolved,
@@ -3580,6 +3583,27 @@ async function runAgentMaintenancePlanAndExecute(
     !screenshotTableEnforcementDegraded
       ? { matched: true, reason: screenshotTableGateResult.reason }
       : undefined;
+  // #9881: `block` is the middle tier between close and advisory -- the PR is HELD, never closed, and told
+  // exactly what is missing. Same three exemptions the close respects: a live capture retry (the evidence may
+  // still be coming), and a degraded enforcement (the bot cannot produce evidence here at all, so holding for
+  // it would be as unfair as closing for it). A hold with an unmeetable condition is just a slower close.
+  // Captured as the REASON rather than a boolean so the hold's message and its existence cannot disagree:
+  // every `violated: true` return from the evaluator carries a reason, and this way the type says so without
+  // an unreachable null-guard. Null here simply means "not blocking this pass", which is the common case.
+  const screenshotBlockReason =
+    screenshotTableGateResult.violated &&
+    screenshotTableGateConfig.action === "block" &&
+    !botCaptureRetryPending &&
+    !screenshotTableEnforcementDegraded
+      ? screenshotTableGateResult.reason
+      : null;
+  const screenshotEvidenceHold =
+    screenshotBlockReason === null
+      ? undefined
+      : {
+          reason: screenshotBlockReason,
+          comment: `${screenshotBlockReason}\n\nThis PR is held, not closed — add the missing before/after screenshots and it proceeds automatically. This is an automated maintenance action.`,
+        };
   if (screenshotTableEnforcementDegraded) {
     await recordAuditEvent(env, {
       eventType: "github_app.screenshot_table_close_degraded_capture_unobtainable",
@@ -3748,6 +3772,7 @@ async function runAgentMaintenancePlanAndExecute(
       migrationCollisionHold,
       unlinkedIssueMatchHold,
       priorityEligibilityHold,
+      screenshotEvidenceHold,
       aiReviewLowConfidenceHold: aiReviewLowConfidenceHold ?? aiReviewSalvageableHold,
       unlinkedIssueMatchClose,
       liveMergeState,

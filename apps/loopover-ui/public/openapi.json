@@ -10335,6 +10335,7 @@
                 "type": "string",
                 "enum": [
                   "close",
+                  "block",
                   "advisory"
                 ]
               },

@@ -4687,7 +4687,7 @@ export async function markPullRequestVisualCaptureSatisfied(env: Env, fullName: 
     // #9030: a proven-successful capture for this head supersedes any earlier "retry pending" marker recorded
     // for the SAME head (an error or a still-building preview on an earlier attempt) -- clearing it here keeps
     // the row's state minimal instead of leaving a now-moot marker sitting alongside a satisfied one.
-    .set({ visualCaptureSatisfiedSha: headSha, visualCaptureRetryPendingSha: null, visualCaptureRetryPendingAt: null, updatedAt: nowIso() })
+    .set({ visualCaptureSatisfiedSha: headSha, visualCaptureRetryPendingSha: null, visualCaptureRetryPendingAt: null, visualCaptureUnobtainableSha: null, updatedAt: nowIso() })
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
 }
 
@@ -4709,6 +4709,25 @@ export async function markPullRequestVisualCaptureRetryPending(env: Env, fullNam
     // it is counting attempts, where resetting would let the count live forever; here the chain is already
     // bounded by that very count, so re-stamping cannot extend it indefinitely.)
     .set({ visualCaptureRetryPendingSha: headSha, visualCaptureRetryPendingAt: nowIso(), updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
+}
+
+/** Structurally unobtainable capture (#9881): record that for `headSha` the bot PROVED the repo produces no
+ *  preview deployment at all -- the deployments read SUCCEEDED (not an API error, not a failed deploy) and
+ *  returned nothing, and the preview-poll budget for this head is spent.
+ *
+ *  That distinction is the whole point. "No evidence found" is a legitimate reason to close a visual PR;
+ *  "evidence was never obtainable" is not, because no contributor action other than hand-authoring the table
+ *  could ever change it, and nothing told the maintainer their configuration was unsatisfiable. The
+ *  screenshotTableGate degrades its CLOSE to advisory while this equals the current head.
+ *
+ *  Scoped to headSha like its siblings, so a later commit re-arms the requirement and a repo that gains
+ *  preview deploys stops matching on its very next push. */
+export async function markPullRequestVisualCaptureUnobtainable(env: Env, fullName: string, number: number, headSha: string): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ visualCaptureUnobtainableSha: headSha, updatedAt: nowIso() })
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
 }
 

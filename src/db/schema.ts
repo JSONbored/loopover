@@ -494,6 +494,11 @@ export const pullRequests = sqliteTable(
     // a sha with no timestamp reads as EXPIRED, which is both honest (the row predates the column) and what
     // releases the PRs already stuck behind one. loopover-computed, written with the sha, cleared with it.
     visualCaptureRetryPendingAt: text("visual_capture_retry_pending_at"),
+    // #9881: the head SHA at which the bot PROVED visual capture is structurally unobtainable for this repo --
+    // the deployments read succeeded, found none at all, and the poll budget is spent. The screenshot-table
+    // gate degrades its CLOSE to advisory for that head rather than closing a PR over evidence no
+    // contributor action could produce.
+    visualCaptureUnobtainableSha: text("visual_capture_unobtainable_sha"),
     // Screenshot-table PRESENCE-mode staleness correlation (#stale-screenshot-table-fix, follow-up to #2006).
     // JSON `{headSha, evidenceFingerprint}` -- the head SHA and before/after-image-URL fingerprint that last
     // satisfied screenshotTableGate's presence-mode check (see evaluateScreenshotTableGate's staleness comment).

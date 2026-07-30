@@ -58,6 +58,7 @@ import {
   markPullRequestVisualCaptureSatisfied,
   clearPullRequestVisualCaptureRetryPending,
   markPullRequestVisualCaptureRetryPending,
+  markPullRequestVisualCaptureUnobtainable,
   markPullRequestScreenshotTablePresenceSatisfied,
   getLatestRegatedAt,
   getLatestBacklogConvergenceRegatedAt,
@@ -3525,6 +3526,9 @@ async function runAgentMaintenancePlanAndExecute(
     botCaptureSatisfied,
     headSha: pr.headSha,
     presenceModeSatisfied: pr.screenshotTablePresenceSatisfied,
+    // #9881: proved-unobtainable for THIS head only -- a later push re-arms the requirement, and a repo
+    // that gains preview deploys stops matching on its very next commit.
+    captureUnobtainable: Boolean(pr.headSha) && pr.visualCaptureUnobtainableSha === pr.headSha,
   });
   // #9030: a visual-capture pipeline ERROR (browserless down, timeout, GitHub hiccup) or a still-building
   // preview looked IDENTICAL to "capture concluded normally, no visual evidence found" -- both left
@@ -3561,14 +3565,35 @@ async function runAgentMaintenancePlanAndExecute(
         `so the screenshot-table gate is evaluating on the evidence actually present instead of deferring again`,
     });
   }
+  // #9881: the bot proved this repo produces no preview deployment at all, so `review.visual.enabled` can
+  // never satisfy this gate here. The violation stands and still surfaces as a finding, but a CLOSE would
+  // destroy a contributor's PR over a maintainer-side pipeline gap no contributor action can close, and
+  // which nothing had ever told the maintainer about. Degrade to advisory and say so.
+  const screenshotTableEnforcementDegraded = screenshotTableGateResult.enforcementDegradedReason !== undefined;
   const screenshotTableMatch =
-    screenshotTableGateResult.violated && screenshotTableGateConfig.action === "close" && !botCaptureRetryPending
+    screenshotTableGateResult.violated &&
+    screenshotTableGateConfig.action === "close" &&
+    !botCaptureRetryPending &&
+    !screenshotTableEnforcementDegraded
       ? { matched: true, reason: screenshotTableGateResult.reason }
       : undefined;
+  if (screenshotTableEnforcementDegraded) {
+    await recordAuditEvent(env, {
+      eventType: "github_app.screenshot_table_close_degraded_capture_unobtainable",
+      actor: null,
+      targetKey: `${repoFullName}#${pr.number}`,
+      outcome: "completed",
+      detail: screenshotTableGateResult.enforcementDegradedReason ?? null,
+      metadata: { headSha: pr.headSha ?? null, configuredAction: screenshotTableGateConfig.action },
+    }).catch(() => undefined);
+  }
   // #9462: deferring the CLOSE is only half a deferral -- on its own it let the plan fall through to a MERGE.
   // Thread the unresolved state into the planner so it holds the PR instead of silently skipping the gate.
   const screenshotTableEvidenceUnresolved =
-    screenshotTableGateResult.violated && screenshotTableGateConfig.action === "close" && botCaptureRetryPending;
+    screenshotTableGateResult.violated &&
+    screenshotTableGateConfig.action === "close" &&
+    botCaptureRetryPending &&
+    !screenshotTableEnforcementDegraded;
   if (screenshotTableEvidenceUnresolved) {
     await recordAuditEvent(env, {
       eventType: "github_app.screenshot_table_close_deferred_capture_retry",
@@ -12902,7 +12927,7 @@ async function maybePublishPrPublicSurface(
           // ordinary "nothing found" capture would, with no separate code path to maintain.
           const capture =
             reviewVisualConfig.enabled === false
-              ? { routes: [], interactions: [], previewPending: false, renderFailed: false }
+              ? { routes: [], interactions: [], previewPending: false, renderFailed: false, previewUnobtainable: false }
               : await buildCapture(env, token, captureTarget, visualFiles, githubRateLimitAdmissionKeyForInstallation(installationId), reviewVisualConfig, changedCssFiles);
           beforeAfter = capture.routes;
           interactionPreviews = capture.interactions;
@@ -12953,6 +12978,22 @@ async function maybePublishPrPublicSurface(
               previewPollAttempt,
             });
           } else if (pr.headSha) {
+            // #9881: this capture concluded, and it concluded because the repo has no preview pipeline at all
+            // (build state `absent` across every poll, budget now spent) -- not because a deploy was late or
+            // a renderer blipped. Record it so the screenshot-table gate degrades its CLOSE instead of
+            // destroying a PR over evidence no contributor action could produce.
+            if (capture.previewUnobtainable) {
+              await markPullRequestVisualCaptureUnobtainable(env, repoFullName, pr.number, pr.headSha).catch((error) => {
+                console.log(
+                  JSON.stringify({
+                    event: "visual_capture_unobtainable_mark_failed",
+                    repoFullName,
+                    pull: pr.number,
+                    message: errorMessage(error).slice(0, 200),
+                  }),
+                );
+              });
+            }
             // Conclusive: release any latch this head still carries. Best-effort and idempotent -- the common
             // case is that there is no latch to clear, and a failed clear only leaves the age bound in
             // visual-capture-retry-latch.ts to end the deferral instead of ending it now.

@@ -101,6 +101,11 @@ export interface CaptureResult {
    * browserless outage.
    */
   renderFailed: boolean;
+  /** #9881: the preview is not late or broken -- this repo has NO preview pipeline at all. Set only when the
+   *  build state was `absent` (no preview check-run found whatsoever, across every poll) AND the per-head
+   *  poll budget is spent. That pair is the proof the screenshot-table gate needs to tell "no evidence found"
+   *  apart from "evidence was never obtainable" before it closes anyone's PR. */
+  previewUnobtainable: boolean;
 }
 
 /** True when `url` is a persisted rendered shot. `capturePage` can also return an on-demand `?url=`
@@ -700,6 +705,7 @@ export async function buildCapture(
   // building) so we can show a terminal "deploy failed" card instead of a spinner.
   let previewBase = "";
   let previewFailed = target.previewFailed === true;
+  let previewUnobtainable = false;
   let previewPending = false;
   // Hoisted above the discovery block below (was previously computed after it) so the eternal-"loading"-
   // placeholder fix's `buildState === "absent"` branch can consult it -- seeing this whole file top to
@@ -754,6 +760,10 @@ export async function buildCapture(
             const attempts = await previewPollAttemptCount(env, target.headSha);
             if (attempts >= MAX_PREVIEW_POLL_ATTEMPTS) {
               previewFailed = true;
+              // #9881: `absent` means no preview check-run was ever found, and the budget is now spent -- so
+              // this is not a late or broken deploy, it is a repo with no preview pipeline. Recording it is
+              // what lets the screenshot-table gate decline to CLOSE on evidence it could never obtain.
+              previewUnobtainable = true;
             } else {
               await recordPreviewPollAttempt(env, target.headSha);
               previewPending = true;
@@ -958,5 +968,5 @@ export async function buildCapture(
     }
   }
 
-  return { routes: captureRoutes, interactions: interactionRoutes, previewPending, renderFailed };
+  return { routes: captureRoutes, interactions: interactionRoutes, previewPending, renderFailed, previewUnobtainable };
 }

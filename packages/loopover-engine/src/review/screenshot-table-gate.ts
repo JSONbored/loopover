@@ -339,6 +339,12 @@ export type ScreenshotTableGateResult = {
    *  across a push (stale -- #stale-screenshot-table-fix / #8866) or the contributor genuinely re-affirmed it.
    *  Absent on every other NO_VIOLATION path (disabled/out-of-scope/bot-capture), and on a violation. */
   presenceModeSatisfiedState?: ScreenshotTablePresenceEvidence | undefined;
+  /** #9881: set when the violation stands but ENFORCEMENT must not. The bot proved this repo produces no
+   *  preview deployment at all, so `review.visual.enabled` can never satisfy the gate here and a CLOSE would
+   *  destroy PRs over evidence no contributor action could supply. The finding is still raised -- the PR
+   *  really does lack visual evidence -- but the caller degrades `action: "close"` to advisory and says this.
+   *  Absent whenever enforcement may proceed normally. */
+  enforcementDegradedReason?: string | undefined;
 };
 
 /** One presence/matrix-mode "satisfied" checkpoint: the head SHA it was satisfied at, plus a fingerprint of the
@@ -395,7 +401,26 @@ function evidenceFreshnessForHead(
  *    evidence otherwise passes but is STALE -- the exact same before/after evidence already satisfied the gate
  *    for a prior, different head SHA (see `headSha`/`presenceModeSatisfied` below and the inline comment at the
  *    check itself) -- a screenshot table from push #1 must not silently keep passing through pushes #2..#N. */
-export function evaluateScreenshotTableGate(input: {
+/** #9881: the reason attached when enforcement is degraded. Stated in the contributor-visible comment, so
+ *  the PR author learns the gate could not be satisfied here rather than being left to guess. */
+export const CAPTURE_UNOBTAINABLE_REASON =
+  "This repository has `review.visual.enabled` but produces no preview deployment, so the bot cannot capture the AFTER screenshot — the screenshot-table requirement is reported here but not enforced. A maintainer needs to either enable preview deploys or set `requireScreenshotTable.action: advisory`.";
+
+/**
+ * The gate, with #9881's enforcement degrade applied.
+ *
+ * The violation itself is decided by the pure evaluator below and is UNCHANGED by the degrade: a PR with no
+ * visual evidence still has no visual evidence, and the finding still says so. What changes is whether that
+ * finding may be acted on. When the bot has proved the repo cannot produce a capture at all, a CLOSE would
+ * punish a contributor for a maintainer-side pipeline gap that no contributor action can close.
+ */
+export function evaluateScreenshotTableGate(input: Parameters<typeof evaluateScreenshotTableGateViolation>[0]): ScreenshotTableGateResult {
+  const result = evaluateScreenshotTableGateViolation(input);
+  if (!result.violated || input.captureUnobtainable !== true) return result;
+  return { ...result, enforcementDegradedReason: CAPTURE_UNOBTAINABLE_REASON };
+}
+
+function evaluateScreenshotTableGateViolation(input: {
   config: ScreenshotTableGateConfig;
   prBody: string | null | undefined;
   prLabels: string[];
@@ -417,6 +442,11 @@ export function evaluateScreenshotTableGate(input: {
    *  `visualCaptureSatisfiedSha === headSha` check). `null`/undefined ⇒ never satisfied before (or the caller
    *  has no persistence wired up yet). */
   presenceModeSatisfied?: ScreenshotTablePresenceEvidence | null | undefined;
+  /** #9881: true when the bot PROVED visual capture is structurally unobtainable for this repo at this head
+   *  -- the deployments read succeeded, found none at all, and the poll budget is spent. Does NOT suppress
+   *  the violation (the PR genuinely has no visual evidence); it degrades ENFORCEMENT, so a maintainer still
+   *  sees the finding but a contributor does not lose their PR to a pipeline gap. */
+  captureUnobtainable?: boolean | undefined;
 }): ScreenshotTableGateResult {
   const { config } = input;
   if (!config.enabled) return NO_VIOLATION;

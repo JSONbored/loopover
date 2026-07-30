@@ -1,0 +1,16 @@
+-- Visual capture that is structurally UNOBTAINABLE for a repo (#9881).
+--
+-- `screenshotTableGate.action: "close"` closes a PR when no visual evidence is found. That is correct when
+-- evidence is merely absent. It is wrong when the pipeline could never have produced it: a repo with
+-- `review.visual.enabled` but NO preview deployments at all (JSONbored/awesome-claude is the live case)
+-- exhausts its preview-poll budget, never sets `visual_capture_satisfied_sha`, and every contributor PR
+-- touching a visual-scoped path is then closed one-shot for evidence no contributor action could supply.
+--
+-- This column records the head SHA at which the bot PROVED the distinction: the deployments read succeeded,
+-- reported no deployment whatsoever (not a failed one, not an API error), and the poll budget is spent.
+-- The gate degrades its CLOSE to advisory for exactly that head and says why, rather than destroying a PR
+-- over a pipeline gap the maintainer was never told about.
+--
+-- Scoped to head SHA like its siblings (visual_capture_satisfied_sha, visual_capture_retry_pending_sha), so
+-- a later commit re-arms the requirement and a repo that gains preview deploys stops matching immediately.
+ALTER TABLE pull_requests ADD COLUMN visual_capture_unobtainable_sha TEXT;

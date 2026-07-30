@@ -2094,7 +2094,7 @@ describe("queue processors", () => {
   // previewPending false, no exception, no real pair -- which is byte-identical to a legitimately evidence-free
   // PR right up until the gate closes it one-shot. Browserless being down must not close contributor PRs.
   it("screenshot-table gate (#9464): a RESOLVED capture whose renderer failed defers the close, exactly like a thrown one", async () => {
-    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockResolvedValueOnce({ routes: [{ path: "/app", afterUrl: "https://worker.example/loopover/shot?url=x", afterUrlMobile: "https://worker.example/loopover/shot?url=x" }], interactions: [], previewPending: false, renderFailed: true });
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockResolvedValueOnce({ routes: [{ path: "/app", afterUrl: "https://worker.example/loopover/shot?url=x", afterUrlMobile: "https://worker.example/loopover/shot?url=x" }], interactions: [], previewPending: false, renderFailed: true, previewUnobtainable: false });
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
       LOOPOVER_REVIEW_SCREENSHOTS: "true",
@@ -2173,7 +2173,7 @@ describe("queue processors", () => {
   // `renderFailed` -- an identical no-evidence capture from a HEALTHY renderer is a true negative and must
   // still close. This is the test that an earlier "infer the blip from zero pairs" attempt broke.
   it("screenshot-table gate (#9464 INVARIANT): a healthy renderer that found no evidence still CLOSES — the fix does not neuter the gate", async () => {
-    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockResolvedValueOnce({ routes: [], interactions: [], previewPending: false, renderFailed: false });
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockResolvedValueOnce({ routes: [], interactions: [], previewPending: false, renderFailed: false, previewUnobtainable: false });
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
       LOOPOVER_REVIEW_SCREENSHOTS: "true",
@@ -2502,7 +2502,7 @@ describe("queue processors", () => {
 
       // The durable budget now ends the chain: the capture RESOLVES with nothing pending and nothing broken,
       // while attempts formally remain. Neither branch that could reschedule fires.
-      buildCaptureSpy.mockResolvedValue({ routes: [], interactions: [], previewPending: false, renderFailed: false });
+      buildCaptureSpy.mockResolvedValue({ routes: [], interactions: [], previewPending: false, renderFailed: false, previewUnobtainable: false });
       await processJob(env, { type: "recapture-preview", deliveryId: "screenshot-latch-conclusive-final", repoFullName: "JSONbored/gittensory", prNumber: 70, installationId: 123, attempt: 1 });
     } finally {
       buildCaptureSpy.mockRestore();
@@ -2521,7 +2521,7 @@ describe("queue processors", () => {
   // fails must not crash the pass, because the pass is also what publishes the review. The latch simply stays
   // until its age releases it, which is strictly better than losing the whole pass to a failed cleanup.
   it("screenshot-table gate (#9876): a failed conclusive clear is swallowed -- the pass still completes", async () => {
-    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockResolvedValue({ routes: [], interactions: [], previewPending: false, renderFailed: false });
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockResolvedValue({ routes: [], interactions: [], previewPending: false, renderFailed: false, previewUnobtainable: false });
     const clearSpy = vi
       .spyOn(repositoriesModule, "clearPullRequestVisualCaptureRetryPending")
       .mockRejectedValue(new Error("d1 write failed"));

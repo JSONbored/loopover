@@ -2327,6 +2327,25 @@ describe("executeAgentMaintenanceActions merge-train gate (#selfhost-merge-train
     expect(mergePullRequest).not.toHaveBeenCalled();
   });
 
+  it("#9952: with several PRs ahead the comment names the POSITION, not just the nearest blocker", async () => {
+    // "Behind #3" and "behind #3 and two others" are very different waits. Naming only the nearest made a
+    // queue read as a stall, because nothing told the contributor how long the line actually was.
+    const env = createTestEnv({});
+    for (const [number, at] of [[3, "2026-07-05T08:00:00.000Z"], [4, "2026-07-05T08:30:00.000Z"], [5, "2026-07-05T09:00:00.000Z"]] as const) {
+      await upsertPullRequestFromGitHub(env, "owner/repo", { number, title: `Older overlapping sibling ${number}`, state: "open", user: { login: "c" }, head: { sha: `sha${number}` }, labels: [], body: "Fixes #1", created_at: at });
+    }
+    await upsertPullRequestFromGitHub(env, "owner/repo", { number: 7, title: "This PR", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], body: "Fixes #1", created_at: "2026-07-05T10:00:00.000Z" });
+
+    await executeAgentMaintenanceActions(env, ctx({ mergeTrainMode: "enforce", pullRequestCreatedAt: "2026-07-05T10:00:00.000Z", pullRequestLinkedIssues: [1] }), [merge]);
+
+    const [, , , , body] = vi.mocked(createIssueComment).mock.calls[0]!;
+    expect(body).toContain("position 4");
+    expect(body).toContain("behind 3 overlapping PRs");
+    expect(body).toContain("#3, #4, #5");
+    // The nearest is still called out by name -- position alone does not tell you what to watch.
+    expect(body).toContain("The nearest is #3");
+  });
+
   it("REGRESSION (#merge-train-honest-comment): an enforce-mode train denial tells the contributor, once", async () => {
     // Observed live on JSONbored/loopover#9837: the published surface said the PR was MERGING (the planner
     // legitimately concluded wouldMerge before the executor's train check), then the denial was recorded

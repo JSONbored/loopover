@@ -33,7 +33,7 @@ function decide(
 describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
   it("waits for a genuinely older, viable, overlapping sibling (by createdAt)", () => {
     const siblings = [sibling(105, "2026-07-07T10:00:00.000Z")];
-    expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105 });
+    expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
   });
 
   it("does not wait for a NEWER sibling (by createdAt)", () => {
@@ -57,12 +57,14 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
 
   it("a non-dirty mergeableState (clean/unknown/unstable) still blocks", () => {
     const siblings = [sibling(105, "2026-07-07T10:00:00.000Z", "unstable")];
-    expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105 });
+    expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
   });
 
   it("the OLDEST of several viable older siblings is the blocker", () => {
     const siblings = [sibling(107, "2026-07-07T10:30:00.000Z"), sibling(105, "2026-07-07T10:00:00.000Z"), sibling(108, "2026-07-07T10:45:00.000Z")];
-    expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105 });
+    // #9952: all three are viable and older, so the queue carries all three (oldest first) while blockingPr
+    // stays the nearest -- this PR is fourth in line, which is what the wait comment now reports.
+    expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105, 107, 108] });
   });
 
   it("staleness cap: an older sibling past MERGE_TRAIN_MAX_WAIT_MS no longer blocks", () => {
@@ -76,12 +78,12 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
     // is just under the cap is unambiguously older than this PR too, decoupling "is it stale" from "is it older".
     const freshCreatedAt = new Date(NOW - MERGE_TRAIN_MAX_WAIT_MS + 1000).toISOString();
     const siblings = [sibling(105, freshCreatedAt)];
-    expect(decide(110, new Date(NOW).toISOString(), siblings, NOW)).toEqual({ wait: true, blockingPr: 105 });
+    expect(decide(110, new Date(NOW).toISOString(), siblings, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
   });
 
   it("missing createdAt on the sibling falls back to PR-number tiebreak (lower number = older)", () => {
     const siblings = [sibling(105, null)];
-    expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105 });
+    expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
   });
 
   it("missing createdAt on the sibling + higher sibling number ⇒ does not block", () => {
@@ -96,13 +98,13 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
 
   it("missing createdAt on both sides falls back to PR-number tiebreak", () => {
     const siblings = [sibling(105, undefined)];
-    expect(decide(110, undefined, siblings, NOW)).toEqual({ wait: true, blockingPr: 105 });
+    expect(decide(110, undefined, siblings, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
   });
 
   it("an exact createdAt tie falls back to PR-number tiebreak", () => {
     const tie = "2026-07-07T11:55:00.000Z"; // recent, well clear of the staleness boundary tested separately above
     const siblings = [sibling(105, tie)];
-    expect(decide(110, tie, siblings, NOW)).toEqual({ wait: true, blockingPr: 105 });
+    expect(decide(110, tie, siblings, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
   });
 
   it("an exact createdAt tie with a LOWER-numbered current PR does not block", () => {
@@ -119,12 +121,12 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
 
     it("waits for an older sibling sharing a linked issue, even with no changed-file data on either side", () => {
       const siblings = [sibling(105, "2026-07-07T10:00:00.000Z", null, [42])];
-      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW, { thisPrLinkedIssues: [42] })).toEqual({ wait: true, blockingPr: 105 });
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW, { thisPrLinkedIssues: [42] })).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
     });
 
     it("waits for an older sibling sharing a meaningful changed file, even with no linked-issue overlap", () => {
       const siblings: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [99], changedFiles: ["src/queue/processors.ts"] }];
-      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW, { thisPrLinkedIssues: [1], thisPrChangedFiles: ["src/queue/processors.ts"] })).toEqual({ wait: true, blockingPr: 105 });
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW, { thisPrLinkedIssues: [1], thisPrChangedFiles: ["src/queue/processors.ts"] })).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
     });
 
     it("does NOT treat a shared lockfile or generated-output path as meaningful overlap", () => {
@@ -146,12 +148,12 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
 
     it("a sibling with no linkedIssues field at all (undefined) can still match via a shared changed file", () => {
       const siblings: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", changedFiles: ["src/a.ts"] }];
-      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW, { thisPrLinkedIssues: [1], thisPrChangedFiles: ["src/a.ts"] })).toEqual({ wait: true, blockingPr: 105 });
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW, { thisPrLinkedIssues: [1], thisPrChangedFiles: ["src/a.ts"] })).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
     });
 
     it("a sibling with unresolved changedFiles can still match via a shared linked issue", () => {
       const siblings: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [7] }];
-      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW, { thisPrLinkedIssues: [7], thisPrChangedFiles: ["src/a.ts"] })).toEqual({ wait: true, blockingPr: 105 });
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW, { thisPrLinkedIssues: [7], thisPrChangedFiles: ["src/a.ts"] })).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
     });
 
     it("this PR having no changedFiles resolved does not manufacture a file-based match (issue-only fallback)", () => {
@@ -168,12 +170,47 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
 
     it("an OVERLAPPING older sibling stuck in review still blocks (bounded by the 24h staleness cap)", () => {
       const siblings = [sibling(105, "2026-07-07T10:00:00.000Z", "unstable", [1])];
-      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105 });
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
     });
 
     it("with several older siblings, only the oldest OVERLAPPING one is the blocker (an unrelated older sibling is skipped over)", () => {
       const siblings = [sibling(104, "2026-07-07T09:30:00.000Z", null, [999]), sibling(105, "2026-07-07T10:00:00.000Z", null, [1]), sibling(107, "2026-07-07T10:30:00.000Z", null, [1])];
-      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105 });
+      // #9952: the queue is overlap-scoped too -- #104 shares no issue, so it is absent from queueAhead and
+      // never inflates the reported position. A contributor must not be told they are behind unrelated work.
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105, 107] });
+    });
+  });
+
+  describe("queue position (#9952)", () => {
+    // The wait comment used to name only the PR in front. "Behind #4" and "behind #4 and six others" are
+    // very different waits, and a queue that will not say which one it is reads as a stall.
+    it("reports the whole queue oldest-first, so position is queueAhead.length + 1", () => {
+      const siblings = [sibling(105, "2026-07-07T10:00:00.000Z"), sibling(106, "2026-07-07T10:10:00.000Z"), sibling(107, "2026-07-07T10:20:00.000Z")];
+      const decision = decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW);
+      expect(decision).toEqual({ wait: true, blockingPr: 105, queueAhead: [105, 106, 107] });
+      // The nearest blocker is always the head of the queue -- the comment quotes both and they must agree.
+      expect(decision.wait && decision.queueAhead[0]).toBe(decision.wait && decision.blockingPr);
+    });
+
+    it("a single blocker yields a one-item queue -- the caller keeps the simpler wording for it", () => {
+      expect(decide(110, "2026-07-07T11:00:00.000Z", [sibling(105, "2026-07-07T10:00:00.000Z")], NOW)).toEqual({
+        wait: true,
+        blockingPr: 105,
+        queueAhead: [105],
+      });
+    });
+
+    it("INVARIANT: evicted siblings never inflate the position", () => {
+      // A draft, a conflicted PR and a manual-review hold are all skipped as blockers, so none of them may
+      // appear in the queue either -- otherwise the contributor is told they are behind PRs that are not
+      // actually in front of them.
+      const siblings: MergeTrainSibling[] = [
+        { number: 101, createdAt: "2026-07-07T09:00:00.000Z", linkedIssues: [1], isDraft: true },
+        { number: 102, createdAt: "2026-07-07T09:15:00.000Z", linkedIssues: [1], mergeableState: "dirty" },
+        { number: 103, createdAt: "2026-07-07T09:30:00.000Z", linkedIssues: [1], heldForManualReview: true },
+        { number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1] },
+      ];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
     });
   });
 
@@ -194,9 +231,9 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
 
     it("isDraft: false (or absent/undefined) leaves the OVERLAPPING older sibling blocking exactly as before", () => {
       const explicit = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], isDraft: false }];
-      expect(decide(110, "2026-07-07T11:00:00.000Z", explicit, NOW)).toEqual({ wait: true, blockingPr: 105 });
+      expect(decide(110, "2026-07-07T11:00:00.000Z", explicit, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
       const absent: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1] }];
-      expect(decide(110, "2026-07-07T11:00:00.000Z", absent, NOW)).toEqual({ wait: true, blockingPr: 105 });
+      expect(decide(110, "2026-07-07T11:00:00.000Z", absent, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
     });
 
     it("a draft sibling is skipped over in favor of the next-oldest still-viable overlapping sibling", () => {
@@ -206,7 +243,7 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
         { number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], isDraft: true },
         { number: 107, createdAt: "2026-07-07T10:30:00.000Z", linkedIssues: [1] },
       ];
-      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 107 });
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 107, queueAhead: [107] });
     });
 
     it("a draft that is ALSO manual-review-held is evicted once, not twice -- the two rules compose", () => {
@@ -223,9 +260,9 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
 
     it("heldForManualReview: false (or absent/undefined) leaves the OVERLAPPING older sibling blocking exactly as before", () => {
       const held = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], heldForManualReview: false }];
-      expect(decide(110, "2026-07-07T11:00:00.000Z", held, NOW)).toEqual({ wait: true, blockingPr: 105 });
+      expect(decide(110, "2026-07-07T11:00:00.000Z", held, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
       const absent: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1] }];
-      expect(decide(110, "2026-07-07T11:00:00.000Z", absent, NOW)).toEqual({ wait: true, blockingPr: 105 });
+      expect(decide(110, "2026-07-07T11:00:00.000Z", absent, NOW)).toEqual({ wait: true, blockingPr: 105, queueAhead: [105] });
     });
 
     it("a manual-review-held sibling is skipped over in favor of the next-oldest still-viable overlapping sibling", () => {
@@ -233,7 +270,7 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
         { number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], heldForManualReview: true },
         { number: 107, createdAt: "2026-07-07T10:30:00.000Z", linkedIssues: [1] },
       ];
-      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 107 });
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 107, queueAhead: [107] });
     });
 
     it("a manual-review-held sibling that is also unrelated/newer/dirty is unaffected -- the flag only matters when it would otherwise block", () => {

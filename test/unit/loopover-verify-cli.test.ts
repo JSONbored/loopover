@@ -161,7 +161,10 @@ describe("runVerify", () => {
     const requested: string[] = [];
     vi.stubGlobal("fetch", async (input: string | URL) => {
       const url = new URL(String(input));
-      if (url.pathname === "/v1/public/eval-corpus") requested.push(url.searchParams.get("rule_id") ?? "");
+      // #9962: `ruleId`, the spelling the route actually reads. This assertion previously read `rule_id` --
+      // the same wrong spelling the CLI was sending -- so the two agreed with each other and disagreed with
+      // production, and the test passed while every real corpus fetch 400'd.
+      if (url.pathname === "/v1/public/eval-corpus") requested.push(url.searchParams.get("ruleId") ?? "");
       if (url.pathname === "/v1/public/eval-scores") {
         return new Response(JSON.stringify({ records: [await record("rule_a"), await record("rule_a"), await record("rule_b")] }), { status: 200 });
       }

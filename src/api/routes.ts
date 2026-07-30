@@ -903,7 +903,14 @@ export function createApp() {
   app.get("/v1/public/eval-corpus", async (c) => {
     const publicStatsManifestOverride = await resolvePublicStatsManifestOverride(c.env);
     if (!isPublicStatsEnabled(c.env, publicStatsManifestOverride)) return c.json({ error: "not_found" }, 404);
-    const ruleId = c.req.query("ruleId");
+    // `ruleId` is canonical (it is what the OpenAPI spec, the verifiability walkthrough and every other query
+    // parameter on this API use). `rule_id` is accepted as an ALIAS because #9962: every published
+    // `@loopover/mcp` verifier up to and including 3.x asks for `?rule_id=`, got a 400 back, and reported
+    // "no corresponding corpus is downloadable" -- a commitment that looked broken while the bytes were sitting
+    // one spelling away. Fixing only the client would leave every already-installed copy reporting that same
+    // false negative against production forever, so the SERVER meets them. The alias is read second, so a
+    // caller passing both gets the canonical spelling rather than a coin flip.
+    const ruleId = c.req.query("ruleId") ?? c.req.query("rule_id");
     // Required, not defaulted: a corpus is only meaningful for one rule, and silently picking one would
     // publish a checksum for a rule the caller never asked about.
     if (!ruleId) return c.json({ error: "rule_id_required" }, 400);

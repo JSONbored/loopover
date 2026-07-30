@@ -3,6 +3,7 @@ import {
   applyPublicEvalCorpusCap,
   buildPublicCorpusCommitments,
   checksumPublicEvalCorpus,
+  isCommittableCorpus,
   loadPublicEvalCorpus,
   PUBLIC_EVAL_CORPUS_MAX_CASES,
   redactBacktestCase,
@@ -192,7 +193,7 @@ describe("loadPublicEvalCorpus — end to end over the real signal tables", () =
 
   it("returns an empty, still-checksummed corpus for a rule with no history", async () => {
     const corpus = await loadPublicEvalCorpus(createTestEnv(), "never_fired", NOW);
-    expect(corpus).toMatchObject({ caseCount: 0, truncated: false, cases: [] });
+    expect(corpus).toMatchObject({ caseCount: 0, truncated: false, readFailed: false, cases: [] });
     expect(corpus.checksum).toBe(await sha256Hex("[]"));
   });
 
@@ -202,6 +203,30 @@ describe("loadPublicEvalCorpus — end to end over the real signal tables", () =
     const corpus = await loadPublicEvalCorpus(broken, "ai_consensus_defect", NOW);
     expect(corpus.caseCount).toBe(0);
     expect(corpus.checksum).toBe(await sha256Hex("[]"));
+  });
+
+  // #9962: fail-safe must not also mean "indistinguishable from a fact about the rule". Both corpora below are
+  // byte-identical apart from this one flag, which is exactly why the flag has to exist -- without it a
+  // transient D1 blip publishes "this rule has decided nothing" and a reader cannot tell.
+  it("REGRESSION: says READ FAILED when it degraded, and does not when the rule is genuinely quiet", async () => {
+    const broken = createTestEnv();
+    broken.DB = { prepare: () => { throw new Error("boom"); } } as never;
+    const degraded = await loadPublicEvalCorpus(broken, "ai_consensus_defect", NOW);
+    const quiet = await loadPublicEvalCorpus(createTestEnv(), "ai_consensus_defect", NOW);
+
+    expect(degraded.readFailed).toBe(true);
+    expect(quiet.readFailed).toBe(false);
+    // Everything a reader could otherwise go on is identical between the two, so `readFailed` is the ONLY
+    // thing carrying the distinction -- pin that, or the flag could be quietly derived from caseCount later.
+    expect(degraded.caseCount).toBe(quiet.caseCount);
+    expect(degraded.checksum).toBe(quiet.checksum);
+    expect(degraded.cases).toEqual(quiet.cases);
+  });
+
+  it("does not claim a read failure on a healthy read that returned cases", async () => {
+    const env = createTestEnv();
+    await seedPair(env, { ruleId: "ai_consensus_defect", targetKey: "acme/widgets#1", verdict: "reversed", confidence: 0.8 });
+    expect((await loadPublicEvalCorpus(env, "ai_consensus_defect", NOW)).readFailed).toBe(false);
   });
 
   it("reports truncation honestly rather than silently trimming", async () => {
@@ -272,8 +297,52 @@ describe("buildPublicCorpusCommitments (#9805)", () => {
     expect((await buildPublicCorpusCommitments(broken, ["rule_a"], NOW)).size).toBe(0);
   });
 
+  it("asks isCommittableCorpus rather than restating the rule, so the two cannot drift", async () => {
+    const env = createTestEnv();
+    await seedPair(env, { ruleId: "rule_a", targetKey: "acme/widgets#1", verdict: "reversed", confidence: 0.8 });
+    const committable = await loadPublicEvalCorpus(env, "rule_a", NOW);
+    const notCommittable = await loadPublicEvalCorpus(env, "never_fired", NOW);
+
+    expect(isCommittableCorpus(committable)).toBe(true);
+    expect(isCommittableCorpus(notCommittable)).toBe(false);
+    const commitments = await buildPublicCorpusCommitments(env, ["rule_a", "never_fired"], NOW);
+    expect(commitments.has("rule_a")).toBe(isCommittableCorpus(committable));
+    expect(commitments.has("never_fired")).toBe(isCommittableCorpus(notCommittable));
+  });
+
   it("returns an empty map for no rules, without touching the database", async () => {
     const env = createTestEnv();
     expect((await buildPublicCorpusCommitments(env, [], NOW)).size).toBe(0);
+  });
+});
+
+// #9962: the predicate the commitment path delegates to. Driven with plain values rather than through the
+// store precisely so each arm is reachable on its own -- the read-failure arm in particular cannot be reached
+// via the store (a failed read is also an empty one), and an arm that only ever fires alongside another arm is
+// an arm no test can prove is doing anything.
+describe("isCommittableCorpus (#9962)", () => {
+  const base = {
+    ruleId: "rule_a",
+    windowDays: PUBLIC_PRECISION_WINDOW_DAYS,
+    caseCount: 3,
+    truncated: false,
+    readFailed: false,
+    checksum: "a".repeat(64),
+    cases: [] as PublicEvalCorpusCase[],
+  };
+
+  it("commits to a healthy, non-empty, complete corpus", () => {
+    expect(isCommittableCorpus(base)).toBe(true);
+  });
+
+  it("REGRESSION: refuses a DEGRADED corpus even when it carries cases -- the arm the store cannot reach", () => {
+    // The whole point of the flag. With `readFailed` absorbed into the empty check, this corpus would be
+    // committed to: it has cases, it is not truncated, and nothing else says the read went wrong.
+    expect(isCommittableCorpus({ ...base, readFailed: true })).toBe(false);
+  });
+
+  it("refuses an empty corpus (its checksum is the same 32 bytes everywhere) and a truncated one", () => {
+    expect(isCommittableCorpus({ ...base, caseCount: 0 })).toBe(false);
+    expect(isCommittableCorpus({ ...base, truncated: true })).toBe(false);
   });
 });

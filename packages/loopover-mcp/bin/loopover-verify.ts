@@ -126,7 +126,13 @@ export async function runVerify(args: readonly string[], baseUrlOverride?: strin
   const ruleIds = [...new Set(records.map((record) => record.workUnit?.ruleId).filter((ruleId): ruleId is string => typeof ruleId === "string"))];
   const corpusEntries = await Promise.all(
     ruleIds.map(async (ruleId) => {
-      const outcome = await apiGet<{ cases?: unknown; checksum?: unknown }>(baseUrl, `/v1/public/eval-corpus?rule_id=${encodeURIComponent(ruleId)}`);
+      // `ruleId`, not `rule_id` (#9962). The route has only ever read the camelCase spelling -- the snake_case
+      // one 400s -- so every corpus fetch this verifier made came back empty and the corpus claim degraded to
+      // "nothing could be rehashed" against a deployment that was publishing a perfectly good corpus. The
+      // camelCase spelling is what the OpenAPI spec and the docs have always documented, so it works against
+      // every deployment, old and new; the alias the route now also accepts is there for verifiers already
+      // installed in the wild, not for this one.
+      const outcome = await apiGet<{ cases?: unknown; checksum?: unknown }>(baseUrl, `/v1/public/eval-corpus?ruleId=${encodeURIComponent(ruleId)}`);
       return [ruleId, outcome.ok ? outcome.value : undefined] as const;
     }),
   );

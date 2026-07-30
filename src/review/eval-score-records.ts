@@ -82,24 +82,41 @@ export function evalScoreCoverage(decided: number, abstained: number): number | 
 }
 
 /**
- * Build `EvalScoreRecord`s from the already-computed public rule-precision block. Returns an empty array
- * when there is no persisted backtest run yet (`latestBacktestRun === null`) -- per #9215's own requirement,
- * a record whose commitments cannot be independently re-derived (no corpus checksum to point at) is not
- * publishable, so this deliberately emits nothing rather than a record with a placeholder commitment.
+ * Build `EvalScoreRecord`s from the already-computed public rule-precision block. A rule is published only
+ * when `corpusChecksumByRuleId` carries a usable commitment for it -- per #9215's own requirement, a record
+ * whose commitments cannot be independently re-derived is not publishable, so this deliberately emits nothing
+ * rather than a record with a placeholder commitment.
  *
- * #9805: when no backtest run is persisted, the commitment falls back to `corpusChecksumByRuleId` -- the
- * checksum of the corpus `/v1/public/eval-corpus` publishes for that same rule, over the same window. That is
- * not a placeholder standing in for a real commitment: it is a hash over an artifact the reader can download
- * and re-hash themselves, which is exactly what the `reproducible` trust tier asserts. It exists because a
- * deployment with review execution retired (the hosted Worker: see src/index.ts) never persists a backtest
- * run at all, so the entire surface was empty while a complete, downloadable corpus sat behind the next
- * endpoint over.
+ * #9805: that commitment is the checksum of the corpus `/v1/public/eval-corpus` publishes for that same rule,
+ * over the same window. It is not a placeholder standing in for a real commitment: it is a hash over an
+ * artifact the reader can download and re-hash themselves, which is exactly what the `reproducible` trust tier
+ * asserts.
+ *
+ * #9962: it is also the ONLY commitment source. `precision.latestBacktestRun.corpusChecksum` used to take
+ * precedence wherever a run was persisted, which was wrong three ways at once and wrong precisely on the
+ * deployments that execute reviews (the hosted Worker has execution retired, so it never hit this path and the
+ * defect stayed invisible there):
+ *
+ *   1. It is NOT DOWNLOADABLE. That checksum is `checksumCases` over the raw internal `BacktestCase[]` --
+ *      `targetKey`, the full metadata bag, full-precision timestamps -- whereas the corpus a reader can fetch
+ *      is the REDACTED one. The two hash different bytes by construction, so the published commitment could
+ *      never match the published corpus, no matter how healthy the deployment. Pairing that with
+ *      `trust.tier: "reproducible"` asserts a reproducibility the artifact cannot support.
+ *   2. It is GLOBAL, not per rule. `loadPublicRulePrecision` selects it with `ORDER BY created_at DESC LIMIT 1`
+ *      and no rule filter, so one rule's freeze point got stamped onto every record. This module already
+ *      warned that stamping one checksum across every record would have every record but one committing to a
+ *      different rule's cases, and called it latent "only because a single rule clears the publication floor";
+ *      on a self-host ledger where seven rules clear it, it stopped being latent.
+ *   3. It is UNWINDOWED. That same query has no `created_at >= ?` bound, so the run could predate the
+ *      `windowStart`/`windowEnd` the record goes on to declare.
+ *
+ * `latestBacktestRun` remains published in its own right as the rule-precision block's freeze point (see
+ * public-rule-precision.ts); it is only no longer misused as a public, re-derivable corpus commitment.
  *
  * The commitment is resolved PER RULE, not once for the whole batch. Each rule's score is computed over its
- * own corpus, so stamping one checksum across every record would have every record but one committing to a
- * different rule's cases -- latent today only because a single rule clears the publication floor.
+ * own corpus, so one checksum across every record would be a different rule's cases on all but one of them.
  *
- * Also returns an empty array when the run's checksum is {@link EMPTY_CORPUS_CHECKSUM}. A hash over zero
+ * Also omits a rule whose checksum is {@link EMPTY_CORPUS_CHECKSUM}. A hash over zero
  * cases is the same 32 bytes for every rule, every window, and every deployment, so it points at nothing a
  * consumer could re-derive the scores from -- it is a placeholder commitment wearing a real hash's clothes,
  * and pairing it with a `reproducible` trust tier claims a reproducibility the artifact cannot support. The
@@ -121,23 +138,19 @@ export function evalScoreCoverage(decided: number, abstained: number): number | 
 export async function buildEvalScoreRecordsFromRulePrecision(
   precision: PublicRulePrecision,
   issuedAt: string,
-  // #9805: per-rule fallback commitments, supplied by the caller so this module stays PURE. Only rules whose
-  // published corpus is a usable commitment belong in here -- the route drops empty and truncated ones before
-  // building it, because a truncated corpus's checksum covers a subset of the cases the score covers.
+  // The per-rule commitments, supplied by the caller so this module stays PURE. Only rules whose published
+  // corpus is a usable commitment belong in here -- buildPublicCorpusCommitments drops degraded reads, empty
+  // corpora and truncated ones before building it, because a truncated corpus's checksum covers a subset of
+  // the cases the score covers. Defaulted to an empty map so a caller with nothing to commit publishes nothing
+  // (#9962: this is now the sole source, so the default means "no records", never "fall back to the run").
   corpusChecksumByRuleId: ReadonlyMap<string, string> = new Map(),
 ): Promise<EvalScoreRecord[]> {
-  // A persisted backtest run still wins where one exists, so a deployment that executes reviews keeps exactly
-  // today's behaviour and this change cannot silently move a self-host commitment.
-  const runChecksum =
-    precision.latestBacktestRun && precision.latestBacktestRun.corpusChecksum !== EMPTY_CORPUS_CHECKSUM
-      ? precision.latestBacktestRun.corpusChecksum
-      : null;
   const windowStart = new Date(Date.parse(issuedAt) - precision.windowDays * 24 * 60 * 60 * 1000).toISOString();
 
   // A rule with no usable commitment is OMITTED rather than published with a placeholder -- the #9215
   // requirement this module has always enforced, now applied per rule instead of to the whole batch.
   const publishable = precision.rules.flatMap((row) => {
-    const corpusChecksum = runChecksum ?? corpusChecksumByRuleId.get(row.ruleId) ?? null;
+    const corpusChecksum = corpusChecksumByRuleId.get(row.ruleId) ?? null;
     return corpusChecksum === null || corpusChecksum === EMPTY_CORPUS_CHECKSUM ? [] : [{ row, corpusChecksum }];
   });
 

@@ -640,6 +640,14 @@ declare global {
      *  where the alternative is a permanently-failing public endpoint. Chain checks are never waived, both
      *  bounds and a reason are mandatory, and the range plus its count are published by /verify. */
     LOOPOVER_LEDGER_CONTENT_WAIVER?: string;
+    /** #9933: the sibling declaration for UNCHAINED records — decision_records rows no ledger row ever
+     *  vouched for (the failed-append signature), which the content waiver deliberately cannot cover because
+     *  chain findings are never waivable. Format `<fromIso>..<toIso>|<maxRecords>|<reason>`: both bounds are
+     *  ABSOLUTE instants (so the window cannot drift the way a relative one would), and the declared count is
+     *  a fail-closed guard — one more orphan inside the window than declared and the whole waiver stops
+     *  applying, so a new failed append can never hide behind an old declaration. A truncated TAIL stays
+     *  unwaivable. See parseLedgerUnchainedWaiver for the full reasoning. */
+    LOOPOVER_LEDGER_UNCHAINED_WAIVER?: string;
     LOOPOVER_LEDGER_ANCHOR_KEYS?: string;
     /** External ledger anchoring (#9270, epic #9267): the PRIVATE half of the anchor-signing keypair — an
      *  ECDSA P-256 key in PKCS8 PEM (the `\n`-escaped single-line form is accepted, since that is how a key

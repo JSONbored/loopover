@@ -1,7 +1,7 @@
 import { createPrivateKey } from "node:crypto";
 import { CRON_INTERVAL_MIN_MS } from "./cron-alignment";
 import { currentAnchorKey, parseAnchorPublicKeys } from "../review/ledger-anchor";
-import { parseLedgerContentWaiver } from "../review/decision-record";
+import { parseLedgerContentWaiver, parseLedgerUnchainedWaiver } from "../review/decision-record";
 
 export type SelfHostPreflightProblem = {
   var: string;
@@ -98,6 +98,24 @@ function checkLedgerContentWaiverConfig(problems: SelfHostPreflightProblem[], en
       problems,
       "LOOPOVER_LEDGER_CONTENT_WAIVER",
       'Set but unparseable, so NOTHING is waived and /v1/public/decision-ledger/verify will keep reporting the mismatches you meant to declare. Expected "<fromSeq>-<toSeq>:<reason>" with both bounds, fromSeq >= 1, toSeq >= fromSeq, and a non-empty reason.',
+    );
+  }
+}
+
+/**
+ * #9933: same reasoning as the content waiver above -- a malformed value waives nothing, silently, and the
+ * operator only discovers it when the public endpoint keeps reporting the orphans they thought they had
+ * declared. Note this check cannot validate the COUNT against reality (that needs the database); it only
+ * catches a value the parser rejects outright.
+ */
+function checkLedgerUnchainedWaiverConfig(problems: SelfHostPreflightProblem[], env: SelfHostPreflightEnv): void {
+  const raw = nonBlank(env["LOOPOVER_LEDGER_UNCHAINED_WAIVER"]);
+  if (!raw) return;
+  if (parseLedgerUnchainedWaiver(raw) === null) {
+    addProblem(
+      problems,
+      "LOOPOVER_LEDGER_UNCHAINED_WAIVER",
+      'Set but unparseable, so NOTHING is waived and /v1/public/decision-ledger/verify will keep reporting the unchained records you meant to declare. Expected "<fromIso>..<toIso>|<maxRecords>|<reason>" with two parseable timestamps, toIso >= fromIso, maxRecords a positive integer, and a non-empty reason.',
     );
   }
 }
@@ -366,6 +384,7 @@ export function preflightEnv(env: SelfHostPreflightEnv): SelfHostPreflightResult
 
   checkLedgerAnchorConfig(problems, env);
   checkLedgerContentWaiverConfig(problems, env);
+  checkLedgerUnchainedWaiverConfig(problems, env);
 
   return problems.length === 0 ? { ok: true, problems: [] } : { ok: false, problems };
 }

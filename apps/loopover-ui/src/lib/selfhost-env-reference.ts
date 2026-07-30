@@ -306,6 +306,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/preflight.ts",
   },
   {
+    name: "LOOPOVER_LEDGER_UNCHAINED_WAIVER",
+    firstReference: "src/selfhost/preflight.ts",
+  },
+  {
     name: "LOOPOVER_MCP_TOKEN",
     firstReference: "src/selfhost/preflight.ts",
   },
@@ -789,6 +793,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_LEDGER_ANCHOR_KEYS` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_LEDGER_CONTENT_WAIVER` | `src/selfhost/preflight.ts` |",
+  "| `LOOPOVER_LEDGER_UNCHAINED_WAIVER` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_MCP_TOKEN` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_METRICS_REPO_LABELS` | `src/server.ts` |",
   "| `LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS` | `src/selfhost/inert-config.ts` |",

@@ -33,7 +33,7 @@ export const DEFAULT_SCREENSHOT_TABLE_GATE: ScreenshotTableGateConfig = {
   requireThemes: [],
 };
 
-const VALID_ACTIONS: readonly ScreenshotTableGateAction[] = ["close", "advisory"];
+const VALID_ACTIONS: readonly ScreenshotTableGateAction[] = ["close", "block", "advisory"];
 
 export function isScreenshotTableGateAction(value: unknown): value is ScreenshotTableGateAction {
   return typeof value === "string" && (VALID_ACTIONS as readonly string[]).includes(value);

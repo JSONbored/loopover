@@ -24,7 +24,14 @@ export type AiReviewLowConfidenceDisposition = "one_shot" | "hold_for_review" | 
 
 // #4110: `request_changes`/`comment` were REMOVED (see src/types.ts's mirror of this type for why).
 // `"advisory"` (#4535) is a NEW, actually-wired value -- see src/types.ts's mirror for the full rationale.
-export type ScreenshotTableGateAction = "close" | "advisory";
+/** #9881: `close` destroys the PR, `advisory` does nothing enforcing. `block` is the missing middle -- it
+ *  HOLDS the PR (no merge) and says what is needed, without closing work the contributor can still fix.
+ *
+ *  Why the middle matters here specifically: a one-shot pipeline has no "changes requested, try again" state
+ *  for contributor work, so a gate whose only enforcing option is `close` converts every miss into destroyed
+ *  work. That is the right answer for genuine slop and the wrong one for a PR that simply has not attached
+ *  screenshots yet -- and it is unrecoverable, because the contributor cannot reopen. */
+export type ScreenshotTableGateAction = "close" | "block" | "advisory";
 
 export type ScreenshotTableGateConfig = {
   enabled: boolean;

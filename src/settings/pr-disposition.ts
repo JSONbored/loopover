@@ -68,6 +68,7 @@ const MERGE_HOLD_INPUTS = {
   unlinkedIssueMatchHold: "an unlinked issue appears to match this work",
   advisoryCheckHold: "an advisory check the maintainer configured is not passing",
   priorityEligibilityHold: "the linked priority issue's eligibility window has not elapsed",
+  screenshotEvidenceHold: "the screenshot-table gate is set to block and the PR has no visual evidence",
   unlinkedIssueMatchCloseWithoutCloseActing: "a repeat unlinked-issue match while close autonomy is off",
 } as const;
 

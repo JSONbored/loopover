@@ -1600,7 +1600,14 @@ export type RepositorySettings = {
  *  which appends a non-blocking `screenshot_table_missing` finding to the PR's advisory panel whenever
  *  `action === "advisory"` and the gate would have violated -- a deterministic signal, not just left to chance
  *  in the AI reviewer's own commentary. */
-export type ScreenshotTableGateAction = "close" | "advisory";
+/** #9881: `close` destroys the PR, `advisory` does nothing enforcing. `block` is the missing middle -- it
+ *  HOLDS the PR (no merge) and says what is needed, without closing work the contributor can still fix.
+ *
+ *  Why the middle matters here specifically: a one-shot pipeline has no "changes requested, try again" state
+ *  for contributor work, so a gate whose only enforcing option is `close` converts every miss into destroyed
+ *  work. That is the right answer for genuine slop and the wrong one for a PR that simply has not attached
+ *  screenshots yet -- and it is unrecoverable, because the contributor cannot reopen. */
+export type ScreenshotTableGateAction = "close" | "block" | "advisory";
 
 /** Per-repo config for the before/after screenshot-table gate (#2006). See {@link RepositorySettings.screenshotTableGate}
  *  and `review/screenshot-table-gate.ts` for the normalizer + pure evaluator. */

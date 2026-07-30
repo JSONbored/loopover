@@ -66,6 +66,52 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(classes(collision)).not.toContain("merge");
   });
 
+  // #9881: `close` destroys the PR and `advisory` enforces nothing. `block` is the middle tier -- the PR is
+  // HELD and told what is missing, without destroying work the contributor can still fix. That middle matters
+  // because a one-shot pipeline has no "changes requested, try again" for contributor work, and a close is
+  // unrecoverable: the contributor cannot reopen.
+  describe("screenshot-evidence block tier (#9881)", () => {
+    const blocked = {
+      conclusion: "success" as const,
+      autonomy: { merge: "auto" as const },
+      manualReviewLabel: "human-review",
+      screenshotEvidenceHold: { reason: "missing before/after screenshots", comment: "add them and it proceeds" },
+      pr: { labels: [], mergeableState: "clean" as const, reviewDecision: "APPROVED" as const },
+    };
+
+    it("HOLDS the PR instead of merging it, and never closes", () => {
+      const plan = planAgentMaintenanceActions(input(blocked));
+      expect(classes(plan)).not.toContain("merge");
+      // The load-bearing distinction from `close`: the PR survives.
+      expect(classes(plan)).not.toContain("close");
+      expect(plan.some((a) => a.actionClass === "label" && a.label === "human-review" && a.labelOp !== "remove")).toBe(true);
+    });
+
+    it("tells the contributor what is missing, so the hold is actionable rather than a silent stall", () => {
+      const plan = planAgentMaintenanceActions(input(blocked));
+      const held = plan.find((a) => a.actionClass === "label" && a.label === "human-review");
+      expect(held?.comment).toContain("add them and it proceeds");
+      expect(held?.reason).toContain("missing before/after screenshots");
+    });
+
+    it("carries the reason on the DISPOSITION label, for a label-only repo where the merge fallback cannot fire", () => {
+      // Two paths can emit the hold label: the merge-authorized fallback and the disposition ternary. The
+      // fallback runs first and claims the label, so the ternary is reachable only where merge autonomy is
+      // OFF and review_state_label is ON -- a real configuration, and the one half of the fleet that would
+      // otherwise get a bare label with no reason. Both paths must carry the message.
+      const plan = planAgentMaintenanceActions(input({ ...blocked, autonomy: { review_state_label: "auto" } }));
+      const held = plan.find((a) => a.actionClass === "label" && a.label === "human-review");
+      expect(held?.comment).toContain("add them and it proceeds");
+      expect(held?.autonomyClass).toBe("review_state_label");
+      expect(classes(plan)).not.toContain("close");
+    });
+
+    it("INVARIANT: absent (the default) is byte-identical to today — a clean approved PR still merges", () => {
+      const plan = planAgentMaintenanceActions(input({ ...blocked, screenshotEvidenceHold: undefined }));
+      expect(classes(plan)).toContain("merge");
+    });
+  });
+
   // #9939: the manual-review label was a ONE-WAY LATCH. The sibling-label cleanup deliberately refuses to
   // touch it (the same string is also a maintainer's manual freeze), so once applied nothing lifted it when
   // the hold cleared. Live on #9935: mergeable, green, re-reviewed to zero findings, and still refused to

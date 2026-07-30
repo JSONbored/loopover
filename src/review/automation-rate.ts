@@ -6,12 +6,18 @@
 //
 // PUBLISHED DEFINITION. A pull request is counted once per week, by the week of its FIRST verdict.
 //
-//   manual     ANY verdict for that PR shows a human in the decision path:
+//   decided    The PR reached a disposition at all: at least one verdict whose action ENACTS one
+//              (`merge` / `close`) or one that HOLDS. `action` also carries non-deciding classes --
+//              `label`, `update_branch`, `approve`, and the error/no-op classes -- and a PR that only ever
+//              drew those was never decided, so it is excluded from BOTH halves rather than counted.
+//              Counting it would have made a PR the gate never decided read as an automated decision.
+//   manual     A decided PR where ANY verdict shows a human in the decision path:
 //                - `action = 'hold'`      -- the gate declined to decide and handed it to a person
 //                - `reevaluation_actor`   -- a named person caused a re-evaluation (#9742)
 //                - `reevaluation_reason = 'maintainer_request'` -- a human asked for the re-run
-//   automated  Every verdict was a merge or close with none of the above: opened, decided, enacted, with
-//              no human action in between.
+//   automated  A PR that reached `merge` or `close` with none of the above: opened, decided, enacted, with
+//              no human action in between. Non-deciding verdicts alongside (a `label`, an `update_branch`)
+//              do NOT make it manual -- those are the bot acting, not a person.
 //
 // A PR that was held and LATER merged is manual, not automated. The question is whether a human had to act,
 // not what the end state was -- counting the final disposition would let the rate be inflated by holding
@@ -33,6 +39,17 @@ import { safeAll } from "./public-stats";
  * honest option; guessing it from the rows would be a fabrication dressed as a derivation.
  */
 export const AUTOMATION_RATE_PROVENANCE_HORIZON_ISO = "2026-07-29T00:00:00.000Z";
+
+/** The action classes that ENACT a decision. A PR reaching one of these, with no human signal, is what
+ *  "automated" means. Exported so the read below filters on exactly the set the fold classifies on -- one
+ *  definition, rather than a WHERE clause and a predicate that can drift apart. */
+export const AUTOMATION_ENACTING_ACTIONS = ["merge", "close"] as const;
+
+/** The action recording that the gate declined to decide and handed the PR to a person. */
+export const AUTOMATION_HOLD_ACTION = "hold";
+
+/** Every action that puts a PR in the series at all -- an enacted decision, or a hold. */
+export const AUTOMATION_COUNTED_ACTIONS: readonly string[] = [...AUTOMATION_ENACTING_ACTIONS, AUTOMATION_HOLD_ACTION];
 
 /** How completely a week could be measured. `full` weeks see every manual signal; `holds_only` weeks predate
  *  the provenance fields and can only under-count manual work. */
@@ -102,28 +119,38 @@ export function buildAutomationRateSeries(rows: readonly AutomationVerdictRow[])
   // Fold verdicts to PULL REQUESTS first: the unit of the question is "did a human have to act on this PR",
   // and a PR with five verdicts is still one PR. Its week is the week of its FIRST verdict, so a PR does not
   // migrate between weeks as it accrues re-evaluations.
-  const byPull = new Map<string, { firstSeen: string; human: boolean }>();
+  const byPull = new Map<string, { firstSeen: string; human: boolean; enacted: boolean; held: boolean }>();
   for (const row of rows) {
     const key = `${row.repoFullName}#${row.pullNumber}`;
-    const existing = byPull.get(key);
     const human = verdictShowsHumanAction(row);
+    const enacted = (AUTOMATION_ENACTING_ACTIONS as readonly string[]).includes(row.action);
+    const held = row.action === AUTOMATION_HOLD_ACTION;
+    const existing = byPull.get(key);
     if (!existing) {
-      byPull.set(key, { firstSeen: row.createdAt, human });
+      byPull.set(key, { firstSeen: row.createdAt, human, enacted, held });
       continue;
     }
     existing.human = existing.human || human;
+    existing.enacted = existing.enacted || enacted;
+    existing.held = existing.held || held;
     if (Date.parse(row.createdAt) < Date.parse(existing.firstSeen)) existing.firstSeen = row.createdAt;
   }
 
   const horizon = Date.parse(AUTOMATION_RATE_PROVENANCE_HORIZON_ISO);
   const weeks = new Map<string, { decided: number; automated: number; manual: number }>();
   for (const entry of byPull.values()) {
+    // Never decided -- only non-deciding verdicts (a label, an update_branch, an error). Excluded from both
+    // halves: this PR is not evidence for OR against automation, and folding it into `automated` because it
+    // happens to carry no human signal is exactly the over-count this guard exists to prevent.
+    if (!entry.enacted && !entry.held) continue;
     const week = weekStartIso(entry.firstSeen);
     if (week === null) continue;
     const bucket = weeks.get(week) ?? { decided: 0, automated: 0, manual: 0 };
     bucket.decided += 1;
-    if (entry.human) bucket.manual += 1;
-    else bucket.automated += 1;
+    // Enacted AND clean of every human signal. A held PR later merged by hand fails the second test, and a
+    // PR that only ever held fails the first -- both are manual, which is the whole point of the metric.
+    if (entry.enacted && !entry.human) bucket.automated += 1;
+    else bucket.manual += 1;
     weeks.set(week, bucket);
   }
 
@@ -185,7 +212,9 @@ async function queryAutomationRows(env: unknown, sinceIso: string): Promise<Auto
             reevaluation_reason AS reevaluationReason,
             reevaluation_actor  AS reevaluationActor
        FROM decision_records
-      WHERE created_at >= ?`,
+      WHERE created_at >= ?
+        AND action IN (${AUTOMATION_COUNTED_ACTIONS.map(() => "?").join(", ")})`,
     sinceIso,
+    ...AUTOMATION_COUNTED_ACTIONS,
   );
 }

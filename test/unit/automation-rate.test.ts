@@ -3,6 +3,7 @@
 // would let the rate be inflated.
 import { describe, expect, it } from "vitest";
 import {
+  AUTOMATION_COUNTED_ACTIONS,
   AUTOMATION_RATE_PROVENANCE_HORIZON_ISO,
   buildAutomationRateSeries,
   loadAutomationRateSeries,
@@ -79,6 +80,39 @@ describe("buildAutomationRateSeries", () => {
     expect(series.weeks[0]?.manual).toBe(1);
     expect(series.automated).toBe(0);
     expect(series.automationRatePct).toBe(0);
+  });
+
+  it("EXCLUDES a PR that was never actually decided, rather than counting it automated", () => {
+    // The regression (#9938 review): `action` also carries non-deciding classes -- `label`, `update_branch`,
+    // `approve`, and the error/no-op classes. None of them is `hold`, so a PR that only ever drew those
+    // carried no human signal and was folded in as an AUTOMATED decision, inflating the published rate with
+    // pull requests the gate never decided at all.
+    const series = buildAutomationRateSeries([
+      row({ pullNumber: 1, action: "label" }),
+      row({ pullNumber: 2, action: "update_branch" }),
+      row({ pullNumber: 3, action: "approve" }),
+    ]);
+    expect(series.decided).toBe(0);
+    expect(series.automated).toBe(0);
+    expect(series.automationRatePct).toBeNull();
+  });
+
+  it("still counts a PR that drew a non-deciding verdict AND then a real one", () => {
+    // The bot labelling a PR before merging it is the bot acting, not a person -- it must not flip the PR
+    // to manual, which would under-count automation just as wrongly as the bug over-counted it.
+    const series = buildAutomationRateSeries([
+      row({ pullNumber: 1, action: "label", createdAt: "2026-07-29T10:00:00.000Z" }),
+      row({ pullNumber: 1, action: "merge", createdAt: "2026-07-29T11:00:00.000Z" }),
+    ]);
+    expect(series.decided).toBe(1);
+    expect(series.automated).toBe(1);
+  });
+
+  it("counts a hold-only PR as decided-and-manual, never as undecided", () => {
+    const series = buildAutomationRateSeries([row({ pullNumber: 1, action: "hold" })]);
+    expect(series.decided).toBe(1);
+    expect(series.automated).toBe(0);
+    expect(series.weeks[0]?.manual).toBe(1);
   });
 
   it("buckets a PR by its FIRST verdict, so re-evaluations do not migrate it between weeks", () => {
@@ -166,10 +200,29 @@ describe("loadAutomationRateSeries", () => {
     // The production caller passes only `env`; without a default the endpoint would publish an empty series
     // forever while every injected-fetcher test above still passed.
     let sql = "";
-    const env = { DB: { prepare(q: string) { sql = q; return { bind: () => ({ all: async () => ({ results: [] }) }) }; } } };
+    let binds: unknown[] = [];
+    const env = {
+      DB: {
+        prepare(q: string) {
+          sql = q;
+          return {
+            bind: (...values: unknown[]) => {
+              binds = values;
+              return { all: async () => ({ results: [] }) };
+            },
+          };
+        },
+      },
+    };
     await loadAutomationRateSeries(env);
     expect(sql).toContain("FROM decision_records");
     expect(sql).toContain("reevaluation_actor");
+    // The action filter is built FROM the same constant the fold classifies on, so the placeholder count and
+    // the bind count cannot drift apart -- a mismatch is a D1 error at runtime that no injected-rows test
+    // above would ever reach.
+    expect(sql).toContain("action IN (");
+    expect((sql.match(/\?/g) ?? []).length).toBe(binds.length);
+    expect(binds.slice(1)).toEqual([...AUTOMATION_COUNTED_ACTIONS]);
   });
 
   it("degrades to an empty series when the read throws, never failing the stats endpoint", async () => {

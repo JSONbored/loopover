@@ -78,6 +78,7 @@ jobs:
       contents: write
       pull-requests: write
       actions: write # dispatch publish-mcp.yml / publish-engine.yml / publish-miner.yml / publish-ui-kit.yml after a release
+      issues: write # #9951: file/update the standing-outage issue when a publish fails on consecutive commits
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -330,6 +331,50 @@ jobs:
             return 1
           }
 
+          # #9951: the retry above is right for the propagation race it was built for, and useless against a
+          # deterministic failure -- which the comment on it already says. What was missing is acting on that
+          # distinction. A publish failing on CONSECUTIVE commits is not a flake being retried, it is a
+          # standing outage: the MCP and miner publishes each failed on every single main commit for as far
+          # back as the run history went (a one-line missing build step, #9946), retrying three times per push
+          # and never once succeeding, and nobody noticed because the only signal was a ::warning:: nobody
+          # reads and a red check that looks like release noise.
+          #
+          # So count the failures at the HEAD of this workflow's own run history. `index("success")` is the
+          # number of leading non-successes; no success in the window at all means the whole window is bad.
+          # Escalates ONCE per outage by reusing an open issue instead of filing a new one per commit -- an
+          # alert that repeats per attempt is the same unread noise in a different place.
+          escalate_persistent_publish_failure() {
+            local workflow="$1" threshold=3 leading
+            # $c below is a JQ variable bound by `as $c`, so the single quotes are required -- letting the
+            # shell expand it would hand jq an empty filter.
+            # shellcheck disable=SC2016
+            leading=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?per_page=10&status=completed" \
+              --jq '[.workflow_runs[].conclusion] as $c | (($c | index("success")) // ($c | length))' 2>/dev/null || echo 0)
+            if [ "${leading:-0}" -lt "$threshold" ]; then
+              echo "$workflow: ${leading:-0} consecutive failure(s) -- below the $threshold-commit escalation threshold, treating as transient."
+              return 0
+            fi
+            local body
+            body=$(printf '%s\n' \
+              "\`$workflow\` has failed on **${leading} consecutive runs**." \
+              "" \
+              "That is no longer a flake being retried -- a deterministic failure fails identically every time, so the package has not been publishing at all for that entire stretch. Retrying it further buys nothing." \
+              "" \
+              "Check the most recent run's logs, fix the cause, and close this issue; it is re-filed automatically only if the failure streak reaches ${threshold} again after a success." \
+              "" \
+              "Filed automatically by the release workflow (#9951).")
+            local existing
+            existing=$(gh issue list --state open --search "publish outage ${workflow} in:title" --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
+            if [ -n "$existing" ]; then
+              echo "$workflow: standing outage already tracked in #$existing -- not filing a duplicate."
+            else
+              gh issue create --title "publish outage: $workflow has failed on consecutive commits" \
+                --label maintainer-only --body "$body" >/dev/null \
+                && echo "::error::$workflow has failed $leading consecutive runs -- standing outage filed." \
+                || echo "::warning::$workflow standing outage detected but the tracking issue could not be filed."
+            fi
+          }
+
           # packages/loopover-mcp and packages/loopover-miner carry REAL runtime `dependencies` entries on
           # BOTH @loopover/engine and @loopover/contract (#9749), so both prerequisites must be live on
           # npm before either dependent publishes -- otherwise the dependent resolves a version that
@@ -349,17 +394,17 @@ jobs:
 
           if [ "$deps_ok" = "true" ]; then
             if needs_publish packages/loopover-mcp @loopover/mcp; then
-              dispatch_and_wait_with_retry publish-mcp.yml || echo "::warning::publish-mcp.yml did not succeed after retries -- left for manual follow-up."
+              dispatch_and_wait_with_retry publish-mcp.yml || { echo "::warning::publish-mcp.yml did not succeed after retries -- left for manual follow-up."; escalate_persistent_publish_failure publish-mcp.yml; }
             fi
             if needs_publish packages/loopover-miner @loopover/miner; then
-              dispatch_and_wait_with_retry publish-miner.yml || echo "::warning::publish-miner.yml did not succeed after retries -- left for manual follow-up."
+              dispatch_and_wait_with_retry publish-miner.yml || { echo "::warning::publish-miner.yml did not succeed after retries -- left for manual follow-up."; escalate_persistent_publish_failure publish-miner.yml; }
             fi
           else
             echo "::warning::Skipping mcp/miner reconciliation -- publish-engine.yml and/or publish-contract.yml did not succeed, and they depend on both."
           fi
 
           if needs_publish packages/loopover-ui-kit @loopover/ui-kit; then
-            dispatch_and_wait publish-ui-kit.yml || echo "::warning::publish-ui-kit.yml did not succeed -- left for manual follow-up."
+            dispatch_and_wait publish-ui-kit.yml || { echo "::warning::publish-ui-kit.yml did not succeed -- left for manual follow-up."; escalate_persistent_publish_failure publish-ui-kit.yml; }
           fi
 
       # Once every committed version is confirmed live on npm (the loop above didn't need to run, or

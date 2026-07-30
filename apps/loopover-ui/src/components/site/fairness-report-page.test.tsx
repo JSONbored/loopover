@@ -77,6 +77,7 @@ const FIXTURE: PublicStats = {
     reversed: 2,
     filteredPct: 40,
     accuracyPct: 97.8,
+    accuracyWindowDays: 90,
     minutesSaved: 2000,
   },
   weekly: { reviewed: 10, merged: 6 },
@@ -237,7 +238,9 @@ describe("FairnessReportPage (#fairness-analytics)", () => {
     await waitFor(() => expect(screen.getByText("Decision accuracy")).toBeTruthy());
     const accuracyCard = screen.getByText("Decision accuracy").closest("div")!.parentElement!;
     expect(accuracyCard.textContent).toContain("97.8%");
-    expect(screen.getByText("2 human-reversed, lifetime")).toBeTruthy();
+    // The window comes from the payload: the headline used to say "lifetime" while the accuracy pairing
+    // behind it has always been bounded by audit-log retention.
+    expect(screen.getByText("2 human-reversed, last 90 days")).toBeTruthy();
   });
 
   it("explains a withheld accuracy instead of letting it read as a dash-shaped mystery", async () => {

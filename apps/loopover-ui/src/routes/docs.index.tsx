@@ -96,6 +96,7 @@ const AUDIENCES: Audience[] = [
       { to: "/docs/ai-summaries", label: "AI summaries policy" },
       { to: "/docs/backtest-calibration", label: "Backtest & calibration" },
       { to: "/docs/verify-this-review", label: "Verify this review" },
+      { to: "/docs/fairness-methodology", label: "Fairness methodology" },
     ],
   },
   {

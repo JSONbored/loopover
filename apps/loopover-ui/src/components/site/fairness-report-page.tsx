@@ -30,6 +30,16 @@ function UnmeasurableAccuracyNote() {
 
 const intFmt = new Intl.NumberFormat("en");
 
+/** How to describe the span `accuracyPct` actually covers.
+ *
+ *  This said "lifetime", which it has never been: the accuracy pairing is deliberately bounded by the audit
+ *  log's retention window (see public-stats.ts's own note on why a lifetime denominator drifts the ratio
+ *  toward 100%), so the headline claimed a wider basis than the number had. The window comes from the
+ *  payload rather than a literal here, so it tracks the retention policy instead of drifting from it. */
+function accuracyWindowLabel(windowDays: number | null): string {
+  return windowDays === null ? "reversal-grounded" : `last ${windowDays} days`;
+}
+
 async function fetchPublicStats(): Promise<PublicStats | null> {
   const result = await apiFetch<PublicStats>(`${getApiOrigin()}/v1/public/stats`, {
     label: "LoopOver fairness report",
@@ -133,8 +143,8 @@ export function FairnessReportPage() {
                       ? `across ${intFmt.format(data.fleetAccuracy.instanceCount)} self-hosted instance${data.fleetAccuracy.instanceCount === 1 ? "" : "s"}, last ${data.fleetAccuracy.windowDays} days`
                       : `self-reported by one self-hosted instance, not corroborated across operators, last ${data.fleetAccuracy.windowDays} days`
                     : data.totals.reversed > 0
-                      ? `${intFmt.format(data.totals.reversed)} human-reversed, lifetime`
-                      : "reversal-grounded, lifetime"}
+                      ? `${intFmt.format(data.totals.reversed)} human-reversed, ${accuracyWindowLabel(data.totals.accuracyWindowDays)}`
+                      : `reversal-grounded, ${accuracyWindowLabel(data.totals.accuracyWindowDays)}`}
                 </p>
                 {/* #9168 computes `basis` precisely so this number is not read as corroborated-across-operators
                     when it is one operator's own disclosed outcomes; the page used to drop the field entirely. */}
@@ -374,6 +384,14 @@ export function FairnessReportPage() {
                   >
                     verify this review
                   </Link>
+                  , or read how every number here is computed in the{" "}
+                  <Link
+                    to="/docs/$slug"
+                    params={{ slug: "fairness-methodology" }}
+                    className="underline underline-offset-2"
+                  >
+                    fairness methodology
+                  </Link>
                   .
                 </p>
                 <TableScroll className="mt-4" label="Measured precision per rule">
@@ -540,6 +558,14 @@ export function FairnessReportPage() {
                     className="underline underline-offset-2"
                   >
                     verify this review
+                  </Link>
+                  . The definitions behind each column are in the{" "}
+                  <Link
+                    to="/docs/$slug"
+                    params={{ slug: "fairness-methodology" }}
+                    className="underline underline-offset-2"
+                  >
+                    fairness methodology
                   </Link>
                   .
                 </p>

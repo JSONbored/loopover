@@ -47,44 +47,18 @@
 // decision's plan from a heuristic close to a hold — see that field's own doc comment.
 import { deliveryIdOrigin, type DeliveryIdOrigin } from "../queue/delivery-id";
 import { errorMessage, nowIso } from "../utils/json";
+import { canonicalJson, contentDigest, sha256Hex } from "@loopover/contract/digest";
 import { retentionCutoffIsoForTable } from "../db/retention";
 
 /** Bump when the record's FIELD SET changes meaning — consumers compare records only within a version. */
 export const DECISION_RECORD_SCHEMA_VERSION = "6"; // v6 (#9743): + findingsCount, so "findings raised per PR" is derivable from the LEDGER rather than from the AI review cache (which is keyed for reuse, not anchored, and so cannot back a reproducibility claim); v5 (#8834): + aiAgreement (inter-run agreement folded with the verbalized confidence); v4 (#9124/#9135): configDigest digests the resolved policy (+ settingsDigest split out), promptDigest digests the actual sent prompt, modelId -> modelIds (real identities), ciState populated, + divertedByHoldout; v3 (#8962): + salvageability {score, factors}; v2 (#8834): + aiConfidence, model/prompt commitments
 
-/**
- * Canonical JSON: recursively key-sorted, no insignificant whitespace — the ONE serialization every digest
- * in this system is computed over. Identical logical inputs must always hash identically, so object key
- * order (an artifact of construction, not meaning) can never influence a digest. Arrays keep their order
- * (order IS meaning there). undefined object members are dropped (JSON has no undefined); undefined inside
- * arrays follows JSON.stringify's own null coercion. PURE.
- */
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
-  if (typeof value === "string") return JSON.stringify(value);
-  if (typeof value === "undefined") return "null";
-  if (Array.isArray(value)) return `[${value.map((entry) => canonicalJson(entry)).join(",")}]`;
-  if (typeof value === "object") {
-    const record = value as Record<string, unknown>;
-    const keys = Object.keys(record)
-      .filter((key) => record[key] !== undefined)
-      .sort();
-    return `{${keys.map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`).join(",")}}`;
-  }
-  // Functions/symbols/bigints have no JSON meaning; refusing loudly beats a silent wrong digest.
-  throw new Error(`canonicalJson: unsupported value type "${typeof value}"`);
-}
-
-/** SHA-256 hex over UTF-8 text via Web Crypto (available in the Workers runtime AND Node ≥20). */
-export async function sha256Hex(text: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-/** Digest of any JSON-shaped value via the canonical serialization above. */
-export async function contentDigest(value: unknown): Promise<string> {
-  return sha256Hex(canonicalJson(value));
-}
+// The canonical serialization and the digest pair every commitment here is computed under. Defined in
+// @loopover/contract (digest.ts) rather than in this file, because the public verifier CLI (#9723) has to
+// recompute these exact digests from a published package with no repo checkout -- and re-exported from
+// here so every existing `from "./decision-record"` call site is unchanged and there is one definition,
+// not two that can drift. See that module's header for the serialization rules themselves.
+export { canonicalJson, sha256Hex, contentDigest };
 
 /** The published, public-safe decision record. Counts/digests/enums only — no diffs, no private config
  *  contents (their DIGEST is the commitment), no author identity beyond what the PR page already shows. */

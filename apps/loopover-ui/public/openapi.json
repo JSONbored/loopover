@@ -402,6 +402,10 @@
               },
               "minutesSaved": {
                 "type": "number"
+              },
+              "accuracyWindowDays": {
+                "type": "number",
+                "nullable": true
               }
             },
             "required": [
@@ -416,6 +420,7 @@
               "reversed",
               "filteredPct",
               "accuracyPct",
+              "accuracyWindowDays",
               "minutesSaved"
             ]
           },

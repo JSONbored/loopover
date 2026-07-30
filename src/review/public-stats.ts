@@ -55,7 +55,7 @@ import { validateCalibrationPayload } from "./risk-control";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import { errorMessage } from "../utils/json";
-import { retentionCutoffIsoForTable } from "../db/retention";
+import { retentionCutoffIsoForTable, retentionDaysForTable } from "../db/retention";
 
 /** FALLBACK estimate of maintainer review/triage time saved per reviewed PR, used ONLY when the real per-PR
  *  average (`estimateReviewEffort`'s minutes, persisted at publish time — see `reviewEffortMinutes` in the
@@ -231,6 +231,11 @@ export interface PublicStatsPayload {
     reversed: number;
     filteredPct: number | null;
     accuracyPct: number | null;
+    /** The window `accuracyPct` and `reversed` are actually bounded by, in days -- null if unbounded.
+     *  Published rather than left implicit because both are pruned with `audit_events` while `merged`/
+     *  `closed` beside them are lifetime and fleet-folded; the page described the figure as "lifetime",
+     *  which the pairing has never been. Derived from the retention policy so it cannot drift from it. */
+    accuracyWindowDays: number | null;
     minutesSaved: number;
   };
   /** Trailing-7-day additions (by review time), for the "+N this week" hero delta. */
@@ -631,6 +636,7 @@ export async function getPublicStats(
       // (own-ledger `reversed`) and the denominator are drawn from the same population AND the same
       // retention window. See the windowed disposition query's own comment for both halves of that pairing.
       accuracyPct: accuracyPct(windowedMerged, windowedClosed, totals.reversed),
+      accuracyWindowDays: retentionDaysForTable("audit_events"),
       minutesSaved,
     },
     weekly: { reviewed: w.reviewed ?? 0, merged: w.merged ?? 0 },

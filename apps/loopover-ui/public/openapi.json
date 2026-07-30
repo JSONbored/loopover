@@ -999,6 +999,70 @@
               "byAuthorClass",
               "byProject"
             ]
+          },
+          "automationRate": {
+            "type": "object",
+            "properties": {
+              "weeks": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "weekStart": {
+                      "type": "string"
+                    },
+                    "decided": {
+                      "type": "number"
+                    },
+                    "automated": {
+                      "type": "number"
+                    },
+                    "manual": {
+                      "type": "number"
+                    },
+                    "automationRatePct": {
+                      "type": "number",
+                      "nullable": true
+                    },
+                    "basis": {
+                      "type": "string",
+                      "enum": [
+                        "full",
+                        "holds_only"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "weekStart",
+                    "decided",
+                    "automated",
+                    "manual",
+                    "automationRatePct",
+                    "basis"
+                  ]
+                }
+              },
+              "decided": {
+                "type": "number"
+              },
+              "automated": {
+                "type": "number"
+              },
+              "automationRatePct": {
+                "type": "number",
+                "nullable": true
+              },
+              "provenanceHorizon": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "weeks",
+              "decided",
+              "automated",
+              "automationRatePct",
+              "provenanceHorizon"
+            ]
           }
         },
         "required": [
@@ -1008,6 +1072,7 @@
           "weekly",
           "rulePrecision",
           "reviewParity",
+          "automationRate",
           "byProject",
           "fleetAccuracy",
           "accuracyTrend",

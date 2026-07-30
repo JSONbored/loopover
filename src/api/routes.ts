@@ -14,6 +14,7 @@ import { buildFindingTaxonomyDocument } from "../review/finding-taxonomy";
 import { buildEnrichmentAnalyzersTaxonomyDocument } from "../review/enrichment-analyzers-taxonomy";
 import { deliveryIdFor } from "../queue/delivery-id";
 import { loadReviewParityRollups } from "../review/review-parity-rollups";
+import { loadAutomationRateSeries } from "../review/automation-rate";
 import {
   GITHUB_OAUTH_STATE_COOKIE,
   authenticateInternalToken,
@@ -672,7 +673,7 @@ export function createApp() {
     const publicStatsManifestOverride = await resolvePublicStatsManifestOverride(c.env);
     if (!isPublicStatsEnabled(c.env, publicStatsManifestOverride)) return c.json({ error: "not_found" }, 404);
     try {
-      const [stats, accuracyTrend, fleetAccuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision, reviewParity] = await Promise.all([
+      const [stats, accuracyTrend, fleetAccuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision, reviewParity, automationRate] = await Promise.all([
         getPublicStats(c.env),
         loadPublicAccuracyTrend(c.env),
         // #9676: the fleet-population sibling of the series above. Deliberately a SECOND series rather than a
@@ -688,9 +689,12 @@ export function createApp() {
         // from `decision_records` alone so an outsider holding the ledger export can recompute every figure
         // -- the definitions live beside the code in review-parity-rollups.ts.
         loadReviewParityRollups(c.env),
+        // #9727: the weekly automation rate -- share of PRs decided with no human in the path. Same ledger,
+        // same reproducibility contract; definitions live beside the code in review/automation-rate.ts.
+        loadAutomationRateSeries(c.env),
       ]);
       c.header("Cache-Control", "public, max-age=60, stale-while-revalidate=300");
-      return c.json({ ...stats, accuracyTrend, fleetAccuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision, reviewParity });
+      return c.json({ ...stats, accuracyTrend, fleetAccuracyTrend, reuseRateTrend, reviewVolumeTrend, rulePrecision, reviewParity, automationRate });
     } catch {
       return c.json({ error: "public_stats_unavailable" }, 503);
     }

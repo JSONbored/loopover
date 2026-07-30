@@ -40,6 +40,13 @@ import {
 const PAYLOAD: PublicStats = {
   // The wire always carries rulePrecision (#8230/#8231). A fixture without it is not a payload the
   // current backend can produce -- the one test that needs that shape strips it explicitly.
+  automationRate: {
+    weeks: [],
+    decided: 0,
+    automated: 0,
+    automationRatePct: null,
+    provenanceHorizon: "2026-07-29T00:00:00.000Z",
+  },
   reviewParity: {
     windowStart: "2026-07-22T00:00:00.000Z",
     windowEnd: "2026-07-29T00:00:00.000Z",

@@ -41,12 +41,14 @@ import { safeAll } from "./public-stats";
 export const AUTOMATION_RATE_PROVENANCE_HORIZON_ISO = "2026-07-29T00:00:00.000Z";
 
 /** The action classes that ENACT a decision. A PR reaching one of these, with no human signal, is what
- *  "automated" means. Exported so the read below filters on exactly the set the fold classifies on -- one
- *  definition, rather than a WHERE clause and a predicate that can drift apart. */
-export const AUTOMATION_ENACTING_ACTIONS = ["merge", "close"] as const;
+ *  "automated" means. Module-private: AUTOMATION_COUNTED_ACTIONS below is the exported surface, and it is
+ *  what both the fold and the read consume -- one definition, rather than a WHERE clause and a predicate
+ *  that can drift apart. */
+const AUTOMATION_ENACTING_ACTIONS = ["merge", "close"] as const;
 
-/** The action recording that the gate declined to decide and handed the PR to a person. */
-export const AUTOMATION_HOLD_ACTION = "hold";
+/** The action recording that the gate declined to decide and handed the PR to a person. Module-private for
+ *  the same reason as the set above. */
+const AUTOMATION_HOLD_ACTION = "hold";
 
 /** Every action that puts a PR in the series at all -- an enacted decision, or a hold. */
 export const AUTOMATION_COUNTED_ACTIONS: readonly string[] = [...AUTOMATION_ENACTING_ACTIONS, AUTOMATION_HOLD_ACTION];

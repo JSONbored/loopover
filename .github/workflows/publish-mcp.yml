@@ -130,6 +130,15 @@ jobs:
       # specifically (imports packages/loopover-mcp and spawns the built binary), NOT the sibling
       # test/unit/mcp-*.test.ts files that exercise the Worker's separate remote MCP server
       # (src/mcp/server.ts, a different deployable entirely).
+      # packages/loopover-mcp imports @loopover/contract (api-schemas / tools / cli-config / client-config).
+      # That package's dist/ is gitignored exactly like the engine's above, so without building it here every
+      # one of those imports fails to resolve -- "Cannot find module '@loopover/contract/...'" -- and the
+      # build below exits 2. This publish has been red on EVERY main commit for as long as the run history
+      # goes back, retrying three times per push and never once succeeding, so the package has not actually
+      # been publishing. Same reason and same placement as the engine build directly above.
+      - name: Build loopover-contract
+        run: npm run build --workspace @loopover/contract
+
       - name: MCP package syntax validation
         run: npm run build:mcp
 

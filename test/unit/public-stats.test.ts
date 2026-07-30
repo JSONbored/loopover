@@ -916,17 +916,24 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.totals.minutesSaved).toBe(101);
   });
 
-  it("skips the own-ledger queries but still queries the Orb aggregate when the allowlist is empty", async () => {
+  it("skips the per-PROJECT own-ledger queries when the allowlist is empty, and never names a repo", async () => {
+    // #9963 narrowed this contract rather than dropping it. The allowlist exists to keep repo IDENTITY
+    // unpublished, so the per-project queries (the ones that GROUP BY repo) still must not run -- but the
+    // aggregate ledger read below carries no repo identity and is now allowed, because publishing
+    // `handled: 0` on a deployment holding thousands of verdicts was a flat falsehood.
     const env = {
       DB: {
         prepare: (sql: string) => {
           // #9474: getOrbGlobalStats now ALSO reads the durable orb_outcome_rollups fold (empty here).
           if (sql.includes("orb_pr_outcomes") || sql.includes("orb_outcome_rollups")) {
-            return {
-              bind: () => ({ first: async () => ({ merged: 0, closed: 0, total: 0 }) }),
-            };
+            return { bind: () => ({ first: async () => ({ merged: 0, closed: 0, total: 0 }) }) };
           }
-          throw new Error("public stats must not query an unscoped own-ledger");
+          // The aggregate ledger read: no GROUP BY, no repo column in the output.
+          if (sql.includes("decision_records")) {
+            expect(sql).not.toContain("GROUP BY");
+            return { all: async () => ({ results: [{ handled: 0, merged: 0, closed: 0, inReview: 0 }] }) };
+          }
+          throw new Error("public stats must not run a per-project own-ledger query without an allowlist");
         },
       },
       LOOPOVER_PUBLIC_STATS_REPOS: "",
@@ -936,6 +943,101 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.totals.reviewed).toBe(0);
     expect(out.weekly).toEqual({ reviewed: 0, merged: 0 });
     expect(out.byProject).toEqual([]);
+  });
+
+  it("REGRESSION (#9963): an unallowlisted Orb reports its LEDGER's handled count, not a false zero", async () => {
+    // The published contradiction, caught live by the verifier within minutes of the flag going on:
+    //   reviewParity.verdicts = 2123   (read from decision_records, ungated)
+    //   totals.handled        = 0      (read from the allowlist-gated audit trail, which was empty)
+    // An Orb that has decided thousands of PRs reporting zero handled is not a rounding difference. Whichever
+    // way it is fixed, publishing a number known to be false is the one option that is definitely wrong.
+    const env = {
+      DB: {
+        prepare: (sql: string) => {
+          if (sql.includes("orb_pr_outcomes") || sql.includes("orb_outcome_rollups")) {
+            return { bind: () => ({ first: async () => ({ merged: 0, closed: 0, total: 0 }) }) };
+          }
+          if (sql.includes("decision_records")) {
+            return { all: async () => ({ results: [{ handled: 987, merged: 488, closed: 497, inReview: 2 }] }) };
+          }
+          throw new Error("unexpected query");
+        },
+      },
+      LOOPOVER_PUBLIC_STATS_REPOS: "",
+    } as unknown as Env;
+    const out = await getPublicStats(env, NOW);
+    expect(out.totals.handled).toBe(987);
+    expect(out.totals.merged).toBe(488);
+    expect(out.totals.closed).toBe(497);
+    // Still no repo named: the allowlist governs identity, and it is empty.
+    expect(out.byProject).toEqual([]);
+  });
+
+  it("INVARIANT (#9963): totals.handled cannot be zero while the ledger holds verdicts", async () => {
+    // This is the cross-surface claim the public verifier checks ("parity rollups report N verdicts,
+    // exceeding the all-time handled count of 0"). Pinned here so the two halves of one payload cannot drift
+    // back into answering to different gates.
+    for (const ledgerHandled of [1, 42, 987]) {
+      const env = {
+        DB: {
+          prepare: (sql: string) => {
+            if (sql.includes("orb_pr_outcomes") || sql.includes("orb_outcome_rollups")) {
+              return { bind: () => ({ first: async () => ({ merged: 0, closed: 0, total: 0 }) }) };
+            }
+            if (sql.includes("decision_records")) {
+              return { all: async () => ({ results: [{ handled: ledgerHandled, merged: 0, closed: 0, inReview: 0 }] }) };
+            }
+            throw new Error("unexpected query");
+          },
+        },
+        LOOPOVER_PUBLIC_STATS_REPOS: "",
+      } as unknown as Env;
+      const out = await getPublicStats(env, NOW);
+      expect(out.totals.handled, `ledger held ${ledgerHandled} PRs`).toBeGreaterThan(0);
+    }
+  });
+
+  it("INVARIANT (#9963): NULL sums from an empty join read as zero, not NaN", async () => {
+    // A SUM() over zero matching rows is NULL, not 0 -- the real shape when the ledger holds PRs the
+    // pull_requests cache has never seen (a fresh Orb, or rows pruned by retention). Adding NULL would
+    // poison every downstream figure with NaN, so the nullish arms are exercised deliberately.
+    const env = {
+      DB: {
+        prepare: (sql: string) => {
+          if (sql.includes("orb_pr_outcomes") || sql.includes("orb_outcome_rollups")) {
+            return { bind: () => ({ first: async () => ({ merged: 0, closed: 0, total: 0 }) }) };
+          }
+          if (sql.includes("decision_records")) {
+            return { all: async () => ({ results: [{ handled: 5, merged: null, closed: null, inReview: null }] }) };
+          }
+          throw new Error("unexpected query");
+        },
+      },
+      LOOPOVER_PUBLIC_STATS_REPOS: "",
+    } as unknown as Env;
+    const out = await getPublicStats(env, NOW);
+    expect(out.totals.handled).toBe(5);
+    expect(out.totals.merged).toBe(0);
+    expect(out.totals.closed).toBe(0);
+    expect(Number.isNaN(out.totals.merged)).toBe(false);
+  });
+
+  it("INVARIANT (#9963): a deployment with NO ledger keeps its zeros instead of inventing a figure", async () => {
+    // safeAll swallows a missing table into an empty result; absence of evidence must not become a number.
+    const env = {
+      DB: {
+        prepare: (sql: string) => {
+          if (sql.includes("orb_pr_outcomes") || sql.includes("orb_outcome_rollups")) {
+            return { bind: () => ({ first: async () => ({ merged: 0, closed: 0, total: 0 }) }) };
+          }
+          if (sql.includes("decision_records")) return { all: async () => ({ results: [] }) };
+          throw new Error("unexpected query");
+        },
+      },
+      LOOPOVER_PUBLIC_STATS_REPOS: "",
+    } as unknown as Env;
+    const out = await getPublicStats(env, NOW);
+    expect(out.totals.handled).toBe(0);
   });
 
   it("reports Orb-only totals when the own-ledger allowlist is empty but Orb has data", async () => {

@@ -323,6 +323,39 @@ export const PUBLISHED_PR_KEYS = `
 /** Assemble the public-safe payload from the LIVE review ledger: distinct PRs the bot published a review for
  *  (audit_events) joined to their terminal disposition (pull_requests state). Realtime behind the 60s HTTP cache
  *  — a new review shows up within ~a minute; no rollup/cron. */
+/**
+ * #9963: aggregate-only dispositions keyed off the anchored ledger (`decision_records`) rather than the
+ * allowlist-gated audit trail, for a deployment that has published no repo allowlist.
+ *
+ * DISTINCT (repo, number) deliberately: `decision_records` holds one row per VERDICT, and a repeat evaluation
+ * of the same head is its own row -- 2,354 rows over 987 pull requests on the production Orb. `handled` counts
+ * pull requests, so counting rows here would overstate it by more than 2x and reintroduce exactly the kind of
+ * cross-surface disagreement this fix exists to remove.
+ *
+ * The merged/closed/in-review split mirrors the allowlisted query's own LEFT JOIN against `pull_requests`
+ * verbatim, so the two paths cannot drift into different definitions of the same word. No GROUP BY: this
+ * returns one aggregate row and never a per-repo breakdown, which is what keeps repo identity unpublished.
+ */
+async function loadLedgerDerivedTotals(env: Env): Promise<{ handled: number; merged: number; closed: number; inReview: number } | null> {
+  // `handled` is COUNT(*), which is never NULL -- only the SUM()s can be, when the join matches no rows. Typing
+  // it non-nullable keeps a `?? 0` off it that no input could ever reach.
+  const rows = await safeAll<{ handled: number; merged: number | null; closed: number | null; inReview: number | null }>(
+    env,
+    `SELECT COUNT(*) AS handled,
+            SUM(CASE WHEN pr.merged_at IS NOT NULL THEN 1 ELSE 0 END) AS merged,
+            SUM(CASE WHEN pr.state = 'closed' AND pr.merged_at IS NULL THEN 1 ELSE 0 END) AS closed,
+            SUM(CASE WHEN pr.id IS NULL OR pr.state = 'open' THEN 1 ELSE 0 END) AS inReview
+       FROM (SELECT DISTINCT repo_full_name AS repo, pull_number AS number FROM decision_records) ev
+       LEFT JOIN pull_requests pr ON pr.repo_full_name = ev.repo AND pr.number = ev.number`,
+  );
+  const row = rows[0];
+  // No ledger (a fresh deployment, or the Worker where decision records live elsewhere) is not a failure --
+  // it means there is nothing to correct, so the caller keeps its existing zeros rather than inventing a
+  // figure. safeAll already swallows a missing table into an empty result.
+  if (!row) return null;
+  return { handled: row.handled, merged: row.merged ?? 0, closed: row.closed ?? 0, inReview: row.inReview ?? 0 };
+}
+
 export async function getPublicStats(
   env: Env,
   nowMs: number = Date.now(),
@@ -331,7 +364,18 @@ export async function getPublicStats(
   const projects = publicStatsProjects(env);
   const generatedAt = new Date(nowMs).toISOString();
   // The own-ledger side needs at least one allowlisted project to query; an empty allowlist skips these three
-  // queries entirely (own-ledger totals stay zero) but still lets the Orb aggregate below run.
+  // queries entirely but still lets the Orb aggregate below run.
+  //
+  // #9963: it used to leave `totals.*` at ZERO in that case, which on a self-hosted Orb published a flat
+  // falsehood -- `totals.handled: 0` beside a `reviewParity` block reporting 2,123 verdicts from the same
+  // deployment's ledger, caught by the public verifier within minutes of the flag being turned on. The two
+  // halves answered to different gates: totals honours this allowlist, the ledger-derived blocks do not.
+  //
+  // Publishing a number known to be false is the one option that is definitely wrong, so the aggregate is now
+  // derived from the SAME ledger the parity block reads when no repo is allowlisted. The privacy intent is
+  // untouched, because it is about NAMING repos: `byProject` still requires the allowlist and stays empty, so
+  // nothing identifies a repo that was not opted in. `totals` carries no repo identity at all.
+  const ledgerTotals = projects.length === 0 ? await loadLedgerDerivedTotals(env) : null;
   const inList = projects.map(() => "?").join(", ");
   const [dispositions, windowedDispositions, reversalRows, weeklyRows, effortRows] = projects.length === 0
     ? await Promise.all([
@@ -532,6 +576,16 @@ export async function getPublicStats(
   // Fleet accuracy (bugfix, #fairness-analytics): independent of the own-ledger allowlist above, so it's fetched
   // unconditionally alongside the Orb global fold, matching that fold's own unscoped-regardless-of-allowlist
   // behavior (see the "skips the own-ledger queries but still queries the Orb aggregate" test).
+  // #9963: apply the ledger-derived aggregate BEFORE the Orb fold, in exactly the place the allowlisted
+  // per-project loop would have contributed. Only reached when no repo is allowlisted, so it can never
+  // double-count: `byProject` is empty in that case and contributed nothing above.
+  if (ledgerTotals !== null) {
+    totals.handled += ledgerTotals.handled;
+    totals.merged += ledgerTotals.merged;
+    totals.closed += ledgerTotals.closed;
+    totals.commented += ledgerTotals.inReview;
+  }
+
   const [orb, fleet] = await Promise.all([getOrbGlobalStats(env), computeFleetAnalytics(env)]);
   totals.merged += orb.merged;
   totals.closed += orb.closed;

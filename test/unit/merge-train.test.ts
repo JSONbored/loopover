@@ -177,6 +177,44 @@ describe("shouldWaitForOlderSiblings (#selfhost-merge-train)", () => {
     });
   });
 
+  describe("draft eviction (#9939 -- head-of-line blocking by an un-mergeable maintainer PR)", () => {
+    // The production shape: a maintainer PR with red CI cannot be auto-closed (maintainers are exempt on
+    // purpose, so they can iterate), so it stays open and overlapping for as long as the fix takes. Every
+    // newer overlapping PR queued behind it -- green, approved, ready -- waited on a PR that was not trying
+    // to merge at all. Marking it draft is the author saying "skip me"; the train now understands that.
+    it("REGRESSION: an older, OVERLAPPING draft sibling does NOT block -- GitHub will not merge a draft at all", () => {
+      const siblings: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], isDraft: true }];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: false });
+    });
+
+    it("also evicts on GitHub's own mergeableState of \"draft\", for a caller that only resolved that field", () => {
+      const siblings: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], mergeableState: "draft" }];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: false });
+    });
+
+    it("isDraft: false (or absent/undefined) leaves the OVERLAPPING older sibling blocking exactly as before", () => {
+      const explicit = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], isDraft: false }];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", explicit, NOW)).toEqual({ wait: true, blockingPr: 105 });
+      const absent: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1] }];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", absent, NOW)).toEqual({ wait: true, blockingPr: 105 });
+    });
+
+    it("a draft sibling is skipped over in favor of the next-oldest still-viable overlapping sibling", () => {
+      // Eviction removes ONE PR from the queue -- it does not disable the gate. A real older sibling behind
+      // the draft still holds the line, which is what keeps this a fix rather than a bypass.
+      const siblings: MergeTrainSibling[] = [
+        { number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], isDraft: true },
+        { number: 107, createdAt: "2026-07-07T10:30:00.000Z", linkedIssues: [1] },
+      ];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: true, blockingPr: 107 });
+    });
+
+    it("a draft that is ALSO manual-review-held is evicted once, not twice -- the two rules compose", () => {
+      const siblings: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], isDraft: true, heldForManualReview: true }];
+      expect(decide(110, "2026-07-07T11:00:00.000Z", siblings, NOW)).toEqual({ wait: false });
+    });
+  });
+
   describe("manual-review eviction (#9039 -- confirmed #8735 incident)", () => {
     it("REGRESSION: an older, OVERLAPPING sibling held for manual review does NOT block -- it is evicted, not waited for", () => {
       const siblings: MergeTrainSibling[] = [{ number: 105, createdAt: "2026-07-07T10:00:00.000Z", linkedIssues: [1], heldForManualReview: true }];

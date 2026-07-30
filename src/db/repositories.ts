@@ -4731,6 +4731,36 @@ export async function markPullRequestVisualCaptureUnobtainable(env: Env, fullNam
     .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
 }
 
+/** #9939: record that the PLANNER applied the manual-review label at `headSha`, for `reason`.
+ *
+ *  This is the provenance that makes the label liftable. The same label string is ALSO how a maintainer
+ *  freezes a PR by hand, and agent-actions.ts rightly refuses to auto-remove it without knowing which it is
+ *  looking at -- silently undoing a human's freeze is far worse than leaving a stale hold. Written only on
+ *  the planner's own add, so a human-applied label never acquires provenance and is never auto-removed.
+ *
+ *  Scoped to headSha like its visual-capture siblings: a new commit is a new decision, and a hold recorded
+ *  against an older head should not license removing a label on a head nobody has re-evaluated. */
+export async function markPullRequestManualReviewLabelApplied(env: Env, fullName: string, number: number, headSha: string, reason: string): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ manualReviewLabelAppliedSha: headSha, manualReviewLabelAppliedReason: boundedString(reason, 300), updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number), eq(pullRequests.headSha, headSha)));
+}
+
+/** #9939: clear the provenance once the label is gone (removed by the planner, or by a maintainer).
+ *
+ *  Leaving it behind would let a LATER human-applied label inherit the bot's provenance and become
+ *  auto-removable -- exactly the override this whole mechanism exists to prevent. Not scoped to headSha: the
+ *  label is gone regardless of which head it was applied at. */
+export async function clearPullRequestManualReviewLabelProvenance(env: Env, fullName: string, number: number): Promise<void> {
+  const db = getDb(env.DB);
+  await db
+    .update(pullRequests)
+    .set({ manualReviewLabelAppliedSha: null, manualReviewLabelAppliedReason: null, updatedAt: nowIso() })
+    .where(and(eq(pullRequests.repoFullName, fullName), eq(pullRequests.number, number)));
+}
+
 /** Release the retry latch: the retry chain that justified it has ended without a successful capture, so the
  *  screenshotTableGate must stop deferring and evaluate the evidence actually present.
  *
@@ -7441,6 +7471,8 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     visualCaptureSatisfiedSha: row.visualCaptureSatisfiedSha,
     visualCaptureRetryPendingSha: row.visualCaptureRetryPendingSha,
     visualCaptureRetryPendingAt: row.visualCaptureRetryPendingAt,
+    manualReviewLabelAppliedSha: row.manualReviewLabelAppliedSha,
+    manualReviewLabelAppliedReason: row.manualReviewLabelAppliedReason,
     screenshotTablePresenceSatisfied: parseJson<{ headSha: string; evidenceFingerprint: string } | null>(row.screenshotTablePresenceSatisfiedJson, null),
   };
 }

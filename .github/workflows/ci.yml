@@ -38,6 +38,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       backendConfig: ${{ steps.filter.outputs.backendConfig }}
+      cocoDev: ${{ steps.filter.outputs.cocoDev }}
       ui: ${{ steps.filter.outputs.ui }}
       uiContract: ${{ steps.filter.outputs.uiContract }}
       mcp: ${{ steps.filter.outputs.mcp }}
@@ -160,6 +161,11 @@ jobs:
             observability:
               - 'grafana/dashboards/**'
               - 'prometheus/rules/**'
+            # #9649: the coco-dev version manifest and the KBS kustomization that must stay in lockstep, plus the
+            # checker itself. Nothing else in the workflow references k8s/, so this is its own narrow filter.
+            cocoDev:
+              - 'k8s/coco-dev/**'
+              - 'scripts/check-coco-dev-versions*.ts'
             # The UI's own app code -- triggers the FULL toolchain (lint/typecheck/test/build).
             # A dependency bump (package.json/package-lock.json) stays here too since it can break the UI
             # build or types in ways only that full toolchain would catch.
@@ -406,6 +412,18 @@ jobs:
       - name: Re-gate sort-key check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run regate-sort-key:check
+      # #9649: coco-dev-versions:check keeps k8s/coco-dev/versions.json and the KBS kustomization in lockstep, but
+      # was wired into test:ci only -- no CI job ran it, and nothing in this workflow references k8s otherwise.
+      # Gated on the new cocoDev path filter plus the standard push clause every drift step above uses.
+      - name: Coco-dev versions drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.cocoDev == 'true' }}
+        run: npm run coco-dev-versions:check
+      # #9649: import-specifiers:check (#9221) scans import specifiers across src/scripts/test and every
+      # packages/* workspace (BUNDLER_ROOTS/NODENEXT_ROOTS), but no CI job ran it -- #9240/#9249 both drifted in
+      # after it shipped. Gate on every filter covering one of those scanned roots.
+      - name: Import-specifiers drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.discoveryIndex == 'true' }}
+        run: npm run import-specifiers:check
 
       # #9563: every webhook-owned handler must decide about #9312's redelivery guard out loud. Three had
       # silently skipped it -- one writing duplicate permanent suppression rows, two spending a second paid

@@ -63,6 +63,7 @@ const DEFAULT_ITEMS: PaletteItem[] = [
   { label: "AI summaries policy", to: "/docs/ai-summaries", group: "Docs" },
   { label: "Backtest & calibration", to: "/docs/backtest-calibration", group: "Docs" },
   { label: "Verify this review", to: "/docs/verify-this-review", group: "Docs" },
+  { label: "Fairness methodology", to: "/docs/fairness-methodology", group: "Docs" },
   { label: "Privacy & security", to: "/docs/privacy-security", group: "Docs" },
   { label: "Troubleshooting", to: "/docs/troubleshooting", group: "Docs" },
   { label: "API reference", to: "/api", group: "Reference" },

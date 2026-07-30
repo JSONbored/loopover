@@ -195,6 +195,14 @@ export const RETENTION_COMPOSITE_PK_TABLES: ReadonlySet<string> = new Set([
  * hash-chained created_at (which cannot be backdated without breaking the chain), so an operator cannot use
  * the tolerance to hide a fresh deletion.
  */
+/** The retention window, in days, a table's rows survive -- null when the table has no rule. Exported so a
+ *  surface that is BOUNDED by retention can publish that bound instead of restating it as a literal: the
+ *  fairness report described its accuracy figure as "lifetime" while the pairing behind it is pruned with
+ *  `audit_events`, and a hand-copied "90" would drift the first time the policy changed. */
+export function retentionDaysForTable(table: string): number | null {
+  return RETENTION_POLICY.find((candidate) => candidate.table === table)?.days ?? null;
+}
+
 export function retentionCutoffIsoForTable(table: string, nowMs: number = Date.parse(nowIso())): string | null {
   const rule = RETENTION_POLICY.find((candidate) => candidate.table === table);
   return rule ? cutoffIso(rule.days, nowMs) : null;

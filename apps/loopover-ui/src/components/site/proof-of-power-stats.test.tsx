@@ -70,6 +70,7 @@ const PAYLOAD: PublicStats = {
     reversed: 33,
     filteredPct: 48.6,
     accuracyPct: 98.4,
+    accuracyWindowDays: 90,
     minutesSaved: 54160,
   },
   weekly: { reviewed: 2000, merged: 900 },

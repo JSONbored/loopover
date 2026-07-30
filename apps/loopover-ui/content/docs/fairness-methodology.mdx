@@ -1,0 +1,187 @@
+---
+title: Fairness methodology
+description: How every number on the fairness report is computed — data sources, outcome-confirmation rules, windows, sample floors, and the limits of what each figure can support.
+eyebrow: Core concepts
+---
+
+## Why this page exists
+
+The [fairness report](/fairness) publishes accuracy, per-rule precision, and review-parity figures.
+Each is a claim, and a claim you cannot check is just an assertion. [Verify this
+review](/docs/verify-this-review) shows you how to re-run the corpus yourself; this page tells you
+what the numbers *mean* — which rows are counted, which are excluded, over what window, and where
+each figure stops being able to support a conclusion.
+
+Nothing here is a summary of intent. Every rule below is the rule the code implements.
+
+<Callout variant="note">
+  **Want the machine-checkable version?** `npx -p @loopover/mcp loopover-verify` recomputes the
+  published commitments from the public endpoints and prints a PASS/FAIL table. It needs no
+  credentials. See [Verify this review](/docs/verify-this-review).
+</Callout>
+
+## The three data sources are not interchangeable
+
+This is the single most important thing to understand before reading any number: the fairness report
+draws on **three disjoint sources**, and figures from different sources cannot be compared or combined.
+
+| Source | What it is | Which figures come from it |
+| --- | --- | --- |
+| **Decision ledger** (`decision_records`) | The hash-chained, anchored record of every verdict | The **review-parity** block only: re-evaluation rate, re-evaluations by reason, per-author-class parity |
+| **Signal history** (human-override audit events) | Human verdicts recorded against individual rule firings | The **measured accuracy per rule** table, and the reproducibility freeze point |
+| **Outcome history** (auto-actions + reversal events) | What the gate did, and what humans later did about it | **Decision accuracy**, the per-repository table, and both weekly trends |
+
+A consequence worth stating plainly: **only the review-parity block is computed from the anchored
+ledger.** Those figures are the ones an outsider holding the ledger export can recompute exactly. The
+rule-precision and accuracy figures are computed from audit history, which is subject to a 90-day
+retention bound and is not itself anchored.
+
+## Outcome confirmation: what makes a case confirmed or reversed
+
+### Per-rule precision
+
+A rule's precision counts **human verdicts recorded against that rule's firings**. A verdict is
+written as `reversed` when a human undid what the gate did, and `confirmed` when a human let it stand.
+
+**Reversal is recorded when:**
+
+- A contributor **reopens** a pull request the gate had closed.
+- A merged PR's body says it **reverts** an earlier PR — and only if that earlier PR's merge was
+  actually recorded. An uncorroborated "Reverts #N" records nothing.
+- A merge **supersedes** a PR the gate had closed.
+- The repository owner reopens a closed PR **and merges it within six hours**. A bare owner reopen is
+  deliberately *not* a reversal on its own — owners reopen for many reasons — so this is a case where
+  a genuine "the gate was wrong" event can go uncounted.
+
+**Confirmation is recorded when:**
+
+- The repository **owner** closes a PR without merging, agreeing with the gate's close. A
+  contributor closing their own PR records nothing.
+- For the AI-judgment rules specifically, an explicit hold confirmation is recorded.
+- For every other rule, a terminal disposition with no reversal records an **implicit** confirmation.
+
+<Callout variant="warn">
+  **Implicit and explicit confirmations are pooled.** Implicit confirmations are tagged in the
+  underlying data so a consumer *could* weight them separately — but the published precision does
+  not. A rule whose confirmations are largely implicit ("nobody undid it") is presented identically
+  to one whose confirmations are explicit ("a human affirmed it"). Those are different strengths of
+  evidence, and the published number does not distinguish them.
+</Callout>
+
+### Excluded from the precision denominator
+
+- **Unrecognized verdicts** — rows whose verdict is neither `confirmed` nor `reversed`. Counted
+  separately, and never allowed to inflate precision or help a rule clear its sample floor.
+- **Non-attributable backfill** — one historical backfill took its labels verbatim from another
+  rule's human verdicts on the same pull requests. Including it printed one rule's number twice, so
+  it is excluded from both the precision aggregate and the published corpus.
+- **Firings with no human verdict at all.** Most firings never receive one. The absence of an
+  override is not evidence in either direction, so it is not counted as either.
+
+## Windows
+
+**Every window is flat and unweighted. There is no time-decay and no recency weighting anywhere.** A
+verdict from day 89 counts exactly as much as one from yesterday.
+
+| Figure | Window |
+| --- | --- |
+| Per-rule precision, and the published eval corpus | **90 days** |
+| Review-parity block (re-evaluation rate, author-class parity) | **7 days** |
+| Weekly trends | **8 weeks** |
+| Fleet decision accuracy | **90 days** |
+| Underlying audit-event retention | **90 days** — a hard bound on everything above it |
+
+The review-parity window being 7 days while the rule table is 90 is a real difference, not a
+rounding of the same thing. The page prints the parity window's actual start and end dates.
+
+The weekly trend buckets a reversal by the **original action's** date, not the reversal's, so a past
+week's figure never shifts retroactively as new reversals arrive.
+
+## Precision, accuracy, and coverage
+
+**Per-rule precision** is `confirmed / (confirmed + reversed)`, rounded to three decimals and
+published as a percentage to one decimal.
+
+**Decision accuracy** is reversal-grounded: the share of the gate's merge/close actions that were not
+later reversed. Its denominator is auto-actions in the retention window; dry-run actions are excluded.
+
+**Coverage is computed but is not displayed on the fairness report.** Where it appears elsewhere it
+means `verdicts / (verdicts + holds)` — the share of decidable pull requests the gate actually
+decided rather than handing to a person. Policy enforcement actions sit outside both the numerator
+and the denominator. The per-rule table publishes a `decided` **count** and no fired-to-decided
+ratio, so it does not tell you what share of a rule's firings were ever adjudicated.
+
+## Confidence intervals
+
+Where an interval is published it is a **Wilson score interval at z = 1.96** (95%). Wilson rather
+than Wald deliberately: the Wald interval degenerates as a proportion approaches 0 or 1 and would
+claim near-impossible certainty at, say, 59 of 60 confirmed.
+
+**What actually carries an interval on the fairness report: the headline decision-accuracy figure,
+and only when the deployment is reporting as a single instance.** Everything else is a bare point
+estimate:
+
+- Per-rule precision has **no** interval.
+- The per-repository accuracy column has **no** interval.
+- Neither weekly trend has an interval.
+- No review-parity figure — re-evaluation rate, close rate, hold rate, findings per PR — has an interval.
+
+Read those as point estimates with unstated uncertainty, and lean on the accompanying counts (`decided`,
+`verdicts`, `n=`) to judge how much weight any of them can carry.
+
+## Sample floors and suppression
+
+A figure computed from too few observations is suppressed rather than published, because a small-sample
+percentage is worse than no percentage at all.
+
+| Figure | Floor | What happens below it |
+| --- | --- | --- |
+| Per-rule precision | **10** decided | The row still appears with its count; the percentage reads "insufficient data" |
+| Weekly accuracy trend | **3** samples | The whole week is blanked, volume columns included |
+| Fleet weekly trend | **5** verdicts | Both the verdict count and the accuracy are blanked |
+| An instance counting toward the fleet | **5** decided | The instance is excluded entirely |
+| Anti-gaming comparison | **3** eligible instances | Flags caught reads as unknown, not zero |
+
+Where a deployment is reported alongside a small number of others, some counts are withheld entirely:
+at two instances, publishing a total would let a reader recover the other instance's volume by subtraction.
+
+## Known limitations
+
+These are the places where the published numbers are weaker than they look. They are listed here
+because a methodology page that omitted them would be marketing.
+
+- **An accuracy of "—" means not measurable, not 100%.** When a deployment took no auto-actions in a
+  period, there is no action a reversal could have been recorded against. Accuracy is unknown, and is
+  published as unknown.
+- **Reversals are undercounted by construction.** A bare owner reopen with no merge inside six hours,
+  and an uncorroborated revert claim, both record nothing. Real "the gate was wrong" events can be missed.
+- **The published corpus is capped and can be a prefix.** The downloadable corpus is bounded at 2,000
+  cases, while the precision figures are computed with an unbounded count. When a rule's corpus is
+  truncated or empty, its checksum commitment is **omitted** rather than published — a commitment
+  covering a prefix of the cases a number was computed over would mislead a reader re-deriving it.
+- **The corpus and the precision aggregate are built by different code paths.** A corpus case requires
+  a firing paired to an override; the precision aggregate counts override rows alone. An override with
+  no matching firing counts toward published precision but has no corpus case. Expect the two to be
+  close, not identical.
+- **Backtest scoring is oriented the other way.** The scorer used for calibration treats `reversed` as
+  its positive class, so its precision is not comparable to the published `confirmed / decided`.
+- **Reads fail soft.** A failed database read yields an empty result rather than an error, so a
+  transient failure under-counts a figure rather than surfacing itself. Compare against the counts and
+  the `updatedAt` timestamp before drawing conclusions from a single load.
+- **Parity counts evaluations, not pull requests.** A re-evaluated head SHA is its own row, so
+  `verdicts` exceeds the number of distinct PRs whenever anything was re-evaluated.
+- **The `unknown` author class is reported, never folded.** A PR whose author association was never
+  recorded gets its own row rather than being bucketed into maintainer or contributor — bucketing it
+  would bias exactly the comparison the block exists to make.
+
+## Where this lives in the code
+
+Kept adjacent to the scoring code it describes, so a change to a definition and a change to this page
+show up in the same review:
+
+- Per-rule precision and the provenance exclusions — `src/review/public-rule-precision.ts`
+- Outcome-confirmation writers (what makes a case confirmed or reversed) — `src/review/outcomes-wire.ts`
+- Accuracy, totals, and the fleet block — `src/review/public-stats.ts`
+- Wilson intervals and the fleet fold — `src/orb/analytics.ts`
+- Review-parity rollups — `src/review/review-parity-rollups.ts`
+- The published corpus and its checksum — `src/review/public-eval-corpus.ts`

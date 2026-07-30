@@ -11,6 +11,11 @@ website only build trust if a skeptic can check them without asking anyone's per
 page is the end-to-end walkthrough: export the same corpus snapshot the numbers come from, verify
 its checksum, replay the same scorer over it, and compare what you get against what is published.
 
+For what each published number *means* — which rows are counted, over what window, and where a
+figure stops supporting a conclusion — see the [fairness methodology](/docs/fairness-methodology).
+For a single command that recomputes the published commitments and exits non-zero if any fail,
+run `npx -p @loopover/mcp loopover-verify`.
+
 Everything below runs read-only against a corpus export and pure functions from `@loopover/engine`.
 Nothing posts anywhere, and nothing needs a LoopOver API key.
 

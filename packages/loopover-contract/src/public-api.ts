@@ -89,6 +89,10 @@ export const PublicStatsSchema = z.object({
     reversed: z.number(),
     filteredPct: z.number().nullable(),
     accuracyPct: z.number().nullable(),
+    /** The window `accuracyPct` and `reversed` are bounded by, in days -- null if unbounded. Both are
+     *  pruned with the audit log while `merged`/`closed` beside them are lifetime and fleet-folded, so the
+     *  bound is published rather than left for a reader to assume. */
+    accuracyWindowDays: z.number().nullable(),
     minutesSaved: z.number(),
   }),
   weekly: z.object({ reviewed: z.number(), merged: z.number() }),

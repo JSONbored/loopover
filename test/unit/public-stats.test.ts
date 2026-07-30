@@ -1,3 +1,4 @@
+import { retentionDaysForTable } from "../../src/db/retention";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createTestEnv } from "../helpers/d1";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
@@ -367,6 +368,10 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
     expect(out.totals.accuracyPct).not.toBe(99);
     // Per-project accuracy is already same-scope and stays unchanged: 1 - 10/100 = 90.
     expect(out.byProject[0]!.accuracyPct).toBe(90);
+    // #9725: the bound that makes the above true is PUBLISHED, not left for a reader to infer. The fairness
+    // page described this figure as "lifetime" while both halves of the ratio are pruned with audit_events.
+    expect(out.totals.accuracyWindowDays).toBe(retentionDaysForTable("audit_events"));
+    expect(out.totals.accuracyWindowDays).toBe(90);
   });
 
   it("keeps own-ledger per-PR effort sum separate from Orb fleet flat credit", async () => {

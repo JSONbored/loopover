@@ -669,6 +669,29 @@ describe("checkContentLaneDeliverable (generic, spec-driven — #content-lane-de
     expect(checkContentLaneDeliverable(spec, issueText, ["registry\\subnets\\foo.json"]).verdict).toBe("delivered");
   });
 
+  it("canonicalizes mixed-case issue-body path tokens while preserving the original mentionedPath (#9667)", () => {
+    const issueText = "Add the missing surfaces to Registry/Subnets/Foo.json.";
+    expect(checkContentLaneDeliverable(spec, issueText, ["tests/foo-verify.test.mjs"])).toEqual({
+      verdict: "missing",
+      mentionedPath: "Registry/Subnets/Foo.json",
+    });
+    expect(checkContentLaneDeliverable(spec, issueText, ["registry/subnets/foo.json"])).toEqual({ verdict: "delivered" });
+  });
+
+  it("keeps all-lowercase issue-body path behavior byte-identical (#9667)", () => {
+    const issueText = "Add the missing surfaces to registry/subnets/foo.json.";
+    expect(checkContentLaneDeliverable(spec, issueText, ["tests/foo-verify.test.mjs"])).toEqual({
+      verdict: "missing",
+      mentionedPath: "registry/subnets/foo.json",
+    });
+    expect(checkContentLaneDeliverable(spec, issueText, ["registry/subnets/foo.json"])).toEqual({ verdict: "delivered" });
+  });
+
+  it("stays not-applicable when the issue body names a path that matches no spec pattern (#9667)", () => {
+    const issueText = "Update the docs at Docs/Guides/Setup.md.";
+    expect(checkContentLaneDeliverable(spec, issueText, ["tests/unrelated.test.mjs"])).toEqual({ verdict: "not-applicable" });
+  });
+
   it("is not-applicable for a spec with no providerFilePattern configured, even if the issue mentions an entry-shaped path (guards the optional-chaining branch)", () => {
     const entryOnlySpec: RegistryLaneSpec = { entryFilePattern: SUBNET_ENTRY_PATTERN, collectionField: "surfaces" };
     const issueText = "Add registry/subnets/foo.json.";

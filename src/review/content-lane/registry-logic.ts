@@ -929,11 +929,14 @@ export function checkContentLaneDeliverable(
   changedFiles: readonly string[],
   issueTitle?: string,
 ): ContentLaneDeliverableCheck {
-  const matchesSpec = (candidate: string): boolean => spec.entryFilePattern.test(candidate) || (spec.providerFilePattern?.test(candidate) ?? false);
+  // Mirror classifyRegistryPrScope's matchesPattern: test on canonicalize(candidate) while keeping the original
+  // string for anything user-visible (mentionedPath in the public PR comment).
+  const matchesSpec = (candidate: string): boolean =>
+    spec.entryFilePattern.test(canonicalize(candidate)) || (spec.providerFilePattern?.test(canonicalize(candidate)) ?? false);
   const mentionedPath = extractPathTokens(issueText).find(matchesSpec);
   const titleImplies = !mentionedPath && Boolean(issueTitle && spec.issueTitleImpliesEntryPattern?.test(issueTitle));
   if (!mentionedPath && !titleImplies) return { verdict: "not-applicable" };
-  const delivered = changedFiles.some((file) => matchesSpec(canonicalize(file)));
+  const delivered = changedFiles.some((file) => matchesSpec(file));
   if (delivered) return { verdict: "delivered" };
   return { verdict: "missing", mentionedPath: mentionedPath ?? `a registry entry file matching ${spec.entryFilePattern} (implied by this issue's title)` };
 }

@@ -1,0 +1,27 @@
+fix(miner): discover --dry-run must not create/migrate/prune the event ledger (#9679) (#9905)
+
+`runDiscover`'s `--dry-run` contract (discover-cli.ts:228, :537-540) is
+"zero writes", but the min-rank-override block that sits above the dry-run
+branch called `initEventLedger` unconditionally. initEventLedger creates
+the ledger file, applies schema migrations, AND runs retention pruning
+(which can delete rows) -- three classes of write on a command whose whole
+point is to make none, and the only store the dry-run path still touched.
+
+The min-rank value is genuinely wanted on the dry-run preview, so read it
+WITHOUT creating the store: guard the initEventLedger call with
+`existsSync(resolveEventLedgerDbPath(env))` when parsed.dryRun is true,
+falling back to AMS_MIN_RANK_SHIPPED when the file is absent -- exactly the
+value an empty/new ledger would yield. Same "skip a file that doesn't
+exist yet" discipline as migrate-cli.ts / store-maintenance.ts. The
+non-dry-run path is unchanged (unconditional initEventLedger). The existing
+try/catch/finally fail-open shape is preserved.
+
+Three named cases: --dry-run against a config dir with no ledger leaves no
+ledger file (fails against current code); --dry-run against an EXISTING
+ledger still consumes the earned min-rank override (0.2), proving the
+preview isn't degraded; the non-dry-run path still creates the ledger.
+
+Closes #9679
+
+Co-authored-by: kai392 <chengjunkai4@gmail.com>
+Co-authored-by: Claude Opus 4.8 <noreply@anthropic.com>

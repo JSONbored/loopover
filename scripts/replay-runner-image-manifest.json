@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "baseImageRef": "node:22-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3",
   "dockerfileSha256": "18b434af0c6359105293a9bd6bdd890f4b5662ce72308df4bcfc3bb30ae7c1ee",
-  "packageLockSha256": "35c61915f0b21d5980f5f5aa1bff532da3d9d51c71257c8b28904f7b798e0d71",
+  "packageLockSha256": "70a2e5ae0e477c97e3bc6fb7c631af2d3a2cec4e56e0ff0bb27c11245b33d96f",
   "sourceFiles": {
     "scripts/attested-backtest-run-core.ts": "e5f5659dc9204f9406c9874317d71cb02fd7f4c993c9f5caa92545595f522167",
     "scripts/attested-backtest-run.ts": "49e0e046e3c4882c0e4afd422a464957b6c4789bad28f5b6682afa9d534424f7",
     "scripts/backtest-corpus-export-core.ts": "060d48a2a6073a7d859efc64c87c18ae1d3d25e06391ce94d6ed40874050b2e8",
     "scripts/snp-attester.ts": "b917e8541908150bd0c885fbe57e178247e5cd5f78f80eda7dc9e8b77da6deb3"
   },
-  "digest": "5b8665f586317a0f3d77c5ac76891b4cf2ba8f1784977d268b093ce6644b2210"
+  "digest": "c58858edac2bc9646edf4a82557dc815c796b4485002c1b37de95004f1db1235"
 }

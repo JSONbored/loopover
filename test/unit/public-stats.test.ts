@@ -44,15 +44,26 @@ function isEffort(sql: string): boolean {
 // getOrbGlobalStats's own-ledger anti-join also references `github_app.pr_public_surface_published` (to skip
 // PRs the disposition query already counted) — exclude it here the same way isWeekly/isEffort already are, or
 // every stub that doesn't special-case `orb_pr_outcomes` would wrongly route the orb read through here too.
+// #9963: the own-decision-ledger disposition source. It is the ONLY read that touches `decision_records`, which
+// is what makes this a precise discriminator -- and it needs one, because it names `orb_pr_outcomes` in an
+// anti-join and would otherwise be routed to the Orb aggregate by any stub matching on that table alone. Same
+// hazard, and the same fix, as the isOrbGlobal exclusion directly below.
+function isLedgerDispositions(sql: string): boolean {
+  return sql.includes("decision_records");
+}
 function isOrbGlobal(sql: string): boolean {
-  return sql.includes("orb_pr_outcomes");
+  return sql.includes("orb_pr_outcomes") && !isLedgerDispositions(sql);
 }
 function isDispositions(sql: string): boolean {
   return (
     sql.includes("github_app.pr_public_surface_published") &&
     !isWeekly(sql) &&
     !isEffort(sql) &&
-    !isOrbGlobal(sql)
+    !isOrbGlobal(sql) &&
+    // #9963: the ledger source names this event type too, in the anti-join that keeps it disjoint from THIS
+    // query's population. Without the exclusion it would be served the published-surface fixture and every
+    // total would double.
+    !isLedgerDispositions(sql)
   );
 }
 // The reversal read is the only one that reads the recorded reversal_reopened/reversal_reverted events.
@@ -337,7 +348,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
 
   it("folds Orb installs into the global totals on top of the own-ledger totals", async () => {
     const withOrb = (sql: string): Row[] =>
-      sql.includes("orb_pr_outcomes") ? [{ merged: 50, closed: 30, total: 80 }] : ledger(sql);
+      isOrbGlobal(sql) ? [{ merged: 50, closed: 30, total: 80 }] : ledger(sql);
     const out = await getPublicStats(stubEnv(withOrb), NOW);
     expect(out.totals.merged).toBe(1392 + 50); // own-ledger + Orb
     expect(out.totals.closed).toBe(724 + 30);
@@ -354,7 +365,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
       if (isDispositions(sql)) return [{ project: "JSONbored/loopover", reviewed: 100, merged: 100, closed: 0, inReview: 0 }];
       if (isAutoAction(sql)) return [{ project: "JSONbored/loopover", merged: 100, closed: 0 }];
       if (isReversal(sql)) return [{ project: "JSONbored/loopover", reversed: 10 }];
-      if (sql.includes("orb_pr_outcomes")) return [{ merged: 6000, closed: 4000, total: 10000 }];
+      if (isOrbGlobal(sql)) return [{ merged: 6000, closed: 4000, total: 10000 }];
       return [];
     };
     const out = await getPublicStats(stubEnv(handler), NOW);
@@ -376,7 +387,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
 
   it("keeps own-ledger per-PR effort sum separate from Orb fleet flat credit", async () => {
     const withOrbAndEffort = (sql: string): Row[] => {
-      if (sql.includes("orb_pr_outcomes")) return [{ merged: 10, closed: 5, total: 15 }];
+      if (isOrbGlobal(sql)) return [{ merged: 10, closed: 5, total: 15 }];
       if (isEffort(sql)) return [{ totalMinutes: 100 }];
       return ledger(sql);
     };
@@ -387,7 +398,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
   it("does not exclude any account from the Orb aggregate (own-ledger side is a frozen snapshot, not live-overlapping)", async () => {
     let excludeBindArg: unknown;
     const captureExclude = (sql: string, args: unknown[]): Row[] => {
-      if (sql.includes("orb_pr_outcomes")) {
+      if (isOrbGlobal(sql)) {
         excludeBindArg = args[0];
         return [{ merged: 0, closed: 0, total: 0 }];
       }
@@ -921,7 +932,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
       DB: {
         prepare: (sql: string) => {
           // #9474: getOrbGlobalStats now ALSO reads the durable orb_outcome_rollups fold (empty here).
-          if (sql.includes("orb_pr_outcomes") || sql.includes("orb_outcome_rollups")) {
+          if (isOrbGlobal(sql) || sql.includes("orb_outcome_rollups")) {
             return {
               bind: () => ({ first: async () => ({ merged: 0, closed: 0, total: 0 }) }),
             };
@@ -949,7 +960,7 @@ describe("getPublicStats — live aggregate over the review ledger", () => {
               bind: () => ({ first: async () => ({ merged: null, closed: null, total: null }) }),
             };
           }
-          if (sql.includes("orb_pr_outcomes")) {
+          if (isOrbGlobal(sql)) {
             return {
               bind: () => ({ first: async () => ({ merged: 12, closed: 8, total: 20 }) }),
             };

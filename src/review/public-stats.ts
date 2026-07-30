@@ -320,6 +320,62 @@ export const PUBLISHED_PR_KEYS = `
   WHERE event_type = 'github_app.pr_public_surface_published' AND instr(target_key, '#') > 0
                   AND length(target_key) - length(replace(target_key, '#', '')) = 1`;
 
+/**
+ * #9963: the deployment's OWN decision ledger as a disposition source, in the same shape the published-surface
+ * query above produces, so everything downstream (totals, byProject, the sort) folds it identically.
+ *
+ * Why this exists. `totals` had exactly two sources -- the allowlisted `audit_events` published-surface snapshot
+ * and the registered-installs fleet fold -- and BOTH are hosted-Worker concepts. On a self-hosted Orb
+ * `LOOPOVER_PUBLIC_STATS_REPOS` is unset (it is a frozen snapshot of the repos the old central App used to
+ * process, not a list any self-hoster has a reason to fill in), so the own-ledger queries are skipped entirely;
+ * and `orb_pr_outcomes` holds what OTHER registered installations reported, which on an Orb is nobody. Both
+ * sources are therefore structurally empty there, while `decision_records` -- the anchored ledger this
+ * deployment actually writes a row to per verdict -- held 2,123 rows. The result was a published
+ * `totals.handled: 0` beside a `reviewParity.verdicts: 2123` computed from that same ledger: not a rounding
+ * difference, an entire population missing. Every `totals.*` figure inherited it.
+ *
+ * DISJOINT BY CONSTRUCTION, so the three sources can be added rather than reconciled -- the same discipline the
+ * file header states for the first two. Both anti-joins below are exclusions of pairs another source already
+ * counts:
+ *   • the published-surface set, but ONLY where that repo is allowlisted, because that is the exact condition
+ *     under which the first query counts a pair. Excluding an un-allowlisted published pair would drop it from
+ *     every source at once;
+ *   • the registered-install outcomes the fleet fold counts (`getOrbGlobalStats`'s own population, matched on
+ *     the same (repo, pr_number) key its anti-join uses).
+ *
+ * On the hosted Worker `decision_records` is empty by design (review execution is retired there), so this adds
+ * nothing and that deployment's numbers do not move at all.
+ */
+function ledgerDispositionsSql(allowlistPlaceholders: string): string {
+  // The allowlist arm is omitted entirely when there is no allowlist: `IN ()` is a syntax error in both
+  // dialects, and with no allowlist the published-surface query contributes nothing to exclude anyway.
+  const publishedExclusion =
+    allowlistPlaceholders === ""
+      ? ""
+      : `AND NOT EXISTS (
+             SELECT 1 FROM audit_events ae
+              WHERE ae.event_type = 'github_app.pr_public_surface_published'
+                AND ae.target_key = dr.repo || '#' || dr.number
+                AND LOWER(dr.repo) IN (${allowlistPlaceholders})
+           )`;
+  // `||` for concatenation and NOT EXISTS both mean the same thing in SQLite and Postgres and need no
+  // translation -- the same basis on which getOrbGlobalStats already builds its target_key anti-join.
+  return `SELECT dr.repo AS project,
+                 COUNT(*) AS reviewed,
+                 SUM(CASE WHEN pr.merged_at IS NOT NULL THEN 1 ELSE 0 END) AS merged,
+                 SUM(CASE WHEN pr.state = 'closed' AND pr.merged_at IS NULL THEN 1 ELSE 0 END) AS closed,
+                 SUM(CASE WHEN pr.id IS NULL OR pr.state = 'open' THEN 1 ELSE 0 END) AS inReview
+            FROM (SELECT DISTINCT repo_full_name AS repo, pull_number AS number FROM decision_records) dr
+            LEFT JOIN pull_requests pr ON pr.repo_full_name = dr.repo AND pr.number = dr.number
+           WHERE NOT EXISTS (
+                   SELECT 1 FROM orb_pr_outcomes o
+                    JOIN orb_github_installations i ON i.installation_id = o.installation_id AND i.registered = 1
+                    WHERE o.repository_full_name = dr.repo AND o.pr_number = dr.number
+                 )
+             ${publishedExclusion}
+           GROUP BY dr.repo`;
+}
+
 /** Assemble the public-safe payload from the LIVE review ledger: distinct PRs the bot published a review for
  *  (audit_events) joined to their terminal disposition (pull_requests state). Realtime behind the 60s HTTP cache
  *  — a new review shows up within ~a minute; no rollup/cron. */
@@ -333,6 +389,9 @@ export async function getPublicStats(
   // The own-ledger side needs at least one allowlisted project to query; an empty allowlist skips these three
   // queries entirely (own-ledger totals stay zero) but still lets the Orb aggregate below run.
   const inList = projects.map(() => "?").join(", ");
+  // #9963: deliberately OUTSIDE the allowlist branch below. An empty allowlist is precisely the self-host case
+  // this source exists to cover, so gating it on the allowlist would reproduce the bug it fixes.
+  const ledgerDispositionsPromise = safeAll<DispositionRow>(env, ledgerDispositionsSql(inList), ...projects);
   const [dispositions, windowedDispositions, reversalRows, weeklyRows, effortRows] = projects.length === 0
     ? await Promise.all([
         Promise.resolve<DispositionRow[]>([]),
@@ -463,6 +522,30 @@ export async function getPublicStats(
     ),
   ]);
 
+  // #9963: fold the own decision ledger in alongside the published-surface dispositions. Merged per project
+  // rather than concatenated so a repo appearing in both sources stays ONE row in `byProject` -- the two are
+  // already disjoint at the (repo, pr) level (see ledgerDispositionsSql), so the per-project counts add.
+  const ledgerDispositions = await ledgerDispositionsPromise;
+  const dispositionsByProject = new Map<string, DispositionRow>();
+  for (const row of [...dispositions, ...ledgerDispositions]) {
+    const key = String(row.project).toLowerCase();
+    const existing = dispositionsByProject.get(key);
+    if (!existing) {
+      dispositionsByProject.set(key, { ...row, project: String(row.project) });
+      continue;
+    }
+    // `?? 0` on every arm: SUM()/COUNT() over zero rows is NULL, and DispositionRow types these as `number`
+    // only because the downstream fold already coalesces them.
+    dispositionsByProject.set(key, {
+      project: existing.project,
+      reviewed: (existing.reviewed ?? 0) + (row.reviewed ?? 0),
+      merged: (existing.merged ?? 0) + (row.merged ?? 0),
+      closed: (existing.closed ?? 0) + (row.closed ?? 0),
+      inReview: (existing.inReview ?? 0) + (row.inReview ?? 0),
+    });
+  }
+  const mergedDispositions = [...dispositionsByProject.values()];
+
   const reversedByProject = new Map(
     reversalRows.map((r) => [String(r.project).toLowerCase(), r.reversed ?? 0]),
   );
@@ -482,7 +565,7 @@ export async function getPublicStats(
   const windowedByProject = new Map(windowedDispositions.map((row) => [String(row.project).toLowerCase(), row]));
   let windowedMerged = 0;
   let windowedClosed = 0;
-  const byProject = dispositions
+  const byProject = mergedDispositions
     .map((d) => {
       const merged = d.merged ?? 0;
       const closed = d.closed ?? 0;

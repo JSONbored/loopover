@@ -75,6 +75,14 @@
     "./api-requests": {
       "types": "./dist/api-requests.d.ts",
       "default": "./dist/api-requests.js"
+    },
+    "./digest": {
+      "types": "./dist/digest.d.ts",
+      "default": "./dist/digest.js"
+    },
+    "./anchor-verify": {
+      "types": "./dist/anchor-verify.d.ts",
+      "default": "./dist/anchor-verify.js"
     }
   },
   "files": [

@@ -23,7 +23,21 @@ import { fileURLToPath } from "node:url";
 const SOURCE = "src/openapi/schemas.ts";
 const OUTPUT = "packages/loopover-contract/src/api-schemas.ts";
 const OPENAPI_DOCUMENT = "apps/loopover-ui/public/openapi.json";
-const CLI_BIN = "packages/loopover-mcp/bin/loopover-mcp.ts";
+/**
+ * The CLI bin DIRECTORY, scanned -- not one named file (#9723).
+ *
+ * This was a single hardcoded path to `loopover-mcp.ts`, correct only while that was the package's only
+ * bin. A second one now ships (`loopover-verify.ts`), and a hardcoded filename means any future bin is
+ * invisible here and reads every response as `any` -- silently opting out of the validation this generator
+ * exists to enforce, which is the exact failure mode `cliApiPaths`' own doc warns about ("a new call site
+ * must not be able to opt out of validation by simply not being added here").
+ *
+ * Scanning the directory closes that by construction. It is a LATENT fix, not a live one: today's output is
+ * byte-identical, because `loopover-verify.ts` deliberately does not use the shared path-first `apiGet`
+ * convention -- a public verifier has to keep checking a deployment running an OLDER build than itself, so
+ * validating those payloads against this build's schemas would turn version skew into a false failure.
+ */
+const CLI_BIN_DIR = "packages/loopover-mcp/bin";
 
 /**
  * Every literal `/v1/...` path the CLI hands to its api helpers. Scanned, not listed: a hand-kept endpoint
@@ -455,7 +469,15 @@ export function generate(deps: { readFile?: (path: string) => string; listDir?: 
   const readFile = deps.readFile ?? ((path: string) => readFileSync(path, "utf8"));
   readModule = readFile;
   listModules = deps.listDir ?? ((dir: string) => readdirSync(dir));
-  return renderApiSchemas(readFile(SOURCE), readFile(OPENAPI_DOCUMENT), readFile(CLI_BIN));
+  // Every bin's sources concatenated: `cliApiPaths` collects into a Set, so a path two bins both call is
+  // emitted once, and the join cannot create a spurious match across the boundary (the regex is anchored on
+  // an `api*(` call and cannot span files).
+  const binSources = listModules(CLI_BIN_DIR)
+    .filter((entry) => entry.endsWith(".ts"))
+    .sort()
+    .map((entry) => readFile(`${CLI_BIN_DIR}/${entry}`))
+    .join("\n");
+  return renderApiSchemas(readFile(SOURCE), readFile(OPENAPI_DOCUMENT), binSources);
 }
 
 function main(): void {

@@ -26,7 +26,8 @@
     "access": "public"
   },
   "bin": {
-    "loopover-mcp": "dist/bin/loopover-mcp.js"
+    "loopover-mcp": "dist/bin/loopover-mcp.js",
+    "loopover-verify": "dist/bin/loopover-verify.js"
   },
   "exports": {
     "./package.json": "./package.json",

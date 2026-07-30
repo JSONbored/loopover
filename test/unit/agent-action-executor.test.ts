@@ -85,7 +85,7 @@ import type { PlannedAgentAction } from "../../src/settings/agent-actions";
 import type { DecisionRecord } from "../../src/review/decision-record";
 import { STRUCTURED_CLOSE_REASONS_MAX_COUNT } from "../../src/settings/agent-execution";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../../src/review/linked-issue-hard-rules";
-import { clearProcessLocalGlobalAgentFrozenCacheForTest, getGlobalContributorBlacklist, isGlobalAgentFrozen, setGlobalAgentFrozen, upsertGlobalModerationConfig, upsertPullRequestFile, upsertPullRequestFromGitHub } from "../../src/db/repositories";
+import { clearProcessLocalGlobalAgentFrozenCacheForTest, getGlobalContributorBlacklist, getPullRequest, isGlobalAgentFrozen, markPullRequestManualReviewLabelApplied, setGlobalAgentFrozen, upsertGlobalModerationConfig, upsertPullRequestFile, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import * as repositoriesModule from "../../src/db/repositories";
 import * as posthogModule from "../../src/selfhost/posthog";
 import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
@@ -123,6 +123,62 @@ const updateBranch: PlannedAgentAction = { actionClass: "update_branch", require
 async function auditFor(env: Env, actionClass: string): Promise<{ outcome: string; metadata_json: string } | null> {
   return env.DB.prepare("select outcome, metadata_json from audit_events where event_type = ? order by created_at desc limit 1").bind(`agent.action.${actionClass}`).first();
 }
+
+describe("manual-review label provenance writes (#9939)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(fetchPullRequestFreshness).mockImplementation(async (_env, args) => ({
+      status: "current",
+      liveHeadSha: args.expectedHeadSha ?? null,
+      liveState: "open",
+      liveLabels: [],
+    }));
+    clearInstallationHealthRefreshCooldownForTest();
+    clearWritePermissionDenialCooldownForTest();
+    resetMetrics();
+  });
+
+  const seedPr = async (env: Env) => {
+    await upsertRepositoryFromGitHub(env, { full_name: "owner/repo", name: "repo", id: 1, private: false } as never, 123);
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 7, title: "t", state: "open", user: { login: "c" }, head: { sha: "sha7" }, labels: [], created_at: "2026-07-05T10:00:00.000Z",
+    } as never);
+  };
+
+  it("records provenance when the BOT adds the manual-review label", async () => {
+    const env = createTestEnv();
+    await seedPr(env);
+    const add: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "verdict=success; guarded path", label: "human-review", labelOp: "add" };
+    await executeAgentMaintenanceActions(env, { ...ctx(), manualReviewLabel: "human-review" }, [add]);
+    const stored = await getPullRequest(env, "owner/repo", 7);
+    expect(stored?.manualReviewLabelAppliedSha).toBe("sha7");
+    expect(stored?.manualReviewLabelAppliedReason).toBe("verdict=success; guarded path");
+  });
+
+  it("INVARIANT: writes NOTHING for any other label -- only the manual-review hold is the bot's to take back", async () => {
+    const env = createTestEnv();
+    await seedPr(env);
+    await executeAgentMaintenanceActions(env, { ...ctx(), manualReviewLabel: "human-review" }, [label]);
+    expect((await getPullRequest(env, "owner/repo", 7))?.manualReviewLabelAppliedSha).toBeNull();
+  });
+
+  it("clears provenance when the label is removed, so a later human-applied one cannot inherit it", async () => {
+    const env = createTestEnv();
+    await seedPr(env);
+    await markPullRequestManualReviewLabelApplied(env, "owner/repo", 7, "sha7", "why");
+    const remove: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "resolved", label: "human-review", labelOp: "remove" };
+    await executeAgentMaintenanceActions(env, { ...ctx(), manualReviewLabel: "human-review" }, [remove]);
+    expect((await getPullRequest(env, "owner/repo", 7))?.manualReviewLabelAppliedSha).toBeNull();
+  });
+
+  it("INVARIANT: a repo with the label disabled never acquires provenance", async () => {
+    const env = createTestEnv();
+    await seedPr(env);
+    const add: PlannedAgentAction = { actionClass: "label", requiresApproval: false, reason: "r", label: "human-review", labelOp: "add" };
+    await executeAgentMaintenanceActions(env, { ...ctx(), manualReviewLabel: null }, [add]);
+    expect((await getPullRequest(env, "owner/repo", 7))?.manualReviewLabelAppliedSha).toBeNull();
+  });
+});
 
 describe("executeAgentMaintenanceActions (#778 gate stack)", () => {
   beforeEach(() => {

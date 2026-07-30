@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  getPullRequest,
+  markPullRequestManualReviewLabelApplied,
+  clearPullRequestManualReviewLabelProvenance,
   getActiveReviewStartedAt,
   getBounty,
   getContributorScoringProfile,
@@ -602,6 +605,50 @@ describe("active-review tracking (#review-evasion-protection)", () => {
       const rows = await listSignalSnapshots(env, "debug-signal", "repo-d");
       expect(rows[0]?.id).toBe("new-row");
     });
+  });
+});
+
+describe("manual-review label provenance (#9939)", () => {
+  const seed = async (env: ReturnType<typeof createTestEnv>) => {
+    await upsertRepositoryFromGitHub(env, { full_name: "owner/repo", name: "repo", id: 1, private: false } as never, 4242);
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 11, title: "t", state: "open", user: { login: "c" }, head: { sha: "head1" }, labels: [], created_at: "2026-07-05T10:00:00.000Z",
+    } as never);
+  };
+
+  it("records the head and reason the PLANNER applied the label at", async () => {
+    const env = createTestEnv();
+    await seed(env);
+    await markPullRequestManualReviewLabelApplied(env, "owner/repo", 11, "head1", "verdict=success; guarded path");
+    const stored = await getPullRequest(env, "owner/repo", 11);
+    expect(stored?.manualReviewLabelAppliedSha).toBe("head1");
+    expect(stored?.manualReviewLabelAppliedReason).toBe("verdict=success; guarded path");
+  });
+
+  it("INVARIANT: the write is head-scoped -- a stale head does not stamp provenance", async () => {
+    // A hold recorded against an older head must not license removing a label on a head nobody re-evaluated.
+    const env = createTestEnv();
+    await seed(env);
+    await markPullRequestManualReviewLabelApplied(env, "owner/repo", 11, "some-other-head", "stale");
+    expect((await getPullRequest(env, "owner/repo", 11))?.manualReviewLabelAppliedSha).toBeNull();
+  });
+
+  it("REGRESSION: clearing removes BOTH fields, so a later human-applied label cannot inherit the bot's provenance", async () => {
+    // The subtle failure this prevents: leftover provenance would make a maintainer's own freeze look
+    // bot-applied on the next pass, and therefore auto-removable -- the exact override it exists to prevent.
+    const env = createTestEnv();
+    await seed(env);
+    await markPullRequestManualReviewLabelApplied(env, "owner/repo", 11, "head1", "why");
+    await clearPullRequestManualReviewLabelProvenance(env, "owner/repo", 11);
+    const stored = await getPullRequest(env, "owner/repo", 11);
+    expect(stored?.manualReviewLabelAppliedSha).toBeNull();
+    expect(stored?.manualReviewLabelAppliedReason).toBeNull();
+  });
+
+  it("INVARIANT: a PR with no provenance reads as null -- absent means \"not ours to lift\"", async () => {
+    const env = createTestEnv();
+    await seed(env);
+    expect((await getPullRequest(env, "owner/repo", 11))?.manualReviewLabelAppliedSha).toBeNull();
   });
 });
 

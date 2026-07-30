@@ -286,6 +286,11 @@ export type AgentActionPlanInput = {
   // Configured manual-review hold label. Undefined uses the default "manual-review"; null disables only the
   // label, not the guardrail hold. Separate from review_state_label so operators can avoid ready/changes labels.
   manualReviewLabel?: string | null | undefined;
+  /** #9939: the head SHA at which the PLANNER previously applied `manualReviewLabel`, or null/absent when the
+   *  bot did not apply it. This is the provenance that makes the label liftable: the same label string is
+   *  also how a maintainer freezes a PR by hand, so without it the planner cannot remove its own stale hold
+   *  without risking silently undoing a human's. Absent ⇒ never auto-removed. */
+  manualReviewLabelAppliedSha?: string | null | undefined;
   // Optional disposition label overrides. Undefined uses generic defaults; null disables that specific label.
   readyToMergeLabel?: string | null | undefined;
   changesRequestedLabel?: string | null | undefined;
@@ -1268,6 +1273,40 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
       reason: `verdict=${conclusion}; ${guardrailReason}`,
       label: labels.manualReview,
       labelOp: "add",
+    });
+  }
+
+  // 1b) #9939: LIFT a manual-review hold the planner itself applied, once nothing wants it any more.
+  //
+  // The sibling-label cleanup further down deliberately refuses to touch this label, because the same string
+  // is also a maintainer's manual freeze and that cleanup has no way to tell them apart. Correct -- but it
+  // made the label a ONE-WAY LATCH: applied on a pass where a hold was real, and never lifted once the hold
+  // cleared. Observed on #9935, which was mergeable, green, and re-reviewed to zero findings, and still
+  // refused to merge until a human removed the label by hand.
+  //
+  // `manualReviewLabelAppliedSha` is the missing provenance. Non-null means the PLANNER applied it, so the
+  // planner may take it back; null means a human applied it (or it predates the column) and it is left
+  // strictly alone. Guarded on `manualHoldReason === null`, i.e. NO reason wants a hold this pass -- which is
+  // why this cannot lift a label applied for reason A just because reason B cleared. Deliberately not scoped
+  // to the recorded head: a rebase that resolves the cause is the single most common way a hold goes stale,
+  // and refusing to lift it there would leave the exact #9935 case unfixed.
+  if (
+    manualHoldReason === null &&
+    labels.manualReview !== null &&
+    input.manualReviewLabelAppliedSha != null &&
+    hasLabel(input.pr.labels, labels.manualReview)
+    // No "is an add already planned this pass?" guard: every site that ADDS this label requires a live hold
+    // (a guardrail hit, the migration-collision fallback, the owner/automation fallback), and all of those
+    // set manualHoldReason -- so the null check above already excludes every case where an add could be in
+    // flight. A guard here would be an arm no input can reach.
+  ) {
+    actions.push({
+      actionClass: "label",
+      autonomyClass: "merge",
+      requiresApproval: approval("merge"),
+      reason: `manual-review hold resolved — clearing the "${labels.manualReview}" label the bot applied`,
+      label: labels.manualReview,
+      labelOp: "remove",
     });
   }
 

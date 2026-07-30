@@ -66,6 +66,58 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(classes(collision)).not.toContain("merge");
   });
 
+  // #9939: the manual-review label was a ONE-WAY LATCH. The sibling-label cleanup deliberately refuses to
+  // touch it (the same string is also a maintainer's manual freeze), so once applied nothing lifted it when
+  // the hold cleared. Live on #9935: mergeable, green, re-reviewed to zero findings, and still refused to
+  // merge until a human removed the label by hand -- in the mode that is meant to have no human in it.
+  describe("manual-review label provenance (#9939)", () => {
+    const healthy = {
+      conclusion: "success" as const,
+      autonomy: { merge: "auto" as const },
+      manualReviewLabel: "human-review",
+      pr: { labels: ["human-review"], mergeableState: "clean" as const, reviewDecision: "APPROVED" as const },
+    };
+
+    it("REGRESSION: lifts a hold the BOT applied once nothing wants it any more", () => {
+      const plan = planAgentMaintenanceActions(input({ ...healthy, manualReviewLabelAppliedSha: "abc123" }));
+      expect(plan.some((a) => a.actionClass === "label" && a.label === "human-review" && a.labelOp === "remove")).toBe(true);
+    });
+
+    it("INVARIANT: never touches a label with NO provenance -- a maintainer's freeze is not the bot's to lift", () => {
+      // The load-bearing safety property. Silently undoing a human's deliberate hold is far worse than
+      // leaving a stale one, which is exactly why the cleanup refused to act before provenance existed.
+      const plan = planAgentMaintenanceActions(input(healthy));
+      expect(plan.some((a) => a.actionClass === "label" && a.label === "human-review" && a.labelOp === "remove")).toBe(false);
+    });
+
+    it("INVARIANT: does not lift while a hold reason STILL wants the label", () => {
+      // Guarded on manualHoldReason === null, so a label applied for reason A cannot be lifted by reason B
+      // clearing. Here a guardrail hit still holds the PR, with the bot's own provenance present.
+      const plan = planAgentMaintenanceActions(
+        input({
+          ...healthy,
+          manualReviewLabelAppliedSha: "abc123",
+          changedPaths: ["src/settings/agent-actions.ts"],
+          hardGuardrailGlobs: ["src/settings/**"],
+        }),
+      );
+      expect(plan.some((a) => a.actionClass === "label" && a.label === "human-review" && a.labelOp === "remove")).toBe(false);
+    });
+
+    it("INVARIANT: no removal when the label is not actually on the PR", () => {
+      const plan = planAgentMaintenanceActions(input({ ...healthy, manualReviewLabelAppliedSha: "abc123", pr: { ...healthy.pr, labels: [] } }));
+      expect(plan.some((a) => a.actionClass === "label" && a.labelOp === "remove")).toBe(false);
+    });
+
+    it("INVARIANT: lifting is authorized by MERGE autonomy, the same class as the add it reverses", () => {
+      // Removing a hold is as consequential as applying one -- it is what lets the merge proceed -- so it
+      // must not ride on a weaker autonomy class than the add.
+      const plan = planAgentMaintenanceActions(input({ ...healthy, manualReviewLabelAppliedSha: "abc123" }));
+      const lift = plan.find((a) => a.actionClass === "label" && a.label === "human-review" && a.labelOp === "remove");
+      expect(lift?.autonomyClass).toBe("merge");
+    });
+  });
+
   // #9808/#9869: a guardrail hit used to mean ONE thing -- suppress auto-merge and hold for a human -- while
   // buying no extra scrutiny at all. With an escalation configured, a CLEAN escalated review can now release
   // that hold instead. These two cases are the whole point of the feature and the only place all three

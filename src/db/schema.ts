@@ -494,6 +494,12 @@ export const pullRequests = sqliteTable(
     // a sha with no timestamp reads as EXPIRED, which is both honest (the row predates the column) and what
     // releases the PRs already stuck behind one. loopover-computed, written with the sha, cleared with it.
     visualCaptureRetryPendingAt: text("visual_capture_retry_pending_at"),
+    // #9939: provenance for the manual-review label -- the head SHA the PLANNER applied it at, and the hold
+    // reason it applied it FOR. The label is overloaded (bot disposition AND maintainer freeze), so without
+    // this the planner cannot lift its own stale hold without risking overriding a human's. NULL means "not
+    // ours" -- a human-applied label, or one predating this column -- and is never auto-removed.
+    manualReviewLabelAppliedSha: text("manual_review_label_applied_sha"),
+    manualReviewLabelAppliedReason: text("manual_review_label_applied_reason"),
     // #9881: the head SHA at which the bot PROVED visual capture is structurally unobtainable for this repo --
     // the deployments read succeeded, found none at all, and the poll budget is spent. The screenshot-table
     // gate degrades its CLOSE to advisory for that head rather than closing a PR over evidence no

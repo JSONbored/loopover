@@ -2877,6 +2877,9 @@ function buildAgentMaintenancePlanInput(args: {
     guardrailEscalationModel: settings.guardrailEscalationModel ?? null,
     guardrailEscalationProvider: settings.guardrailEscalationProvider ?? null,
     manualReviewLabel: settings.manualReviewLabel,
+    // #9939: provenance for the label above -- non-null only when the PLANNER applied it, which is what
+    // lets a later pass lift its own stale hold without ever touching a maintainer's manual freeze.
+    manualReviewLabelAppliedSha: pr.manualReviewLabelAppliedSha,
     readyToMergeLabel: settings.readyToMergeLabel,
     changesRequestedLabel: settings.changesRequestedLabel,
     migrationCollisionLabel: settings.migrationCollisionLabel,

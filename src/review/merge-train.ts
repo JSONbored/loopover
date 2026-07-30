@@ -49,6 +49,18 @@ export type MergeTrainSibling = {
    *  processors.ts) rather than inventing a second, possibly-drifting definition here. Absent/undefined ⇒ not
    *  held (unchanged from before this field existed). */
   heldForManualReview?: boolean | undefined;
+  /** True when this sibling is a DRAFT (#9939). The strongest possible "not trying to merge" signal there is:
+   *  GitHub itself refuses to merge a draft, so a draft sibling is not one merge away from landing, it is one
+   *  AUTHOR ACTION away from even being eligible. Same reasoning that evicted the manual-review hold above,
+   *  only more so -- a manual-review hold at least describes a PR someone might unblock, while a draft is the
+   *  author's own declaration that it is not ready.
+   *
+   *  This is the head-of-line case that hurt in production: a maintainer PR with red CI cannot be auto-closed
+   *  (maintainers are exempt, deliberately, so they can iterate), so it stays open and overlapping for as long
+   *  as the fix takes -- holding every newer overlapping PR behind it for up to the full 24h cap even when
+   *  those are green and approved. Marking it draft now says "skip me" in a way the train understands.
+   *  Absent/undefined ⇒ not a draft (unchanged from before this field existed). */
+  isDraft?: boolean | undefined;
 };
 
 /** How long an older, OVERLAPPING sibling can hold up a newer one before it's excluded from blocking (24
@@ -126,6 +138,10 @@ export function shouldWaitForOlderSiblings(input: ShouldWaitForOlderSiblingsInpu
     .filter((sibling) => sibling.number !== thisPrNumber)
     .filter((sibling) => sibling.mergeableState !== "dirty")
     .filter((sibling) => !sibling.heldForManualReview)
+    // #9939: a draft is not trying to reach merge -- GitHub will not merge one at all. Evicted outright
+    // rather than merely capped, exactly like the manual-review hold above: waiting on a PR that cannot
+    // merge buys nothing, and the 24h cap is far too long to be the only bound on it.
+    .filter((sibling) => !sibling.isDraft && sibling.mergeableState !== "draft")
     .filter((sibling) => isOlder(sibling))
     .filter((sibling) => overlaps(thisPrLinkedIssues, thisPrChangedFiles, sibling))
     .filter((sibling) => {

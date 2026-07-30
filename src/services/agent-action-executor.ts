@@ -32,6 +32,7 @@ import { isActingAutonomyLevel, resolveAutonomy } from "../settings/autonomy";
 import { boundStructuredCloseReasonsForPersistence, buildAgentActionAudit, formatAgentPermissionDenial, isGlobalAgentPause, resolveAgentActionMode, resolveAgentPermissionReadiness, type AgentActionMode } from "../settings/agent-execution";
 import { AGENT_LABEL_NEEDS_REVIEW, type PlannedAgentAction } from "../settings/agent-actions";
 import type { AgentActionClass, AgentPendingActionParams, AutonomyLevel, AutonomyPolicy } from "../types";
+import { clearPullRequestManualReviewLabelProvenance, markPullRequestManualReviewLabelApplied } from "../db/repositories";
 import { errorMessage } from "../utils/json";
 import {
   MODERATION_VIOLATION_EVENT_TYPE,
@@ -697,6 +698,10 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
           linkedIssues: sibling.linkedIssues,
           changedFiles: pathsByPullNumber.get(sibling.number),
           heldForManualReview: manualReviewLabel !== null && sibling.labels.some((label) => label.toLowerCase() === manualReviewLabel.toLowerCase()),
+          // #9939: a draft sibling never blocks -- GitHub will not merge it, so it is not "about to land".
+          // `?? false` rather than passing the nullable straight through: the field is optional on the record
+          // and the gate treats absent as "not a draft", so normalising here keeps the two readings identical.
+          isDraft: sibling.isDraft ?? false,
         })),
         nowMs: Date.now(),
       });
@@ -1287,8 +1292,21 @@ async function performAction(env: Env, ctx: AgentActionExecutionContext, action:
       // optional comment (the Pass-1 flag warning, or the resolved note) posted alongside the label mutation.
       if (action.labelOp === "remove") {
         await removePullRequestLabel(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.label ?? "");
+        // #9939: the label is gone, so its provenance must go with it. Leaving a stale marker behind would let
+        // a LATER human-applied label inherit the bot's provenance and become auto-removable -- exactly the
+        // override the provenance exists to prevent. Best-effort: a failed clear only means the next pass
+        // re-evaluates with a marker for a label that is not there, which the `hasLabel` guard already ignores.
+        if (ctx.manualReviewLabel && action.label === ctx.manualReviewLabel) {
+          await clearPullRequestManualReviewLabelProvenance(env, ctx.repoFullName, ctx.pullNumber).catch(() => {});
+        }
       } else {
         await ensurePullRequestLabel(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.label ?? "", { createMissingLabel: true });
+        // #9939: record that the PLANNER (not a maintainer) applied this hold, so a later pass may lift it
+        // once nothing wants it. Written only here, on the bot's own add, which is what keeps a
+        // human-applied label provenance-free and therefore untouchable.
+        if (ctx.manualReviewLabel && action.label === ctx.manualReviewLabel && ctx.headSha) {
+          await markPullRequestManualReviewLabelApplied(env, ctx.repoFullName, ctx.pullNumber, ctx.headSha, action.reason).catch(() => {});
+        }
       }
       if (action.comment) await createIssueComment(env, ctx.installationId, ctx.repoFullName, ctx.pullNumber, action.comment);
       return;

@@ -131,4 +131,12 @@ describe("check-import-specifiers script", () => {
     expect(multi.map((v) => v.file)).toEqual(["src/a.ts", "src/z.ts", "src/z.ts"]);
     expect(multi.map((v) => v.specifier)).toEqual(["./c.js", "./a.js", "./b.js"]);
   });
+
+  // Most important regression test in this file: the real repo must have zero import-specifier violations.
+  // #9240 and #9249 reached main while this guard was local-only; this closes the same gap the workflow
+  // step alone cannot (vitest runs unconditionally on every backend PR).
+  it("the real repo has zero import-specifier violations (regression guard)", () => {
+    const violations = findImportSpecifierViolations();
+    expect(violations).toEqual([]);
+  });
 });

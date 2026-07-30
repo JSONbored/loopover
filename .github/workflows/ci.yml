@@ -49,6 +49,7 @@ jobs:
       rees: ${{ steps.filter.outputs.rees }}
       controlPlane: ${{ steps.filter.outputs.controlPlane }}
       observability: ${{ steps.filter.outputs.observability }}
+      cocoDev: ${{ steps.filter.outputs.cocoDev }}
     steps:
       # Debounce rapid re-pushes to an open PR: every job below (validate-code, validate-tests)
       # has `needs: changes` in its dependency chain, so none of
@@ -198,6 +199,9 @@ jobs:
             discoveryIndex:
               - 'packages/discovery-index/**'
               - 'package-lock.json'
+            cocoDev:
+              - 'k8s/coco-dev/**'
+              - 'scripts/check-coco-dev-versions*.ts'
             # 6 of the 7 MCP CLI-cluster test files, and ONLY these 6, are truly self-contained w.r.t. root
             # src/**: verified by direct-import inspection that test/unit/mcp-cli-*.test.ts (5 files) and
             # their shared test/unit/support/mcp-cli-harness.ts import nothing but node:* builtins + vitest,
@@ -400,6 +404,20 @@ jobs:
       - name: Dead source-file check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' }}
         run: npm run dead-source-files:check
+      # Same local-only-until-now gap as the drift checks above: coco-dev-versions:check was wired into
+      # `npm run test:ci` but nothing in this workflow previously ran it, so a version bump in only one of
+      # k8s/coco-dev/versions.json and k8s/coco-dev/kbs/base/kustomization.yaml could silently ship with zero
+      # CI signal (#9213).
+      - name: Coco-dev versions drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.cocoDev == 'true' }}
+        run: npm run coco-dev-versions:check
+      # Same local-only-until-now gap as the drift checks above: import-specifiers:check (#9221) was wired into
+      # `npm run test:ci` but nothing in this workflow previously ran it -- #9240 and #9249 are two separate
+      # relative-import drifts that reached main while the guard was local-only. Gated on every filter covering a
+      # packages/* workspace plus backend (src/scripts/test are under backend).
+      - name: Import specifiers check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.discoveryIndex == 'true' }}
+        run: npm run import-specifiers:check
       # #9499: an agent-regate-pr producer that omits prCreatedAt does not merely lose the oldest-first
       # ordering, it INVERTS it -- the legacy sort fallback places such a job ahead of every real PR. Five of
       # eight producers had drifted that way before this check existed.

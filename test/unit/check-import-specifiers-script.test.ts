@@ -131,4 +131,13 @@ describe("check-import-specifiers script", () => {
     expect(multi.map((v) => v.file)).toEqual(["src/a.ts", "src/z.ts", "src/z.ts"]);
     expect(multi.map((v) => v.specifier)).toEqual(["./c.js", "./a.js", "./b.js"]);
   });
+
+  // #9649: the most important regression test in this file -- run findImportSpecifierViolations against the
+  // REAL repo tree (no injected listSourceFiles/readFile, so it walks src/scripts/test + every packages/*
+  // workspace via the default roots), the same real-tree guard the sibling checks close for themselves
+  // (check-coverage-bolt-on-filenames-script.test.ts, validate-no-hand-written-js.test.ts). #9240 and #9249
+  // both reached main while this guard was local-only -- enforced by neither a CI step nor a real-tree test.
+  it("the real repo has zero import-specifier violations (regression guard)", () => {
+    expect(findImportSpecifierViolations()).toEqual([]);
+  });
 });

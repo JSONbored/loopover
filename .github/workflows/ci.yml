@@ -49,6 +49,7 @@ jobs:
       rees: ${{ steps.filter.outputs.rees }}
       controlPlane: ${{ steps.filter.outputs.controlPlane }}
       observability: ${{ steps.filter.outputs.observability }}
+      cocoDev: ${{ steps.filter.outputs.cocoDev }}
     steps:
       # Debounce rapid re-pushes to an open PR: every job below (validate-code, validate-tests)
       # has `needs: changes` in its dependency chain, so none of
@@ -198,6 +199,13 @@ jobs:
             discoveryIndex:
               - 'packages/discovery-index/**'
               - 'package-lock.json'
+            # coco-dev-versions:check reconciles k8s/coco-dev/versions.json with the KBS kustomization's recorded
+            # version; both files live entirely outside every other filter (no src/** or packages/** import edge),
+            # so without a dedicated trigger a version bump to only those files would skip the check with zero CI
+            # signal (#9649).
+            cocoDev:
+              - 'k8s/coco-dev/**'
+              - 'scripts/check-coco-dev-versions*.ts'
             # 6 of the 7 MCP CLI-cluster test files, and ONLY these 6, are truly self-contained w.r.t. root
             # src/**: verified by direct-import inspection that test/unit/mcp-cli-*.test.ts (5 files) and
             # their shared test/unit/support/mcp-cli-harness.ts import nothing but node:* builtins + vitest,
@@ -438,6 +446,21 @@ jobs:
       - name: Branding drift check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.discoveryIndex == 'true' }}
         run: npm run branding-drift:check
+      # #9649: coco-dev-versions:check reconciles k8s/coco-dev/versions.json with the KBS kustomization's
+      # recorded version; nothing in this workflow previously ran it, so a version bump made in only one of the
+      # two files could silently ship a KBS deploy not matching its own manifest with zero CI signal. Same
+      # local-only-until-now gap as the drift checks above; gated on the new cocoDev filter, the only one
+      # covering k8s/coco-dev/** and the script.
+      - name: Coco-dev versions check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.cocoDev == 'true' }}
+        run: npm run coco-dev-versions:check
+      # #9649: import-specifiers:check (#9221) enforces the per-zone relative-import specifier convention over
+      # src, scripts, test and every packages/* workspace (BUNDLER_ROOTS/NODENEXT_ROOTS); #9240 and #9249 both
+      # drifted to main while the guard was local-only. Same gap as the drift checks above; gated on every
+      # filter that covers one of those roots.
+      - name: Import specifiers check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.discoveryIndex == 'true' }}
+        run: npm run import-specifiers:check
       # Every engines.node in this repo used to be open-ended (">=22.0.0", no upper bound), so npm never
       # warned or blocked a Node 23+ install locally -- exactly how the Node 26 jsdom/localStorage gap
       # (nodejs/node#60303) went undetected in apps/loopover-miner-ui (#7592/#7597), then again in

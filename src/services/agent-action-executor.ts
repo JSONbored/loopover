@@ -765,8 +765,16 @@ export async function executeAgentMaintenanceActions(env: Env, ctx: AgentActionE
               ctx.installationId,
               ctx.repoFullName,
               ctx.pullNumber,
-              `Queued in the merge train behind #${decision.blockingPr}, which touches overlapping work and was opened first. ` +
-                `This PR merges automatically once #${decision.blockingPr} completes (or leaves the train). No action needed. ` +
+              // #9952: name the POSITION, not just the PR in front. "behind #4" and "behind #4 and six
+              // others" are very different waits, and a queue that will not say which one it is reads as a
+              // stall rather than a wait. `queueAhead` is oldest-first, so its length is this PR's place in
+              // line minus one. Only the immediate blocker is named when it is the only one ahead -- listing
+              // a one-item queue as "1 PR ahead: #4" is noise.
+              (decision.queueAhead.length > 1
+                ? `Queued in the merge train at position ${decision.queueAhead.length + 1}, behind ${decision.queueAhead.length} overlapping PRs opened before this one (${decision.queueAhead.map((pr) => `#${pr}`).join(", ")}). ` +
+                  `The nearest is #${decision.blockingPr}. This PR merges automatically as they complete (or leave the train). No action needed. `
+                : `Queued in the merge train behind #${decision.blockingPr}, which touches overlapping work and was opened first. ` +
+                  `This PR merges automatically once #${decision.blockingPr} completes (or leaves the train). No action needed. `) +
                 `This is an automated maintenance action.`,
             ).then(() => true).catch(() => false);
             // Recorded ONLY after a successful post: a failed post leaves no row, so the next pass retries

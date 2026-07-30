@@ -70,7 +70,19 @@ export type MergeTrainSibling = {
  *  indefinitely, so this is the escape hatch, not a tight SLA. */
 export const MERGE_TRAIN_MAX_WAIT_MS = 24 * 60 * 60 * 1000;
 
-export type MergeTrainDecision = { wait: true; blockingPr: number } | { wait: false };
+export type MergeTrainDecision =
+  | {
+      wait: true;
+      /** The immediate blocker: the OLDEST viable overlapping sibling. */
+      blockingPr: number;
+      /** Every viable overlapping sibling ahead of this PR, oldest first -- `blockingPr` is its first entry.
+       *  Surfaced so the contributor-facing wait comment can say WHERE in the train this PR sits rather than
+       *  only naming the one PR in front of it: "behind #4" and "behind #4, and 6 others" are very different
+       *  waits, and a queue that will not say which one it is reads as a stall. Length is the position minus
+       *  one, so `queueAhead.length + 1` is this PR's own place in line. */
+      queueAhead: readonly number[];
+    }
+  | { wait: false };
 
 /** Low-priority path buckets (lockfiles, generated/build output, vendored third-party trees) that overlapping
  *  alone never counts as real conflict risk. Lockfile-NAME matching delegates to the canonical `isLockfile`
@@ -151,5 +163,5 @@ export function shouldWaitForOlderSiblings(input: ShouldWaitForOlderSiblingsInpu
     })
     .sort((a, b) => a.number - b.number);
   const blocker = viable[0];
-  return blocker ? { wait: true, blockingPr: blocker.number } : { wait: false };
+  return blocker ? { wait: true, blockingPr: blocker.number, queueAhead: viable.map((sibling) => sibling.number) } : { wait: false };
 }

@@ -32,6 +32,10 @@ const {
   parseDualAiTieBreakJudgeResponse,
   coerceAiText,
   composeAdvisoryNotes,
+  narrativeWasWithheld,
+  regeneratePublicSafeSummary,
+  WITHHELD_NARRATIVE_CLEAN,
+  WITHHELD_NARRATIVE_WITH_BLOCKERS,
   composeInlineFindings,
   composeImprovementSignal,
   consensusDefectOf,
@@ -5650,5 +5654,64 @@ describe("withheld-narrative honesty (#9794 regression)", () => {
     expect(notes).toContain("blocking findings");
     expect(notes).toContain("Missing bounds check");
     expect(notes).not.toContain("withheld");
+  });
+});
+
+describe("regenerated public-safe summary (#9809)", () => {
+  // The withheld branch: every sentence of an honest narrative about this project's own scoring/gate code
+  // trips the sanitizer, so the reader used to get a fixed placeholder instead of a real summary. The
+  // regeneration improves that text WITHOUT widening what is publishable -- the rewrite faces the identical
+  // sanitizer, and anything that does not survive falls back to the fixed sentence.
+  const withheldNarrative = "The ranking weights are recomputed and the reward payout shifts accordingly.";
+  const modelReview = (over: Partial<Record<string, unknown>> = {}) =>
+    ({ assessment: withheldNarrative, blockers: [], nits: [], suggestions: [], confidence: 0.9, inlineFindings: [], ...over }) as never;
+
+  it("narrativeWasWithheld is true only when the WHOLE narrative was withheld and nothing blocks", () => {
+    expect(narrativeWasWithheld([modelReview()])).toBe(true);
+    // A publishable narrative needs no regeneration -- firing there would spend a completion on every review.
+    expect(narrativeWasWithheld([modelReview({ assessment: "The error branch is unhandled." })])).toBe(false);
+    // Blockers keep the fixed sentence, so a rewrite would be discarded; do not pay for one.
+    expect(narrativeWasWithheld([modelReview({ blockers: ["The ranking weight is wrong"] })])).toBe(false);
+    expect(narrativeWasWithheld([])).toBe(false);
+  });
+
+  it("publishes a regenerated summary that survives the sanitizer", () => {
+    const notes = composeAdvisoryNotes([modelReview()], { regeneratedAssessment: "The change updates how a value is computed and the tests cover both branches." });
+    expect(notes).toContain("the tests cover both branches");
+    expect(notes).not.toContain(WITHHELD_NARRATIVE_CLEAN);
+  });
+
+  it("falls back to the fixed sentence when no regeneration was obtained", () => {
+    expect(composeAdvisoryNotes([modelReview()])).toContain(WITHHELD_NARRATIVE_CLEAN);
+  });
+
+  it("NEVER lets a regenerated summary speak for a withheld BLOCKER", () => {
+    // The one wrong outcome: prose that reads clean over a blocker the model actually raised. The rewrite is
+    // ignored entirely on this branch, not merely appended to.
+    const notes = composeAdvisoryNotes([modelReview({ blockers: ["The ranking weight is miscomputed"] })], {
+      regeneratedAssessment: "The change looks good and no issues were found.",
+    });
+    expect(notes).toContain(WITHHELD_NARRATIVE_WITH_BLOCKERS);
+    expect(notes).not.toContain("no issues were found");
+  });
+
+  it("regeneratePublicSafeSummary returns null when the rewrite itself trips the sanitizer", async () => {
+    // The never-echo guarantee: the prompt is not the boundary, the sanitizer is. A rewrite that still names
+    // forbidden vocabulary must not reach the public surface just because it was asked to avoid it.
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ content: [{ type: "text", text: "The ranking weights changed." }] }), { status: 200 }));
+    const out = await regeneratePublicSafeSummary({ provider: "anthropic", key: "k", model: "m" } as never, withheldNarrative);
+    expect(out).toBeNull();
+  });
+
+  it("treats the model's CANNOT_SUMMARIZE opt-out as a refusal, never as summary text", async () => {
+    vi.stubGlobal("fetch", async () => new Response(JSON.stringify({ content: [{ type: "text", text: "CANNOT_SUMMARIZE" }] }), { status: 200 }));
+    expect(await regeneratePublicSafeSummary({ provider: "anthropic", key: "k", model: "m" } as never, withheldNarrative)).toBeNull();
+  });
+
+  it("degrades to null when the provider call fails, rather than losing the review", async () => {
+    vi.stubGlobal("fetch", async () => {
+      throw new Error("network down");
+    });
+    expect(await regeneratePublicSafeSummary({ provider: "anthropic", key: "k", model: "m" } as never, withheldNarrative)).toBeNull();
   });
 });

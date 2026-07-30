@@ -2120,6 +2120,56 @@ export async function callAiProvider(
 
 /** Run the maintainer's BYOK frontier model for the advisory write-up. Never throws; the review is null on
  *  any error and `failure` names the reason (timeout/http_error/exception) for the audit trail. */
+/** Token ceiling for the rewrite. A summary paragraph, not a second review -- this call exists to rephrase
+ *  text the model already produced, so a small budget is both sufficient and the cost control. */
+const REGENERATED_SUMMARY_MAX_TOKENS = 400;
+
+/**
+ * Rewrite an already-produced review narrative for a PUBLIC audience, then hold it to the same sanitizer
+ * (#9809).
+ *
+ * Fires only when `narrativeWasWithheld` is true -- every sentence of the original tripped the public-safety
+ * gate, which is routine for a PR touching this project's own scoring/gate code, where an honest sentence
+ * says "score" or "ranking". Those readers currently get a fixed placeholder instead of a real summary.
+ *
+ * THE SANITIZER IS STILL THE AUTHORITY. The rewrite is not trusted because the prompt asked nicely; it goes
+ * through the identical `toPublicSafeBySentence` gate, and anything that does not survive is discarded in
+ * favour of the fixed sentence. So this can only ever improve the text a reader sees -- it cannot widen what
+ * is publishable, and a prompt-injected or careless rewrite fails closed.
+ *
+ * Returns null on: provider failure, empty output, or a rewrite that does not survive sanitization. Never
+ * throws -- a summary is a nicety, and a review must not be lost because the rewrite of its prose failed.
+ */
+export async function regeneratePublicSafeSummary(
+  providerKey: AiReviewProviderKey,
+  narrative: string,
+  options?: { allowBareScoreTerm?: boolean },
+): Promise<string | null> {
+  const system = [
+    "You rewrite code-review summaries for a PUBLIC pull-request comment.",
+    "The original summary was withheld because it referenced internal project vocabulary.",
+    "Rewrite it so a contributor understands the review's conclusion, WITHOUT using any of these classes of term:",
+    "- scoring, scores, ranking, rank, weights, or any measure of contributor standing",
+    "- rewards, payouts, emissions, incentives, or anything about compensation",
+    "- wallets, keys, hotkeys, coldkeys, addresses",
+    "- trust, reputation, or credibility as a tracked quantity",
+    "Describe the CODE and the review's conclusion only. Keep it to two or three sentences, plain prose, no headings or lists.",
+    "If the original cannot be described without those terms, reply with exactly: CANNOT_SUMMARIZE",
+  ].join("\n");
+
+  const { text, failure } = await callAiProvider(providerKey, system, narrative, REGENERATED_SUMMARY_MAX_TOKENS).catch(
+    // A rewrite is strictly optional; a thrown provider error must degrade to the fixed sentence, never
+    // propagate into the review path that has already succeeded.
+    () => ({ text: null, failure: "regeneration_call_failed" as const }),
+  );
+  if (failure || !text) return null;
+  const trimmed = text.trim();
+  // The model's own opt-out. Treated as a refusal rather than run through the sanitizer, so a literal
+  // "CANNOT_SUMMARIZE" can never be published as if it were a summary.
+  if (trimmed === "" || trimmed.includes("CANNOT_SUMMARIZE")) return null;
+  return toPublicSafeBySentence(trimmed, options);
+}
+
 async function runProviderReview(
   providerKey: AiReviewProviderKey,
   system: string,
@@ -2237,7 +2287,38 @@ function composeFallbackAdvisoryNotes(notes: readonly string[]): string | null {
  *  legitimately-public `score`-named field (metagraphed's own `totalScore`/`credibility`) had its entire
  *  narrative assessment silently discarded in favor of the generic "did not include a separate narrative
  *  summary" fallback -- observed live, recurring. */
-export function composeAdvisoryNotes(reviews: ModelReview[], options?: { allowBareScoreTerm?: boolean }): string | null {
+/** The honest fixed sentence for a withheld narrative that raised BLOCKERS (#9806). Never replaced by a
+ *  regenerated summary: prose that could read as clean over a real blocker is the one wrong outcome here. */
+export const WITHHELD_NARRATIVE_WITH_BLOCKERS =
+  "The AI review completed and raised blocking findings, but they were withheld from this public surface because they referenced non-public project internals. A maintainer should read the private review record before deciding this PR.";
+
+/** The honest fixed sentence for a withheld narrative with no blockers (#9806). This is the floor #9809's
+ *  regenerated summary improves on -- and falls back to whenever the rewrite does not survive the sanitizer. */
+export const WITHHELD_NARRATIVE_CLEAN =
+  "The AI review completed and found no blocking issues. Its narrative summary was withheld from this public surface because it referenced non-public project internals.";
+
+/**
+ * Would this review's narrative be withheld entirely, leaving only a fixed sentence? (#9809)
+ *
+ * Exported so the caller can decide whether to spend an LLM call BEFORE composing, without string-matching
+ * the published output to find out. PURE, and deliberately the same computation `composeAdvisoryNotes` does
+ * -- reproducing the sanitizer's decision by any other means would let the two drift, and a regeneration
+ * that fires on a review whose narrative was actually published is wasted spend on every review.
+ *
+ * False when blockers are present: that branch keeps its fixed sentence, so a rewrite would be discarded.
+ */
+export function narrativeWasWithheld(reviews: ModelReview[], options?: { allowBareScoreTerm?: boolean }): boolean {
+  const assessments = reviews.map((r) => r.assessment).filter(Boolean);
+  if (assessments.length === 0) return false;
+  if (toPublicSafeBySentence(assessments[0] ?? "", options)) return false;
+  const blockers = [...new Set(reviews.flatMap((r) => r.blockers))].slice(0, 3);
+  return blockers.length === 0;
+}
+
+export function composeAdvisoryNotes(
+  reviews: ModelReview[],
+  options?: { allowBareScoreTerm?: boolean; regeneratedAssessment?: string | undefined },
+): string | null {
   const assessments = reviews.map((r) => r.assessment).filter(Boolean);
   // High-signal caps: a focused review shows only the few findings that matter (the prompt also asks the
   // model to be selective + deduplicate). Keep the core blockers and a handful of nits. (#focused-reviews)
@@ -2269,12 +2350,18 @@ export function composeAdvisoryNotes(reviews: ModelReview[], options?: { allowBa
   // review's real verdict. The genuinely-empty case (no parsed review content at all) still returns null
   // below, so a true provider failure keeps its accurate "unavailable" report.
   if (!publicAssessment && assessments.length > 0) {
-    // Wording must track the review's REAL verdict: with raw blockers present (all withheld above), claiming
-    // "no blocking issues" would be false and could green-light a PR the model actually flagged.
+    // #9809: a REGENERATED summary, when the caller obtained one. It is a public-audience rewrite of this same
+    // narrative that has already been through the identical sanitizer, so publishing it cannot leak anything
+    // the per-sentence gate above would have withheld. Absent (no call made, or the rewrite tripped the
+    // sanitizer too), the fixed sentence below stays the floor -- a real summary is the goal, never at the
+    // cost of the never-echo guarantee.
+    //
+    // Blockers are the exception: a withheld BLOCKER must never be replaced by prose that could read as
+    // clean, so that branch keeps its fixed sentence regardless of what the rewrite produced.
     publicAssessment =
       blockers.length > 0
-        ? "The AI review completed and raised blocking findings, but they were withheld from this public surface because they referenced non-public project internals. A maintainer should read the private review record before deciding this PR."
-        : "The AI review completed and found no blocking issues. Its narrative summary was withheld from this public surface because it referenced non-public project internals.";
+        ? WITHHELD_NARRATIVE_WITH_BLOCKERS
+        : (options?.regeneratedAssessment ?? WITHHELD_NARRATIVE_CLEAN);
   }
   if (!publicAssessment) return null;
   const lines: string[] = [];
@@ -3350,9 +3437,27 @@ export async function runLoopOverAiReview(
   // push an `ai_review_inconclusive` advisory finding off this same already-computed result (incrementing there
   // too would double/triple-count one review).
   if (inconclusive) incr("loopover_ai_review_inconclusive_total", { mode: input.mode });
+  const notesOptions = { allowBareScoreTerm: isPublicScoreTermSafeForRepo(env, input.repoFullName) };
+  // #9809: when the sanitizer withheld the ENTIRE narrative, the reader would otherwise get a fixed
+  // placeholder instead of a real summary. Ask for a public-audience rewrite of the same narrative and hold
+  // it to the identical sanitizer. Gated on `narrativeWasWithheld` so this costs one extra completion only
+  // on the branch that has no summary today (~2-3/day observed), never on a review whose prose published.
+  //
+  // The IO lives HERE rather than inside composeAdvisoryNotes, which stays pure and synchronous: making the
+  // composer async to hold a provider call would push `await` through its call site and cost the
+  // testability that makes the sanitizer's behaviour verifiable at all.
+  let regeneratedAssessment: string | undefined;
+  if (reviewsForNotes.length > 0 && input.providerKey && narrativeWasWithheld(reviewsForNotes, notesOptions)) {
+    const narrative = reviewsForNotes.map((review) => review.assessment).find((text): text is string => Boolean(text));
+    const regenerated = narrative ? await regeneratePublicSafeSummary(input.providerKey, narrative, notesOptions) : null;
+    regeneratedAssessment = regenerated ?? undefined;
+    // Both outcomes are counted: the regeneration RATE is the point of the metric, and a silent
+    // all-fallback result would otherwise look identical to the feature never firing.
+    incr("loopover_ai_review_summary_regenerated_total", { outcome: regenerated ? "published" : "fallback" });
+  }
   const advisoryNotes =
     reviewsForNotes.length > 0
-      ? (composeAdvisoryNotes(reviewsForNotes, { allowBareScoreTerm: isPublicScoreTermSafeForRepo(env, input.repoFullName) }) ?? composeFallbackAdvisoryNotes(fallbackNotes))
+      ? (composeAdvisoryNotes(reviewsForNotes, { ...notesOptions, ...(regeneratedAssessment !== undefined && { regeneratedAssessment }) }) ?? composeFallbackAdvisoryNotes(fallbackNotes))
       : composeFallbackAdvisoryNotes(fallbackNotes);
   // Line-anchored inline findings (#inline-comments): only propagate model output when the resolved feature gate
   // asked for it. AI output is PR-author-influenced, so the prompt suffix is not an authorization boundary.
@@ -3530,6 +3635,10 @@ export const __aiReviewInternals = {
   synthesizeDefect,
   toPublicSafe,
   toPublicSafeBySentence,
+  narrativeWasWithheld,
+  regeneratePublicSafeSummary,
+  WITHHELD_NARRATIVE_CLEAN,
+  WITHHELD_NARRATIVE_WITH_BLOCKERS,
   estimateNeurons,
   runWorkersOpinion,
   coerceAiUsage,

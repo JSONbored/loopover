@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { computeFleetAnalytics, getFleetHealthSummary, HEALTH_STALE_HOURS, wilsonInterval } from "../../src/orb/analytics";
 import { createTestEnv, } from "../helpers/d1";
 
+// #9955: anchored to ONE instant for the whole file -- re-reading Date.now() per call makes two fixture
+// timestamps mutually inconsistent by the time elapsed between them, which flips any comparison the code
+// under test derives from one of them. Enforced by scripts/check-fixture-clock-races.ts.
+const FIXTURE_NOW_MS = Date.now();
+
 let seq = 0;
 /** Insert N orb_signals rows for one instance with a fixed verdict/outcome/reversal/cycle. */
 async function signals(
@@ -613,7 +618,7 @@ describe("fleetFramingEligible (#9168)", () => {
 // #9783: orb_signals prunes at 90 days into orb_signal_rollups, so a window that reaches past the prune has
 // to read both halves or the headline silently under-counts as history ages out.
 describe("computeFleetAnalytics() over folded history (#9783)", () => {
-  const dayAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+const dayAgo = (n: number) => new Date(FIXTURE_NOW_MS - n * 86_400_000).toISOString();
 
   const foldedCell = async (env: Env, day: string, over: { verdict?: string; outcome?: string; n: number }) =>
     env.DB
@@ -676,7 +681,8 @@ describe("computeFleetAnalytics() over folded history (#9783)", () => {
 // rollup. So a window reaching past the retention horizon must not quietly report percentiles computed from
 // only the surviving rows.
 describe("cycle-time observability across the retention horizon (#9783)", () => {
-  const dayAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString();
+  // #9955: same anchor as the module-level helper this one shadows -- both must be deterministic.
+  const dayAgo = (n: number) => new Date(FIXTURE_NOW_MS - n * 86_400_000).toISOString();
 
   const seedCycle = async (env: Env) => {
     await env.DB.prepare("INSERT INTO orb_instances (instance_id, registered) VALUES ('inst', 1)").run();

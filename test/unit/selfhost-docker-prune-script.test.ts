@@ -104,8 +104,14 @@ function stubDate(binDir: string): void {
   chmodSync(join(binDir, "date"), 0o755);
 }
 
+// #9955: anchored to ONE instant for the whole file. Re-reading Date.now() per call makes timestamps
+// within a single fixture mutually inconsistent by however long elapsed between the calls, which is a
+// real race wherever the code under test compares them against a boundary derived from one of them --
+// it cost a false-positive red CI on #9950, on a PR that changed nothing but a workflow file.
+const FIXTURE_NOW_MS = Date.now();
+
 function isoHoursAgo(hours: number): string {
-  return new Date(Date.now() - hours * 3600_000).toISOString();
+  return new Date(FIXTURE_NOW_MS - hours * 3600_000).toISOString();
 }
 
 function runPruneScript(

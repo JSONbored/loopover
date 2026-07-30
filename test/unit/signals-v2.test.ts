@@ -42,7 +42,11 @@ import type { ContributorRepoStatRecord, IssueRecord, PullRequestRecord, RecentM
 
 // Shared-fixture timestamps are relative to "now" so age-bucket / reviewability windows (e.g. the
 // `< 30 days` likely-reviewable cutoff) never drift past their boundary as real time advances (no time-bomb).
-const isoDaysAgo = (days: number): string => new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+// #9955: anchored to ONE instant for the whole file -- re-reading Date.now() per call makes two fixture
+// timestamps mutually inconsistent by the time elapsed between them, which flips any comparison the code
+// under test derives from one of them. Enforced by scripts/check-fixture-clock-races.ts.
+const FIXTURE_NOW_MS = Date.now();
+const isoDaysAgo = (days: number): string => new Date(FIXTURE_NOW_MS - days * 24 * 60 * 60 * 1000).toISOString();
 
 const repo: RepositoryRecord = {
   fullName: "JSONbored/loopover",

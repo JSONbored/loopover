@@ -568,7 +568,11 @@ describe("verifier vs absence (#9474 pruned records, #9489 grace + interior orph
       vi.useRealTimers();
     }
   };
-  const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  // #9955: anchored to ONE instant for the whole file -- re-reading Date.now() per call makes two fixture
+// timestamps mutually inconsistent by the time elapsed between them, which flips any comparison the code
+// under test derives from one of them. Enforced by scripts/check-fixture-clock-races.ts.
+const FIXTURE_NOW_MS = Date.now();
+const daysAgo = (days: number) => new Date(FIXTURE_NOW_MS - days * 24 * 60 * 60 * 1000);
 
   it("REGRESSION (#9474): a record pruned by the 180-day retention window verifies clean, counted in prunedRecords -- not reported as tampering", async () => {
     const env = createTestEnv();

@@ -176,6 +176,25 @@ describe("checkAnchorCheckpoint", () => {
     expect(result.detail).toContain("not among");
   });
 
+  it("distinguishes an EMPTY ledger from a missing signing key (#9940)", async () => {
+    // These read identically before, and the difference is the whole diagnosis. Conflating them sent me
+    // looking for a missing secret on a deployment whose anchoring was working fine -- the surface simply
+    // held no ledger, because the records live on a different one.
+    const { checkAnchorCheckpoint } = await loadClaims();
+    const empty = await checkAnchorCheckpoint(undefined, [], { totalCount: 0 });
+    expect(empty.status).toBe("skip");
+    expect(empty.detail).toContain("EMPTY");
+    expect(empty.detail).toContain("--base-url");
+
+    // Records present but nothing signed: a real gap, and it must NOT read as "nothing to anchor".
+    const unsigned = await checkAnchorCheckpoint(undefined, [], { totalCount: 2190 });
+    expect(unsigned.detail).toContain("2190");
+    expect(unsigned.detail).not.toContain("EMPTY");
+
+    // Ledger size unknown (the endpoint itself was unreachable) is its own third case.
+    expect((await checkAnchorCheckpoint(undefined, [], undefined)).detail).toContain("ledger size is unknown");
+  });
+
   it("skips when no checkpoint is published, and when no key is published to check one against", async () => {
     const { checkAnchorCheckpoint } = await loadClaims();
     const { signed } = await realCheckpoint();

@@ -109,11 +109,14 @@ export async function runVerify(args: readonly string[], baseUrlOverride?: strin
 
   // Fetched together: they are independent reads, and a verifier that serialises four round trips for no
   // reason is a slower verifier with no compensating property.
-  const [scoresOutcome, statsOutcome, checkpointOutcome, keysOutcome] = await Promise.all([
+  const [scoresOutcome, statsOutcome, checkpointOutcome, keysOutcome, ledgerOutcome] = await Promise.all([
     apiGet<{ records?: VerifiableEvalRecord[] }>(baseUrl, "/v1/public/eval-scores"),
     apiGet<{ totals?: { handled?: unknown }; reviewParity?: { verdicts?: unknown } }>(baseUrl, "/v1/public/stats"),
     apiGet<{ signed?: unknown; signingInput?: unknown }>(baseUrl, "/v1/public/decision-ledger/anchor-payload"),
     apiGet<{ keys?: unknown[] }>(baseUrl, "/v1/public/decision-ledger/anchor-key"),
+    // #9940: the ledger's own size, so an EMPTY surface is reported as such rather than as a missing
+    // signing key. Those are different findings and only one of them is a problem.
+    apiGet<{ totalCount?: unknown }>(baseUrl, "/v1/public/decision-ledger/verify"),
   ]);
 
   const records = scoresOutcome.ok && Array.isArray(scoresOutcome.value.records) ? scoresOutcome.value.records : [];
@@ -141,7 +144,7 @@ export async function runVerify(args: readonly string[], baseUrlOverride?: strin
   // so an unavailable checkpoint is passed through as `undefined` and reported as a skip by the check
   // itself rather than being special-cased into a second, subtly different skip message here.
   const keys = keysOutcome.ok && Array.isArray(keysOutcome.value.keys) ? (keysOutcome.value.keys as Parameters<typeof checkAnchorCheckpoint>[1]) : [];
-  results.push(await checkAnchorCheckpoint(checkpointOutcome.ok ? checkpointOutcome.value : undefined, keys));
+  results.push(await checkAnchorCheckpoint(checkpointOutcome.ok ? checkpointOutcome.value : undefined, keys, ledgerOutcome.ok ? ledgerOutcome.value : undefined));
 
   results.push(
     statsOutcome.ok

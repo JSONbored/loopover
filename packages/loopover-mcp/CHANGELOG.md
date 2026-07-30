@@ -5,6 +5,39 @@
 ### Fixes
 - Blunt slop-risk / issue-slop REST + CLI to match the MCP tools (#6990) (#7052)
 
+## [3.17.0](https://github.com/JSONbored/loopover/compare/mcp-v3.15.2...mcp-v3.17.0) (2026-07-30)
+
+
+### Features
+
+* **contract:** add @loopover/contract, the single zod source for tool and API schemas ([#9530](https://github.com/JSONbored/loopover/issues/9530)) ([95f1524](https://github.com/JSONbored/loopover/commit/95f1524035a6785834fd2236ee676a1626ba8854))
+* **contract:** migrate every remote MCP tool contract to @loopover/contract ([#9518](https://github.com/JSONbored/loopover/issues/9518)) ([#9559](https://github.com/JSONbored/loopover/issues/9559)) ([968c731](https://github.com/JSONbored/loopover/commit/968c73171baca6128845e358d9e15a10144791a5))
+* **mcp:** add validate:mcp, the contract validator that enforces all three servers ([#9520](https://github.com/JSONbored/loopover/issues/9520)) ([#9575](https://github.com/JSONbored/loopover/issues/9575)) ([0e990a3](https://github.com/JSONbored/loopover/commit/0e990a31d6ba491b6617e638ce3ae0e341366386))
+* **mcp:** discovery surfaces, registry publish, and the stdio gateway ([#9526](https://github.com/JSONbored/loopover/issues/9526)) ([#9735](https://github.com/JSONbored/loopover/issues/9735)) ([983ea31](https://github.com/JSONbored/loopover/commit/983ea31fee115e2f63e5bfbf23c858d50c539012))
+* **mcp:** generate every tool, CLI, client, and docs surface from the contract ([#9521](https://github.com/JSONbored/loopover/issues/9521)) ([#9590](https://github.com/JSONbored/loopover/issues/9590)) ([bd139a5](https://github.com/JSONbored/loopover/commit/bd139a5d5d6a95bfd4c38b46ab29ec73b43af8e3))
+* **mcp:** migrate the stdio MCP server's 102 tools to @loopover/contract ([#9537](https://github.com/JSONbored/loopover/issues/9537)) ([#9565](https://github.com/JSONbored/loopover/issues/9565)) ([d5a5a8f](https://github.com/JSONbored/loopover/commit/d5a5a8fe5c6cb3b2541689d85baf1c3d0a45c422))
+* **mcp:** one registry-driven telemetry contract at all three dispatch chokepoints ([#9525](https://github.com/JSONbored/loopover/issues/9525)) ([#9579](https://github.com/JSONbored/loopover/issues/9579)) ([06a090f](https://github.com/JSONbored/loopover/commit/06a090f9a6ab786165ab76fc741e2697c0ff1ae1))
+
+
+### Fixes
+
+* **contract:** close the last duplications and make the .shape trap impossible ([#9762](https://github.com/JSONbored/loopover/issues/9762)) ([#9765](https://github.com/JSONbored/loopover/issues/9765)) ([edbdb58](https://github.com/JSONbored/loopover/commit/edbdb584c7ebcab3f85f11018b7cab25ad056486))
+* **mcp:** await PostHog flush via unit-tested stdio wrapper ([#8738](https://github.com/JSONbored/loopover/issues/8738)) ([7ee07cc](https://github.com/JSONbored/loopover/commit/7ee07cc7bf3a4f42ba82ab0ff9e5bad253c3ad03)), closes [#8690](https://github.com/JSONbored/loopover/issues/8690)
+* **mcp:** correct loopover_check_issue_slop description and drop the dead issue-slop rubric ([#8959](https://github.com/JSONbored/loopover/issues/8959)) ([fcecf0c](https://github.com/JSONbored/loopover/commit/fcecf0c8f18e06041ff72f2b8b1eea47367f25c3)), closes [#8907](https://github.com/JSONbored/loopover/issues/8907)
+* **mcp:** exit the CLI cleanly on a broken-pipe stdout/stderr error ([#8731](https://github.com/JSONbored/loopover/issues/8731)) ([2fc27bc](https://github.com/JSONbored/loopover/commit/2fc27bc053613860cb2db8e7bb0c12e2d22721b7)), closes [#8691](https://github.com/JSONbored/loopover/issues/8691)
+* **mcp:** mirror loopover_clear_selftune_override in the CLI stdio package ([#9300](https://github.com/JSONbored/loopover/issues/9300)) ([#9361](https://github.com/JSONbored/loopover/issues/9361)) ([09eb223](https://github.com/JSONbored/loopover/commit/09eb223551611140f7457c51998612cc076e5f90))
+* **mcp:** stop --json=false and --exit-code=false enabling the flag they disable ([#8725](https://github.com/JSONbored/loopover/issues/8725)) ([60f9f8f](https://github.com/JSONbored/loopover/commit/60f9f8f5decffe71eb7208918ebc154c86ee79e4))
+* **orb:** report null mergeRate for a zero-sample slop band ([#9921](https://github.com/JSONbored/loopover/issues/9921)) ([c5a6cb4](https://github.com/JSONbored/loopover/commit/c5a6cb472b66adc3cb192a37f50794c579ca783e))
+* **security:** close two open GitHub Security Advisories ([#9281](https://github.com/JSONbored/loopover/issues/9281)) ([29591ca](https://github.com/JSONbored/loopover/commit/29591caa9873708bc8c105e049fafde1c0bcfdf9))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^0.1.0 to ^3.17.0
+    * @loopover/engine bumped from ^3.16.0 to ^3.17.0
+
 ## [3.15.2](https://github.com/JSONbored/loopover/compare/mcp-v3.14.1...mcp-v3.15.2) (2026-07-27)
 
 

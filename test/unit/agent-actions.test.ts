@@ -66,6 +66,43 @@ describe("planAgentMaintenanceActions (#778)", () => {
     expect(classes(collision)).not.toContain("merge");
   });
 
+  // #9808/#9869: a guardrail hit used to mean ONE thing -- suppress auto-merge and hold for a human -- while
+  // buying no extra scrutiny at all. With an escalation configured, a CLEAN escalated review can now release
+  // that hold instead. These two cases are the whole point of the feature and the only place all three
+  // preconditions (guardrail hit, clean review, escalation configured) hold at once, which is what decides
+  // whether onCleanReview is even consulted.
+  it("guardrailEscalation.onCleanReview: proceed RELEASES the guardrail hold when the escalated review is clean (#9808)", () => {
+    const escalated = {
+      conclusion: "success" as const,
+      autonomy: { merge: "auto" as const, review_state_label: "auto" as const },
+      manualReviewLabel: "human-review",
+      changedPaths: ["src/settings/agent-actions.ts"],
+      hardGuardrailGlobs: ["src/settings/**"],
+      guardrailEscalationEffort: "high",
+      pr: { labels: [], mergeableState: "clean" as const, reviewDecision: "APPROVED" as const },
+    };
+
+    // proceed: the escalated review vouched for the guarded path, so the PR merges and is NOT parked for a human.
+    const proceed = planAgentMaintenanceActions(input({ ...escalated, guardrailEscalationOnCleanReview: "proceed" }));
+    expect(proceed.some((a) => a.actionClass === "label" && a.label === "human-review")).toBe(false);
+    expect(classes(proceed)).toContain("merge");
+
+    // hold (the default): identical input, opposite outcome -- the hold stands and the label goes on. Asserting
+    // both against the SAME input is what proves onCleanReview is the deciding term rather than something else
+    // in the escalated shape.
+    const hold = planAgentMaintenanceActions(input({ ...escalated, guardrailEscalationOnCleanReview: "hold" }));
+    expect(hold.some((a) => a.actionClass === "label" && a.label === "human-review")).toBe(true);
+    expect(classes(hold)).not.toContain("merge");
+
+    // proceed with NO escalation configured must not release: "proceed" is a promise about an ESCALATED review,
+    // so honouring it without one would hand guarded paths a weaker gate than they had before the feature.
+    const unconfigured = planAgentMaintenanceActions(
+      input({ ...escalated, guardrailEscalationEffort: null, guardrailEscalationOnCleanReview: "proceed" }),
+    );
+    expect(unconfigured.some((a) => a.actionClass === "label" && a.label === "human-review")).toBe(true);
+    expect(classes(unconfigured)).not.toContain("merge");
+  });
+
   it("uses manualReviewLabel for manual holds without enabling ready/changes review-state labels", () => {
     const guarded = planAgentMaintenanceActions(input({ conclusion: "success", autonomy: { merge: "auto" }, manualReviewLabel: "human-review", readyToMergeLabel: null, changesRequestedLabel: null, changedPaths: ["src/settings/agent-actions.ts"], hardGuardrailGlobs: ["src/settings/**"], pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" } }));
     expect(guarded.some((a) => a.actionClass === "label" && a.label === "human-review" && a.autonomyClass === "merge")).toBe(true);

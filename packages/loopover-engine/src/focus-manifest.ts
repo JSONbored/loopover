@@ -130,6 +130,13 @@ export type FocusManifestGateConfig = {
   guardrailEscalationModel: string | null;
   guardrailEscalationEffort: "low" | "medium" | "high" | "xhigh" | "max" | null;
   guardrailEscalationSelfConsistencyRuns: number | null;
+  /** `gate.guardrailEscalation.onCleanReview` (#9808 second half): what a CLEAN escalated review buys.
+   *  `hold` (default) keeps today's behavior -- the PR still waits for a human even when the escalated
+   *  review found nothing. `proceed` releases the guardrail hold when the gate passed and CI is green, so a
+   *  guarded path is protected by the ESCALATED REVIEW rather than by a human queue -- the full-autonomy
+   *  mode. Fail-closed: `proceed` does nothing unless at least one escalation knob is actually set, so the
+   *  hold can never be released without the extra scrutiny that justifies releasing it. */
+  guardrailEscalationOnCleanReview: "hold" | "proceed" | null;
   aiReviewAllAuthors: boolean | null;
   /** `gate.aiReview.closeConfidence` (#7): minimum calibrated AI-reviewer confidence (0-1) for an AI defect to BLOCK
    *  under `aiReview.mode: block`. null (unset) ⇒ the gate's 0.93 default. Clamped to [0,1] at parse time. */
@@ -659,6 +666,7 @@ export type FocusManifestSettings = Partial<
     | "guardrailEscalationModel"
     | "guardrailEscalationEffort"
     | "guardrailEscalationSelfConsistencyRuns"
+    | "guardrailEscalationOnCleanReview"
     | "aiReviewAllAuthors"
     | "aiReviewConfirmedContributorsOnly"
     | "closeOwnerAuthors"
@@ -1376,6 +1384,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   guardrailEscalationModel: null,
   guardrailEscalationEffort: null,
   guardrailEscalationSelfConsistencyRuns: null,
+  guardrailEscalationOnCleanReview: null,
   aiReviewAllAuthors: null,
   aiReviewCloseConfidence: null,
   aiReviewSalvageabilityMinScore: null,
@@ -1928,6 +1937,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     guardrailEscalationModel: normalizeOptionalString(escalationRecord?.model, "gate.guardrailEscalation.model", warnings),
     guardrailEscalationEffort: normalizeOptionalEnum(escalationRecord?.effort, "gate.guardrailEscalation.effort", ["low", "medium", "high", "xhigh", "max"] as const, warnings),
     guardrailEscalationSelfConsistencyRuns: normalizeOptionalNonNegativeInt(escalationRecord?.selfConsistencyRuns, "gate.guardrailEscalation.selfConsistencyRuns", warnings),
+    guardrailEscalationOnCleanReview: normalizeOptionalEnum(escalationRecord?.onCleanReview, "gate.guardrailEscalation.onCleanReview", ["hold", "proceed"] as const, warnings),
     aiReviewAllAuthors: normalizeOptionalBoolean(aiReviewRecord?.allAuthors, "gate.aiReview.allAuthors", warnings),
     aiReviewCloseConfidence: normalizeOptionalConfidence(aiReviewRecord?.closeConfidence, "gate.aiReview.closeConfidence", warnings),
     aiReviewSalvageabilityMinScore: normalizeOptionalScore(aiReviewRecord?.salvageabilityMinScore, "gate.aiReview.salvageabilityMinScore", warnings),
@@ -2028,6 +2038,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     gate.guardrailEscalationModel !== null ||
     gate.guardrailEscalationEffort !== null ||
     gate.guardrailEscalationSelfConsistencyRuns !== null ||
+    gate.guardrailEscalationOnCleanReview !== null ||
     gate.ignoredCheckRuns !== null ||
     gate.aiJudgmentBlockersMode !== null ||
     gate.copycatMode !== null ||
@@ -2116,13 +2127,15 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
     gate.guardrailEscalationProvider !== null ||
     gate.guardrailEscalationModel !== null ||
     gate.guardrailEscalationEffort !== null ||
-    gate.guardrailEscalationSelfConsistencyRuns !== null
+    gate.guardrailEscalationSelfConsistencyRuns !== null ||
+    gate.guardrailEscalationOnCleanReview !== null
   ) {
     const escalation: Record<string, JsonValue> = {};
     if (gate.guardrailEscalationProvider !== null) escalation.provider = gate.guardrailEscalationProvider;
     if (gate.guardrailEscalationModel !== null) escalation.model = gate.guardrailEscalationModel;
     if (gate.guardrailEscalationEffort !== null) escalation.effort = gate.guardrailEscalationEffort;
     if (gate.guardrailEscalationSelfConsistencyRuns !== null) escalation.selfConsistencyRuns = gate.guardrailEscalationSelfConsistencyRuns;
+    if (gate.guardrailEscalationOnCleanReview !== null) escalation.onCleanReview = gate.guardrailEscalationOnCleanReview;
     out.guardrailEscalation = escalation;
   }
   if (gate.mergeReadiness !== null) out.mergeReadiness = gate.mergeReadiness;

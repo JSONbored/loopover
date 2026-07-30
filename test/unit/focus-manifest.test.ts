@@ -347,6 +347,7 @@ describe(".loopover.yml.example field-exhaustiveness (#1670)", () => {
     guardrailEscalationModel: "guardrailEscalation:",
     guardrailEscalationEffort: "guardrailEscalation:",
     guardrailEscalationSelfConsistencyRuns: "guardrailEscalation:",
+    guardrailEscalationOnCleanReview: "guardrailEscalation:",
     ignoredCheckRuns: "ignoredCheckRuns:",
     aiJudgmentBlockersMode: "aiJudgmentBlockers:",
     copycatMode: "copycat:",
@@ -446,6 +447,7 @@ describe(".loopover.yml.example field-exhaustiveness (#1670)", () => {
     guardrailEscalationModel: "guardrailEscalation:",
     guardrailEscalationEffort: "guardrailEscalation:",
     guardrailEscalationSelfConsistencyRuns: "guardrailEscalation:",
+    guardrailEscalationOnCleanReview: "guardrailEscalation:",
   } satisfies Record<Exclude<keyof FocusManifestSettings, (typeof SETTINGS_GATE_ALIASED_FIELDS)[number]>, string>;
 
   it.each(Object.entries(SETTINGS_FIELD_TOKENS))("documents settings.%s", (_field, token) => {
@@ -1012,7 +1014,7 @@ describe("compileFocusManifestPolicy", () => {
       issueDiscoveryPolicy: "neutral",
       maintainerNotes: [],
       publicNotes: ["Keep PRs focused.", "Maximize your reward payout"],
-      gate: { present: false, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewEffort: null, aiReviewSelfConsistencyRuns: null, guardrailEscalationProvider: null, guardrailEscalationModel: null, guardrailEscalationEffort: null, guardrailEscalationSelfConsistencyRuns: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewSalvageabilityMinScore: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, priorityEligibilityWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, ignoredCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
+      gate: { present: false, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: null, duplicates: null, readinessMode: null, readinessMinScore: null, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewEffort: null, aiReviewSelfConsistencyRuns: null, guardrailEscalationProvider: null, guardrailEscalationModel: null, guardrailEscalationEffort: null, guardrailEscalationSelfConsistencyRuns: null, guardrailEscalationOnCleanReview: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewSalvageabilityMinScore: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, priorityEligibilityWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, ignoredCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null },
       settings: {},
       review: { present: false, footerText: null, note: null, fields: {}, enrichmentAnalyzers: {}, profile: null, tone: null, securityFocus: null, inlineComments: null, fixHandoff: null, autoMergeSummary: null, suggestions: null, changedFilesSummary: null, effortScore: null, impactMap: null, cultureProfile: null, selftune: null, sweepWatchdog: null, prReconciliation: null, activeReviewReconciliation: null, reviewMemory: null, findingCategories: null, inlineCommentsPerCategory: null, minFindingSeverity: null, maxFindings: { blockers: null, nits: null }, commentVerbosity: null, e2eTestDelivery: null, e2eTestAutoTrigger: null, pathInstructions: [], instructions: null, excludePaths: [], pathFilters: [], preMergeChecks: [], autoReview: { ...EMPTY_AUTO_REVIEW_CONFIG }, aiModel: { ...EMPTY_SELF_HOST_AI_MODEL_CONFIG }, visual: { ...EMPTY_VISUAL_CONFIG }, linkedIssueSatisfaction: null, sharedConfigSource: null },
       features: { present: false, rag: null, reputation: null, safety: null, grounding: null, e2eTests: null, screenshots: null, improvementSignal: null, amsReputationBridge: null },
@@ -1206,7 +1208,7 @@ describe("parseFocusManifest gate config", () => {
     // the block→advisory deprecation-downgrade behavior itself is covered separately below.
     const m = parseFocusManifest({ gate: { linkedIssue: "block", duplicates: "advisory", readiness: { mode: "advisory", minScore: 70 } } });
     expect(m.present).toBe(true);
-    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewEffort: null, aiReviewSelfConsistencyRuns: null, guardrailEscalationProvider: null, guardrailEscalationModel: null, guardrailEscalationEffort: null, guardrailEscalationSelfConsistencyRuns: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewSalvageabilityMinScore: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, priorityEligibilityWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, ignoredCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
+    expect(m.gate).toEqual({ present: true, enabled: null, checkMode: null, pack: null, closeAuditHoldoutPct: null, linkedIssue: "block", duplicates: "advisory", readinessMode: "advisory", readinessMinScore: 70, slopMode: null, slopMinScore: null, slopAiAdvisory: null, sizeMode: null, sizeMaxFiles: null, sizeMaxLines: null, lockfileIntegrityMode: null, aiReviewMode: null, aiReviewByok: null, aiReviewProvider: null, aiReviewModel: null, aiReviewEffort: null, aiReviewSelfConsistencyRuns: null, guardrailEscalationProvider: null, guardrailEscalationModel: null, guardrailEscalationEffort: null, guardrailEscalationSelfConsistencyRuns: null, guardrailEscalationOnCleanReview: null, aiReviewAllAuthors: null, aiReviewCloseConfidence: null, aiReviewSalvageabilityMinScore: null, aiReviewLowConfidenceDisposition: null, aiReviewCombine: null, aiReviewOnMerge: null, aiReviewReviewers: null, mergeReadiness: null, selfAuthoredLinkedIssue: null, linkedIssueSatisfaction: null, contentLaneDeliverable: null, backtestRegression: null, manifestPolicy: null, dryRun: null, premergeContentRecheck: null, requireFreshRebaseWindowMinutes: null, priorityEligibilityWindowMinutes: null, staleBaseAheadByThreshold: null, claMode: null, claConsentPhrase: null, claCheckRunName: null, claCheckRunAppSlug: null, expectedCiContexts: null, advisoryCheckRuns: null, ignoredCheckRuns: null, aiJudgmentBlockersMode: null, copycatMode: null, copycatMinScore: null });
   });
 
   it("parses gate.mergeReadiness, round-trips it, and warns on a bad value (#822)", () => {
@@ -1671,6 +1673,22 @@ describe("parseFocusManifest gate config", () => {
     ]) {
       expect(parseFocusManifest({ gate }).gate.present).toBe(true);
     }
+
+    // #9808/#9869: onCleanReview is the field that decides whether a CLEAN escalated review RELEASES the
+    // guardrail hold or merely records it, so it must survive the whole path -- parse, presence, round-trip,
+    // and (the gap this closes) the RESOLVE step that folds it into effective settings. Parsing it correctly
+    // and then dropping it during resolution would silently restore the old always-hold behaviour, with the
+    // manifest still reading as if full autonomy were configured.
+    const clean = parseFocusManifest({ gate: { guardrailEscalation: { effort: "high", onCleanReview: "proceed" } } });
+    expect(clean.gate.guardrailEscalationOnCleanReview).toBe("proceed");
+    expect(clean.gate.present).toBe(true);
+    expect(resolveEffectiveSettings({} as RepositorySettings, clean).guardrailEscalationOnCleanReview).toBe("proceed");
+    expect(parseFocusManifest({ gate: gateConfigToJson(clean.gate) }).gate).toEqual(clean.gate);
+    // onCleanReview ALONE flips presence, like each of its six siblings above.
+    expect(parseFocusManifest({ gate: { guardrailEscalation: { onCleanReview: "hold" } } }).gate.present).toBe(true);
+    // Left unset it stays null, so the resolver leaves effective settings untouched and the default (hold)
+    // stands -- the nullish arm of the same line, which is what a repo that never configured this gets.
+    expect(resolveEffectiveSettings({} as RepositorySettings, parseFocusManifest({ gate: { guardrailEscalation: { effort: "high" } } })).guardrailEscalationOnCleanReview).toBeUndefined();
 
     // Partial escalation: unset fields stay null (each falls through to repo/global downstream).
     const partial = parseFocusManifest({ gate: { guardrailEscalation: { effort: "high" } } });

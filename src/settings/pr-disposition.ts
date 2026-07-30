@@ -90,6 +90,13 @@ export type PrDispositionInput = Record<MergeHoldInput, boolean> & {
    *  held anyway (observed on JSONbored/loopover#9816, reason "mergeable_state is unstable — non-required
    *  check(s) not passing: Contributor trust"). Set ONLY when nothing else adverse was seen. */
   unstableExplainedByIgnoredChecks?: boolean | undefined;
+  /** #9808 second half: the `guardrailHit` hold was CLEARED by a clean escalated review — see `releasedHolds`
+   *  in derivePrDisposition. Resolved by the caller (agent-actions.ts), which requires ALL of:
+   *  `guardrailEscalation.onCleanReview: proceed` configured, at least one escalation knob actually set (the
+   *  extra scrutiny must exist before it can vouch for anything), and reviewGood (gate success — which folds in
+   *  the AI verdict's blockers — plus green CI). Releases ONLY the guardrail term; every other hold in
+   *  MERGE_HOLD_INPUTS is untouched. Default false ⇒ byte-identical to the pre-#9808 behaviour. */
+  guardrailEscalationCleared?: boolean | undefined;
 };
 
 export type PrDisposition = {
@@ -120,7 +127,15 @@ export function derivePrDisposition(input: PrDispositionInput): PrDisposition {
   const unstableHolds = mergeable === "unstable" && input.unstableExplainedByIgnoredChecks !== true;
   // Derived from MERGE_HOLD_INPUTS, so a hold declared in that table is folded in by construction and a
   // new one can never be added-but-not-honoured.
-  const heldForManualReview = MERGE_HOLD_INPUT_KEYS.some((key) => input[key] === true) || unstableHolds;
+  //
+  // #9808: a hold may also be explicitly RELEASED. A guardrail hit whose escalated review came back clean no
+  // longer summons a human -- the guarded path is protected by the escalated review instead of by a queue.
+  // Expressed as a release map rather than by dropping the term, so the table stays the single declaration of
+  // what holds and this stays the single declaration of what can lift one.
+  const releasedHolds: Partial<Record<MergeHoldInput, boolean>> = {
+    guardrailHit: input.guardrailEscalationCleared === true,
+  };
+  const heldForManualReview = MERGE_HOLD_INPUT_KEYS.some((key) => input[key] === true && releasedHolds[key] !== true) || unstableHolds;
   const heldForUnstableMergeState = unstableHolds;
   const wouldApprove = input.reviewGood && !heldForManualReview && mergeable !== "conflict";
   const wouldMerge = input.reviewGood && !heldForManualReview && mergeable === "clean";

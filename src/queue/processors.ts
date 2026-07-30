@@ -2868,6 +2868,13 @@ function buildAgentMaintenancePlanInput(args: {
     slopGateMinScore: settings.slopGateMinScore,
     changedPaths,
     hardGuardrailGlobs,
+    // #9808 second half: the escalation settings ride with the globs they modify, so the planner can release
+    // the guardrail hold when a clean escalated review has vouched for the guarded path.
+    guardrailEscalationOnCleanReview: settings.guardrailEscalationOnCleanReview ?? null,
+    guardrailEscalationEffort: settings.guardrailEscalationEffort ?? null,
+    guardrailEscalationSelfConsistencyRuns: settings.guardrailEscalationSelfConsistencyRuns ?? null,
+    guardrailEscalationModel: settings.guardrailEscalationModel ?? null,
+    guardrailEscalationProvider: settings.guardrailEscalationProvider ?? null,
     manualReviewLabel: settings.manualReviewLabel,
     readyToMergeLabel: settings.readyToMergeLabel,
     changesRequestedLabel: settings.changesRequestedLabel,

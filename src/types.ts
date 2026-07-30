@@ -1135,6 +1135,10 @@ export type RepositorySettings = {
   guardrailEscalationModel?: string | null | undefined;
   guardrailEscalationEffort?: "low" | "medium" | "high" | "xhigh" | "max" | null | undefined;
   guardrailEscalationSelfConsistencyRuns?: number | null | undefined;
+  /** `gate.guardrailEscalation.onCleanReview` (#9808 second half): `proceed` releases the guardrail hold
+   *  when the escalated review came back clean (gate success + CI green); `hold` (default) keeps a human in
+   *  the loop even then. Fail-closed: `proceed` is inert unless an escalation knob is actually set. */
+  guardrailEscalationOnCleanReview?: "hold" | "proceed" | null | undefined;
   /** Review EVERY PR's author, not only confirmed Gittensor contributors. Only meaningful when
    *  {@link aiReviewConfirmedContributorsOnly} is also `true` (that field opts INTO confirmed-only
    *  scoping in the first place — see its own doc comment for the full invariant: AI review runs for

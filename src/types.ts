@@ -762,6 +762,10 @@ export type PullRequestRecord = {
    *  screenshotTableGate treats visualCaptureSatisfiedSha === headSha as evidence equivalent to a hand-authored
    *  before/after table. Publish-written; read straight from the row. */
   visualCaptureSatisfiedSha?: string | null | undefined;
+  /** #9881: the head SHA at which the bot PROVED visual capture is structurally unobtainable here -- the
+   *  deployments read succeeded, found none at all, and the poll budget is spent. The screenshotTableGate
+   *  degrades its CLOSE to advisory while this equals the current head. */
+  visualCaptureUnobtainableSha?: string | null | undefined;
   /** False-positive close guard (#9030): the head SHA a bounded visual-capture recapture retry is currently
    *  scheduled/in-flight for -- set only when the capture pipeline errored, or the preview is still building,
    *  AND a retry budget attempt remains. While this equals the PR's current headSha, the screenshotTableGate's

@@ -14,6 +14,7 @@ import {
   missingScreenshotMatrixPairs,
   normalizeScreenshotTableGateConfig,
   requiredScreenshotMatrixPairs,
+  CAPTURE_UNOBTAINABLE_REASON,
   type ScreenshotMatrixPair,
 } from "../../src/review/screenshot-table-gate";
 import type { ScreenshotTableGateConfig } from "../../src/types";
@@ -901,5 +902,48 @@ describe("evaluateScreenshotTableGate presence-mode staleness (#stale-screenshot
     });
     expect(replay.violated).toBe(false);
     expect(replay.presenceModeSatisfiedState?.headSha).toBe("presence-push-1");
+  });
+});
+
+// #9881: a CLOSE must never rest on evidence the pipeline is structurally unable to produce.
+describe("enforcement degrade when capture is unobtainable (#9881)", () => {
+  const violatingInput = {
+    config: config({ enabled: true, action: "close" as const, whenPaths: ["apps/web/src/**"] }),
+    prBody: "no screenshots here",
+    prLabels: [],
+    changedFiles: ["apps/web/src/routes/home.tsx"],
+    headSha: "abc123",
+  };
+
+  it("still reports the violation — the PR genuinely lacks visual evidence", () => {
+    const result = evaluateScreenshotTableGate({ ...violatingInput, captureUnobtainable: true });
+    expect(result.violated, "the finding is not suppressed; only enforcement is").toBe(true);
+    expect(result.reason).toBeTruthy();
+  });
+
+  it("marks enforcement degraded, and says why in words a contributor can act on", () => {
+    const result = evaluateScreenshotTableGate({ ...violatingInput, captureUnobtainable: true });
+    expect(result.enforcementDegradedReason).toBe(CAPTURE_UNOBTAINABLE_REASON);
+    // The message must name the maintainer-side remedy, since no contributor action can fix this.
+    expect(result.enforcementDegradedReason).toMatch(/preview deployment/i);
+    expect(result.enforcementDegradedReason).toMatch(/advisory/i);
+  });
+
+  it("does NOT degrade when capture is merely absent — that close is legitimate", () => {
+    const result = evaluateScreenshotTableGate({ ...violatingInput, captureUnobtainable: false });
+    expect(result.violated).toBe(true);
+    expect(result.enforcementDegradedReason).toBeUndefined();
+  });
+
+  it("omits the degrade entirely when there is no violation to enforce", () => {
+    const satisfied = evaluateScreenshotTableGate({ ...violatingInput, botCaptureSatisfied: true, captureUnobtainable: true });
+    expect(satisfied.violated).toBe(false);
+    expect(satisfied.enforcementDegradedReason).toBeUndefined();
+  });
+
+  it("is byte-identical to before when the flag is not passed at all", () => {
+    const before = evaluateScreenshotTableGate(violatingInput);
+    expect(before.enforcementDegradedReason).toBeUndefined();
+    expect(before).toEqual(evaluateScreenshotTableGate({ ...violatingInput, captureUnobtainable: undefined }));
   });
 });

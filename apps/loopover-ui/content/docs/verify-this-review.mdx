@@ -16,6 +16,19 @@ figure stops supporting a conclusion — see the [fairness methodology](/docs/fa
 For a single command that recomputes the published commitments and exits non-zero if any fail,
 run `npx -p @loopover/mcp loopover-verify`.
 
+**Two surfaces, because they hold different things** (#9940). The commands on this page use
+`api.loopover.ai`, which serves aggregate stats and eval-score records. The **anchored decision
+ledger** — the hash chain, its signed checkpoints, and the Rekor anchors — lives on the Orb that
+performs the reviews, at `https://shots.loopover.ai`. Point the ledger and anchor checks there:
+
+```bash
+curl -s https://shots.loopover.ai/v1/public/decision-ledger/verify | jq '{ok, tipSeq, totalCount}'
+npx -p @loopover/mcp loopover-verify --base-url https://shots.loopover.ai
+```
+
+The public API's own ledger is empty by design — it aggregates outcomes Orbs report, rather than
+holding their chains — so a run against it reports the ledger checks as *skipped*, never failed.
+
 Everything below runs read-only against a corpus export and pure functions from `@loopover/engine`.
 Nothing posts anywhere, and nothing needs a LoopOver API key.
 

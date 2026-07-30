@@ -16,8 +16,22 @@ Nothing here is a summary of intent. Every rule below is the rule the code imple
 
 <Callout variant="note">
   **Want the machine-checkable version?** `npx -p @loopover/mcp loopover-verify` recomputes the
-  published commitments from the public endpoints and prints a PASS/FAIL table. It needs no
-  credentials. See [Verify this review](/docs/verify-this-review).
+  published commitments and prints a PASS/FAIL table. It needs no credentials. See
+  [Verify this review](/docs/verify-this-review).
+
+  Two surfaces answer different questions, because they hold different data (#9940). Aggregate
+  stats and eval-score records come from `api.loopover.ai`, the default. The **anchored decision
+  ledger** lives on the Orb that actually reviews — its own hash chain, signed and anchored to
+  Rekor — so ledger and anchor checks need that one:
+
+  ```bash
+  npx -p @loopover/mcp loopover-verify                                    # stats + eval scores
+  npx -p @loopover/mcp loopover-verify --base-url https://shots.loopover.ai   # ledger + anchors
+  ```
+
+  The public API's own ledger is empty by design: it aggregates outcomes reported by Orbs rather
+  than holding their chains. A verifier run against it reports the ledger checks as *skipped*,
+  not failed.
 </Callout>
 
 ## The three data sources are not interchangeable

@@ -534,12 +534,22 @@ healthy idle instance.
 ### 1. Generate the keypair
 
 ```bash
-npm run ledger:anchor-keygen
+npm run ledger:anchor-keygen -- --secret-file /run/secrets/ledger-anchor-private-key
 ```
 
-Prints both halves already in the encodings the runtime expects, with the key id derived from the public
-half so the two cannot drift apart. It writes nothing to disk — the private key exists only in that output,
-so run it on a machine you trust and paste straight into your secret store.
+Writes the private half straight to that path at `0600` and **never prints it** — so there is nothing to
+copy and nothing to leave in scrollback, shell history, or a captured session. Only the public half is
+printed, which is what you publish anyway. Then point `LOOPOVER_LEDGER_ANCHOR_PRIVATE_KEY_FILE` at that
+path (the generic `<NAME>_FILE` mechanism every self-host secret supports) and recreate the container.
+
+It refuses to overwrite an existing file: replacing a live signing key would strand every anchor already
+published under it, and the rotation rule below exists precisely so those stay verifiable.
+
+Dropping `--secret-file` prints both halves instead, for reading the shape before you provision. Prefer the
+file mode for anything real — a private key on a terminal is a private key you now have to be careful with.
+
+Either way the key id is derived from the public half with the same function the runtime uses, so the
+published key and the anchors referencing it cannot drift apart.
 
 ### 2. Provision both halves
 

@@ -45,6 +45,7 @@ import { diffFilePriority } from "../review/diff-file-priority.js";
 import type { ImprovementBand, StructuralImprovementAssessment } from "../../../../src/signals/improvement.js";
 import type { ImprovementMagnitude } from "../../../../src/services/ai-review.js";
 import type { SlopBand } from "./slop.js";
+import { MAINTAINER_AUTHOR_ASSOCIATIONS } from "../settings/author-association.js";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";
 export type SignalFinding = AdvisoryFinding;
@@ -5238,7 +5239,10 @@ function outcomeFailurePatterns(history: ContributorOutcomeHistory): OutcomePatt
 }
 
 function strongestAssociation(values: string[]): string | undefined {
-  for (const association of ["OWNER", "MEMBER", "COLLABORATOR"]) {
+  // Iterates MAINTAINER_AUTHOR_ASSOCIATIONS in DECLARATION order, which is its precedence order
+  // (OWNER > MEMBER > COLLABORATOR). This is the one consumer that depends on that ordering rather than
+  // on membership alone, so it is stated here rather than left implicit in a re-typed literal.
+  for (const association of MAINTAINER_AUTHOR_ASSOCIATIONS) {
     if (values.includes(association)) return association;
   }
   return values[0];

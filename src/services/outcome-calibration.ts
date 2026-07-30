@@ -12,6 +12,7 @@ import { listAgentRecommendationOutcomes, listPullRequests } from "../db/reposit
 import type { SlopBand } from "../signals/slop";
 import type { AgentRecommendationOutcomeRecord, AgentRecommendationOutcomeState, PullRequestRecord } from "../types";
 import { nowIso } from "../utils/json";
+import { isMaintainerAuthorAssociation } from "../github/author-association";
 
 // The single place the recommendation-outcome states are grouped into positive/negative/pending. Both
 // aggregators over the agent_recommendation_outcomes ledger — this module and recommendation-quality-report.ts,
@@ -74,12 +75,11 @@ function terminalOutcome(pr: PullRequestRecord): "merged" | "closed" | null {
   return null;
 }
 
-// Same OWNER/MEMBER/COLLABORATOR classification settings-preview.ts's includeMaintainerAuthors check already
-// uses to exclude this population from the public surface by default.
-const MAINTAINER_AUTHOR_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
-
+// Same classification settings-preview.ts's includeMaintainerAuthors check uses to exclude this
+// population from the public surface by default -- now the shared predicate rather than a local copy
+// of the list (#9860).
 function isMaintainerAuthoredPr(pr: PullRequestRecord): boolean {
-  return pr.authorAssociation != null && MAINTAINER_AUTHOR_ASSOCIATIONS.has(pr.authorAssociation);
+  return isMaintainerAuthorAssociation(pr.authorAssociation);
 }
 
 /** Per-slop-band merge/close calibration over the resolved PRs that carry a slop assessment. Pure. */

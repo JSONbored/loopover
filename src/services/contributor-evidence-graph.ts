@@ -9,6 +9,7 @@ import type {
   RepoSyncStateRecord,
 } from "../types";
 import { nowIso } from "../utils/json";
+import { isMaintainerAuthorAssociation } from "../github/author-association";
 
 export const CONTRIBUTOR_EVIDENCE_GRAPH_SIGNAL = "contributor-evidence-graph";
 const CONTRIBUTOR_EVIDENCE_GRAPH_VERSION = 1;
@@ -481,7 +482,7 @@ function fallbackRoleContext(
 
 function maintainerAssociationVisible(pullRequests: PullRequestRecord[], issues: IssueRecord[]): boolean {
   return [...pullRequests.map((pr) => pr.authorAssociation), ...issues.map((issue) => issue.authorAssociation)].some((association) =>
-    ["OWNER", "MEMBER", "COLLABORATOR"].includes((association ?? "").toUpperCase()),
+    isMaintainerAuthorAssociation(association),
   );
 }
 

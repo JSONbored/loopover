@@ -1,5 +1,6 @@
 import type { CheckSummaryRecord, PullRequestRecord, PullRequestReviewRecord, RoleContext } from "./types.js";
 import type { ScorePreviewInput } from "./preview.js";
+import { isMaintainerAuthorAssociation } from "../settings/author-association.js";
 
 // Deterministic subset of the backend's `src/scoring/pending-pr-scenarios.ts` (#2282): the pure
 // classification/detection logic that only needs already-fetched PR/review/check records. The two
@@ -42,14 +43,6 @@ const STALE_DAYS = 14;
 // Real draft markers only — "[draft]", "Draft:", "Draft -"; the delimiter keeps "Drafting" and
 // "draft-js" from matching. Trailing \s* lets the same pattern also strip the marker for dedup keys.
 export const DRAFT_TITLE_PATTERN = /^(?:\[\s*draft\s*\]|draft(?:\s*:|\s+-))\s*/i;
-
-// Mirrors `src/github/commands.ts`'s `isMaintainerAssociation`/`MAINTAINER_ASSOCIATIONS` exactly. Duplicated
-// here (rather than imported) because this package cannot reach into `src/`; keep the two in sync by hand.
-const MAINTAINER_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
-
-function isMaintainerAssociation(association: string | null | undefined): boolean {
-  return Boolean(association && MAINTAINER_ASSOCIATIONS.has(association));
-}
 
 export function detectPendingPrScenario(args: {
   login: string;
@@ -147,7 +140,7 @@ export function classifyOpenPullRequest(args: {
     reasons.push("Maintainer-lane context for this repo; not counted as outside-contributor pending reward work.");
     return { repoFullName: args.pr.repoFullName, number: args.pr.number, title: args.pr.title, classification: "maintainer_lane", reasons };
   }
-  if (isMaintainerAssociation(args.pr.authorAssociation)) {
+  if (isMaintainerAuthorAssociation(args.pr.authorAssociation)) {
     reasons.push("Author association indicates maintainer-authored work.");
     return { repoFullName: args.pr.repoFullName, number: args.pr.number, title: args.pr.title, classification: "maintainer_lane", reasons };
   }

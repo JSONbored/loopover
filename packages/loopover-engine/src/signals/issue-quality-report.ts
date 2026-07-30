@@ -22,6 +22,7 @@ import type {
   RepositoryRecord,
 } from "../types/predicted-gate-types.js";
 import { nowIso } from "../utils/json.js";
+import { isMaintainerAuthorAssociation } from "../settings/author-association.js";
 import {
   bountyIssueKey,
   buildCollisionReport,
@@ -77,16 +78,12 @@ function daysSince(value: string | null | undefined): number {
   return Math.floor((Date.now() - parsed) / 86_400_000);
 }
 
-function isMaintainerAssociation(value: string | null | undefined): boolean {
-  return value === "OWNER" || value === "MEMBER" || value === "COLLABORATOR";
-}
-
 function sameLogin(value: string | null | undefined, login: string): boolean {
   return value?.toLowerCase() === login.toLowerCase();
 }
 
 function isMaintainerWipIssue(issue: IssueRecord): boolean {
-  return isMaintainerAssociation(issue.authorAssociation) && issue.labels.some((label) => MAINTAINER_WIP_LABELS.has(label.toLowerCase().trim()));
+  return isMaintainerAuthorAssociation(issue.authorAssociation) && issue.labels.some((label) => MAINTAINER_WIP_LABELS.has(label.toLowerCase().trim()));
 }
 
 function indexPullRequestsByLinkedIssue<T extends { number: number; linkedIssues: number[] }>(pullRequests: T[]): Map<number, T[]> {
@@ -253,7 +250,7 @@ export function buildIssueQualityReport(
       const bounty = bountyByIssue.get(bountyIssueKey(fullName, issue.number)) ?? null;
       const bountyLifecycle: BountyLifecycle | null = bounty ? classifyBountyLifecycle(bounty, issue) : null;
       const linkedWorkCount = linkedPrs.length + linkedMergedPrs.length + issue.linkedPrs.length;
-      const maintainerAuthored = isMaintainerAssociation(issue.authorAssociation);
+      const maintainerAuthored = isMaintainerAuthorAssociation(issue.authorAssociation);
       const maintainerWip = isMaintainerWipIssue(issue);
       const reasons = [
         ...(bodyLength >= 200 ? ["Issue has enough body detail to evaluate."] : []),

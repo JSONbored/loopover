@@ -29,11 +29,39 @@ const SCAN_ROOTS = ["src", "packages/loopover-engine/src", "packages/loopover-co
 const SOURCE_PATTERN = /\.tsx?$/;
 const EXCLUDED_SEGMENT = /(^|\/)(node_modules|dist|dist-test|coverage)(\/|$)/;
 
-/** The three-value maintainer subset, in any quoting/spacing, on one line. */
-const MAINTAINER_TRIPLE = /["']OWNER["']\s*,\s*["']MEMBER["']\s*,\s*["']COLLABORATOR["']/;
+/** Each member of the three-value maintainer subset, quoted, in any casing of quote. Detection is
+ *  "all three appear close together", NOT "they appear comma-separated" -- the first version of this check
+ *  only matched array literals, and review caught that it therefore missed
+ *  `value === "OWNER" || value === "MEMBER" || value === "COLLABORATOR"` sitting in engine.ts with fourteen
+ *  call sites. A guard that only recognises one spelling of the thing it is guarding is a list again. */
+const OWNER_LITERAL = /["']OWNER["']/;
+const MEMBER_LITERAL = /["']MEMBER["']/;
+const COLLABORATOR_LITERAL = /["']COLLABORATOR["']/;
+
+/** How many consecutive lines are considered together. A formatter will break a long `||` chain or a
+ *  multi-entry array across lines, so a single-line scan would miss the same predicate purely on width. */
+const WINDOW_LINES = 4;
+
+function namesAllThree(text: string): boolean {
+  return OWNER_LITERAL.test(text) && MEMBER_LITERAL.test(text) && COLLABORATOR_LITERAL.test(text);
+}
 
 /** A full eight-value GitHub association vocabulary -- a wire schema, not this predicate. */
 const FULL_VOCABULARY = /["']CONTRIBUTOR["']|["']FIRST_TIME(?:R|_CONTRIBUTOR)["']|["']MANNEQUIN["']/;
+
+/**
+ * Sites that name all three associations but are NOT this predicate, with the reason.
+ *
+ * This is an exception list, not a list of known copies -- the difference matters. It records places whose
+ * SEMANTICS genuinely differ, each of which would be wrong to "fix"; it does not record duplicates awaiting
+ * migration. Mirrors check-regate-sort-key.ts's ALLOWED_OMISSIONS, and an entry has to say why.
+ */
+export const ALLOWED_DISTINCT_SEMANTICS: ReadonlyMap<string, string> = new Map([
+  [
+    "packages/loopover-engine/src/settings/command-authorization.ts",
+    "Not the maintainer predicate: it maps OWNER/MEMBER to the `maintainer` role and COLLABORATOR to a SEPARATE `collaborator` role. Collapsing the two would silently grant collaborators maintainer-only commands.",
+  ],
+]);
 
 export type AssociationCopy = { file: string; line: number; snippet: string };
 
@@ -52,18 +80,28 @@ function listSourceFiles(root: string): string[] {
 
 /** Pure over its inputs so the check is testable without touching the tree. */
 export function findMaintainerAssociationCopies(
-  options: { roots?: readonly string[]; readFile?: (file: string) => string; listFiles?: (root: string) => string[] } = {},
+  options: { roots?: readonly string[]; readFile?: (file: string) => string; listFiles?: (root: string) => string[]; allowed?: ReadonlyMap<string, string> } = {},
 ): AssociationCopy[] {
-  const { roots = SCAN_ROOTS, listFiles = listSourceFiles, readFile = (file: string) => readFileSync(join(REPO_ROOT, file), "utf8") } = options;
+  const { roots = SCAN_ROOTS, listFiles = listSourceFiles, readFile = (file: string) => readFileSync(join(REPO_ROOT, file), "utf8"), allowed = ALLOWED_DISTINCT_SEMANTICS } = options;
   const copies: AssociationCopy[] = [];
   for (const root of roots) {
     for (const file of listFiles(root)) {
       if (relative(DEFINITION_FILE, file) === "") continue;
-      for (const [index, line] of readFile(file).split("\n").entries()) {
-        if (!MAINTAINER_TRIPLE.test(line)) continue;
-        // A line that also names the wider vocabulary is a schema enum, not the maintainer predicate.
-        if (FULL_VOCABULARY.test(line)) continue;
-        copies.push({ file, line: index + 1, snippet: line.trim().slice(0, 120) });
+      const lines = readFile(file).split("\n");
+      let reportedThrough = -1;
+      for (const [index] of lines.entries()) {
+        if (index <= reportedThrough) continue; // one report per occurrence, not one per overlapping window
+        const window = lines.slice(index, index + WINDOW_LINES).join("\n");
+        if (!namesAllThree(window)) continue;
+        // A window that also names the wider vocabulary is a schema enum, not the maintainer predicate.
+        if (FULL_VOCABULARY.test(window)) continue;
+        if (allowed.has(file)) continue;
+        // Report the line that actually names one of them, not the window's first line -- a window can open
+        // on a blank line or a closing brace, which tells a reader nothing about what was found.
+        const offset = lines.slice(index, index + WINDOW_LINES).findIndex((l) => OWNER_LITERAL.test(l) || MEMBER_LITERAL.test(l) || COLLABORATOR_LITERAL.test(l));
+        const at = index + (offset === -1 ? 0 : offset);
+        copies.push({ file, line: at + 1, snippet: (lines[at] ?? "").trim().slice(0, 120) });
+        reportedThrough = index + WINDOW_LINES - 1;
       }
     }
   }

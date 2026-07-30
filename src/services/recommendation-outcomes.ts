@@ -16,6 +16,7 @@ import type {
   PullRequestRecord,
 } from "../types";
 import { nowIso } from "../utils/json";
+import { isMaintainerAuthorAssociation } from "../github/author-association";
 
 const DEFAULT_RECOMMENDATION_OUTCOME_STALE_DAYS = 14;
 const DEFAULT_RECOMMENDATION_OUTCOME_IGNORED_DAYS = 7;
@@ -367,7 +368,7 @@ function repoFromPayload(action: AgentActionRecord): string | null {
 
 function isMaintainerLane(login: string, repoFullName: string, association?: string | null | undefined): boolean {
   const owner = repoFullName.split("/")[0] ?? "";
-  return sameLogin(owner, login) || association === "OWNER" || association === "MEMBER" || association === "COLLABORATOR";
+  return sameLogin(owner, login) || isMaintainerAuthorAssociation(association);
 }
 
 function sameLogin(left: string | null | undefined, right: string | null | undefined): boolean {

@@ -3,6 +3,7 @@ import { getFreshOfficialMinerDetection, getRepository, listAllPullRequests, lis
 import type { ControlPanelRoleCard, ControlPanelRoleName, ControlPanelRoleSummary, InstallationRecord, PullRequestRecord, RepositoryRecord } from "../types";
 import { nowIso } from "../utils/json";
 import { PUBLIC_LOCAL_PATH_SCRUB_PATTERN, publicTokenPattern } from "../signals/redaction";
+import { isMaintainerAuthorAssociation } from "../github/author-association";
 
 export type RoleSummaryInputs = {
   login: string;
@@ -108,7 +109,7 @@ function resolveAccountRepoScope(args: RoleSummaryInputs): {
       (sameLogin(repo.owner, args.login) || (repo.installationId !== undefined && repo.installationId !== null && accountInstallationIds.has(repo.installationId))),
   );
   const maintainerRepoNames = args.pullRequests
-    .filter((pull) => sameLogin(pull.authorLogin, args.login) && isMaintainerAssociation(pull.authorAssociation))
+    .filter((pull) => sameLogin(pull.authorLogin, args.login) && isMaintainerAuthorAssociation(pull.authorAssociation))
     .map((pull) => pull.repoFullName)
     .filter((repoFullName) => installedRepos.some((repo) => sameRepo(repo.fullName, repoFullName)));
   return { installedRepos, accountInstallations, ownedInstalledRepos, maintainerRepoNames };
@@ -292,10 +293,6 @@ function sameLogin(value: string | null | undefined, login: string): boolean {
 
 function sameRepo(left: string | null | undefined, right: string | null | undefined): boolean {
   return Boolean(left && right && left.toLowerCase() === right.toLowerCase());
-}
-
-function isMaintainerAssociation(value: string | null | undefined): boolean {
-  return value === "OWNER" || value === "MEMBER" || value === "COLLABORATOR";
 }
 
 export function sanitizeRoleText(value: string): string {

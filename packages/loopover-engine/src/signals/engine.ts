@@ -45,7 +45,7 @@ import { diffFilePriority } from "../review/diff-file-priority.js";
 import type { ImprovementBand, StructuralImprovementAssessment } from "../../../../src/signals/improvement.js";
 import type { ImprovementMagnitude } from "../../../../src/services/ai-review.js";
 import type { SlopBand } from "./slop.js";
-import { MAINTAINER_AUTHOR_ASSOCIATIONS } from "../settings/author-association.js";
+import { MAINTAINER_AUTHOR_ASSOCIATIONS, isMaintainerAuthorAssociation } from "../settings/author-association.js";
 
 export type ParticipationLane = "direct_pr" | "issue_discovery" | "split" | "inactive" | "unknown";
 export type SignalFinding = AdvisoryFinding;
@@ -235,7 +235,7 @@ const MAINTAINER_WIP_LABELS = new Set([
 
 /** True iff a maintainer-authored issue is labelled as the maintainer's own in-progress/internal work. */
 function isMaintainerWipIssue(issue: IssueRecord): boolean {
-  return isMaintainerAssociation(issue.authorAssociation) && issue.labels.some((label) => MAINTAINER_WIP_LABELS.has(label.toLowerCase().trim()));
+  return isMaintainerAuthorAssociation(issue.authorAssociation) && issue.labels.some((label) => MAINTAINER_WIP_LABELS.has(label.toLowerCase().trim()));
 }
 
 /**
@@ -244,7 +244,7 @@ function isMaintainerWipIssue(issue: IssueRecord): boolean {
  * exact condition the issue-watch monitor (#699 path B) notifies subscribers about.
  */
 export function isGrabbableHighMultiplierIssue(issue: IssueRecord): boolean {
-  return issue.state === "open" && isMaintainerAssociation(issue.authorAssociation) && !isMaintainerWipIssue(issue);
+  return issue.state === "open" && isMaintainerAuthorAssociation(issue.authorAssociation) && !isMaintainerWipIssue(issue);
 }
 
 export type ContributorFit = {
@@ -966,7 +966,7 @@ export function buildQueueHealth(
   const unlinkedPullRequests = openPullRequests.filter((pr) => pr.linkedIssues.length === 0);
   const stalePullRequests = openPullRequests.filter((pr) => daysSince(pr.updatedAt ?? pr.createdAt) >= 14);
   const draftPullRequests = openPullRequests.filter((pr) => pr.isDraft);
-  const maintainerAuthoredPullRequests = openPullRequests.filter((pr) => isMaintainerAssociation(pr.authorAssociation));
+  const maintainerAuthoredPullRequests = openPullRequests.filter((pr) => isMaintainerAuthorAssociation(pr.authorAssociation));
   const slopFlaggedPullRequests = openPullRequests.filter(
     (pr) => pr.slopBand === "elevated" || pr.slopBand === "high",
   ).length;
@@ -1262,7 +1262,7 @@ export function buildContributorProfile(
     authoredPullRequests.filter((pr) => pr.state === "open" && pr.linkedIssues.length === 0).length,
     matchingStats.reduce((sum, stat) => sum + stat.unlinkedPullRequests, 0),
   );
-  const maintainerAssociatedPullRequests = authoredPullRequests.filter((pr) => isMaintainerAssociation(pr.authorAssociation)).length;
+  const maintainerAssociatedPullRequests = authoredPullRequests.filter((pr) => isMaintainerAuthorAssociation(pr.authorAssociation)).length;
   const pullRequestCount = Math.max(authoredPullRequests.length, statPullRequests);
   const mergedPullRequestCount = Math.max(mergedPullRequests.length, statMergedPullRequests);
   const issueCount = Math.max(authoredIssues.length, statIssues);
@@ -1298,7 +1298,7 @@ function buildGittensorContributorProfile(
   /* v8 ignore next -- Official Gittensor snapshots normally include the canonical GitHub login; request-login fallback protects legacy rows. */
   const matchingStats = repoStats.filter((stat) => sameLogin(stat.login, snapshot.githubUsername) || sameLogin(stat.login, login));
   const unlinkedOpenPullRequests = matchingStats.reduce((sum, stat) => sum + stat.unlinkedPullRequests, 0);
-  const maintainerAssociatedPullRequests = pullRequests.filter((pr) => sameLogin(pr.authorLogin, login) && isMaintainerAssociation(pr.authorAssociation)).length;
+  const maintainerAssociatedPullRequests = pullRequests.filter((pr) => sameLogin(pr.authorLogin, login) && isMaintainerAuthorAssociation(pr.authorAssociation)).length;
   const reposTouched = snapshot.repositories
     .filter((repo) => repo.pullRequests + repo.openIssues + repo.closedIssues > 0)
     .map((repo) => repo.repoFullName)
@@ -1478,7 +1478,7 @@ export function buildContributorOpportunities(
             : quality?.status === "hold"
               ? -15
               : 0;
-      const maintainerAuthored = isMaintainerAssociation(issue.authorAssociation);
+      const maintainerAuthored = isMaintainerAuthorAssociation(issue.authorAssociation);
       const maintainerWip = isMaintainerWipIssue(issue);
       const multiplierTier: ContributorOpportunity["multiplierTier"] = maintainerAuthored ? "maintainer_created" : "community";
       const availability: ContributorOpportunity["availability"] = maintainerWip ? "maintainer_wip" : "ready";
@@ -1638,7 +1638,7 @@ export function buildRoleContext(args: {
     role = "collaborator";
     source = "github_association";
   /* v8 ignore next -- strongestAssociation resolves maintainer associations before this guard; it protects malformed mixed association rows. */
-  } else if (authoredAssociations.some(isMaintainerAssociation)) {
+  } else if (authoredAssociations.some(isMaintainerAuthorAssociation)) {
     role = "repo_maintainer";
     source = "github_association";
   } else if (touchedByOfficial) {
@@ -1888,8 +1888,8 @@ export function buildContributorReconciliationReport(args: {
     const maintainerLane =
       sameLogin(repo?.owner, args.login) ||
       sameLogin(repoOwner, args.login) ||
-      args.pullRequests.some((pr) => sameRepo(pr.repoFullName, repoFullName) && sameLogin(pr.authorLogin, args.login) && isMaintainerAssociation(pr.authorAssociation)) ||
-      args.issues.some((issue) => sameRepo(issue.repoFullName, repoFullName) && sameLogin(issue.authorLogin, args.login) && isMaintainerAssociation(issue.authorAssociation));
+      args.pullRequests.some((pr) => sameRepo(pr.repoFullName, repoFullName) && sameLogin(pr.authorLogin, args.login) && isMaintainerAuthorAssociation(pr.authorAssociation)) ||
+      args.issues.some((issue) => sameRepo(issue.repoFullName, repoFullName) && sameLogin(issue.authorLogin, args.login) && isMaintainerAuthorAssociation(issue.authorAssociation));
     return {
       repoFullName,
       maintainerLane,
@@ -2082,7 +2082,7 @@ function normalizeRecentMergedOutcome(
   // lane so the record is excluded from outside-contributor statistics rather than silently
   // inflating the outside-contributor merge rate with unclassifiable data.
   const knownOutsider = association === "NONE" || association === "CONTRIBUTOR" || association === "FIRST_TIME_CONTRIBUTOR" || association === "FIRST_TIMER";
-  const maintainerLane = isMaintainerAssociation(association) || !knownOutsider;
+  const maintainerLane = isMaintainerAuthorAssociation(association) || !knownOutsider;
   return {
     number: record.number,
     bucket: "merged",
@@ -2154,7 +2154,7 @@ export function buildRepoOutcomePatterns(args: {
         bucket,
         decided: merged || closedUnmerged,
         merged,
-        maintainerLane: isMaintainerAssociation(pr.authorAssociation),
+        maintainerLane: isMaintainerAuthorAssociation(pr.authorAssociation),
         linked: pr.linkedIssues.length > 0 || (mergedDetail?.linkedIssues.length ?? 0) > 0,
         labels: [...new Set([...pr.labels, ...(mergedDetail?.labels ?? [])])].sort(),
         filePaths,
@@ -2582,7 +2582,7 @@ export function buildPreflightResult(
   // snapshot; "inactive" (zero emission share) is unambiguous either way -- it is only reachable from real
   // synced data.
   const laneUnavailable = (lane.lane === "unknown" && registryEverSynced) || lane.lane === "inactive";
-  const maintainerAuthored = isMaintainerAssociation(input.authorAssociation);
+  const maintainerAuthored = isMaintainerAuthorAssociation(input.authorAssociation);
   if (laneUnavailable) {
     findings.push({
       code: "lane_not_recommended",
@@ -2739,7 +2739,7 @@ export function buildMaintainerPacket(
     .map((pr) => {
       const reasons = [
         ...(pr.linkedIssues.length === 0 ? ["Missing linked issue context."] : []),
-        ...(isMaintainerAssociation(pr.authorAssociation) ? ["Author has maintainer association."] : []),
+        ...(isMaintainerAuthorAssociation(pr.authorAssociation) ? ["Author has maintainer association."] : []),
         ...(collisions.clusters.some((cluster) => cluster.items.some((item) => item.type === "pull_request" && item.number === pr.number))
           ? ["Potential overlap with other open work."]
           : []),
@@ -3020,7 +3020,7 @@ export function buildIssueQualityReport(
       const linkage = buildIssueLinkageRecord(issue, lifecycleEntry, linkedPrs, linkedMergedPrs);
       // #186: maintainer-authored issues must not silently read as "ready" for outside contributors —
       // always warn to confirm intent, and downgrade ones labelled as the maintainer's own in-progress work.
-      const maintainerAuthored = isMaintainerAssociation(issue.authorAssociation);
+      const maintainerAuthored = isMaintainerAuthorAssociation(issue.authorAssociation);
       const maintainerWip = isMaintainerWipIssue(issue);
       const reasons = [
         ...(bodyLength >= 200 ? ["Issue has enough body detail to evaluate."] : []),
@@ -5246,10 +5246,6 @@ function strongestAssociation(values: string[]): string | undefined {
     if (values.includes(association)) return association;
   }
   return values[0];
-}
-
-function isMaintainerAssociation(value: string | null | undefined): boolean {
-  return value === "OWNER" || value === "MEMBER" || value === "COLLABORATOR";
 }
 
 function sameLogin(value: string | null | undefined, login: string): boolean {

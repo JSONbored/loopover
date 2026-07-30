@@ -21,6 +21,7 @@ import { nowIso } from "../utils/json.js";
 import { PREFLIGHT_LIMITS } from "./preflight-limits.js";
 import { hasValidationNote, isCodeFile, isTestPath } from "./test-evidence.js";
 import { diffFilePriority } from "../review/diff-file-priority.js";
+import { isMaintainerAuthorAssociation } from "../settings/author-association.js";
 
 export type { IssueQualityReport, CollisionReport, CollisionCluster } from "../types/predicted-gate-types.js";
 
@@ -238,7 +239,7 @@ export function buildQueueHealth(
   const unlinkedPullRequests = openPullRequests.filter((pr) => pr.linkedIssues.length === 0);
   const stalePullRequests = openPullRequests.filter((pr) => daysSince(pr.updatedAt ?? pr.createdAt) >= 14);
   const draftPullRequests = openPullRequests.filter((pr) => pr.isDraft);
-  const maintainerAuthoredPullRequests = openPullRequests.filter((pr) => isMaintainerAssociation(pr.authorAssociation));
+  const maintainerAuthoredPullRequests = openPullRequests.filter((pr) => isMaintainerAuthorAssociation(pr.authorAssociation));
   const slopFlaggedPullRequests = openPullRequests.filter(
     (pr) => pr.slopBand === "elevated" || pr.slopBand === "high",
   ).length;
@@ -398,7 +399,7 @@ export function buildPreflightResult(
   // snapshot; "inactive" (zero emission share) is unambiguous either way -- it is only reachable from real
   // synced data.
   const laneUnavailable = (lane.lane === "unknown" && registryEverSynced) || lane.lane === "inactive";
-  const maintainerAuthored = isMaintainerAssociation(input.authorAssociation);
+  const maintainerAuthored = isMaintainerAuthorAssociation(input.authorAssociation);
   if (laneUnavailable) {
     findings.push({
       code: "lane_not_recommended",
@@ -982,10 +983,6 @@ function extractLinkedIssueNumbersWithOverflow(text: string, repoFullName: strin
 
 function extractLinkedIssueNumbers(text: string, repoFullName: string): number[] {
   return extractLinkedIssueNumbersWithOverflow(text, repoFullName).numbers;
-}
-
-function isMaintainerAssociation(value: string | null | undefined): boolean {
-  return value === "OWNER" || value === "MEMBER" || value === "COLLABORATOR";
 }
 
 function sameLogin(value: string | null | undefined, login: string): boolean {

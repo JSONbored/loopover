@@ -11,6 +11,7 @@ import {
   type EvalScoreRecord,
 } from "../../src/review/eval-score-records";
 import { contentDigest, sha256Hex } from "../../src/review/decision-record";
+import { buildPublicCorpusCommitments, loadPublicEvalCorpus } from "../../src/review/public-eval-corpus";
 import { loadPublicRulePrecision, PUBLIC_PRECISION_MIN_DECIDED, type PublicRulePrecision } from "../../src/review/public-rule-precision";
 import { createSignalStore } from "../../src/review/signal-tracking-wire";
 import { persistThresholdBacktestRuns, runThresholdBacktestAdvisory } from "../../src/services/threshold-backtest-run";
@@ -28,6 +29,16 @@ const PRECISION_WITH_FREEZE_POINT: PublicRulePrecision = {
   latestBacktestRun: { corpusChecksum: "abc123def456", at: "2026-07-27T10:00:00.000Z" },
 };
 
+// #9962: the per-rule DOWNLOADABLE-corpus commitments the route supplies. Since the persisted run's checksum
+// is no longer a publishable commitment (it hashes the raw corpus, which no reader can fetch), these are what
+// a record commits to -- so every builder call below has to pass them to publish anything at all. The
+// PRECISION_WITH_FREEZE_POINT fixture keeps its run so these tests still cover the case where one exists.
+const CORPUS_COMMITMENTS: ReadonlyMap<string, string> = new Map([
+  ["ai_consensus_defect", "a".repeat(64)],
+  ["sparse_rule", "b".repeat(64)],
+  ["never_fired", "c".repeat(64)],
+]);
+
 describe("evalScoreCoverage (#9643)", () => {
   it("is #9215's decided/(decided+abstained), so a validator re-deriving it agrees with the published field", () => {
     expect(evalScoreCoverage(25, 0)).toBe(1); // no abstention concept: everything seen was decided
@@ -41,17 +52,23 @@ describe("evalScoreCoverage (#9643)", () => {
 });
 
 describe("buildEvalScoreRecordsFromRulePrecision (#9266)", () => {
-  it("returns an empty array when there is no persisted backtest run to commit to", async () => {
+  it("returns an empty array when no rule has a downloadable corpus to commit to", async () => {
+    // #9962: a persisted backtest run no longer rescues these records into the surface with a commitment no
+    // reader could check, so "nothing to commit to" now means exactly "no per-rule corpus commitment".
     const records = await buildEvalScoreRecordsFromRulePrecision({ ...PRECISION_WITH_FREEZE_POINT, latestBacktestRun: null }, ISSUED_AT);
     expect(records).toEqual([]);
   });
 
-  it("refuses to publish records whose freeze point commits to an empty corpus", async () => {
+  it("refuses to publish a record that would commit to an empty corpus", async () => {
     // Regression: production published decided=460/confirmed=287 alongside sha256("[]") -- a hash that is
     // byte-identical for every rule and every window, so it committed to nothing a consumer could re-derive.
     const records = await buildEvalScoreRecordsFromRulePrecision(
-      { ...PRECISION_WITH_FREEZE_POINT, latestBacktestRun: { corpusChecksum: EMPTY_CORPUS_CHECKSUM, at: "2026-07-27T10:00:00.000Z" } },
+      PRECISION_WITH_FREEZE_POINT,
       ISSUED_AT,
+      new Map([
+        ["ai_consensus_defect", EMPTY_CORPUS_CHECKSUM],
+        ["sparse_rule", EMPTY_CORPUS_CHECKSUM],
+      ]),
     );
     expect(records).toEqual([]);
   });
@@ -65,11 +82,14 @@ describe("buildEvalScoreRecordsFromRulePrecision (#9266)", () => {
     expect(EMPTY_CORPUS_CHECKSUM).toBe(await sha256Hex("[]"));
   });
 
-  it("builds one record per rule, committed to the freeze point's corpus checksum", async () => {
-    const records = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT);
+  it("builds one record per rule, committed to that rule's own downloadable-corpus checksum", async () => {
+    const records = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT, CORPUS_COMMITMENTS);
     expect(records).toHaveLength(2);
     for (const record of records) {
-      expect(record.commitments.corpusChecksum).toBe("abc123def456");
+      const ruleId = record.workUnit.kind === "outcome_confirmed_precision" ? record.workUnit.ruleId : "";
+      expect(record.commitments.corpusChecksum).toBe(CORPUS_COMMITMENTS.get(ruleId));
+      // #9962: never the persisted run's checksum, which this fixture still carries.
+      expect(record.commitments.corpusChecksum).not.toBe(PRECISION_WITH_FREEZE_POINT.latestBacktestRun?.corpusChecksum);
       expect(record.commitments.scoringRuleVersion).toBe(OUTCOME_CONFIRMED_PRECISION_SCORING_RULE_VERSION);
       expect(record.commitments.windowEnd).toBe(ISSUED_AT);
       expect(record.commitments.windowStart).toBe(new Date(Date.parse(ISSUED_AT) - 90 * 24 * 60 * 60 * 1000).toISOString());
@@ -83,7 +103,7 @@ describe("buildEvalScoreRecordsFromRulePrecision (#9266)", () => {
   });
 
   it("carries decided/confirmed/precision through verbatim, with recall null and abstained 0 (not applicable to this work-unit kind)", async () => {
-    const records = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT);
+    const records = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT, CORPUS_COMMITMENTS);
     const withPrecision = records.find((r) => r.workUnit.kind === "outcome_confirmed_precision" && r.workUnit.ruleId === "ai_consensus_defect");
     // coverage is 1, not null: abstained is structurally 0 here, so 25/(25+0) is fully determined (#9643).
     expect(withPrecision?.score).toEqual({ decided: 25, confirmed: 20, precision: 0.8, recall: null, coverage: 1, abstained: 0 });
@@ -101,6 +121,7 @@ describe("buildEvalScoreRecordsFromRulePrecision (#9266)", () => {
     const records = await buildEvalScoreRecordsFromRulePrecision(
       { ...PRECISION_WITH_FREEZE_POINT, rules: [{ ruleId: "never_fired", decided: 0, confirmed: 0, precision: null, unrecognized: 0 }] },
       ISSUED_AT,
+      CORPUS_COMMITMENTS,
     );
     expect(records).toHaveLength(1);
     expect(records[0]?.score).toEqual({ decided: 0, confirmed: 0, precision: null, recall: null, coverage: null, abstained: 0 });
@@ -110,7 +131,7 @@ describe("buildEvalScoreRecordsFromRulePrecision (#9266)", () => {
     // recordDigest is computed over the whole record, so changing coverage changes the digest. Records are
     // built on read (routes.ts), never persisted, so nothing needs migrating -- but the round-trip a consumer
     // runs to verify a fetched record must still hold.
-    const records = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT);
+    const records = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT, CORPUS_COMMITMENTS);
     expect(records).toHaveLength(2);
     for (const record of records) {
       expect(record.score.coverage).toBe(1);
@@ -119,7 +140,7 @@ describe("buildEvalScoreRecordsFromRulePrecision (#9266)", () => {
   });
 
   it("each record's recordDigest is the sha256 of its own canonical content (independently recomputable)", async () => {
-    const records = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT);
+    const records = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT, CORPUS_COMMITMENTS);
     for (const record of records) {
       const { recordDigest, ...rest } = record;
       expect(await contentDigest(rest)).toBe(recordDigest);
@@ -127,7 +148,7 @@ describe("buildEvalScoreRecordsFromRulePrecision (#9266)", () => {
   });
 
   it("emits records sorted the same way the input rules array is ordered (no re-sort, no reordering surprise)", async () => {
-    const records = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT);
+    const records = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT, CORPUS_COMMITMENTS);
     expect(records.map((r) => (r.workUnit.kind === "outcome_confirmed_precision" ? r.workUnit.ruleId : ""))).toEqual([
       "ai_consensus_defect",
       "sparse_rule",
@@ -186,12 +207,12 @@ describe("filterEvalScoreRecords", () => {
 
 describe("verifyEvalScoreRecordDigest", () => {
   it("returns true for a record whose digest matches its own content", async () => {
-    const [record] = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT);
+    const [record] = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT, CORPUS_COMMITMENTS);
     expect(await verifyEvalScoreRecordDigest(record as EvalScoreRecord)).toBe(true);
   });
 
   it("returns false for a record whose content was tampered with after the digest was computed", async () => {
-    const [record] = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT);
+    const [record] = await buildEvalScoreRecordsFromRulePrecision(PRECISION_WITH_FREEZE_POINT, ISSUED_AT, CORPUS_COMMITMENTS);
     const tampered: EvalScoreRecord = { ...(record as EvalScoreRecord), issuedAt: "2099-01-01T00:00:00.000Z" };
     expect(await verifyEvalScoreRecordDigest(tampered)).toBe(false);
   });
@@ -254,24 +275,45 @@ describe("per-rule corpus commitments when no backtest run is persisted (#9805)"
     expect(records).toEqual([]);
   });
 
-  it("INVARIANT: a persisted backtest run still WINS, so self-host behaviour is unchanged", async () => {
+  // #9962: the persisted run used to WIN here, which is what made every self-host record commit to bytes no
+  // reader could obtain. Its checksum is `checksumCases` over the RAW corpus (targetKey, full metadata bag,
+  // full-precision timestamps); the downloadable corpus is the redacted one, so the two hash different inputs
+  // by construction and the published commitment could never match the published corpus.
+  it("REGRESSION: commits to the DOWNLOADABLE corpus, not the persisted run's non-downloadable checksum", async () => {
     const records = await buildEvalScoreRecordsFromRulePrecision(
       precisionOf([rule("ai_consensus_defect")], { corpusChecksum: "d".repeat(64), at: ISSUED_AT }),
       ISSUED_AT,
       new Map([["ai_consensus_defect", "e".repeat(64)]]),
     );
-    expect(records[0]!.commitments.corpusChecksum).toBe("d".repeat(64));
+    expect(records[0]!.commitments.corpusChecksum).toBe("e".repeat(64));
+    expect(records[0]!.commitments.corpusChecksum).not.toBe("d".repeat(64));
   });
 
-  it("falls back when the persisted run's checksum is the empty-corpus one, rather than publishing nothing", async () => {
-    // The run exists but commits to nothing; the rule's real corpus does. Preferring the run here would keep
-    // the surface empty for no benefit.
+  it("REGRESSION: a persisted run does not stamp ONE checksum across every rule's record", async () => {
+    // The shape the Orb was actually publishing: several rules clear the floor, `latestBacktestRun` is a
+    // single global row (`ORDER BY created_at DESC LIMIT 1`, no rule filter), so every record carried the same
+    // commitment and all but one of them pointed at a different rule's cases.
     const records = await buildEvalScoreRecordsFromRulePrecision(
-      precisionOf([rule("ai_consensus_defect")], { corpusChecksum: EMPTY_CORPUS_CHECKSUM, at: ISSUED_AT }),
+      precisionOf([rule("rule_a"), rule("rule_b")], { corpusChecksum: "d".repeat(64), at: ISSUED_AT }),
       ISSUED_AT,
-      new Map([["ai_consensus_defect", "f".repeat(64)]]),
+      new Map([
+        ["rule_a", "a".repeat(64)],
+        ["rule_b", "b".repeat(64)],
+      ]),
     );
-    expect(records[0]!.commitments.corpusChecksum).toBe("f".repeat(64));
+    const checksums = records.map((r) => r.commitments.corpusChecksum);
+    expect(new Set(checksums).size).toBe(2);
+    expect(checksums).not.toContain("d".repeat(64));
+  });
+
+  it("publishes nothing for a rule with no downloadable corpus, even when a run is persisted", async () => {
+    // Previously the run's checksum rescued this rule into the surface with an unverifiable commitment. The
+    // honest outcome is an omitted record, not a record a reader cannot check.
+    const records = await buildEvalScoreRecordsFromRulePrecision(
+      precisionOf([rule("ai_consensus_defect")], { corpusChecksum: "d".repeat(64), at: ISSUED_AT }),
+      ISSUED_AT,
+    );
+    expect(records).toEqual([]);
   });
 
   it("still returns [] with neither a run nor any commitment -- the #9215 rule is unchanged", async () => {
@@ -319,12 +361,20 @@ describe("in-Worker backtest -> /v1/public/eval-scores records (#9639)", () => {
     const now = Date.now();
     const { run, precision } = await seedRunAndLoad(env, now);
     expect(precision.rules.length).toBeGreaterThan(0);
+    // The run is what #9639 was about, so it still has to be persisted and readable for this to be the same
+    // regression -- but #9962 moved WHICH checksum gets published, so the commitments now come from the
+    // downloadable corpus and the run's checksum is asserted against below rather than for.
+    expect(precision.latestBacktestRun).not.toBeNull();
+    const commitments = await buildPublicCorpusCommitments(env, precision.rules.map((r) => r.ruleId), now);
 
-    const records = await buildEvalScoreRecordsFromRulePrecision(precision, ISSUED_AT);
+    const records = await buildEvalScoreRecordsFromRulePrecision(precision, ISSUED_AT, commitments);
 
     expect(records).toHaveLength(precision.rules.length);
     for (const record of records) {
-      expect(record.commitments.corpusChecksum).toBe(run.corpusChecksumByRuleId.get("linked_issue_scope_mismatch"));
+      const ruleId = (record.workUnit as { ruleId: string }).ruleId;
+      expect(record.commitments.corpusChecksum).toBe((await loadPublicEvalCorpus(env, ruleId, now)).checksum);
+      // #9962: NOT the run's raw-corpus checksum -- that one hashes bytes no reader can download.
+      expect(record.commitments.corpusChecksum).not.toBe(run.corpusChecksumByRuleId.get(ruleId));
       expect(record.commitments.corpusChecksum).not.toBe(EMPTY_CORPUS_CHECKSUM);
       expect(record.trust.tier).toBe("reproducible");
       // Each record still commits to its own content, so the freeze point cannot be swapped undetected.
@@ -341,6 +391,7 @@ describe("in-Worker backtest -> /v1/public/eval-scores records (#9639)", () => {
     await persistThresholdBacktestRuns(env, "acme/widgets", 7, run.changed, run.comparisons, run.corpusChecksumByRuleId);
 
     const precision = await loadPublicRulePrecision(env, now);
-    expect(await buildEvalScoreRecordsFromRulePrecision(precision, ISSUED_AT)).toEqual([]);
+    const commitments = await buildPublicCorpusCommitments(env, precision.rules.map((r) => r.ruleId), now);
+    expect(await buildEvalScoreRecordsFromRulePrecision(precision, ISSUED_AT, commitments)).toEqual([]);
   });
 });

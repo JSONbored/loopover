@@ -59,6 +59,13 @@ export type PublicEvalCorpus = {
   windowDays: number;
   caseCount: number;
   truncated: boolean;
+  /** #9962: TRUE when the history read threw and this corpus is empty for that reason rather than because the
+   *  rule genuinely has no cases in the window. The two are otherwise indistinguishable -- same `caseCount: 0`,
+   *  same {@link checksumPublicEvalCorpus}`([])` -- so a transient D1 blip published "this rule has decided
+   *  nothing", which is a false statement about the rule rather than an honest one about the deployment. It is
+   *  a published field, not just an internal one: a reader who downloads a corpus is entitled to know they are
+   *  looking at a degraded read, and {@link buildPublicCorpusCommitments} refuses to commit to one. */
+  readFailed: boolean;
   checksum: string;
   cases: PublicEvalCorpusCase[];
 };
@@ -134,10 +141,14 @@ export async function loadPublicEvalCorpus(env: Env, ruleId: string, nowMs: numb
   // them must say so -- committing a published score to a prefix, while claiming completeness, is exactly the
   // unverifiable-artifact problem this endpoint exists to solve.
   let saturated = false;
+  // #9962: recorded, not swallowed. Fail-safe still means "never 500 an unauthenticated route", but it must not
+  // also mean "report the failure as a fact about the rule" -- see PublicEvalCorpus.readFailed.
+  let readFailed = false;
   try {
     ({ fired, overrides, saturated } = await createSignalStore(env).queryRuleHistory(ruleId, sinceMs, MAX_RULE_HISTORY_LIMIT));
   } catch {
     // Fall through to an empty corpus rather than 500ing an unauthenticated route.
+    readFailed = true;
   }
 
   // Same exclusion the published per-rule precision applies: an override whose verdict was a human
@@ -157,9 +168,29 @@ export async function loadPublicEvalCorpus(env: Env, ruleId: string, nowMs: numb
     // Either bound truncates: the cap on the built cases, or the read that fed it. Reporting only the former
     // is what made this field always-false.
     truncated: truncated || saturated,
+    readFailed,
     checksum: await checksumPublicEvalCorpus(cases),
     cases,
   };
+}
+
+/**
+ * PURE. Is this corpus something a published record may commit to? The ONE place that question is answered,
+ * so the commitment path and anything else that needs the same judgement cannot drift apart (#9962).
+ *
+ * Split out from {@link buildPublicCorpusCommitments} for the same reason {@link applyPublicEvalCorpusCap} is
+ * split out of the loader: every arm is then exercised directly. In particular `readFailed` and `caseCount`
+ * always move together through the real store -- a failed read is why a corpus is empty -- so as an inline
+ * condition the read-failure arm would be unreachable and untested, indistinguishable from a redundant one. As
+ * a predicate over a plain value it can be driven with a degraded corpus that still carries cases, which is
+ * what proves the arm is load-bearing rather than decorative.
+ */
+export function isCommittableCorpus(corpus: PublicEvalCorpus): boolean {
+  // Ordered most-specific first: a degraded read is a statement about the DEPLOYMENT, and must not be
+  // reported (or silently absorbed) as the empty-corpus case, which is a statement about the RULE.
+  if (corpus.readFailed) return false;
+  if (corpus.caseCount === 0) return false;
+  return !corpus.truncated;
 }
 
 /**
@@ -168,9 +199,14 @@ export async function loadPublicEvalCorpus(env: Env, ruleId: string, nowMs: numb
  *
  * A rule is OMITTED (rather than mapped to a checksum a reader would be misled by) when:
  *
+ *   • the READ FAILED (#9962) -- checked FIRST and on its own, ahead of the empty-corpus arm it used to hide
+ *     behind. Both arms omit, so the observable behaviour is the same today; what changes is that the reason is
+ *     now known at the point the decision is made instead of being inferred from a `caseCount` that a blip and
+ *     a genuinely quiet rule produce identically. That distinction is load-bearing the moment anything wants to
+ *     tell "we decline to commit because this rule has no cases" apart from "we decline to commit because we
+ *     could not read", and collapsing the two is how a degraded read gets published as a fact about the rule;
  *   • the corpus is empty -- `checksumPublicEvalCorpus([])` is the same 32 bytes for every rule, every
- *     window and every deployment, so it commits to nothing re-derivable. This is also where a failed read
- *     lands, since loadPublicEvalCorpus degrades to an empty corpus rather than throwing a public route;
+ *     window and every deployment, so it commits to nothing re-derivable;
  *   • the corpus is TRUNCATED at PUBLIC_EVAL_CORPUS_MAX_CASES -- the checksum would then cover a prefix of
  *     the window while the record's `decided`/`confirmed` cover all of it. A reader who re-derived scores
  *     from the published cases would get different numbers and reasonably conclude the published ones were
@@ -188,7 +224,7 @@ export async function buildPublicCorpusCommitments(
   const commitments = new Map<string, string>();
   for (const ruleId of ruleIds) {
     const corpus = await loadPublicEvalCorpus(env, ruleId, nowMs);
-    if (corpus.caseCount === 0 || corpus.truncated) continue;
+    if (!isCommittableCorpus(corpus)) continue;
     commitments.set(ruleId, corpus.checksum);
   }
   return commitments;

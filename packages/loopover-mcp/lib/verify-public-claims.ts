@@ -100,7 +100,7 @@ export async function checkRecordDigests(records: readonly VerifiableEvalRecord[
 /**
  * CLAIM 2: each record's `corpusChecksum` is the checksum of a corpus that can actually be downloaded.
  *
- * `corpusByRuleId` holds what `/v1/public/eval-corpus?rule_id=…` returned for each rule -- absent when that
+ * `corpusByRuleId` holds what `/v1/public/eval-corpus?ruleId=…` returned for each rule -- absent when that
  * fetch found nothing. The checksum is recomputed from the CASES as served, which is the whole point: a
  * commitment is only worth anything if it covers bytes the reader can obtain, so this deliberately does not
  * trust the corpus payload's own `checksum` field and recomputes from `cases` instead.

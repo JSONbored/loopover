@@ -1976,13 +1976,21 @@ export function buildOpenApiSpec() {
     operationId: "getPublicEvalCorpus",
     tags: ["Public"],
     summary: "The redacted, checksummed corpus behind one rule's published precision — downloadable without credentials",
-    request: { query: z.object({ ruleId: z.string() }) },
+    request: {
+      query: z.object({
+        ruleId: z.string(),
+        rule_id: z
+          .string()
+          .optional()
+          .describe("Deprecated alias for `ruleId`, accepted so verifiers published before #9962 (which asked for this spelling and got a 400) work unchanged. `ruleId` wins if both are given."),
+      }),
+    },
     responses: {
       200: {
         description:
-          "{ ruleId, windowDays, caseCount, truncated, checksum, cases: [{ ruleId, outcome, label, firedAt, decidedAt, metadata?: { confidence } }] } — `targetKey` and every other metadata key are DROPPED, not hashed, so no repo or PR identity is published; `metadata.confidence` stays nested where buildConfidenceThresholdClassifier reads it. Timestamps are truncated to the UTC day. `checksum` is sha256 over canonicalJson(cases), i.e. it commits to the artifact you can actually download",
+          "{ ruleId, windowDays, caseCount, truncated, readFailed, checksum, cases: [{ ruleId, outcome, label, firedAt, decidedAt, metadata?: { confidence } }] } — `targetKey` and every other metadata key are DROPPED, not hashed, so no repo or PR identity is published; `metadata.confidence` stays nested where buildConfidenceThresholdClassifier reads it. Timestamps are truncated to the UTC day. `checksum` is sha256 over canonicalJson(cases), i.e. it commits to the artifact you can actually download. `readFailed` is true when the corpus is empty because the history read failed rather than because the rule has no cases — no commitment is published for such a corpus",
       },
-      400: { description: "`ruleId` is required — a corpus is only meaningful for one rule" },
+      400: { description: "`ruleId` (or its `rule_id` alias) is required — a corpus is only meaningful for one rule" },
       404: { description: "Public stats are disabled for this deployment" },
     },
   });

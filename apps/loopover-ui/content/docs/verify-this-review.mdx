@@ -157,6 +157,30 @@ A rate over an empty window is `null`, never `0` — "nothing was held" and "not
 different claims, and the fairness report renders the second as *measured zero* with its window rather
 than as a reassuring number.
 
+### Automation rate
+
+`reviewParity`'s sibling, from the same ledger (#9727):
+
+```bash
+curl -s "https://api.loopover.ai/v1/public/stats" | jq '.automationRate'
+```
+
+A pull request counts as **automated** only if every verdict for it was a merge or close with no human in
+the path. Three things mark a human:
+
+- `action = 'hold'` — the gate declined to decide and handed it to a person,
+- a `reevaluation_actor` — a named person caused a re-evaluation,
+- `reevaluation_reason = 'maintainer_request'` — a human asked for the re-run.
+
+So a PR that was **held and later merged is manual**, not automated. Counting the final disposition instead
+would let the rate be inflated by holding everything and then merging it by hand — which is exactly the
+failure mode this number exists to make visible.
+
+Each week carries a `basis`. `holds_only` weeks start before `provenanceHorizon`, the date the bot began
+recording who caused a re-evaluation; those weeks can only detect manual work that took the form of a hold,
+so they **under-count** it. A week straddling that date is labelled `holds_only` too — understating
+confidence rather than overstating it.
+
 The same per-rule numbers are also published as digest-committed
 [EvalScoreRecords](/docs/what-you-can-verify), each independently re-derivable without trusting the
 transport — recompute `recordDigest` over the record's own remaining fields and compare:

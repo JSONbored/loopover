@@ -40,6 +40,13 @@ function renderWithClient(ui: ReactNode) {
 const FIXTURE: PublicStats = {
   // The wire always carries rulePrecision (#8230/#8231). A fixture without it is not a payload the
   // current backend can produce -- the one test that needs that shape strips it explicitly.
+  automationRate: {
+    weeks: [],
+    decided: 0,
+    automated: 0,
+    automationRatePct: null,
+    provenanceHorizon: "2026-07-29T00:00:00.000Z",
+  },
   reviewParity: {
     windowStart: "2026-07-22T00:00:00.000Z",
     windowEnd: "2026-07-29T00:00:00.000Z",
@@ -508,5 +515,87 @@ describe("FairnessReportPage (#fairness-analytics)", () => {
 
     expect(await screen.findByText(/No re-evaluations recorded/i)).toBeTruthy();
     expect(screen.queryByText(/No verdicts recorded/i)).toBeNull();
+  });
+
+  // #9728: the automation-rate surface and its zero/reduced-basis states.
+  function automationFixture(over: Record<string, unknown>) {
+    return {
+      ok: true,
+      durationMs: 10,
+      data: {
+        ...FIXTURE,
+        automationRate: {
+          weeks: [],
+          decided: 0,
+          automated: 0,
+          automationRatePct: null,
+          provenanceHorizon: "2026-07-29T00:00:00.000Z",
+          ...over,
+        },
+      },
+    };
+  }
+
+  it("renders the headline rate, the weekly table, and the definition", async () => {
+    apiFetch.mockResolvedValue(
+      automationFixture({
+        decided: 10,
+        automated: 7,
+        automationRatePct: 70,
+        weeks: [
+          {
+            weekStart: "2026-07-27T00:00:00.000Z",
+            decided: 10,
+            automated: 7,
+            manual: 3,
+            automationRatePct: 70,
+            basis: "full",
+          },
+        ],
+      }),
+    );
+    renderWithClient(<FairnessReportPage />);
+
+    expect(await screen.findByText(/Automation rate/i)).toBeTruthy();
+    expect(screen.getByText(/70% automated/)).toBeTruthy();
+    expect(screen.getByText(/7 of 10 pull requests/)).toBeTruthy();
+    // The definition must be readable without opening source -- that is #9728's acceptance.
+    expect(screen.getByText(/no human action/i)).toBeTruthy();
+    expect(screen.getByText(/counts as manual even if it later merged/i)).toBeTruthy();
+  });
+
+  it("labels reduced-basis weeks and explains that they UNDER-count manual work", async () => {
+    apiFetch.mockResolvedValue(
+      automationFixture({
+        decided: 4,
+        automated: 4,
+        automationRatePct: 100,
+        weeks: [
+          {
+            weekStart: "2026-07-06T00:00:00.000Z",
+            decided: 4,
+            automated: 4,
+            manual: 0,
+            automationRatePct: 100,
+            basis: "holds_only",
+          },
+        ],
+      }),
+    );
+    renderWithClient(<FairnessReportPage />);
+
+    expect(
+      (await screen.findAllByText(/reduced basis/i)).length,
+      "the row badge and the footnote both say it",
+    ).toBeGreaterThanOrEqual(2);
+    expect(screen.getByText(/under-count it rather than over-count it/i)).toBeTruthy();
+  });
+
+  it("renders an empty window as a measured zero, not as missing data", async () => {
+    apiFetch.mockResolvedValue(automationFixture({}));
+    renderWithClient(<FairnessReportPage />);
+
+    expect(await screen.findByText(/No pull requests decided/i)).toBeTruthy();
+    expect(screen.getByText(/measured zero, not missing data/i)).toBeTruthy();
   });
 });

@@ -424,6 +424,103 @@ export function FairnessReportPage() {
               </div>
             ) : null}
 
+            {/* #9728: the automation rate — the share of PRs decided with no human in the path. Rendered
+                unconditionally when present: a window that decided nothing is a MEASURED zero and says so,
+                which is a different claim from "we did not compute this". */}
+            {data.automationRate ? (
+              <div className="mt-10">
+                <h2 className="text-token-lg font-medium">Automation rate</h2>
+                <p className="mt-2 text-token-sm text-muted-foreground">
+                  The share of pull requests decided and enacted with{" "}
+                  <span className="font-medium text-foreground">no human action</span> between open
+                  and disposition. A PR that was held for a person — or that a maintainer asked to
+                  be re-run — counts as manual even if it later merged: the question is whether
+                  someone had to act, not how it ended. Computed from the ledger alone, so you can
+                  recompute it:{" "}
+                  <Link
+                    to="/docs/$slug"
+                    params={{ slug: "verify-this-review" }}
+                    className="underline underline-offset-2"
+                  >
+                    verify this review
+                  </Link>
+                  .
+                </p>
+
+                {data.automationRate.decided === 0 ? (
+                  <p className="mt-4 text-token-sm text-muted-foreground">
+                    <span className="font-medium text-foreground">No pull requests decided</span> in
+                    this window — a measured zero, not missing data.
+                  </p>
+                ) : (
+                  <>
+                    <p className="mt-4 text-token-sm">
+                      {data.automationRate.automationRatePct != null
+                        ? `${pctFmt.format(data.automationRate.automationRatePct)}% automated`
+                        : "Rate unavailable"}{" "}
+                      <span className="text-muted-foreground">
+                        ({intFmt.format(data.automationRate.automated)} of{" "}
+                        {intFmt.format(data.automationRate.decided)} pull requests)
+                      </span>
+                    </p>
+                    <TableScroll className="mt-4" label="Weekly automation rate">
+                      <table className="w-full min-w-[30rem] text-left text-token-sm">
+                        <caption className="sr-only">
+                          Automated and manual pull requests per week, with each week&apos;s
+                          measurement basis.
+                        </caption>
+                        <thead className="text-token-xs text-muted-foreground">
+                          <tr>
+                            <th scope="col" className="pb-2 pr-4 font-medium">
+                              Week
+                            </th>
+                            <th scope="col" className="pb-2 pr-4 font-medium">
+                              Decided
+                            </th>
+                            <th scope="col" className="pb-2 pr-4 font-medium">
+                              Automated
+                            </th>
+                            <th scope="col" className="pb-2 font-medium">
+                              Rate
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {data.automationRate.weeks.map((week) => (
+                            <tr key={week.weekStart} className="border-t border-hairline">
+                              <td className="py-2 pr-4">
+                                {new Date(week.weekStart).toLocaleDateString()}
+                                {week.basis === "holds_only" ? (
+                                  <span className="ml-2 text-token-xs text-muted-foreground">
+                                    reduced basis
+                                  </span>
+                                ) : null}
+                              </td>
+                              <td className="py-2 pr-4">{intFmt.format(week.decided)}</td>
+                              <td className="py-2 pr-4">{intFmt.format(week.automated)}</td>
+                              <td className="py-2">
+                                {week.automationRatePct != null
+                                  ? `${pctFmt.format(week.automationRatePct)}%`
+                                  : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </TableScroll>
+                    <p className="mt-3 text-token-xs text-muted-foreground">
+                      Weeks marked{" "}
+                      <span className="font-medium text-foreground">reduced basis</span> start
+                      before {new Date(data.automationRate.provenanceHorizon).toLocaleDateString()},
+                      when the bot began recording who caused a re-evaluation. Those weeks can only
+                      detect manual work that took the form of a hold, so they under-count it rather
+                      than over-count it.
+                    </p>
+                  </>
+                )}
+              </div>
+            ) : null}
+
             {/* #9744: re-evaluation rate + author-class parity. Rendered UNCONDITIONALLY when the block is
                 present -- a window with no verdicts is a MEASURED zero and says so with its own bounds,
                 which is a different claim from "we did not compute this" and must not look identical. */}

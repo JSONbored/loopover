@@ -74,6 +74,34 @@ export const ReviewParitySchema = z.object({
   byProject: z.array(z.object({ project: z.string(), byAuthorClass: z.array(ParityRollupSchema) })),
 });
 
+/**
+ * Weekly automation-rate series (#9727): the share of pull requests decided with no human in the path.
+ * Computed from `decision_records` alone; definitions live beside the implementation in
+ * src/review/automation-rate.ts and are restated in the verifier walkthrough.
+ */
+export const AutomationRateWeekSchema = z.object({
+  /** ISO date-time of the week's UTC Monday. */
+  weekStart: z.string(),
+  /** Distinct pull requests with at least one verdict that week, bucketed by their FIRST verdict. */
+  decided: z.number(),
+  automated: z.number(),
+  manual: z.number(),
+  /** Null when the week decided nothing -- an undefined ratio, never a reassuring 100%. */
+  automationRatePct: z.number().nullable(),
+  /** `holds_only` weeks predate the re-evaluation provenance fields and can only UNDER-count manual work.
+   *  A week straddling the horizon is labelled `holds_only` too: understating confidence, not overstating. */
+  basis: z.enum(["full", "holds_only"]),
+});
+
+export const AutomationRateSchema = z.object({
+  weeks: z.array(AutomationRateWeekSchema),
+  decided: z.number(),
+  automated: z.number(),
+  automationRatePct: z.number().nullable(),
+  /** The date the provenance fields began being written, so a reader can see which weeks are reduced-basis. */
+  provenanceHorizon: z.string(),
+});
+
 export const PublicStatsSchema = z.object({
   generatedAt: z.string(),
   updatedAt: z.string(),
@@ -94,6 +122,7 @@ export const PublicStatsSchema = z.object({
   weekly: z.object({ reviewed: z.number(), merged: z.number() }),
   rulePrecision: PublicRulePrecisionSchema,
   reviewParity: ReviewParitySchema,
+  automationRate: AutomationRateSchema,
   byProject: z.array(
     z.object({
       project: z.string(),
@@ -186,4 +215,5 @@ export const PublicStatsSchema = z.object({
 
 export type PublicStats = z.infer<typeof PublicStatsSchema>;
 export type ReviewParity = z.infer<typeof ReviewParitySchema>;
+export type AutomationRate = z.infer<typeof AutomationRateSchema>;
 export type ParityRollup = z.infer<typeof ParityRollupSchema>;

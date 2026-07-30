@@ -150,9 +150,23 @@ checks go green) is the only way to know you didn't break it.
   patch coverage; a backend `src/**` change owes coverage on **every changed line + branch**.
 - **Measure unsharded locally:** `npm run test:coverage`. CI shards into 3 and Codecov merges them,
   so a single local shard under-reports — never trust it.
+- **`npm run typecheck` does not cover `apps/**`.** `ui:typecheck` is a separate step, present in
+  `test:ci` but NOT in the root `typecheck` script — so a type change you validated locally with
+  `npm run typecheck` can still break the UI build in CI (#9815 shipped exactly this). Run
+  `npm run ui:typecheck` too, or just run the whole `npm run test:ci`.
 - **Flaky tests are already tracked.** Every shard uploads a JUnit report (`report_type: test_results`),
   which auto-enables Codecov Test Analytics with no extra config — check a PR's "Tests" tab or its
   Codecov bot comment if a test needed a retry, rather than assuming it's pure infra noise.
+- **`packages/loopover-engine/src/**` is credited by TWO uploads, and this is the biggest gotcha in the
+  repo (#9860 item 5).** The unflagged `backend` report (root vitest, v8) and the `engine` flag (the
+  package's own `node:test` suite, c8 `--all`) both cover those lines, and Codecov *unions* their hits.
+  The two runs disagree about which lines even exist — c8 `--all` instruments every file including ones
+  no test imports, v8 does not — so **an engine change that is genuinely 100% tested by root-suite tests
+  alone can still land as ~65% on `codecov/patch`** (seen on #9821).
+  → **If you change `packages/loopover-engine/src/**`, add or extend a test in
+  `packages/loopover-engine/test/**` (the `node:test` suite), not only in root `test/**`.** Run it with
+  `npm run test --workspace @loopover/engine`. A root-suite test alone is not a reliable way to clear the
+  patch gate on engine source, no matter what your local `npm run test:coverage` says.
 
 ---
 

@@ -2,6 +2,7 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
 import {
+  PaginationEllipsis,
   PaginationLink,
   PaginationNext,
   PaginationPrevious,
@@ -45,5 +46,32 @@ describe("PaginationLink aria-disabled styling (#8307)", () => {
     const link = screen.getByLabelText("active");
     // isActive/aria-current is untouched by this fix.
     expect(link.getAttribute("aria-current")).toBe("page");
+  });
+});
+
+// #10052: aria-hidden on the outer wrapper removed the sr-only "More pages" label from the a11y tree.
+// Scope aria-hidden to the decorative icon only — same pattern as TypingIndicator.
+describe("PaginationEllipsis sr-only label not inside aria-hidden (#10052)", () => {
+  it("exposes \"More pages\" with no aria-hidden ancestor; icon is aria-hidden", () => {
+    const { container } = render(<PaginationEllipsis />);
+    const label = screen.getByText("More pages");
+    expect(label.closest("[aria-hidden='true'], [aria-hidden='']")).toBeNull();
+    const icon = container.querySelector("svg");
+    expect(icon).not.toBeNull();
+    expect(icon!.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("merges caller className through cn (mx-2 + h-9)", () => {
+    const { container } = render(<PaginationEllipsis className="mx-2" />);
+    const outer = container.firstElementChild as HTMLElement;
+    expect(outer.tagName).toBe("SPAN");
+    expect(outer.className).toContain("mx-2");
+    expect(outer.className).toContain("h-9");
+  });
+
+  it("lets an explicit aria-hidden prop win on the outer span", () => {
+    const { container } = render(<PaginationEllipsis aria-hidden />);
+    const outer = container.firstElementChild as HTMLElement;
+    expect(outer.getAttribute("aria-hidden")).toBe("true");
   });
 });

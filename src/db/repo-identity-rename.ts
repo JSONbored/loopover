@@ -630,6 +630,84 @@ export async function renameRepositoryIdentity(env: Env, oldFullName: string, ne
 
   // scorePreviews: PK is surrogate `id`, no unique constraint on repo_full_name -- plain rename (#9650).
   await env.DB.prepare("UPDATE score_previews SET repo_full_name = ? WHERE repo_full_name = ?").bind(newFullName, oldFullName).run();
+
+  // Five more raw-SQL-only identity-bearing tables (#10053), each folded by its REAL constraint (verified
+  // against its own migration) rather than by column name -- the same shapes already used above:
+
+  // decisionRecords: `id` is `record:<owner/repo>#<pull>@<head sha>` (decision-record.ts's persistDecisionRecord)
+  // but is DELIBERATELY NOT rewritten here: decision_ledger.record_id commits to it inside a hash chain
+  // (appendDecisionLedger), and decision_replay_inputs.record_id / decision_replay_prompts.record_id key off
+  // it (decision-replay.ts) -- rewriting it would break the ledger chain and orphan both replay tables. Only
+  // repo_full_name (its own structural identity column, unrelated to the hash chain) moves. No unique
+  // constraint exists on repo_full_name alone, so nothing can collide -- plain rename, same shape as
+  // orbWebhookEvents above.
+  await env.DB.prepare("UPDATE decision_records SET repo_full_name = ? WHERE repo_full_name = ?").bind(newFullName, oldFullName).run();
+
+  // decisionAuditLabels: PK `id` is `audit:<target_id>` and `target_id` is `owner/repo#N` (close-audit-
+  // holdout.ts); `project` mirrors repo_full_name. The UNIQUE(target_id) collision is equivalent to the `id`
+  // collision here since `id` is entirely derived from `target_id` -- same PK-collision fold + substring-
+  // replace shape as reviewAudit above.
+  const oldDecisionAuditLabelIds = (
+    await env.DB.prepare("SELECT id FROM decision_audit_labels WHERE project = ?").bind(oldFullName).all<{ id: string }>()
+  ).results.map((row) => row.id);
+  const renamedDecisionAuditLabelIds = oldDecisionAuditLabelIds.map((id) => id.split(oldFullName).join(newFullName));
+  if (renamedDecisionAuditLabelIds.length > 0) {
+    const placeholders = renamedDecisionAuditLabelIds.map(() => "?").join(",");
+    await env.DB.prepare(`DELETE FROM decision_audit_labels WHERE id IN (${placeholders})`)
+      .bind(...renamedDecisionAuditLabelIds)
+      .run();
+  }
+  await env.DB.prepare("UPDATE decision_audit_labels SET id = replace(id, ?, ?), project = ?, target_id = replace(target_id, ?, ?) WHERE project = ?")
+    .bind(oldFullName, newFullName, newFullName, oldFullName, newFullName, oldFullName)
+    .run();
+
+  // submitterOutcomeLog: PRIMARY KEY (project, submitter, pull_number, outcome) (migrations/0189) -- fold on
+  // the OTHER three columns as a composite tuple, the multi-column analogue of submitterStats' single-column
+  // fold above (submitter_stats' PK is just (project, submitter)), favoring the pre-existing oldFullName
+  // row per tuple.
+  const oldOutcomeLogKeys = (
+    await env.DB.prepare("SELECT submitter, pull_number, outcome FROM submitter_outcome_log WHERE project = ?")
+      .bind(oldFullName)
+      .all<{ submitter: string; pull_number: number; outcome: string }>()
+  ).results;
+  if (oldOutcomeLogKeys.length > 0) {
+    for (const key of oldOutcomeLogKeys) {
+      await env.DB.prepare("DELETE FROM submitter_outcome_log WHERE project = ? AND submitter = ? AND pull_number = ? AND outcome = ?")
+        .bind(newFullName, key.submitter, key.pull_number, key.outcome)
+        .run();
+    }
+  }
+  await env.DB.prepare("UPDATE submitter_outcome_log SET project = ? WHERE project = ?").bind(newFullName, oldFullName).run();
+
+  // aiReviewVerdictFlips: PRIMARY KEY (repo_full_name, pull_number) (migrations/0183) -- fold on the OTHER
+  // half of the composite key, pull_number, same single-column-tuple shape as orbPrOutcomes above.
+  const collidingVerdictFlipPulls = (
+    await env.DB.prepare("SELECT pull_number FROM ai_review_verdict_flips WHERE repo_full_name = ?").bind(oldFullName).all<{ pull_number: number }>()
+  ).results.map((row) => row.pull_number);
+  if (collidingVerdictFlipPulls.length > 0) {
+    const placeholders = collidingVerdictFlipPulls.map(() => "?").join(",");
+    await env.DB.prepare(`DELETE FROM ai_review_verdict_flips WHERE repo_full_name = ? AND pull_number IN (${placeholders})`)
+      .bind(newFullName, ...collidingVerdictFlipPulls)
+      .run();
+  }
+  await env.DB.prepare("UPDATE ai_review_verdict_flips SET repo_full_name = ? WHERE repo_full_name = ?").bind(newFullName, oldFullName).run();
+
+  // alertDedupClaims: UNIQUE (project, target_id, notification_key), PK `id` a random string (newId("hc"),
+  // alerts.ts's runAnomalyAlerts) that never embeds the project -- fold on the OTHER two columns of the
+  // unique index as a composite tuple, same shape as submitterOutcomeLog above.
+  const oldAlertDedupClaimKeys = (
+    await env.DB.prepare("SELECT target_id, notification_key FROM alert_dedup_claims WHERE project = ?")
+      .bind(oldFullName)
+      .all<{ target_id: string; notification_key: string }>()
+  ).results;
+  if (oldAlertDedupClaimKeys.length > 0) {
+    for (const key of oldAlertDedupClaimKeys) {
+      await env.DB.prepare("DELETE FROM alert_dedup_claims WHERE project = ? AND target_id = ? AND notification_key = ?")
+        .bind(newFullName, key.target_id, key.notification_key)
+        .run();
+    }
+  }
+  await env.DB.prepare("UPDATE alert_dedup_claims SET project = ? WHERE project = ?").bind(newFullName, oldFullName).run();
 }
 
 /** Tables carrying a repo-identity column that renameRepositoryIdentity DELIBERATELY does not rename -- the

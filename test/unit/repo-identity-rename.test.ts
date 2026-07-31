@@ -51,6 +51,8 @@ import {
   upsertRepoSyncSegment,
   upsertRepoSyncState,
 } from "../../src/db/repositories";
+import { loadCalibrationPairs } from "../../src/review/risk-control-wire";
+import { getSubmitterReputation, recordSubmissionOutcome } from "../../src/review/submitter-reputation";
 import { createTestEnv } from "../helpers/d1";
 
 const OLD = "owner/gittensory";
@@ -1281,6 +1283,211 @@ describe("renameRepositoryIdentity", () => {
     });
   }
 
+  // #10053: five raw-SQL-only tables the completeness drift guard couldn't see because it only enumerated
+  // src/db/schema.ts's Drizzle tables (see the widened guard below).
+  describe("decision_records (#10053)", () => {
+    const insert = (env: Env, id: string, repo: string, pullNumber: number, headSha: string) =>
+      env.DB.prepare(
+        "INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at) VALUES (?, ?, ?, ?, 'close', 'blocker:tests', 'digest1', '{}', '2026-07-01T00:00:00.000Z')",
+      )
+        .bind(id, repo, pullNumber, headSha)
+        .run();
+
+    it("renames repo_full_name and leaves id byte-identical, since it is committed inside the ledger hash chain", async () => {
+      const env = createTestEnv();
+      const id = `record:${OLD}#7@sha1`;
+      await insert(env, id, OLD, 7, "sha1");
+      await renameRepositoryIdentity(env, OLD, NEW);
+      const oldLeft = await env.DB.prepare("select count(*) as n from decision_records where repo_full_name = ?").bind(OLD).first<{ n: number }>();
+      expect(oldLeft?.n).toBe(0);
+      const renamed = await env.DB.prepare("select id, pull_number as pullNumber, head_sha as headSha from decision_records where repo_full_name = ?")
+        .bind(NEW)
+        .first<{ id: string; pullNumber: number; headSha: string }>();
+      // The id is UNCHANGED (still carries the OLD repo name as a substring) -- deliberately, since
+      // decision_ledger.record_id and the replay tables key off this exact string.
+      expect(renamed).toEqual({ id, pullNumber: 7, headSha: "sha1" });
+    });
+  });
+
+  describe("decision_audit_labels (#10053)", () => {
+    const insert = (env: Env, id: string, project: string, targetId: string, adjudication: string) =>
+      env.DB.prepare(
+        "INSERT INTO decision_audit_labels (id, project, target_id, verdict, outcome, stratum, rubric_version, sampled_at, status, adjudication) VALUES (?, ?, ?, 'close', 'closed', 'merge_arm', 'v1', '2026-07-01T00:00:00.000Z', 'adjudicated', ?)",
+      )
+        .bind(id, project, targetId, adjudication)
+        .run();
+
+    it("rewrites project, the project-embedding id, and target_id together", async () => {
+      const env = createTestEnv();
+      await insert(env, `audit:${OLD}#7`, OLD, `${OLD}#7`, "correct");
+      await insert(env, "audit:some/other-repo#1", "some/other-repo", "some/other-repo#1", "correct");
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select id, target_id as targetId from decision_audit_labels where project = ?").bind(NEW).all<{ id: string; targetId: string }>();
+      expect(rows.results).toEqual([{ id: `audit:${NEW}#7`, targetId: `${NEW}#7` }]);
+      const unrelated = await env.DB.prepare("select count(*) as n from decision_audit_labels where project = 'some/other-repo'").first<{ n: number }>();
+      expect(unrelated?.n).toBe(1);
+    });
+
+    it("folds a row whose renamed id would collide with an existing new-name row", async () => {
+      const env = createTestEnv();
+      await insert(env, `audit:${OLD}#7`, OLD, `${OLD}#7`, "correct");
+      await insert(env, `audit:${NEW}#7`, NEW, `${NEW}#7`, "incorrect"); // the id the rename would produce
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select adjudication from decision_audit_labels where project = ?").bind(NEW).all<{ adjudication: string }>();
+      expect(rows.results).toEqual([{ adjudication: "correct" }]); // the pre-existing OLD row's payload wins
+    });
+  });
+
+  describe("submitter_outcome_log (#10053)", () => {
+    const insert = (env: Env, project: string, submitter: string, pullNumber: number, outcome: string) =>
+      env.DB.prepare("INSERT INTO submitter_outcome_log (project, submitter, pull_number, outcome) VALUES (?, ?, ?, ?)").bind(project, submitter, pullNumber, outcome).run();
+
+    it("renames project for a submitter's outcome-log row", async () => {
+      const env = createTestEnv();
+      await insert(env, OLD, "alice", 3, "merged");
+      await renameRepositoryIdentity(env, OLD, NEW);
+      const oldLeft = await env.DB.prepare("select count(*) as n from submitter_outcome_log where project = ?").bind(OLD).first<{ n: number }>();
+      expect(oldLeft?.n).toBe(0);
+      const renamed = await env.DB.prepare("select submitter, pull_number as pullNumber, outcome from submitter_outcome_log where project = ?")
+        .bind(NEW)
+        .first<{ submitter: string; pullNumber: number; outcome: string }>();
+      expect(renamed).toEqual({ submitter: "alice", pullNumber: 3, outcome: "merged" });
+    });
+
+    it("folds a row whose (submitter, pull_number, outcome) triple collides with an existing new-name row, keeping the pre-existing old-name row", async () => {
+      const env = createTestEnv();
+      await insert(env, OLD, "alice", 3, "merged"); // the pre-existing, real outcome
+      await insert(env, NEW, "alice", 3, "merged"); // a fragment already counted under the new name
+      await insert(env, NEW, "alice", 4, "closed"); // a different pull: survives untouched
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select pull_number as pullNumber, outcome from submitter_outcome_log where project = ? order by pull_number").bind(NEW).all<{
+        pullNumber: number;
+        outcome: string;
+      }>();
+      expect(rows.results).toEqual([
+        { pullNumber: 3, outcome: "merged" },
+        { pullNumber: 4, outcome: "closed" },
+      ]);
+    });
+  });
+
+  describe("ai_review_verdict_flips (#10053)", () => {
+    const insert = (env: Env, repo: string, pullNumber: number, flipCount: number) =>
+      env.DB.prepare("INSERT INTO ai_review_verdict_flips (repo_full_name, pull_number, last_had_defect, flip_count, updated_at) VALUES (?, ?, 1, ?, '2026-07-01T00:00:00.000Z')")
+        .bind(repo, pullNumber, flipCount)
+        .run();
+
+    it("renames repo_full_name for a PR's verdict-flip tracking row", async () => {
+      const env = createTestEnv();
+      await insert(env, OLD, 5, 2);
+      await renameRepositoryIdentity(env, OLD, NEW);
+      const oldLeft = await env.DB.prepare("select count(*) as n from ai_review_verdict_flips where repo_full_name = ?").bind(OLD).first<{ n: number }>();
+      expect(oldLeft?.n).toBe(0);
+      const renamed = await env.DB.prepare("select flip_count as flipCount from ai_review_verdict_flips where repo_full_name = ? and pull_number = 5").bind(NEW).first<{ flipCount: number }>();
+      expect(renamed?.flipCount).toBe(2);
+    });
+
+    it("folds a row whose pull_number collides with an existing new-name row, keeping the pre-existing old-name row's flip_count", async () => {
+      const env = createTestEnv();
+      await insert(env, OLD, 5, 3); // the real, accumulated flip history
+      await insert(env, NEW, 5, 0); // a fragment already created under the new name
+      await insert(env, NEW, 6, 1); // a different pull: survives untouched
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select pull_number as pullNumber, flip_count as flipCount from ai_review_verdict_flips where repo_full_name = ? order by pull_number").bind(NEW).all<{
+        pullNumber: number;
+        flipCount: number;
+      }>();
+      expect(rows.results).toEqual([
+        { pullNumber: 5, flipCount: 3 },
+        { pullNumber: 6, flipCount: 1 },
+      ]);
+    });
+  });
+
+  describe("alert_dedup_claims (#10053)", () => {
+    const insert = (env: Env, id: string, project: string, targetId: string, notificationKey: string, status: string) =>
+      env.DB.prepare("INSERT INTO alert_dedup_claims (id, project, target_id, notification_key, status) VALUES (?, ?, ?, ?, ?)").bind(id, project, targetId, notificationKey, status).run();
+
+    it("renames project for a dedup-claim row", async () => {
+      const env = createTestEnv();
+      await insert(env, "claim-1", OLD, "__healthcheck__", "hash1", "sent");
+      await renameRepositoryIdentity(env, OLD, NEW);
+      const oldLeft = await env.DB.prepare("select count(*) as n from alert_dedup_claims where project = ?").bind(OLD).first<{ n: number }>();
+      expect(oldLeft?.n).toBe(0);
+      const renamed = await env.DB.prepare("select id from alert_dedup_claims where project = ?").bind(NEW).first<{ id: string }>();
+      expect(renamed?.id).toBe("claim-1");
+    });
+
+    it("folds a row whose (target_id, notification_key) collides with an existing new-name row, keeping the pre-existing old-name row", async () => {
+      const env = createTestEnv();
+      await insert(env, "claim-old", OLD, "__healthcheck__", "hash1", "sent"); // the pre-existing claim
+      await insert(env, "claim-stray", NEW, "__healthcheck__", "hash1", "sent"); // fragment under the new name
+      await insert(env, "claim-other", NEW, "__healthcheck__", "hash2", "sent"); // different key: survives
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const rows = await env.DB.prepare("select id from alert_dedup_claims where project = ? order by id").bind(NEW).all<{ id: string }>();
+      expect(rows.results.map((r) => r.id)).toEqual(["claim-old", "claim-other"]);
+    });
+  });
+
+  describe("loadCalibrationPairs across a rename (#10053)", () => {
+    it("keeps decision_records and decision_audit_labels joinable at the new name after a rename", async () => {
+      const env = createTestEnv();
+      const targetId = `${OLD}#7`;
+      await env.DB.prepare(
+        "INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at) VALUES (?, ?, 7, 'sha1', 'close', 'blocker:tests', 'digest1', ?, '2026-07-01T00:00:00.000Z')",
+      )
+        .bind(`record:${OLD}#7@sha1`, OLD, JSON.stringify({ aiConfidence: 0.87, configDigest: "resolved-digest" }))
+        .run();
+      await env.DB.prepare(
+        "INSERT INTO decision_audit_labels (id, project, target_id, verdict, outcome, stratum, rubric_version, sampled_at, status, adjudication) VALUES (?, ?, ?, 'close', 'closed', 'merge_arm', 'v1', '2026-07-01T00:00:00.000Z', 'adjudicated', 'correct')",
+      )
+        .bind(`audit:${targetId}`, OLD, targetId)
+        .run();
+
+      const before = await loadCalibrationPairs(env, "close", OLD.toLowerCase());
+      expect(before).toEqual([{ confidence: 0.87, correct: true, backfilled: false }]);
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      // Proves decision_records.repo_full_name and decision_audit_labels.target_id moved TOGETHER: the join
+      // in loadCalibrationPairs reconstructs `repo_full_name || '#' || pull_number` and matches it against
+      // target_id, so if only one side had moved this would come back empty.
+      const after = await loadCalibrationPairs(env, "close", NEW.toLowerCase());
+      expect(after).toEqual([{ confidence: 0.87, correct: true, backfilled: false }]);
+    });
+  });
+
+  describe("getSubmitterReputation across a rename (#10053)", () => {
+    it("REGRESSION (#10053): returns the same windowed counts under the new name that it returned under the old name before the rename", async () => {
+      const env = createTestEnv();
+      await recordSubmissionOutcome(env, OLD, "alice", 1, "merged");
+      await recordSubmissionOutcome(env, OLD, "alice", 2, "merged");
+      await recordSubmissionOutcome(env, OLD, "alice", 3, "closed");
+      await recordSubmissionOutcome(env, OLD, "alice", 4, "manual");
+
+      const before = await getSubmitterReputation(env, OLD, "alice");
+      expect(before.submissions).toBe(4);
+
+      await renameRepositoryIdentity(env, OLD, NEW);
+
+      const after = await getSubmitterReputation(env, NEW, "alice");
+      expect(after).toEqual(before);
+      // The old name goes blank rather than double-counting -- the whole point of moving the log, not just
+      // submitter_stats, forward.
+      expect(await getSubmitterReputation(env, OLD, "alice")).toEqual({ submissions: 0, merged: 0, closed: 0, manual: 0, closeRate: 0, signal: "neutral" });
+    });
+  });
+
   describe("renameRepositoryIdentity completeness (drift guard, #9650)", () => {
     // Every schema.ts table carrying a repo_full_name / repository_full_name column must be either renamed by
     // this module or explicitly exempt — so the list (which has drifted before) can never silently regress.
@@ -1336,6 +1543,47 @@ describe("renameRepositoryIdentity", () => {
         .toLowerCase();
       const dead = [...RENAME_OUT_OF_SCOPE_TABLES].filter((table) => !schemaSqlNames.has(table) && !migrationsSql.includes(table.toLowerCase()));
       expect(dead).toEqual([]);
+    });
+  });
+
+  describe("renameRepositoryIdentity completeness — raw-SQL-only tables (drift guard, #10053)", () => {
+    // The guard above (repoIdentityTables) derives its table list from src/db/schema.ts's declared Drizzle
+    // columns, so a raw-SQL-only table -- deliberately never added to schema.ts, see this module's own header
+    // -- never appears in Object.entries(schema) and is structurally invisible to it. This guard closes that
+    // blind spot: replay migrations/*.sql the same way scripts/check-schema-drift.ts's replayMigrations does,
+    // then introspect the REAL post-replay column set (PRAGMA table_info), not migration file TEXT -- so a
+    // table created then later DROPped (orb_events/orb_installations, retired by migrations/0060) correctly
+    // never surfaces here, the way a naive grep over migrations/*.sql text would wrongly flag it.
+    const RAW_IDENTITY_COLUMNS = new Set(["repo_full_name", "repository_full_name", "project", "repo"]);
+
+    /** Every table that (a) exists once every migration has replayed, (b) is NOT a Drizzle schema.ts table
+     *  (repoIdentityTables()'s own guard already covers those), and (c) carries at least one repo-identity-
+     *  shaped column by name. */
+    async function rawSqlOnlyIdentityTables(): Promise<string[]> {
+      const { replayMigrations, listActualTables, actualColumnsFor, collectSchemaTables } = await import("../../scripts/check-schema-drift");
+      const schema = await import("../../src/db/schema");
+      const drizzleTableNames = new Set(collectSchemaTables(schema).keys());
+      const db = replayMigrations("migrations");
+      const out: string[] = [];
+      for (const table of listActualTables(db)) {
+        if (drizzleTableNames.has(table)) continue;
+        const columns = actualColumnsFor(db, table);
+        if ([...columns].some((column) => RAW_IDENTITY_COLUMNS.has(column))) out.push(table);
+      }
+      return out.sort();
+    }
+
+    it("derives a non-empty raw-SQL-only identity-table list, including review_audit and submitter_outcome_log", async () => {
+      const derived = await rawSqlOnlyIdentityTables();
+      expect(derived.length).toBeGreaterThan(0);
+      expect(derived).toContain("review_audit");
+      expect(derived).toContain("submitter_outcome_log");
+    });
+
+    it("every raw-SQL-only table carrying a repo-identity column is referenced here or explicitly exempt", async () => {
+      const source = readFileSync("src/db/repo-identity-rename.ts", "utf8");
+      const unaccounted = (await rawSqlOnlyIdentityTables()).filter((table) => !source.includes(table) && !RENAME_OUT_OF_SCOPE_TABLES.has(table));
+      expect(unaccounted).toEqual([]);
     });
   });
 });

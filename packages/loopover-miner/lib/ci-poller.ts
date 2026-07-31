@@ -5,6 +5,10 @@ const defaultMinIntervalMs = 60_000;
 const defaultMaxIntervalMs = 5 * 60_000;
 const defaultMaxAttempts = 1;
 const defaultRequestTimeoutMs = 10_000;
+// Follow the check-runs Link header past the first page so a head with >100 checks isn't silently
+// truncated; cap the follow loop so a pathological Link chain can't run away (#10007). Default 10
+// pages × per_page=100 = 1000 checks — well above any realistic PR check-run count.
+const defaultMaxPages = 10;
 const githubApiVersion = "2022-11-28";
 
 export type CheckRunConclusion = "pending" | "success" | "failure" | "neutral";
@@ -33,6 +37,8 @@ export type PollCheckRunsOptions = {
   minIntervalMs?: number;
   maxIntervalMs?: number;
   requestTimeoutMs?: number;
+  /** Cap on check-runs page follows (#10007); defaults to `defaultMaxPages`. */
+  maxPages?: number;
   sleepFn?: (delayMs: number) => Promise<unknown>;
 };
 
@@ -44,6 +50,7 @@ type NormalizedPollOptions = {
   minIntervalMs: number;
   maxIntervalMs: number;
   requestTimeoutMs: number;
+  maxPages: number;
   sleepFn: (delayMs: number) => Promise<unknown>;
 };
 
@@ -81,6 +88,8 @@ function normalizeOptions(options: PollCheckRunsOptions = {}): NormalizedPollOpt
     minIntervalMs: normalizePositiveInt(options.minIntervalMs, defaultMinIntervalMs, 1, 60 * 60_000),
     maxIntervalMs: normalizePositiveInt(options.maxIntervalMs, defaultMaxIntervalMs, 1, 60 * 60_000),
     requestTimeoutMs: normalizePositiveInt(options.requestTimeoutMs, defaultRequestTimeoutMs, 1, 60_000),
+    // Same clamp shape as opportunity-fanout's maxPages (#4831 / #10007).
+    maxPages: normalizePositiveInt(options.maxPages, defaultMaxPages, 1, 100),
     sleepFn:
       options.sleepFn ??
       ((delayMs: number) => new Promise((resolve) => setTimeout(resolve, delayMs))),
@@ -233,7 +242,8 @@ async function fetchCheckRuns(
   const checks: NormalizedCheckRun[] = [];
   let page = 1;
   let expectedTotalCount: number | null = null;
-  while (true) {
+  // #10007: page-count cap (not checks.length) so a looping endpoint that re-serves the same page can't spin forever.
+  while (page <= options.maxPages) {
     const { payload, response } = await githubGetJsonResponse(
       apiUrl(
         options.apiBaseUrl,
@@ -257,6 +267,8 @@ async function fetchCheckRuns(
     }
     page += 1;
   }
+  // Distinct from pagination_incomplete: the server kept advertising more pages past the hard cap.
+  throw new Error("github_check_runs_pagination_page_cap");
 }
 
 export async function pollCheckRuns(

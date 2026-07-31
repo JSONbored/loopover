@@ -77,8 +77,9 @@ export function collectCrossBoundaryReach(root: string): CrossBoundaryReach[] {
   const reach = new Map<string, string>();
   for (const file of files) {
     const source = readFileSync(file, "utf8");
-    // Both `from "..."` and bare `import "..."`, since a side-effect import is type-checked too.
-    for (const match of source.matchAll(/(?:from|import)\s+"((?:\.\.\/)+[^"]+)"/g)) {
+    // Static `from "..."`, bare `import "..."`, and dynamic `import("...")` (incl. multi-line) — side-effect
+    // and JSON imports are type-checked too. Mirror check-dead-source-files.ts's optional-paren form (#10046).
+    for (const match of source.matchAll(/(?:from|import)\s*\(?\s*"((?:\.\.\/)+[^"]+)"/g)) {
       const specifier = match[1];
       if (!specifier) continue;
       const segments = /(?:^|\/)(packages|apps)\/([^/]+)\/([^/"]+)/.exec(specifier);

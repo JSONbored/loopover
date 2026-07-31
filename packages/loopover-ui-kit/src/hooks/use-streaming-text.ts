@@ -16,7 +16,11 @@ export interface StreamingTextState {
   text: string;
   status: StreamingStatus;
   error: Error | null;
-  /** Stop consuming the current source; no later chunk from it reaches state. Idempotent, safe post-unmount. */
+  /**
+   * Stop consuming the current source; no later chunk from it reaches state. Idempotent, safe
+   * post-unmount. A no-op once the stream has already settled (reached `idle`, `done` or `error`
+   * for the current source) — it never overwrites a settled status with `"cancelled"`.
+   */
   cancel: () => void;
 }
 
@@ -39,8 +43,11 @@ export function useStreamingText(
     // Per-effect flag (a fresh closure each run): the cleanup below flips it on a new source or unmount, so the
     // previous run's worker stops and writes no more state. cancel() flips this same flag for an explicit stop.
     let cancelled = false;
+    // Per-effect flag mirroring `cancelled`, but set on each terminal transition (idle/done/error) instead of
+    // by cancel()/cleanup. Once the stream has settled, cancel() must leave status/text/error untouched.
+    let settled = false;
     cancelRef.current = () => {
-      if (!cancelled) {
+      if (!cancelled && !settled) {
         cancelled = true;
         setStatus("cancelled");
       }
@@ -55,6 +62,7 @@ export function useStreamingText(
       setText("");
       setError(null);
       if (!source) {
+        settled = true;
         setStatus("idle");
         return;
       }
@@ -64,9 +72,13 @@ export function useStreamingText(
           if (cancelled) return;
           setText((prev) => prev + chunk);
         }
-        if (!cancelled) setStatus("done");
+        if (!cancelled) {
+          settled = true;
+          setStatus("done");
+        }
       } catch (err) {
         if (!cancelled) {
+          settled = true;
           setError(err instanceof Error ? err : new Error(String(err)));
           setStatus("error");
         }

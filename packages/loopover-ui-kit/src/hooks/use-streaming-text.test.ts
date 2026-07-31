@@ -122,4 +122,70 @@ describe("useStreamingText (#6516)", () => {
     expect(result.current.error?.message).toBe("stream boom");
     expect(result.current.text).toBe("partial");
   });
+
+  describe("cancel() after settle is a no-op (#10050)", () => {
+    it("cancel() on a null source leaves status idle", () => {
+      const { result } = renderHook(() => useStreamingText(null));
+      expect(result.current.status).toBe("idle");
+
+      act(() => result.current.cancel());
+
+      expect(result.current.status).toBe("idle");
+      expect(result.current.text).toBe("");
+      expect(result.current.error).toBe(null);
+    });
+
+    it("cancel() on a completed stream leaves status done and text unchanged", async () => {
+      const src = deferredSource();
+      const { result } = renderHook(() => useStreamingText(src.source));
+      await src.push("Hello");
+      await waitFor(() => expect(result.current.text).toBe("Hello"));
+      await src.finish();
+      await waitFor(() => expect(result.current.status).toBe("done"));
+
+      act(() => result.current.cancel());
+
+      expect(result.current.status).toBe("done");
+      expect(result.current.text).toBe("Hello");
+    });
+
+    it("cancel() on a failed stream leaves status error and the error intact", async () => {
+      const src = deferredSource();
+      const { result } = renderHook(() => useStreamingText(src.source));
+      await src.push("partial");
+      await waitFor(() => expect(result.current.text).toBe("partial"));
+      await src.fail(new Error("stream boom"));
+      await waitFor(() => expect(result.current.status).toBe("error"));
+
+      act(() => result.current.cancel());
+
+      expect(result.current.status).toBe("error");
+      expect(result.current.error?.message).toBe("stream boom");
+    });
+
+    it("swapping in a new source after a settled cancel() still starts and can be cancelled", async () => {
+      const first = deferredSource();
+      const { result, rerender } = renderHook(
+        ({ s }: { s: ChunkSource | null }) => useStreamingText(s),
+        { initialProps: { s: first.source as ChunkSource | null } },
+      );
+      await first.push("old");
+      await waitFor(() => expect(result.current.text).toBe("old"));
+      await first.finish();
+      await waitFor(() => expect(result.current.status).toBe("done"));
+
+      act(() => result.current.cancel()); // settled cancel — no-op
+      expect(result.current.status).toBe("done");
+
+      const second = deferredSource();
+      rerender({ s: second.source });
+      await waitFor(() => expect(result.current.status).toBe("streaming"));
+
+      await second.push("new");
+      await waitFor(() => expect(result.current.text).toBe("new"));
+
+      act(() => result.current.cancel());
+      await waitFor(() => expect(result.current.status).toBe("cancelled"));
+    });
+  });
 });

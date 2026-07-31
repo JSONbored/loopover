@@ -28,6 +28,7 @@ import {
 } from "@loopover/contract";
 import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content";
 import { instrumentToolDispatch, NOOP_DISPATCH_SINK, type DispatchTelemetrySink } from "../../src/mcp/dispatch-telemetry";
+import { resolveMcpToolCallOk } from "../../src/mcp/server";
 
 const call: McpToolCallTelemetry = { tool: "loopover_get_repo_context", category: "maintainer", surface: "remote", ok: true, durationMs: 12 };
 
@@ -451,5 +452,34 @@ describe("PostHog canonical MCP analytics contract (#10175)", () => {
     // A server advertising nothing is a real, diagnosable state; an absent key reads as "not
     // measured" instead.
     expect(buildMcpToolsListProperties([]).$mcp_listed_tool_names).toEqual([]);
+  });
+});
+
+describe("resolveMcpToolCallOk (#10035)", () => {
+  it("reports failure for a tools/call response whose result carries isError", async () => {
+    const response = new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [] } }), { status: 200 });
+    await expect(resolveMcpToolCallOk(response, true)).resolves.toBe(false);
+  });
+
+  it("reports failure for a tools/call response with a top-level JSON-RPC error", async () => {
+    const response = new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32602, message: "bad params" } }), { status: 200 });
+    await expect(resolveMcpToolCallOk(response, true)).resolves.toBe(false);
+  });
+
+  it("reports success for a normal tool result", async () => {
+    const response = new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { structuredContent: {} } }), { status: 200 });
+    await expect(resolveMcpToolCallOk(response, true)).resolves.toBe(true);
+  });
+
+  it("falls back to the status-derived outcome when the body does not parse as JSON, rather than throwing", async () => {
+    const response = new Response("not-json", { status: 200 });
+    await expect(resolveMcpToolCallOk(response, true)).resolves.toBe(true);
+    await expect(resolveMcpToolCallOk(response.clone(), false)).resolves.toBe(false);
+  });
+
+  it("leaves the response body available for the caller after reading it for telemetry", async () => {
+    const response = new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [] } }), { status: 200 });
+    await resolveMcpToolCallOk(response, true);
+    await expect(response.json()).resolves.toMatchObject({ result: { isError: true } });
   });
 });

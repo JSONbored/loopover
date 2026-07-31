@@ -101,6 +101,73 @@ describe("derivePublicCommentMergeFacts() — failing-check projection (#4607)",
   });
 });
 
+describe("derivePublicCommentMergeFacts() — mergeStateHeld honours the ignored-checks resolution (#10055)", () => {
+  it("does NOT hold an unstable state fully explained by an ignored, non-passing check", () => {
+    const { mergeReadiness } = facts({
+      liveMergeState: "unstable",
+      mergeableState: "unstable",
+      liveCi: {
+        ciState: "passed",
+        failingDetails: [],
+        nonRequiredFailingDetails: [],
+        ignoredCheckDetails: [{ name: "Contributor trust", appSlug: "some-app", conclusion: "failure" }],
+      },
+    });
+    expect(mergeReadiness.mergeStateHeld).toBe(false);
+  });
+
+  it("still holds an unstable state when the ignored check passed (nothing explains the instability)", () => {
+    const { mergeReadiness } = facts({
+      liveMergeState: "unstable",
+      mergeableState: "unstable",
+      liveCi: {
+        ciState: "passed",
+        failingDetails: [],
+        nonRequiredFailingDetails: [],
+        ignoredCheckDetails: [{ name: "Contributor trust", appSlug: "some-app", conclusion: "success" }],
+      },
+    });
+    expect(mergeReadiness.mergeStateHeld).toBe(true);
+  });
+
+  it("still holds an unstable state when some OTHER non-required check is also red", () => {
+    const { mergeReadiness } = facts({
+      liveMergeState: "unstable",
+      mergeableState: "unstable",
+      liveCi: {
+        ciState: "passed",
+        failingDetails: [],
+        nonRequiredFailingDetails: [{ name: "advisory-scan", summary: "1 note" }],
+        ignoredCheckDetails: [{ name: "Contributor trust", appSlug: "some-app", conclusion: "failure" }],
+      },
+    });
+    expect(mergeReadiness.mergeStateHeld).toBe(true);
+  });
+
+  it("still holds an unstable state when CI itself failed, even with a non-passing ignored check", () => {
+    const { mergeReadiness } = facts({
+      liveMergeState: "unstable",
+      mergeableState: "unstable",
+      liveCi: {
+        ciState: "failed",
+        failingDetails: [{ name: "codecov/patch" }],
+        nonRequiredFailingDetails: [],
+        ignoredCheckDetails: [{ name: "Contributor trust", appSlug: "some-app", conclusion: "failure" }],
+      },
+    });
+    expect(mergeReadiness.mergeStateHeld).toBe(true);
+  });
+
+  it("has no ignored checks to explain anything when ignoredCheckDetails is omitted (byte-identical to before #10055)", () => {
+    const { mergeReadiness } = facts({
+      liveMergeState: "unstable",
+      mergeableState: "unstable",
+      liveCi: { ciState: "passed", failingDetails: [], nonRequiredFailingDetails: [] },
+    });
+    expect(mergeReadiness.mergeStateHeld).toBe(true);
+  });
+});
+
 describe("derivePublicCommentMergeFacts() — heldForReview (#guarded-hold-comment, #4607)", () => {
   it("holds a PR whose diff touches a hard-guardrail path, and does not hold one that doesn't", () => {
     expect(facts({ unifiedFiles: [GUARDED_FILE] }).heldForReview).toBe(true);

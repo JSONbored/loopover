@@ -2163,7 +2163,12 @@ export function derivePublicCommentMergeFacts(args: {
   // #8683: the live per-repo admin verdict for the author, resolved by the caller (isPerTenantAdmin) so this
   // pure function can match the planner's owner-OR-admin close-eligibility formula without an async fetch.
   authorIsAdmin: boolean;
-  liveCi: Pick<LiveCiAggregate, "ciState" | "failingDetails" | "nonRequiredFailingDetails">;
+  liveCi: Pick<LiveCiAggregate, "ciState" | "failingDetails" | "nonRequiredFailingDetails"> & {
+    // #10055: optional so existing fixtures/callers that predate the ignored-checks resolution keep
+    // typechecking unchanged; the one production caller always passes the full LiveCiAggregate, which
+    // always has this field. Absent/empty behaves exactly like "nothing was ignored".
+    ignoredCheckDetails?: LiveCiAggregate["ignoredCheckDetails"] | undefined;
+  };
   settings: Pick<RepositorySettings, "hardGuardrailGlobs" | "hardGuardrailGlobsOverridesInvariants" | "manualReviewLabel" | "closeOwnerAuthors">;
   unifiedFiles: Awaited<ReturnType<typeof listPullRequestFiles>>;
   repoFullName: string;
@@ -2180,13 +2185,22 @@ export function derivePublicCommentMergeFacts(args: {
   // Non-required-but-red checks (#4414-class advisory holds): surfaced so a flagged check is never silently
   // invisible, but never folded into failingChecks/failingDetails -- those two drive ciState/close.
   const nonRequiredFailingDetails = publicCheckFailureDetails(args.liveCi.nonRequiredFailingDetails);
+  // #10055: the SAME resolution agent-actions.ts's buildPrDispositionInput computes at its
+  // `unstableExplainedByIgnoredChecks` field -- only the NON-PASSING ignored runs count as an explanation,
+  // and only when nothing else non-required is also red and CI itself did not fail. Recomputed here (not
+  // threaded as a pre-resolved boolean) because this is the only production caller of the state-only
+  // helper and must read this surface's own live-CI inputs rather than a second, possibly-stale source.
+  const ignoredCheckNonPassing = (args.liveCi.ignoredCheckDetails ?? []).filter((run) => !CI_PASSING_CONCLUSIONS.has(run.conclusion));
+  const unstableExplainedByIgnoredChecks =
+    ignoredCheckNonPassing.length > 0 && nonRequiredFailingDetails.length === 0 && args.liveCi.ciState !== "failed";
   const mergeReadiness: MergeReadiness = {
     ciState,
     ...(mergeStateLabel ? { mergeStateLabel } : {}),
-    // #8759: the SHARED interpretation of the merge state (pr-disposition.ts) — the same one the
-    // disposition planner reads — resolved here so the self-contained renderer consumes a boolean
-    // instead of re-deriving meaning from the raw string (the #8711 four-surfaces-disagree class).
-    ...(mergeStateLabel ? { mergeStateHeld: isCommentMergeStateHeld(mergeStateLabel) } : {}),
+    // #8759/#10055: the SHARED interpretation of the merge state (pr-disposition.ts) — the same one the
+    // disposition planner reads, now including the ignored-checks resolution — resolved here so the
+    // self-contained renderer consumes a boolean instead of re-deriving meaning from the raw string (the
+    // #8711 four-surfaces-disagree class).
+    ...(mergeStateLabel ? { mergeStateHeld: isCommentMergeStateHeld(mergeStateLabel, unstableExplainedByIgnoredChecks) } : {}),
     ...(failingDetails.length > 0 ? { failingChecks: failingDetails.map((detail) => detail.name) } : {}),
     ...(failingDetails.length > 0 ? { failingDetails } : {}),
     ...(nonRequiredFailingDetails.length > 0 ? { nonRequiredFailingDetails } : {}),

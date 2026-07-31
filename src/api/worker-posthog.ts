@@ -99,16 +99,29 @@ export interface WorkerErrorRequestContext {
 /** Capture one exception from the hosted Worker path. Never throws -- a PostHog init/capture/flush failure
  *  degrades to recording nothing, matching every other capture* function in this codebase's identical
  *  best-effort guarantee. Resolves once the event has actually been flushed (or given up on), so the caller
- *  should schedule this via ctx.waitUntil rather than await it inline on the request's hot path. */
-export async function capturePostHogWorkerError(env: WorkerPostHogEnv, error: unknown, context: WorkerErrorRequestContext): Promise<void> {
+ *  should schedule this via ctx.waitUntil rather than await it inline on the request's hot path.
+ *
+ *  `extraProperties` lets a non-HTTP caller (the MCP dispatch sink, #10037) attach its own grouping
+ *  properties (e.g. `mcp_tool`/`error_code`) alongside the fixed `environment`/`request_path`/
+ *  `request_method` shape -- scrubbed the same way those are, then merged in. Omitting it leaves
+ *  `createWorkerPostHogErrorMiddleware`'s HTTP callers unaffected. */
+export async function capturePostHogWorkerError(
+  env: WorkerPostHogEnv,
+  error: unknown,
+  context: WorkerErrorRequestContext,
+  extraProperties?: Record<string, unknown>,
+): Promise<void> {
   try {
     const client = await buildClient(env);
     if (!client) return;
     const err = error instanceof Error ? error : new Error(String(error));
+    const scrubbedExtra = extraProperties ? { ...extraProperties } : undefined;
+    if (scrubbedExtra) scrubRecord(scrubbedExtra, 0);
     client.captureException(err, WORKER_ERROR_DISTINCT_ID, {
       environment: trimmedOrUndefined(env.WORKER_POSTHOG_ENVIRONMENT) ?? "production",
       request_path: scrubString(context.path),
       request_method: context.method,
+      ...scrubbedExtra,
     });
     await client.flush();
   } catch {

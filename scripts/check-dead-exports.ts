@@ -38,10 +38,10 @@ const REFERENCE_ROOTS = ["src", "packages", "test", "scripts", "apps/loopover-ui
 const SOURCE_PATTERN = /(?<!\.d)\.tsx?$/;
 const EXCLUDED_SEGMENT = /(?:^|\/)(?:node_modules|dist|dist-test)(?:\/|$)/;
 
-/** `export const NAME` / `export function NAME` / `export async function NAME` at the top level. Types and
- *  interfaces are deliberately out of scope: an unused type costs nothing at runtime and TypeScript's own
- *  `noUnusedLocals` already covers the local case. */
-const EXPORTED_RUNTIME_SYMBOL = /^export (?:async )?(?:const|function) ([A-Za-z_][A-Za-z0-9_]*)/gm;
+/** `export const|function|class|enum NAME` (plus `async function` / `abstract class` / `const enum`) at the
+ *  top level. Types and interfaces stay out of scope: an unused type costs nothing at runtime and
+ *  TypeScript's own `noUnusedLocals` already covers the local case. */
+const EXPORTED_RUNTIME_SYMBOL = /^export (?:async )?(?:abstract )?(?:const\s+enum|const|function|class|enum) ([A-Za-z_][A-Za-z0-9_]*)/gm;
 
 /**
  * Exports with no in-repo reference that are nonetheless legitimate, each with the reason.

@@ -25,6 +25,7 @@ import {
   listIssueSignalSample,
   listLatestSignalSnapshotsByTarget,
   listOtherOpenPullRequests,
+  listMergedPullRequestsInWindow,
   listOtherOpenPullRequestsForAuthor,
   listOpenIssues,
   listOpenPullRequests,
@@ -350,6 +351,8 @@ import {
 } from "../signals/engine";
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
+import { isSupersededCloseEnabledGlobally } from "../settings/superseded-close-mode";
+import { resolveSupersession, supersededSearchWindow, type LinkedIssueClosure, type SupersededByRival } from "../review/linked-issue-superseded";
 import { isOpenPrFileCollisionEnabledGlobally, resolveOpenPrFileCollisionEnabled } from "../settings/open-pr-file-collision-mode";
 import { buildAiReviewDiff, buildSecretScanDiff, totalAddedLineCount } from "../review/review-diff";
 // #4013 step 4 (prep): buildAiReviewDiff/buildSecretScanDiff moved to review-diff.ts (a natural existing
@@ -1610,12 +1613,13 @@ export async function sweepRepoRegate(
     // Thread linked-issue authors + the open-reference check so the re-gate sweep applies the same
     // self-authored-linked-issue block AND stale-issue-link countermeasure the main webhook path applies —
     // without this a self-authored or stale-link-gaming PR re-gated by the sweep escapes both. (#self-authored-parity, #unlinked-issue-guardrail-followup)
-    const { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue } = await resolveLinkedIssueAdvisoryContext(
+    const { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue, supersededBy } = await resolveLinkedIssueAdvisoryContext(
       env,
       sweepInstallationId,
       repoFullName,
       pr.linkedIssues,
       settings,
+      pr,
     );
     // #9160: see resolveScopedLinkedIssueClaimedAt's own doc comment -- scopes pr's claim time to only the
     // issue(s) actually contested with an open sibling instead of pr's blended linkedIssueClaimedAt column.
@@ -1627,6 +1631,7 @@ export async function sweepRepoRegate(
       duplicateWinnerEnabled,
       linkedIssueAuthorLogins,
       confirmedNoOpenLinkedIssue,
+      supersededBy,
       copycatGateMode: settings.copycatGateMode,
       copycatGateMinScore: settings.copycatGateMinScore,
       scopedLinkedIssueClaimedAt,
@@ -4378,10 +4383,10 @@ export async function reReviewStoredPullRequest(
     pr.number,
     pr.headSha,
   );
-  const [cachedOtherOpenPullRequests, { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue }] =
+  const [cachedOtherOpenPullRequests, { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue, supersededBy }] =
     await Promise.all([
       listOtherOpenPullRequests(env, repoFullName, prNumber),
-      resolveLinkedIssueAdvisoryContext(env, installationId, repoFullName, pr.linkedIssues, settings),
+      resolveLinkedIssueAdvisoryContext(env, installationId, repoFullName, pr.linkedIssues, settings, pr),
     ]);
   // #dup-winner / audit #15: drop any cached-open duplicate sibling already closed on GitHub before the advisory
   // (and the disposition below) elect the cluster winner, so the real lowest-OPEN PR is never demoted+auto-closed.
@@ -4405,6 +4410,7 @@ export async function reReviewStoredPullRequest(
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
     duplicateWinnerEnabled: duplicateWinnerEnabledForPr,
     confirmedNoOpenLinkedIssue,
+    supersededBy,
     linkedIssueAuthorLogins,
     copycatGateMode: settings.copycatGateMode,
     copycatGateMinScore: settings.copycatGateMinScore,
@@ -7531,11 +7537,11 @@ async function handlePullRequestWebhookEvent(
     // column, so reading late would always see this pass's own bookkeeping write instead of the real prior
     // review pass's recorded visual_unrelated_issue_finding. Gated on `closed` (the only action
     // maybePostVisualFollowupComment ever fires for) so every other action skips this read entirely.
-    const [repo, cachedOtherOpenPullRequests, { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue }, priorAdvisoryForVisualFollowup] =
+    const [repo, cachedOtherOpenPullRequests, { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue, supersededBy }, priorAdvisoryForVisualFollowup] =
       await Promise.all([
         getRepository(env, repoFullName),
         listOtherOpenPullRequests(env, repoFullName, pr.number),
-        resolveLinkedIssueAdvisoryContext(env, installationId, repoFullName, pr.linkedIssues, settings),
+        resolveLinkedIssueAdvisoryContext(env, installationId, repoFullName, pr.linkedIssues, settings, pr),
         payload.action === "closed" && installationId ? getLatestAdvisoryForPullRequest(env, repoFullName, pr.number) : Promise.resolve(null),
       ]);
     // #dup-winner / audit #15: drop any cached-open duplicate sibling already closed on GitHub before the
@@ -7560,6 +7566,7 @@ async function handlePullRequestWebhookEvent(
       requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
       duplicateWinnerEnabled: duplicateWinnerEnabledForPr,
       confirmedNoOpenLinkedIssue,
+      supersededBy,
       linkedIssueAuthorLogins,
       copycatGateMode: settings.copycatGateMode,
       copycatGateMinScore: settings.copycatGateMinScore,
@@ -8353,12 +8360,45 @@ async function resolveLinkedIssueAdvisoryContext(
   repoFullName: string,
   linkedIssues: number[],
   settings: Pick<RepositorySettings, "selfAuthoredLinkedIssueGateMode" | "linkedIssueGateMode">,
-): Promise<{ linkedIssueAuthorLogins: (string | null)[]; confirmedNoOpenLinkedIssue: boolean }> {
-  const [linkedIssueAuthorLogins, hasOpenReference] = await Promise.all([
+  // #10168: needed only to distinguish a superseded PR from one that cited a dead issue -- the check is
+  // "was this issue still open when THIS pull request was created".
+  pr: Pick<PullRequestRecord, "number" | "createdAt">,
+): Promise<{ linkedIssueAuthorLogins: (string | null)[]; confirmedNoOpenLinkedIssue: boolean; supersededBy: SupersededByRival | null }> {
+  const [linkedIssueAuthorLogins, reference] = await Promise.all([
     resolveLinkedIssueAuthorLogins(env, installationId, repoFullName, linkedIssues, settings.selfAuthoredLinkedIssueGateMode === "block"),
-    settings.linkedIssueGateMode === "block" ? resolveLinkedIssueHasOpenReference({ env, repoFullName, linkedIssues, installationId }) : Promise.resolve(true),
+    settings.linkedIssueGateMode === "block"
+      ? resolveLinkedIssueHasOpenReference({ env, repoFullName, linkedIssues, installationId })
+      : Promise.resolve({ hasOpenReference: true, closures: [] }),
   ]);
-  return { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue: !hasOpenReference };
+  const confirmedNoOpenLinkedIssue = !reference.hasOpenReference;
+  // Only a PR that ALREADY reads as having no open linked issue can be superseded -- this splits that one
+  // verdict in two, it never creates a new one. Gated OFF by default (#10168): recognising supersession
+  // closes the PR. Best effort: a failed lookup yields null, which keeps today's `missing_linked_issue`.
+  const supersededBy =
+    confirmedNoOpenLinkedIssue && isSupersededCloseEnabledGlobally(env)
+      ? await resolveSupersededRival(env, repoFullName, pr, reference.closures).catch(() => null)
+      : null;
+  return { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue, supersededBy };
+}
+
+/**
+ * #10168: find the merged rival that closed this PR's linked issue, if there is one.
+ *
+ * The candidate window runs from this PR's own creation to the latest observed issue close plus the
+ * resolver's tolerance -- the smallest range that can still contain a qualifying merge, so the DB read stays
+ * bounded no matter how long the PR has been sitting. Returns null when the PR has no synced `createdAt` or
+ * no conclusively-read closed issue, because neither half of the evidence can be established without them.
+ */
+async function resolveSupersededRival(
+  env: Env,
+  repoFullName: string,
+  pr: Pick<PullRequestRecord, "number" | "createdAt">,
+  closures: LinkedIssueClosure[],
+): Promise<SupersededByRival | null> {
+  const window = supersededSearchWindow(pr.createdAt, closures);
+  if (window === null) return null;
+  const mergedRivals = await listMergedPullRequestsInWindow(env, repoFullName, window.sinceIso, window.untilIso);
+  return resolveSupersession({ prNumber: pr.number, prCreatedAt: pr.createdAt, closures, mergedRivals });
 }
 
 export async function shouldRefreshFilesForPreMergeChecks(
@@ -15211,12 +15251,13 @@ export async function buildAuthorizedPrActionAdvisory(
   // Mirror the main webhook path: thread linked-issue authors + the open-reference check so an authorized PR
   // action (gate-override / panel retrigger) honors the same self-authored-linked-issue block AND stale-
   // issue-link countermeasure. installationId comes from the repo record. (#self-authored-parity, #unlinked-issue-guardrail-followup)
-  const { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue } = await resolveLinkedIssueAdvisoryContext(
+  const { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue, supersededBy } = await resolveLinkedIssueAdvisoryContext(
     env,
     repo?.installationId ?? null,
     repoFullName,
     pr.linkedIssues,
     settings,
+    pr,
   );
   const duplicateWinnerEnabledForPr = resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode);
   // #9160: see resolveScopedLinkedIssueClaimedAt's own doc comment -- scopes pr's claim time to only the
@@ -15230,6 +15271,7 @@ export async function buildAuthorizedPrActionAdvisory(
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
     duplicateWinnerEnabled: duplicateWinnerEnabledForPr,
     confirmedNoOpenLinkedIssue,
+    supersededBy,
     linkedIssueAuthorLogins,
     copycatGateMode: settings.copycatGateMode,
     copycatGateMinScore: settings.copycatGateMinScore,

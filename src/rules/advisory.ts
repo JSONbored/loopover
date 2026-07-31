@@ -47,6 +47,7 @@ import { CONFIDENCE_WHEN_UNSTATED } from "../services/ai-review";
 import { LOOPOVER_GATE_CHECK_NAME } from "../review/check-names";
 import { CLA_CHECK_UNRESOLVED_CODE, CLA_CONSENT_MISSING_CODE } from "../review/cla-check";
 import { REVIEW_THREAD_BLOCKER_CODE } from "../review/review-thread-findings";
+import type { SupersededByRival } from "../review/linked-issue-superseded";
 import { createSignalStore } from "../review/signal-tracking-wire";
 import { labelMatchesPattern } from "../scoring/preview";
 import { isMaintainerAuthorAssociation } from "../github/author-association";
@@ -209,6 +210,10 @@ export const GATE_SCORE_SIGNAL_CODES: readonly string[] = Object.freeze(["slop_g
 
 export const CONFIGURED_GATE_BLOCKER_SIGNAL_CODES: readonly string[] = Object.freeze([
   "missing_linked_issue",
+  // #10168: the superseded split-off of missing_linked_issue. Listed here for the same reason its sibling is
+  // -- it gates a real close, so its reversals must record under their own id rather than under the code it
+  // was split out of, or the per-rule precision check in downgradeCloseToHold can never see it.
+  "linked_issue_superseded",
   "duplicate_pr_risk",
   ...AI_JUDGMENT_BLOCKER_CODES,
   REVIEW_THREAD_BLOCKER_CODE,
@@ -392,6 +397,12 @@ export function buildPullRequestAdvisory(
      *  — this is fail-open by construction: the caller only ever sets it true after a live check confirms
      *  every reference is dead, never on ambiguity. */
     confirmedNoOpenLinkedIssue?: boolean;
+    /** #10168: the evidence that this PR's linked issue was closed by a rival that merged AFTER it opened,
+     *  resolved by the caller (`resolveSupersession`, review/linked-issue-superseded.ts). Present ⇒ the
+     *  `confirmedNoOpenLinkedIssue` case is reported as a supersession naming the rival, instead of as
+     *  `missing_linked_issue`'s unactionable "link it explicitly in the PR body". Absent/null ⇒ byte-identical
+     *  to before this existed, which is also what a fleet with the flag off always sees. */
+    supersededBy?: SupersededByRival | null | undefined;
     /** #9033: the repo's EFFECTIVE `copycatGateMode`/`copycatGateMinScore` (already resolved by the caller via
      *  `resolveRepositorySettings` — reward-eligible repos default this to `warn` even with no `.loopover.yml`
      *  entry, see `settings/copycat-gate-mode.ts`). Used ONLY to decide whether `pr`'s own persisted copycat
@@ -449,6 +460,7 @@ export function buildPullRequestAdvisory(
       context.copycatGateMode,
       context.copycatGateMinScore,
       context.scopedLinkedIssueClaimedAt,
+      context.supersededBy,
     );
   }
   return advisory("pull_request", targetKey, repoFullName, findings, "Pull request advisory generated.", pr?.number, undefined, pr?.headSha ?? undefined);
@@ -1055,6 +1067,8 @@ function addPullRequestFindings(
   // `undefined` (every caller that hasn't been updated, and every non-DB caller like decision-replay.ts) falls
   // back to pr.linkedIssueClaimedAt, byte-identical to before this existed.
   scopedLinkedIssueClaimedAt?: string | null | undefined,
+  // #10168: present only when the caller proved a rival merged after this PR opened and closed its issue.
+  supersededBy?: SupersededByRival | null | undefined,
 ): void {
   if (pr.state !== "open") {
     findings.push({
@@ -1073,15 +1087,31 @@ function addPullRequestFindings(
   // issues API, which presupposes a real body was already parsed.
   const noLinkedIssueCited = pr.linkedIssues.length === 0 && pr.bodyObservedAt !== null;
   if ((noLinkedIssueCited || confirmedNoOpenLinkedIssue) && requireLinkedIssue) {
-    findings.push({
-      code: "missing_linked_issue",
-      severity: "warning",
-      title: "No linked issue detected",
-      detail: noLinkedIssueCited
-        ? "No closing reference or linked issue number was found in the PR metadata/body."
-        : "The PR cites an issue number, but it could not be verified as a currently open issue.",
-      action: "If this PR is intended to solve an issue, link it explicitly in the PR body.",
-    });
+    // #10168: a PR whose linked issue a merged rival closed did NOT fail to link an issue -- it linked one
+    // correctly and lost a race. Reporting that as `missing_linked_issue` gives advice that cannot work
+    // (re-linking a closed issue changes nothing), so the superseded case gets its own code and message.
+    // `supersededBy` is only ever set once the caller has proven both halves (the issue outlived this PR's
+    // creation, and a rival citing it merged into the window ending at its close), so this never displaces
+    // the anti-gaming reading for a PR that cited an already-dead issue.
+    if (supersededBy) {
+      findings.push({
+        code: "linked_issue_superseded",
+        severity: "warning",
+        title: "Superseded by a merged pull request",
+        detail: `Issue #${supersededBy.issueNumber} was closed by #${supersededBy.rivalPullNumber}, which merged after this pull request opened. The work this pull request targets is already on the default branch.`,
+        action: `Nothing is wrong with the issue link. If part of this pull request is still unaddressed by #${supersededBy.rivalPullNumber}, open a new issue describing what remains.`,
+      });
+    } else {
+      findings.push({
+        code: "missing_linked_issue",
+        severity: "warning",
+        title: "No linked issue detected",
+        detail: noLinkedIssueCited
+          ? "No closing reference or linked issue number was found in the PR metadata/body."
+          : "The PR cites an issue number, but it could not be verified as a currently open issue.",
+        action: "If this PR is intended to solve an issue, link it explicitly in the PR body.",
+      });
+    }
   } else {
     const linkedIssueOverlapPrs = otherOpenPullRequests.filter((otherPr) =>
       otherPr.linkedIssues.some((issueNumber) => pr.linkedIssues.includes(issueNumber)),
@@ -1290,6 +1320,11 @@ function resolveConfiguredGateMode(finding: AdvisoryFinding, policy: GateCheckPo
   // Missing linked issue defaults to ADVISORY — issues aren't always available, so it only blocks when a
   // repo explicitly opts in with linkedIssueGateMode: "block".
   if (code === "missing_linked_issue") return gateMode(policy.linkedIssueGateMode ?? "advisory");
+  // #10168: supersession rides the SAME knob it was split out of. A repo that opted into
+  // `linkedIssueGateMode: "block"` already asked for an unlinked PR to be acted on; splitting the message in
+  // two must not quietly change WHETHER it is acted on, only what the contributor is told and which code the
+  // ledger records. A repo on the "advisory" default keeps getting an advisory finding here too.
+  if (code === "linked_issue_superseded") return gateMode(policy.linkedIssueGateMode ?? "advisory");
   // #9129: default changed from "block" to "advisory" — the input this finding is derived from (another
   // contributor's own PR body text) is adversary-controlled, so blocking-by-default let anyone force-close a
   // rival's PR for free. A maintainer who explicitly opts into "block" still gets real effect: evaluateGateCheckCore

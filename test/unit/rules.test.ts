@@ -181,6 +181,48 @@ describe("advisory rules", () => {
     expect(finding?.detail).toBe("No closing reference or linked issue number was found in the PR metadata/body.");
   });
 
+  // #10168: the same confirmedNoOpenLinkedIssue state splits in two once the caller can prove a rival merged
+  // after this PR opened and closed its issue. The contributor did not fail to link anything.
+  describe("supersession (#10168)", () => {
+    const supersededPr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 8886,
+      title: "Fix a bug",
+      state: "open",
+      authorLogin: "oktofeesh1",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [8829],
+    };
+    const supersededBy = { issueNumber: 8829, rivalPullNumber: 8881, rivalMergedAt: "2026-07-31T09:30:24Z", issueClosedAt: "2026-07-31T09:30:25Z" };
+
+    it("reports a supersession naming the rival, not 'No linked issue detected'", () => {
+      const advisory = buildPullRequestAdvisory(repo, supersededPr, { requireLinkedIssue: true, confirmedNoOpenLinkedIssue: true, supersededBy });
+
+      expect(advisory.findings.find((f) => f.code === "missing_linked_issue")).toBeUndefined();
+      const finding = advisory.findings.find((f) => f.code === "linked_issue_superseded");
+      expect(finding?.title).toBe("Superseded by a merged pull request");
+      expect(finding?.detail).toContain("#8829 was closed by #8881");
+      // The advice must not be the one that cannot work -- re-linking a closed issue changes nothing.
+      expect(finding?.action).not.toContain("link it explicitly in the PR body");
+      expect(finding?.action).toContain("#8881");
+    });
+
+    it("keeps the anti-gaming reading when no rival is proven (absent and explicit-null both)", () => {
+      for (const value of [undefined, null]) {
+        const advisory = buildPullRequestAdvisory(repo, supersededPr, { requireLinkedIssue: true, confirmedNoOpenLinkedIssue: true, supersededBy: value });
+        expect(advisory.findings.find((f) => f.code === "linked_issue_superseded")).toBeUndefined();
+        expect(advisory.findings.find((f) => f.code === "missing_linked_issue")).toBeDefined();
+      }
+    });
+
+    it("never fires while the linked-issue requirement is off", () => {
+      const advisory = buildPullRequestAdvisory(repo, supersededPr, { requireLinkedIssue: false, confirmedNoOpenLinkedIssue: true, supersededBy });
+      expect(advisory.findings.find((f) => f.code === "linked_issue_superseded")).toBeUndefined();
+    });
+  });
+
   it("marks unknown repositories as action required", () => {
     const advisory = buildRepositoryAdvisory(null, "owner/repo");
     expect(advisory.conclusion).toBe("action_required");

@@ -2265,7 +2265,7 @@ describe("module-load cycle safety (#module-cycle-regression)", () => {
   });
 });
 
-// #hard-blockers-not-ai-judgment parity guard (nit): CONCRETE_EVIDENCE_BLOCKER_CODES hand-types all 10 of its
+// #hard-blockers-not-ai-judgment parity guard (nit): CONCRETE_EVIDENCE_BLOCKER_CODES hand-types all 11 of its
 // literals rather than importing any of them from their producers, even where a producer DOES export a
 // reusable constant (advisory.ts's DUPLICATE_ONLY_BLOCKER_CODES, pre-merge-checks.ts's
 // PRE_MERGE_CHECK_BLOCKING_CODE) -- see the doc comment on CONCRETE_EVIDENCE_BLOCKER_CODES for why: this module
@@ -2284,6 +2284,7 @@ describe("CONCRETE_EVIDENCE_BLOCKER_CODES parity — hand-typed literals still m
     { code: "pre_merge_check_required", file: "packages/loopover-engine/src/review/pre-merge-checks.ts" },
     { code: "lockfile_tamper_risk", file: "src/review/lockfile-tamper.ts" },
     { code: "missing_linked_issue", file: "src/rules/advisory.ts" },
+    { code: "linked_issue_superseded", file: "src/rules/advisory.ts" },
     { code: "self_authored_linked_issue", file: "src/rules/advisory.ts" },
     { code: "content_lane_deliverable_missing", file: "src/queue/processors.ts" },
   ];

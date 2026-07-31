@@ -654,7 +654,7 @@ import {
 } from "../review/linked-issue-hard-rules";
 import { DEFAULT_UNLINKED_ISSUE_GUARDRAIL } from "../review/unlinked-issue-guardrail-config";
 import { resolveUnlinkedIssueMatchDisposition } from "../review/unlinked-issue-guardrail";
-import { DEFAULT_SCREENSHOT_CONTRACT_MESSAGE, DEFAULT_SCREENSHOT_TABLE_GATE, evaluateScreenshotTableGate, extractTableRowImageUrls, type ScreenshotTableGateConfig } from "../review/screenshot-table-gate";
+import { CAPTURE_UNOBTAINABLE_REASON, DEFAULT_SCREENSHOT_CONTRACT_MESSAGE, DEFAULT_SCREENSHOT_TABLE_GATE, evaluateScreenshotTableGate, extractTableRowImageUrls, type ScreenshotTableGateConfig } from "../review/screenshot-table-gate";
 import { isSafeHttpUrl } from "../review/content-lane/safe-url";
 import {
   buildScreenshotTableVisionFindings,
@@ -3549,7 +3549,7 @@ async function runAgentMaintenancePlanAndExecute(
     presenceModeSatisfied: pr.screenshotTablePresenceSatisfied,
     // #9881: proved-unobtainable for THIS head only -- a later push re-arms the requirement, and a repo
     // that gains preview deploys stops matching on its very next commit.
-    captureUnobtainable: Boolean(pr.headSha) && pr.visualCaptureUnobtainableSha === pr.headSha,
+    captureUnobtainable: screenshotCaptureUnobtainableForHead(pr),
   });
   // #9030: a visual-capture pipeline ERROR (browserless down, timeout, GitHub hiccup) or a still-building
   // preview looked IDENTICAL to "capture concluded normally, no visual evidence found" -- both left
@@ -8760,15 +8760,26 @@ export async function maybeAddLockfileTamperFinding(
   }
 }
 
+/** #9881/#10060: whether the bot has proved visual capture is structurally unobtainable for THIS pr's current
+ *  head. Shared by BOTH `evaluateScreenshotTableGate` call sites (the enforcement pass in
+ *  `runAgentMaintenancePlanAndExecute` and the advisory pass below) so the two evaluations of the same fact
+ *  cannot disagree -- a later push re-arms the requirement, since the persisted marker is head-scoped. */
+export function screenshotCaptureUnobtainableForHead(pr: { headSha?: string | null | undefined; visualCaptureUnobtainableSha?: string | null | undefined }): boolean {
+  return Boolean(pr.headSha) && pr.visualCaptureUnobtainableSha === pr.headSha;
+}
+
 /**
- * Screenshot-table gate advisory visibility (#2006 follow-up). `action: "close"` already communicates via its
- * own templated close comment (see planAgentMaintenanceActions/screenshotTableCloseMessage), so a violation
- * there never needs a SEPARATE advisory finding -- this only ever fires for `action: "advisory"`, which
+ * Screenshot-table gate advisory visibility (#2006 follow-up, #10060). `action: "close"` already communicates
+ * via its own templated close comment (see planAgentMaintenanceActions/screenshotTableCloseMessage), so a
+ * violation there never needs a SEPARATE advisory finding -- this fires for `action: "advisory"` (which
  * previously had NO visible effect at all: the live gate's only other `evaluateScreenshotTableGate` call site
- * (`runAgentMaintenancePlanAndExecute`) discards the result entirely once `action !== "close"`. Mirrors
- * `maybeAddLockfileTamperFinding` immediately above: off/out-of-scope is free, a violation appends ONE
- * warning-severity, non-blocking finding (unrecognized by `isConfiguredGateBlocker`, so it can never gate),
- * and any evaluation error is swallowed so it can never destabilize the gate.
+ * (`runAgentMaintenancePlanAndExecute`) discards the result entirely once `action !== "close"`) AND, per
+ * `captureUnobtainable`, for a `close`/`block` gate whose enforcement #9881 degraded -- otherwise that
+ * degrade was silent: `runAgentMaintenancePlanAndExecute` (the only place that evaluated it) never appended
+ * a finding for the degraded path. Mirrors `maybeAddLockfileTamperFinding` immediately above: off/out-of-scope
+ * is free, a violation appends ONE warning-severity, non-blocking finding (unrecognized by
+ * `isConfiguredGateBlocker`, so it can never gate), and any evaluation error is swallowed so it can never
+ * destabilize the gate.
  */
 export async function maybeAddScreenshotTableAdvisoryFinding(
   env: Env,
@@ -8780,10 +8791,19 @@ export async function maybeAddScreenshotTableAdvisoryFinding(
     prBody: string | null | undefined;
     prLabels: string[];
     botCaptureSatisfied: boolean;
+    captureUnobtainable: boolean;
     files: Awaited<ReturnType<typeof listPullRequestFiles>> | null;
   },
 ): Promise<void> {
-  if (!args.screenshotTableGateConfig.enabled || args.screenshotTableGateConfig.action !== "advisory") return;
+  if (!args.screenshotTableGateConfig.enabled) return;
+  // #9881 degrade: a captureUnobtainable gate must still be evaluated even when action !== "advisory" -- ONLY
+  // the evaluator (not this early return) can tell whether the degrade actually applies, since it also
+  // requires `violated: true`. Every other action !== "advisory" case stays the pre-#10060 free early-out.
+  // (Nothing further down needs to re-check `action !== "advisory"`: reaching past this line with a
+  // non-advisory action is only possible via captureUnobtainable, and evaluateScreenshotTableGate sets
+  // `enforcementDegradedReason` on every `violated: true` result whose `captureUnobtainable` was true --
+  // so a non-advisory action that gets this far is always the degraded case.)
+  if (args.screenshotTableGateConfig.action !== "advisory" && !args.captureUnobtainable) return;
   try {
     const files =
       args.files ??
@@ -8794,9 +8814,12 @@ export async function maybeAddScreenshotTableAdvisoryFinding(
       prLabels: args.prLabels,
       changedFiles: files.map((file) => file.path),
       botCaptureSatisfied: args.botCaptureSatisfied,
+      captureUnobtainable: args.captureUnobtainable,
     });
     if (!result.violated) return;
-    const detail = result.reason ?? DEFAULT_SCREENSHOT_CONTRACT_MESSAGE;
+    const enforcementDegraded = result.enforcementDegradedReason !== undefined;
+    const reason = result.reason ?? DEFAULT_SCREENSHOT_CONTRACT_MESSAGE;
+    const detail = enforcementDegraded ? `${reason}\n\n${CAPTURE_UNOBTAINABLE_REASON}` : reason;
     args.advisory.findings.push({
       code: "screenshot_table_missing",
       severity: "warning",
@@ -12138,9 +12161,10 @@ async function maybePublishPrPublicSurface(
       files: await getReviewFiles(),
     });
 
-    // Screenshot-table gate advisory visibility (#2006 follow-up): `action: "advisory"` previously had no
-    // visible effect at all (see maybeAddScreenshotTableAdvisoryFinding's own doc comment). No-op for `off`,
-    // out-of-scope, or `action: "close"` (which already communicates via its own close comment).
+    // Screenshot-table gate advisory visibility (#2006 follow-up, #10060): `action: "advisory"` previously had
+    // no visible effect at all, and a `close`/`block` gate whose enforcement #9881 degraded went completely
+    // silent (see maybeAddScreenshotTableAdvisoryFinding's own doc comment). No-op for `off`, out-of-scope, or
+    // a non-degraded `close`/`block` (which already communicates via its own close/hold comment).
     await maybeAddScreenshotTableAdvisoryFinding(env, {
       advisory,
       repoFullName,
@@ -12149,6 +12173,9 @@ async function maybePublishPrPublicSurface(
       prBody: pr.body,
       prLabels: pr.labels,
       botCaptureSatisfied: Boolean(pr.headSha) && pr.visualCaptureSatisfiedSha === pr.headSha,
+      // #9881: the SAME shared helper the enforcement call site (this file) calls -- the two evaluations of
+      // the same pure check cannot disagree.
+      captureUnobtainable: screenshotCaptureUnobtainableForHead(pr),
       files: await getReviewFiles(),
     });
 

@@ -17,7 +17,10 @@ import {
   CAPTURE_UNOBTAINABLE_REASON,
   type ScreenshotMatrixPair,
 } from "../../src/review/screenshot-table-gate";
-import type { ScreenshotTableGateConfig } from "../../src/types";
+import type { Advisory, PullRequestFileRecord, ScreenshotTableGateConfig } from "../../src/types";
+import { maybeAddScreenshotTableAdvisoryFinding, screenshotCaptureUnobtainableForHead } from "../../src/queue/processors";
+import { planAgentMaintenanceActions, type AgentActionPlanInput } from "../../src/settings/agent-actions";
+import { createTestEnv } from "../helpers/d1";
 
 function config(overrides: Partial<ScreenshotTableGateConfig> = {}): ScreenshotTableGateConfig {
   return { ...DEFAULT_SCREENSHOT_TABLE_GATE, whenLabels: [], whenPaths: [], ...overrides };
@@ -997,5 +1000,174 @@ describe("enforcement degrade when capture is unobtainable (#9881)", () => {
     const before = evaluateScreenshotTableGate(violatingInput);
     expect(before.enforcementDegradedReason).toBeUndefined();
     expect(before).toEqual(evaluateScreenshotTableGate({ ...violatingInput, captureUnobtainable: undefined }));
+  });
+});
+
+// #9881/#10060: the conjunction shared by both evaluateScreenshotTableGate call sites in processors.ts.
+describe("screenshotCaptureUnobtainableForHead (#9881/#10060)", () => {
+  it("false when headSha is absent, regardless of the persisted marker", () => {
+    expect(screenshotCaptureUnobtainableForHead({ headSha: null, visualCaptureUnobtainableSha: null })).toBe(false);
+    expect(screenshotCaptureUnobtainableForHead({ headSha: undefined, visualCaptureUnobtainableSha: "sha-1" })).toBe(false);
+  });
+
+  it("true when the persisted marker matches the current head", () => {
+    expect(screenshotCaptureUnobtainableForHead({ headSha: "sha-1", visualCaptureUnobtainableSha: "sha-1" })).toBe(true);
+  });
+
+  it("false when the persisted marker is for a DIFFERENT head — a later push re-arms the requirement", () => {
+    expect(screenshotCaptureUnobtainableForHead({ headSha: "sha-2", visualCaptureUnobtainableSha: "sha-1" })).toBe(false);
+    expect(screenshotCaptureUnobtainableForHead({ headSha: "sha-2", visualCaptureUnobtainableSha: null })).toBe(false);
+  });
+});
+
+// #10060: the degrade decided by evaluateScreenshotTableGate above only reaches a maintainer if
+// maybeAddScreenshotTableAdvisoryFinding (src/queue/processors.ts) actually appends a finding for it. Before
+// this fix `action !== "advisory"` always early-returned, so a degraded close/block gate went completely
+// silent -- the exact gap #9881's own comments claimed did not exist.
+describe("maybeAddScreenshotTableAdvisoryFinding wiring the #9881 degrade to a finding (#10060)", () => {
+  const REPO = "acme/widgets";
+  const PR = 7;
+
+  function advisory(): Advisory {
+    return {
+      id: "adv-10060",
+      targetType: "pull_request",
+      targetKey: `${REPO}#${PR}`,
+      repoFullName: REPO,
+      pullNumber: PR,
+      headSha: "sha-10060",
+      conclusion: "neutral",
+      severity: "info",
+      title: "LoopOver advisory available",
+      summary: "ok",
+      findings: [],
+      generatedAt: "2026-07-31T00:00:00.000Z",
+    };
+  }
+
+  function scopedFiles(): PullRequestFileRecord[] {
+    return [
+      {
+        repoFullName: REPO,
+        pullNumber: PR,
+        path: "apps/web/src/routes/home.tsx",
+        status: "modified",
+        additions: 1,
+        deletions: 0,
+        changes: 1,
+        payload: {},
+      },
+    ];
+  }
+
+  function args(overrides: Partial<Parameters<typeof maybeAddScreenshotTableAdvisoryFinding>[1]> = {}) {
+    return {
+      advisory: advisory(),
+      repoFullName: REPO,
+      pullNumber: PR,
+      screenshotTableGateConfig: config({ enabled: true, action: "close" as const, whenPaths: ["apps/web/src/**"] }),
+      prBody: "no screenshots here",
+      prLabels: [],
+      botCaptureSatisfied: false,
+      captureUnobtainable: false,
+      files: scopedFiles(),
+      ...overrides,
+    };
+  }
+
+  // Mirrors what processors.ts actually computes for the planner when the gate is degraded:
+  // screenshotTableMatch/screenshotEvidenceHold stay undefined and screenshotTableEvidenceUnresolved stays
+  // false (all three gated on `!screenshotTableEnforcementDegraded`), so the plan built from the same facts
+  // falls straight through to ordinary disposition instead of closing or holding.
+  function degradedPlanInput(overrides: Partial<AgentActionPlanInput> = {}): AgentActionPlanInput {
+    return {
+      blockerTitles: [],
+      autonomy: { close: "auto", approve: "auto", merge: "auto" },
+      autoMaintain: { requireApprovals: 1, mergeMethod: "squash" },
+      slopGateMinScore: 60,
+      changedPaths: [],
+      hardGuardrailGlobs: [],
+      authorIsOwner: false,
+      authorIsAdmin: false,
+      authorIsAutomationBot: false,
+      ciState: "passed",
+      pr: { labels: [] },
+      conclusion: "success",
+      ...overrides,
+    };
+  }
+
+  it("gate disabled: no finding regardless of captureUnobtainable", async () => {
+    const env = createTestEnv();
+    const callArgs = args({
+      screenshotTableGateConfig: config({ enabled: false, action: "close" as const, whenPaths: ["apps/web/src/**"] }),
+      captureUnobtainable: true,
+    });
+    await maybeAddScreenshotTableAdvisoryFinding(env, callArgs);
+    expect(callArgs.advisory.findings).toEqual([]);
+  });
+
+  it("action close, violated, captureUnobtainable true: appends exactly one finding naming the maintainer remedy, and the plan built from the same degraded facts has no close and no hold", async () => {
+    const env = createTestEnv();
+    const callArgs = args({ captureUnobtainable: true });
+    await maybeAddScreenshotTableAdvisoryFinding(env, callArgs);
+    expect(callArgs.advisory.findings).toHaveLength(1);
+    const finding = callArgs.advisory.findings[0];
+    expect(finding?.code).toBe("screenshot_table_missing");
+    expect(finding?.detail).toContain(CAPTURE_UNOBTAINABLE_REASON);
+
+    const plan = planAgentMaintenanceActions(degradedPlanInput());
+    expect(plan.map((a) => a.actionClass)).not.toContain("close");
+    expect(plan.some((a) => a.actionClass === "label" && a.autonomyClass === "close")).toBe(false);
+  });
+
+  it("action block, violated, captureUnobtainable true: same finding appended, no hold", async () => {
+    const env = createTestEnv();
+    const callArgs = args({
+      screenshotTableGateConfig: config({ enabled: true, action: "block", whenPaths: ["apps/web/src/**"] }),
+      captureUnobtainable: true,
+    });
+    await maybeAddScreenshotTableAdvisoryFinding(env, callArgs);
+    expect(callArgs.advisory.findings).toHaveLength(1);
+    expect(callArgs.advisory.findings[0]?.detail).toContain(CAPTURE_UNOBTAINABLE_REASON);
+
+    const plan = planAgentMaintenanceActions(degradedPlanInput());
+    expect(plan.map((a) => a.actionClass)).not.toContain("close");
+    expect(plan.some((a) => a.actionClass === "label" && a.autonomyClass === "close")).toBe(false);
+  });
+
+  it("action close, violated, captureUnobtainable false: pins today's behaviour — NO advisory finding", async () => {
+    const env = createTestEnv();
+    const callArgs = args({ captureUnobtainable: false });
+    await maybeAddScreenshotTableAdvisoryFinding(env, callArgs);
+    expect(callArgs.advisory.findings).toEqual([]);
+  });
+
+  it("action advisory, violated, captureUnobtainable false: byte-identical finding to today", async () => {
+    const env = createTestEnv();
+    const callArgs = args({
+      screenshotTableGateConfig: config({ enabled: true, action: "advisory", whenPaths: ["apps/web/src/**"] }),
+      captureUnobtainable: false,
+    });
+    await maybeAddScreenshotTableAdvisoryFinding(env, callArgs);
+    expect(callArgs.advisory.findings).toHaveLength(1);
+    const finding = callArgs.advisory.findings[0];
+    expect(finding).toMatchObject({
+      code: "screenshot_table_missing",
+      severity: "warning",
+      title: "Missing before/after screenshot table",
+      action:
+        "Add a before/after screenshot table to the pull request description (advisory only — this does not block merge).",
+    });
+    expect(finding?.detail).not.toContain(CAPTURE_UNOBTAINABLE_REASON);
+  });
+
+  // #10060 regression: the exact defect reported -- a degraded `action: "close"` evaluation must never be a
+  // completely silent pass.
+  it("regression: a degraded close-action gate never produces a silent pass", async () => {
+    const env = createTestEnv();
+    const callArgs = args({ captureUnobtainable: true });
+    await maybeAddScreenshotTableAdvisoryFinding(env, callArgs);
+    expect(callArgs.advisory.findings).not.toEqual([]);
   });
 });

@@ -222,7 +222,9 @@ export type JobMessage =
     }
   | {
       type: "notify-deliver";
-      requestedBy: "notify-evaluate" | "test";
+      // #10025: the approval-queue's staged-action + reminder badges enqueue their own notify-deliver jobs so
+      // they reach the feed without waiting on the stranded-delivery sweep.
+      requestedBy: "notify-evaluate" | "test" | "agent-approval";
       deliveryId: string;
     }
   | {

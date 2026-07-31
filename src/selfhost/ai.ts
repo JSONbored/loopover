@@ -796,7 +796,29 @@ export function providerNameFromBaseUrl(baseUrl: string | undefined): "ollama" |
   return "openai-compatible";
 }
 
+// ALIASES of one value -- different providers' names for the same number, so `maxNumber` (below) is the right
+// combinator. The uncached portion of the prompt only; see the two cache tiers directly below.
 const INPUT_TOKEN_KEYS = ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"] as const;
+/** #10235: Anthropic (and therefore Claude Code) splits one prompt across THREE counters -- `input_tokens`
+ *  carries only the portion that was neither read from nor written to the prompt cache. With caching active,
+ *  which it is for every review the CLI runs, essentially the whole prompt lands in these two instead.
+ *
+ *  Measured on edge-nl-01 before this fix: `claude-code` recorded a total of 2048 input tokens across 1000
+ *  calls -- an average of exactly 2.0, against 1051 output tokens per call and $225 of real spend. An average
+ *  of 2.0 over a thousand calls is not a measurement, it is a constant, and every derived figure
+ *  (cost-per-token, input:output ratio, `loopover_ai_input_tokens_total`) was wrong by ~3 orders of magnitude.
+ *
+ *  These are genuine input tokens: the model processed them, and they are billed (cache reads at a reduced
+ *  rate). Each tier is its OWN alias group because the three are ADDITIVE COMPONENTS of one prompt, not names
+ *  for one value -- they must be summed with each other and max'd only within a group. Folding them into
+ *  INPUT_TOKEN_KEYS would take the maximum of the three and silently under-report again, just less severely.
+ *
+ *  Deliberately NOT applied to `coerceByokUsage` (src/services/ai-review.ts): that path documents its own
+ *  reason for skipping these keys -- `callAiProvider` never sends `cache_control`, so the provider never
+ *  populates them there -- and it feeds BYOK_MODEL_PRICING_USD_PER_MTOK, where a cache read bills at a
+ *  different rate than fresh input. The divergence between the two paths is intentional. */
+const CACHE_READ_INPUT_TOKEN_KEYS = ["cache_read_input_tokens", "cacheReadInputTokens"] as const;
+const CACHE_CREATION_INPUT_TOKEN_KEYS = ["cache_creation_input_tokens", "cacheCreationInputTokens"] as const;
 const OUTPUT_TOKEN_KEYS = ["output_tokens", "outputTokens", "completion_tokens", "completionTokens"] as const;
 const TOTAL_TOKEN_KEYS = ["total_tokens", "totalTokens"] as const;
 const COST_KEYS = ["total_cost_usd", "totalCostUsd", "cost_usd", "costUsd"] as const;
@@ -819,6 +841,24 @@ function maxNumber(record: Record<string, unknown>, keys: readonly string[]): nu
   return out;
 }
 
+/**
+ * The full prompt size for one usage envelope: the uncached portion plus both cache tiers (#10235).
+ *
+ * Returns undefined only when the envelope reports NO input counter at all, so a provider that never emits
+ * these keys is completely unaffected and an absent count is never turned into a fabricated 0 (#10207's rule).
+ * A tier that is present but zero contributes a real zero, which is why absence is tested per tier rather than
+ * falsiness.
+ */
+function totalInputTokens(entry: Record<string, unknown>): number | undefined {
+  const tiers = [
+    maxNumber(entry, INPUT_TOKEN_KEYS),
+    maxNumber(entry, CACHE_READ_INPUT_TOKEN_KEYS),
+    maxNumber(entry, CACHE_CREATION_INPUT_TOKEN_KEYS),
+  ];
+  if (tiers.every((tier) => tier === undefined)) return undefined;
+  return tiers.reduce<number>((sum, tier) => sum + (tier ?? 0), 0);
+}
+
 function mergeUsage(out: CliUsage, record: Record<string, unknown>): void {
   const nested = [
     record,
@@ -829,7 +869,7 @@ function mergeUsage(out: CliUsage, record: Record<string, unknown>): void {
     asRecord(record.usageMetadata),
   ].filter((entry): entry is Record<string, unknown> => Boolean(entry));
   for (const entry of nested) {
-    const inputTokens = maxNumber(entry, INPUT_TOKEN_KEYS);
+    const inputTokens = totalInputTokens(entry);
     if (inputTokens !== undefined) out.inputTokens = Math.max(out.inputTokens ?? 0, inputTokens);
     const outputTokens = maxNumber(entry, OUTPUT_TOKEN_KEYS);
     if (outputTokens !== undefined) out.outputTokens = Math.max(out.outputTokens ?? 0, outputTokens);

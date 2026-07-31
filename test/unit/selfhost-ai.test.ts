@@ -1618,6 +1618,36 @@ describe("branch coverage — defaults + edge inputs", () => {
       ),
     ).toEqual({ inputTokens: 12, outputTokens: 6, totalTokens: 18, costUsd: 0.09, model: "gpt-5" });
   });
+
+  it("REGRESSION (#10235): sums the prompt-cache tiers into inputTokens, instead of reporting the uncached remainder", () => {
+    // The real Claude Code result frame. `input_tokens` carries ONLY what was neither read from nor written to
+    // the prompt cache, so with caching active -- which it is on every review -- it degenerates to a handful of
+    // tokens. Measured on the Orb before this fix: 2048 input tokens across 1000 claude-code calls, an average
+    // of exactly 2.0, against 1051 output tokens per call and $225 of real spend.
+    expect(
+      extractCliUsage(
+        JSON.stringify({
+          type: "result",
+          usage: { input_tokens: 2, cache_read_input_tokens: 41_820, cache_creation_input_tokens: 1_140, output_tokens: 1051 },
+          model: "claude-sonnet-5",
+        }),
+      ),
+    ).toEqual({ inputTokens: 42_962, outputTokens: 1051, model: "claude-sonnet-5" });
+  });
+
+  it("sums the cache tiers only when present, leaving every other provider untouched (#10235)", () => {
+    // codex and the OpenAI-compatible providers emit no cache keys at all: their figure must be byte-identical
+    // to before, which is what makes this safe to apply at the shared extraction point.
+    expect(extractCliUsage(JSON.stringify({ usage: { input_tokens: 20, output_tokens: 7 } }))).toEqual({ inputTokens: 20, outputTokens: 7 });
+    // A cache tier alone, with no uncached remainder reported, still yields the real prompt size.
+    expect(extractCliUsage(JSON.stringify({ usage: { cache_read_input_tokens: 900 } }))).toEqual({ inputTokens: 900 });
+    // camelCase aliases resolve the same way the other key groups already do.
+    expect(extractCliUsage(JSON.stringify({ usage: { inputTokens: 5, cacheReadInputTokens: 10, cacheCreationInputTokens: 20 } }))).toEqual({ inputTokens: 35 });
+    // A genuinely reported 0 in one tier contributes a real 0 rather than dropping the whole reading.
+    expect(extractCliUsage(JSON.stringify({ usage: { input_tokens: 0, cache_read_input_tokens: 700, cache_creation_input_tokens: 0 } }))).toEqual({ inputTokens: 700 });
+    // No input counter of any kind stays ABSENT -- never a fabricated 0 (#10207).
+    expect(extractCliUsage(JSON.stringify({ usage: { output_tokens: 4 } }))).toEqual({ outputTokens: 4 });
+  });
   it("claudeErrorStatus: subtype + unknown fallbacks", () => {
     expect(claudeErrorStatus(JSON.stringify({ is_error: true, subtype: "sub" }))).toBe("sub");
     expect(claudeErrorStatus(JSON.stringify({ is_error: true }))).toBe("unknown");

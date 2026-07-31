@@ -1,5 +1,25 @@
 # Changelog
 
+## [3.21.1](https://github.com/JSONbored/loopover/compare/miner-v3.21.0...miner-v3.21.1) (2026-07-31)
+
+
+### Fixes
+
+* **miner:** cap check-runs page follows so poll cannot spin forever ([#10007](https://github.com/JSONbored/loopover/issues/10007)) ([#10258](https://github.com/JSONbored/loopover/issues/10258)) ([470d417](https://github.com/JSONbored/loopover/commit/470d4175f20f35e6f2c43d29df4b98a516101db3))
+* **miner:** keep discover --dry-run off the contribution-profile cache ([#10255](https://github.com/JSONbored/loopover/issues/10255)) ([e8c5200](https://github.com/JSONbored/loopover/commit/e8c5200cd0eb06f13b53e997935c1eaf71d3c9cf))
+* **miner:** prime runLoop's ledger cursor with an indexed MAX(seq) lookup ([#10259](https://github.com/JSONbored/loopover/issues/10259)) ([efc2c7e](https://github.com/JSONbored/loopover/commit/efc2c7e33eb3bab0168da105068a707a9537f4a7))
+* **miner:** scope the policy-verdict-cache purge to its real host-scoped repo key ([#10250](https://github.com/JSONbored/loopover/issues/10250)) ([5b24374](https://github.com/JSONbored/loopover/commit/5b243749fe587ec6ea3d2fdf95100847f50830e5))
+* **miner:** stop doctor's ams-backtest-proposals check from creating and pruning the event ledger ([#10264](https://github.com/JSONbored/loopover/issues/10264)) ([6f3ac84](https://github.com/JSONbored/loopover/commit/6f3ac84b9384ad54ca0e54eb5dc388c3034d4a3a))
+* **miner:** stop pickScript selecting watch/fix validation scripts ([#10261](https://github.com/JSONbored/loopover/issues/10261)) ([c7e8e80](https://github.com/JSONbored/loopover/commit/c7e8e8096f800c56bff02b8ee557d915c999f067))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.21.0 to ^3.21.1
+    * @loopover/engine bumped from ^3.21.0 to ^3.21.1
+
 ## [3.21.0](https://github.com/JSONbored/loopover/compare/miner-v3.20.0...miner-v3.21.0) (2026-07-31)
 
 

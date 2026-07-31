@@ -46,6 +46,10 @@ export const RAW_SQL_ONLY_TABLES: Set<string> = new Set([
   "decision_ledger_anchors",
   "decision_records",
   "decision_replay_inputs",
+  // #9985: written and read only through raw statements in selfhost/service-status-history.ts, the same
+  // posture as the decision_* tables above. Declaring it in the drizzle schema would add an export nothing
+  // imports (dead-exports:check rejects that, correctly) purely to satisfy this checker.
+  "service_status_samples",
   // #9028: same raw-SQL-only posture as its sibling above — an operator-private blob table the drizzle
   // schema never queries (writes go through persistDecisionReplayPrompt's raw statement; reads happen only
   // in the operator's own extract SQL for the replay CLI).

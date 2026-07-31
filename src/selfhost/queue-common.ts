@@ -801,6 +801,9 @@ const IMMEDIATE_SCHEDULED_JOB_TYPES = new Set<string>([
   // must fire independent of the hourly clock), and is a cheap 1-2 query no-op the overwhelming majority of
   // ticks -- not a heavy per-repo fan-out parent, so it needs no phase-spreading either.
   "anchor-decision-ledger",
+  // #9985: a handful of INSERTs, no fan-out. Phase-spreading it would jitter the sample cadence, and the
+  // derived uptime reads evenly-spaced samples as evenly-weighted time.
+  "sample-service-status",
 ]);
 
 export function scheduledEnqueueDelaySeconds(jobType: string): number {

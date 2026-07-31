@@ -309,6 +309,7 @@ import { loadDecisionLedgerTip, loadPublicDecisionRecord, loadPublicLedgerRow, v
 import { buildEvalScoreRecordsFromRulePrecision, filterEvalScoreRecords } from "../review/eval-score-records";
 import { buildPublicCorpusCommitments } from "../review/public-eval-corpus";
 import { isServiceStatusEnabled, loadServiceStatus } from "../selfhost/service-status";
+import { buildComponentHistory, loadServiceStatusSamples } from "../selfhost/service-status-history";
 import { anchorSigningInput, buildLedgerAnchorPayload, currentAnchorKey, diagnoseAnchorPublicKeys, parseAnchorPublicKeys, publicAnchorStatus, signLedgerAnchorPayload } from "../review/ledger-anchor";
 import { resolveProofPage } from "../review/proof-summary";
 import { renderProofBadgeSvg } from "./proof-badge";
@@ -929,10 +930,17 @@ export function createApp() {
   app.get("/v1/public/service-status", async (c) => {
     if (!isServiceStatusEnabled(c.env)) return c.json({ error: "not_found" }, 404);
     const status = await loadServiceStatus(c.env);
+    // #9985: the past tense, derived from persisted samples rather than posted by hand. Attached per
+    // component so a reader never has to correlate two lists, and computed from the SAME status vocabulary
+    // the live board publishes.
+    const now = new Date();
+    const components = await Promise.all(
+      status.components.map(async (entry) => ({ ...entry, ...buildComponentHistory(await loadServiceStatusSamples(c.env, entry.component, now), now.getTime()) })),
+    );
     // Shorter than the sibling public surfaces on purpose: this is the endpoint people refresh DURING an
     // incident, and a 60s cache would keep serving "operational" for a minute after an outage started.
     c.header("Cache-Control", "public, max-age=15, stale-while-revalidate=30");
-    return c.json(status);
+    return c.json({ ...status, components });
   });
 
   app.get("/v1/public/eval-scores", async (c) => {

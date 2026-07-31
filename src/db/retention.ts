@@ -22,6 +22,12 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
   // needs would be gone by the time the fold ran, and the rollup would permanently over-count exactly the
   // PRs the live query never counted.
   { table: "orb_pr_outcomes", column: "occurred_at", days: 90 },
+  // #9985: status samples are high-volume (one row per component per ~2-min tick) and low-value once the
+  // window that reads them has passed. 35 days deliberately EXCEEDS the widest reported window (30), so the
+  // 30-day uptime figure never silently loses its own tail to the prune -- a retention equal to the window
+  // would make the oldest day of every month quietly unmeasured. No rollup is needed while that inequality
+  // holds; widening UPTIME_WINDOW_DAYS past 35 without widening this would break it.
+  { table: "service_status_samples", column: "sampled_at", days: 35 },
   // #9783: orb_signals had no rule at all and grew without bound, while being a PUBLIC data source
   // (computeFleetAnalytics' /fairness headline, and #9775's weekly fleet trend). It could not simply be
   // pruned: listFleetInstances reports a LIFETIME signalCount, and /v1/internal/fleet/analytics takes an
@@ -127,6 +133,7 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
 // not scan-optimal, which is acceptable for the lower row counts of the tables that fall back today.
 export const RETENTION_PK_COLUMN: Readonly<Record<string, string>> = {
   audit_events: "id",
+  service_status_samples: "id",
   // #9783: orb_signals has `id INTEGER PRIMARY KEY` (migrations/0060), so it maps cleanly here rather than
   // joining RETENTION_COMPOSITE_PK_TABLES -- its UNIQUE (instance_id, repo_hash, pr_hash) is the ingest
   // dedup key, not its primary key. The fold below uses its own bounded-slice path rather than the generic

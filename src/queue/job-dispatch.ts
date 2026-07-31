@@ -53,6 +53,8 @@ import { withInstallationTokenRetry } from "../github/app";
 import { runScheduledLedgerAnchor, resolveGitAnchorTarget } from "../review/ledger-anchor-scheduler";
 import { submitToGitAnchor } from "../review/ledger-anchor-git";
 import { incr } from "../selfhost/metrics";
+import { loadServiceStatus } from "../selfhost/service-status";
+import { recordServiceStatusSamples } from "../selfhost/service-status-history";
 import { generateSignalSnapshots } from "./signal-snapshot";
 import { isDecisionAuditEnabled, runDecisionAuditSample } from "../review/decision-audit";
 import { isRiskControlEnabled, runRiskControlRecalibration } from "../review/risk-control-wire";
@@ -97,6 +99,18 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
     case "refresh-registry":
       await refreshRegistry(env);
       return;
+    case "sample-service-status": {
+      // #9985: read the live board through the SAME loader the public route uses, then persist one row per
+      // component. Reusing the loader is what keeps the history and the live status the same measurement --
+      // a second read path here could report a component healthy while the endpoint called it degraded, and
+      // the derived uptime would then describe a board nobody ever saw.
+      const status = await loadServiceStatus(env);
+      await recordServiceStatusSamples(
+        env,
+        status.components.map((entry) => ({ component: entry.component, status: entry.status })),
+      );
+      return;
+    }
     case "anchor-decision-ledger": {
       // Git anchoring runs only when BOTH the target (owner/repo, #9273) and an installation id (to mint a
       // token through) are configured -- unset means that backend simply isn't wired up yet; Rekor still

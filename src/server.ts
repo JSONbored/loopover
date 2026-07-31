@@ -1576,7 +1576,11 @@ async function main(): Promise<void> {
     // is genuinely imminent and a stranded lock is the worse outcome. Opt in with
     // LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS; unset means "wait for the drain", which is right wherever the
     // orchestrator's grace period comfortably exceeds a review (this deployment's stop_grace_period is 300s).
-    const forceReleaseAfterMs = Number(process.env["LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS"] ?? "");
+    // parsePositiveIntEnv (not a bare Number()): a supplied non-integer/out-of-range value (e.g. "30s",
+    // "30_000", "0.5", "-1") now warns and falls back to 0 — "wait for the drain" — instead of silently
+    // taking that same branch (NaN) or accepting a fractional millisecond deadline every shutdown loses (#10056).
+    // { min: 0, fallback: 0 } keeps unset ⇒ 0 ⇒ the `> 0` gate below selecting the drain-first path, unchanged.
+    const forceReleaseAfterMs = parsePositiveIntEnv("LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS", { min: 0, fallback: 0 });
     const drainPromise = backend.shutdown();
     const drainedInTime =
       Number.isFinite(forceReleaseAfterMs) && forceReleaseAfterMs > 0

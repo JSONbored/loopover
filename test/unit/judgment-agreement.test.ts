@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { scoreJudgmentAgreement, UNCORROBORATED_AGREEMENT } from "../../src/review/judgment-agreement";
+import { judgmentAgreementMetrics, scoreJudgmentAgreement, UNCORROBORATED_AGREEMENT } from "../../src/review/judgment-agreement";
 
 // #8834: the per-decision confidence signal. The contract worth pinning is that the score can never read as
 // MORE certain than its weakest input, and that a run with nothing to corroborate it is never scored as
@@ -62,5 +62,30 @@ describe("scoreJudgmentAgreement (#8834)", () => {
         expect(scored.agreement).toBeLessThanOrEqual(1);
       }
     }
+  });
+});
+
+describe("judgmentAgreementMetrics (#10226 — what is worth reporting to PostHog)", () => {
+  const sample = (votedFail: boolean): { reviewer: string; votedFail: boolean } => ({ reviewer: "claude-code", votedFail });
+
+  it("reports agreement and sample count for a corroborated review", () => {
+    expect(judgmentAgreementMetrics([sample(true), sample(true), sample(false)])).toEqual([
+      { name: "judgment_agreement", value: 2 / 3 },
+      { name: "judgment_sample_count", value: 3 },
+    ]);
+  });
+
+  it("reports unanimity as a real 1.0, not a special case", () => {
+    expect(judgmentAgreementMetrics([sample(true), sample(true)])).toEqual([
+      { name: "judgment_agreement", value: 1 },
+      { name: "judgment_sample_count", value: 2 },
+    ]);
+  });
+
+  it("reports NOTHING for an uncorroborated review rather than publishing the agreement floor", () => {
+    // UNCORROBORATED_AGREEMENT (0.5) is a deliberate placeholder, not a measurement. Emitting it would drop a
+    // fabricated 0.5 into an average alongside real scores.
+    expect(judgmentAgreementMetrics([sample(true)])).toEqual([]);
+    expect(judgmentAgreementMetrics([])).toEqual([]);
   });
 });

@@ -32,7 +32,9 @@ import {
   forwardStructuredLogToPostHog,
   initPostHog,
   installPostHogStructuredLogForwarding,
+  capturePostHogAiMetric,
   POSTHOG_AI_DEGRADED_EVENT,
+  POSTHOG_AI_METRIC_EVENT,
   POSTHOG_MONITOR_HEARTBEAT_EVENT,
   resetPostHogForTest,
   resolvePostHogRelease,
@@ -949,6 +951,68 @@ describe("capturePostHogAiDegradation (#10186 — a request that reached NO mode
   it("never carries prompt/response content", async () => {
     await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
     capturePostHogAiDegradation({ ...BASE, error: new Error("boom") });
+    const keys = Object.keys(mocks.capture.mock.calls[0]?.[0].properties);
+    expect(keys).not.toContain("$ai_input");
+    expect(keys).not.toContain("$ai_output_choices");
+  });
+});
+
+describe("capturePostHogAiMetric (#10226 — review quality, joined to the AI trace)", () => {
+  it("is a no-op when PostHog is unconfigured", () => {
+    capturePostHogAiMetric({ name: "reviewer_vote_fail", value: 1 });
+    expect(mocks.capture).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op with no ambient trace — an orphan quality score joins to nothing", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue(undefined);
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiMetric({ name: "reviewer_vote_fail", value: 1 });
+    expect(mocks.capture).not.toHaveBeenCalled();
+  });
+
+  it("emits the SDK's exact property contract, with the value stringified", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "review-trace-1", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiMetric({ name: "judgment_agreement", value: 0.75, context: { repo: "owner/repo", pullNumber: 7 } });
+    const call = mocks.capture.mock.calls[0]?.[0];
+    expect(call.event).toBe(POSTHOG_AI_METRIC_EVENT);
+    // @posthog/core's captureTraceMetric stringifies the value; a hand-built event must be
+    // indistinguishable from an SDK-built one downstream.
+    expect(call.properties.$ai_metric_name).toBe("judgment_agreement");
+    expect(call.properties.$ai_metric_value).toBe("0.75");
+    expect(call.properties.$ai_trace_id).toBe("review-trace-1");
+    expect(call.properties.repo).toBe("owner/repo");
+    expect(call.groups).toEqual({ repo: "owner/repo" });
+  });
+
+  it("stringifies a numeric zero and a boolean rather than dropping them", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "t", span_id: "s" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiMetric({ name: "reviewer_vote_fail", value: 0 });
+    capturePostHogAiMetric({ name: "flagged", value: false });
+    // A "did not flag" vote is real signal, not an absent one.
+    expect(mocks.capture.mock.calls[0]?.[0].properties.$ai_metric_value).toBe("0");
+    expect(mocks.capture.mock.calls[1]?.[0].properties.$ai_metric_value).toBe("false");
+  });
+
+  it("omits the repo group when the metric has no repo context", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "t", span_id: "s" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiMetric({ name: "reviewer_vote_fail", value: 1 });
+    expect("groups" in (mocks.capture.mock.calls[0]?.[0] as object)).toBe(false);
+  });
+
+  it("drops a context key that is not on the shared operational allowlist", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "t", span_id: "s" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiMetric({ name: "reviewer_vote_fail", value: 1, context: { notAllowlisted: "dropped" } });
+    expect("notAllowlisted" in mocks.capture.mock.calls[0]?.[0].properties).toBe(false);
+  });
+
+  it("never carries prompt/response content", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "t", span_id: "s" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiMetric({ name: "reviewer_vote_fail", value: 1 });
     const keys = Object.keys(mocks.capture.mock.calls[0]?.[0].properties);
     expect(keys).not.toContain("$ai_input");
     expect(keys).not.toContain("$ai_output_choices");

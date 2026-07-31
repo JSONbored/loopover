@@ -136,16 +136,31 @@ describe("loopover-miner policy-verdict cache store (#4843)", () => {
     expect(() => initPolicyVerdictCacheStore("")).toThrow("invalid_policy_verdict_cache_db_path");
   });
 
-  it("purgeByRepo deletes only the given repo scope's row and returns the count (#6987)", () => {
+  it("purgeByRepo takes a plain owner/repo and deletes every row scoped to it across every forge host, leaving other repos intact (#6987, #10001)", () => {
+    // Real repo_scope shape: `<apiBaseUrl>::owner/repo` -- purgeByRepo's argument is the bare owner/repo
+    // (matching purge-cli.js's only caller), never the full scope get/put take.
     const store = openStore();
-    store.put("acme/widgets", "AI-USAGE.md", '"v1"', VERDICT);
-    store.put("acme/other", "AI-USAGE.md", '"v2"', VERDICT);
-    expect(store.purgeByRepo("acme/widgets")).toBe(1);
-    expect(store.get("acme/widgets")).toBeNull();
-    expect(store.get("acme/other")).not.toBeNull();
+    store.put("https://api.github.com::acme/widgets", "AI-USAGE.md", '"v1"', VERDICT);
+    store.put("https://forge.example.com::acme/widgets", "AI-USAGE.md", '"v2"', VERDICT);
+    store.put("https://api.github.com::acme/other", "AI-USAGE.md", '"v3"', VERDICT);
+    expect(store.purgeByRepo("acme/widgets")).toBe(2);
+    expect(store.get("https://api.github.com::acme/widgets")).toBeNull();
+    expect(store.get("https://forge.example.com::acme/widgets")).toBeNull();
+    expect(store.get("https://api.github.com::acme/other")).not.toBeNull();
   });
 
-  it("purgeByRepo returns 0 when the repo scope has no cached verdict (#6987)", () => {
+  it("purgeByRepo returns 0 when the repo has no cached verdict under any host (#6987)", () => {
     expect(openStore().purgeByRepo("acme/widgets")).toBe(0);
+  });
+
+  it("REGRESSION (#10001): purgeByRepo does not over-match a `_` in the repo name as a LIKE wildcard, and does not match a longer name sharing the same prefix", () => {
+    const store = openStore();
+    store.put("https://api.github.com::acme/my_repo", "AI-USAGE.md", '"v1"', VERDICT);
+    store.put("https://api.github.com::acme/myXrepo", "AI-USAGE.md", '"v2"', VERDICT);
+    store.put("https://api.github.com::acme/my_repo-extra", "AI-USAGE.md", '"v3"', VERDICT);
+    expect(store.purgeByRepo("acme/my_repo")).toBe(1);
+    expect(store.get("https://api.github.com::acme/my_repo")).toBeNull();
+    expect(store.get("https://api.github.com::acme/myXrepo")).not.toBeNull();
+    expect(store.get("https://api.github.com::acme/my_repo-extra")).not.toBeNull();
   });
 });

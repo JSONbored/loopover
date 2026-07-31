@@ -1,7 +1,7 @@
 import type { AiPolicyVerdict } from "@loopover/engine";
 import { normalizeLocalStoreDbPath, openLocalStoreAdapter, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
-import { POLICY_VERDICT_CACHE_PURGE_SPEC, purgeStoreByRepo } from "./store-maintenance.js";
+import { hostScopedRepoSuffixPattern } from "./store-maintenance.js";
 
 // Local cache of resolved AI-usage-policy verdicts (#4843). Even with #4842's conditional-GET doc cache, the small
 // but non-zero cost of resolving `resolveAiPolicyVerdict` from raw doc text was still paid on every discover run.
@@ -40,8 +40,13 @@ export type PolicyVerdictCacheStore = {
     etag: string,
     verdict: AiPolicyVerdict,
   ): PolicyVerdictCacheWrite;
-  /** Delete every cached verdict row for one repo scope (#6987); returns the number of rows removed. */
-  purgeByRepo(repoScope: string): number;
+  /** Delete every cached verdict row for one repo, across every forge host it was ever cached against (#6987,
+   *  #10001). Takes a plain `owner/repo` (`repoFullName`) -- NOT a host-scoped repo SCOPE like `get`/`put` --
+   *  matching the only value its production caller (purge-cli.js's `purgeOneStore`) ever passes; a real row's
+   *  `repo_scope` is `<apiBaseUrl>::owner/repo` (`policyVerdictCacheKey`, opportunity-fanout.js), so this
+   *  matches the `owner/repo` SUFFIX after each row's `::` separator, across every host. Returns the number of
+   *  rows removed. */
+  purgeByRepo(repoFullName: string): number;
   close(): void;
 };
 
@@ -122,6 +127,11 @@ export function initPolicyVerdictCacheStore(dbPath: string = resolvePolicyVerdic
       verdict = excluded.verdict,
       updated_at = excluded.updated_at
   `;
+  // Suffix match, not equality (#10001): repo_scope is `<apiBaseUrl>::owner/repo`, never a bare `owner/repo`, so
+  // `repo_scope = ?` can never match a real row. hostScopedRepoSuffixPattern escapes `_`/`%` in the repo value
+  // so this is the SAME pattern countStoreByRepo's hostScopedSuffixMatch branch builds for the dry-run count --
+  // the two share that one helper instead of each hand-rolling the escaping, so they can never diverge.
+  const purgeByRepoSql = "DELETE FROM policy_verdict_cache WHERE repo_scope LIKE ? ESCAPE '\\'";
 
   return {
     dbPath: resolvedPath,
@@ -146,12 +156,18 @@ export function initPolicyVerdictCacheStore(dbPath: string = resolvePolicyVerdic
       return { repoScope: normalizedRepoScope, decisiveDoc: normalizedDecisiveDoc, etag: normalizedEtag, verdict, updatedAt };
     },
     /**
-     * Delete every cached verdict row for one repo scope (#6987) -- the right-to-be-forgotten path
-     * `loopover-miner purge` invokes. Returns the number of rows removed. Reuses store-maintenance.js's
-     * identifier-guarded purgeStoreByRepo, exactly like the other repo-scoped stores.
+     * Delete every cached verdict row for one repo, across every forge host it was ever cached against
+     * (#6987, #10001) -- the right-to-be-forgotten path `loopover-miner purge` invokes. Takes a plain
+     * `owner/repo`, matching purge-cli.js's only caller; a real row's `repo_scope` is `<apiBaseUrl>::owner/
+     * repo`, so this matches the `owner/repo` SUFFIX after each row's `::` separator rather than reusing
+     * store-maintenance.js's generic purgeStoreByRepo, whose `repoColumn = ?` equality can never match such a
+     * row. Own hand-written delete, same house-style split as WORKTREE_ALLOCATOR_PURGE_SPEC's own custom
+     * purgeByRepo (store-maintenance.js's countStoreByRepo mirrors it, not the other way around). Returns the
+     * number of rows removed.
      */
-    purgeByRepo(repoScope) {
-      return purgeStoreByRepo(db, POLICY_VERDICT_CACHE_PURGE_SPEC, normalizeRepoScope(repoScope));
+    purgeByRepo(repoFullName) {
+      const info = db.prepare(purgeByRepoSql).run(hostScopedRepoSuffixPattern(normalizeRepoScope(repoFullName)));
+      return Number(info.changes);
     },
     close() {
       db.close();

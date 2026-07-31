@@ -8,11 +8,13 @@ import {
   EVENT_LEDGER_RETENTION_SPEC,
   LEDGER_RETENTION_DAYS_ENV,
   LEDGER_RETENTION_MAX_ROWS_ENV,
+  POLICY_VERDICT_CACHE_PURGE_SPEC,
   WORKTREE_ALLOCATOR_PURGE_SPEC,
   checkStoreIntegrity,
   classifyIntegrityRows,
   countStoreByRepo,
   describeError,
+  hostScopedRepoSuffixPattern,
   pruneLedgerByRetention,
   purgeStoreByRepo,
   resolveLedgerRetentionPolicy,
@@ -50,6 +52,16 @@ function seedPurgeTable(rows: Array<{ repoFullName: string }>): DatabaseSync {
 }
 function purgeTableRowCount(db: DatabaseSync): number {
   return Number((db.prepare("SELECT COUNT(*) AS n FROM miner_claims").get() as { n: number }).n);
+}
+
+// A minimal store matching POLICY_VERDICT_CACHE_PURGE_SPEC's shape (table policy_verdict_cache, repoColumn
+// repo_scope) -- rows are keyed `<apiBaseUrl>::owner/repo`, never a bare `owner/repo` (#10001).
+function seedHostScopedTable(repoScopes: string[]): DatabaseSync {
+  const db = new DatabaseSync(":memory:");
+  db.exec("CREATE TABLE policy_verdict_cache (repo_scope TEXT PRIMARY KEY)");
+  const insert = db.prepare("INSERT INTO policy_verdict_cache (repo_scope) VALUES (?)");
+  for (const repoScope of repoScopes) insert.run(repoScope);
+  return db;
 }
 
 describe("classifyIntegrityRows (#4834)", () => {
@@ -332,5 +344,43 @@ describe("countStoreByRepo (#5564)", () => {
     expect(CLAIM_LEDGER_PURGE_SPEC.extraWhereSql).toBeUndefined();
     expect(countStoreByRepo(db, CLAIM_LEDGER_PURGE_SPEC, "acme/widgets")).toBe(1);
     db.close();
+  });
+
+  // #10001: hostScopedSuffixMatch counts a composite `<apiBaseUrl>::owner/repo` column by the owner/repo SUFFIX
+  // instead of a whole-column equality -- an equality match against POLICY_VERDICT_CACHE_PURGE_SPEC's real
+  // `repo_scope` shape would match zero rows, always (the bug this issue fixes).
+  it("matches the owner/repo suffix across every host prefix when the spec declares hostScopedSuffixMatch", () => {
+    const db = seedHostScopedTable([
+      "https://api.github.com::acme/widgets",
+      "https://forge.example.com::acme/widgets",
+      "https://api.github.com::acme/other",
+    ]);
+    expect(POLICY_VERDICT_CACHE_PURGE_SPEC.hostScopedSuffixMatch).toBe(true);
+    expect(countStoreByRepo(db, POLICY_VERDICT_CACHE_PURGE_SPEC, "acme/widgets")).toBe(2);
+    expect(countStoreByRepo(db, POLICY_VERDICT_CACHE_PURGE_SPEC, "acme/other")).toBe(1);
+    expect(countStoreByRepo(db, POLICY_VERDICT_CACHE_PURGE_SPEC, "acme/nonexistent")).toBe(0);
+    db.close();
+  });
+
+  it("escapes a `_`/`%` in the repo value so a hostScopedSuffixMatch count never over-matches a wildcard", () => {
+    const db = seedHostScopedTable([
+      "https://api.github.com::acme/my_repo",
+      "https://api.github.com::acme/myXrepo", // would spuriously match an unescaped `_` wildcard
+      "https://api.github.com::acme/my_repo-extra", // longer name sharing the prefix must not match either
+    ]);
+    expect(countStoreByRepo(db, POLICY_VERDICT_CACHE_PURGE_SPEC, "acme/my_repo")).toBe(1);
+    db.close();
+  });
+});
+
+describe("hostScopedRepoSuffixPattern (#10001)", () => {
+  it("builds a `%::` + escaped-value suffix pattern with no trailing wildcard", () => {
+    expect(hostScopedRepoSuffixPattern("acme/widgets")).toBe("%::acme/widgets");
+  });
+
+  it("escapes LIKE wildcards (`_`, `%`) and the escape character itself in the repo value", () => {
+    expect(hostScopedRepoSuffixPattern("acme/my_repo")).toBe("%::acme/my\\_repo");
+    expect(hostScopedRepoSuffixPattern("acme/100%done")).toBe("%::acme/100\\%done");
+    expect(hostScopedRepoSuffixPattern("acme/back\\slash")).toBe("%::acme/back\\\\slash");
   });
 });

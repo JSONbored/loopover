@@ -343,36 +343,11 @@ jobs:
           # number of leading non-successes; no success in the window at all means the whole window is bad.
           # Escalates ONCE per outage by reusing an open issue instead of filing a new one per commit -- an
           # alert that repeats per attempt is the same unread noise in a different place.
+          # #10146: this was 30 lines of inline bash duplicating what selfhost.yml now also needs. Same class,
+          # same threshold, one implementation -- scripts/escalate-workflow-outage.ts. Behaviour is unchanged
+          # except the tracking issue's title, which is now workflow-generic rather than publish-specific.
           escalate_persistent_publish_failure() {
-            local workflow="$1" threshold=3 leading
-            # $c below is a JQ variable bound by `as $c`, so the single quotes are required -- letting the
-            # shell expand it would hand jq an empty filter.
-            # shellcheck disable=SC2016
-            leading=$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/runs?per_page=10&status=completed" \
-              --jq '[.workflow_runs[].conclusion] as $c | (($c | index("success")) // ($c | length))' 2>/dev/null || echo 0)
-            if [ "${leading:-0}" -lt "$threshold" ]; then
-              echo "$workflow: ${leading:-0} consecutive failure(s) -- below the $threshold-commit escalation threshold, treating as transient."
-              return 0
-            fi
-            local body
-            body=$(printf '%s\n' \
-              "\`$workflow\` has failed on **${leading} consecutive runs**." \
-              "" \
-              "That is no longer a flake being retried -- a deterministic failure fails identically every time, so the package has not been publishing at all for that entire stretch. Retrying it further buys nothing." \
-              "" \
-              "Check the most recent run's logs, fix the cause, and close this issue; it is re-filed automatically only if the failure streak reaches ${threshold} again after a success." \
-              "" \
-              "Filed automatically by the release workflow (#9951).")
-            local existing
-            existing=$(gh issue list --state open --search "publish outage ${workflow} in:title" --json number --jq '.[0].number // empty' 2>/dev/null || echo "")
-            if [ -n "$existing" ]; then
-              echo "$workflow: standing outage already tracked in #$existing -- not filing a duplicate."
-            else
-              gh issue create --title "publish outage: $workflow has failed on consecutive commits" \
-                --label maintainer-only --body "$body" >/dev/null \
-                && echo "::error::$workflow has failed $leading consecutive runs -- standing outage filed." \
-                || echo "::warning::$workflow standing outage detected but the tracking issue could not be filed."
-            fi
+            node --experimental-strip-types "${GITHUB_WORKSPACE}/scripts/escalate-workflow-outage.ts" --workflow "$1"
           }
 
           # packages/loopover-mcp and packages/loopover-miner carry REAL runtime `dependencies` entries on

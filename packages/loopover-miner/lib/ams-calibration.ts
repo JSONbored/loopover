@@ -24,7 +24,7 @@ import {
 import { existsSync as fsExistsSync, readFileSync as fsReadFileSync } from "node:fs";
 import { parseAmsPolicySpecContent } from "@loopover/engine";
 import type { AppendEventInput, LedgerEntry } from "./event-ledger.js";
-import { resolveAmsPolicyConfigPath } from "./ams-policy.js";
+import { resolveLocalAmsPolicyReadPath } from "./ams-policy.js";
 import { MINER_PR_OUTCOME_EVENT } from "./pr-outcome.js";
 
 /** Event-ledger vocabulary for one persisted advisory min-rank backtest run (the AMS analog of ORB's
@@ -304,8 +304,11 @@ export function buildAmsBacktestProposals(
   return proposals;
 }
 
-/** Sync read of the operator's `.loopover-ams.yml` `minRankAutotuneEnabled` flag (#8187's gate one). The
- *  async resolveAmsPolicy wrapper exists for attempt-time policy; the calibration commands and discover's
+/** Sync read of the operator's `minRankAutotuneEnabled` flag (#8187's gate one), probing the full documented
+ *  {@link AMS_POLICY_SPEC_FILENAMES} discovery order via the SAME `resolveLocalAmsPolicyReadPath` resolver
+ *  `resolveAmsPolicy` uses for attempt-time policy (#10009 -- this used to resolve the canonical filename only,
+ *  silently ignoring the flag when an operator's policy lived at any of the other three documented candidates).
+ *  The async resolveAmsPolicy wrapper exists for attempt-time policy; the calibration commands and discover's
  *  consumption point need only this one boolean and must stay synchronous, so this reuses the same path
  *  resolution + tolerant parser. Fail CLOSED: an unreadable policy file never enables autonomy. */
 export function readMinRankAutotuneEnabled(
@@ -313,9 +316,9 @@ export function readMinRankAutotuneEnabled(
   deps: { readFileSync?: typeof fsReadFileSync; existsSync?: typeof fsExistsSync } = {},
 ): boolean {
   try {
-    const path = resolveAmsPolicyConfigPath(env);
     const exists = deps.existsSync ?? fsExistsSync;
-    if (!exists(path)) return false;
+    const path = resolveLocalAmsPolicyReadPath(env, exists);
+    if (path === null) return false;
     const read = deps.readFileSync ?? fsReadFileSync;
     return parseAmsPolicySpecContent(String(read(path, "utf8"))).spec.minRankAutotuneEnabled;
   } catch {

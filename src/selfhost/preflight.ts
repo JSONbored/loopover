@@ -381,6 +381,10 @@ export function preflightEnv(env: SelfHostPreflightEnv): SelfHostPreflightResult
   positiveInteger(problems, env, "CRON_INTERVAL_MS", CRON_INTERVAL_MIN_MS, 24 * 60 * 60_000);
   positiveInteger(problems, env, "PORT", 1, 65_535);
   positiveInteger(problems, env, "GITHUB_CACHE_TTL_SECONDS", 0, 86_400);
+  // 0 is the documented "wait for the drain" default, so min 0 (mirrors GITHUB_CACHE_TTL_SECONDS above); #10056.
+  positiveInteger(problems, env, "LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS", 0, 24 * 60 * 60_000);
+  // 0 is not a meaningful context window, so min 1.
+  positiveInteger(problems, env, "OLLAMA_NUM_CTX", 1, 1_000_000);
 
   checkLedgerAnchorConfig(problems, env);
   checkLedgerContentWaiverConfig(problems, env);

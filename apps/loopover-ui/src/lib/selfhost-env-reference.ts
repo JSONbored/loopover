@@ -347,7 +347,7 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
   },
   {
     name: "LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS",
-    firstReference: "src/server.ts",
+    firstReference: "src/selfhost/preflight.ts",
   },
   {
     name: "LOOPOVER_SINGLE_INSTANCE",
@@ -807,7 +807,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_REVIEW_CONTINUOUS` | `src/queue/processors.ts` |",
   "| `LOOPOVER_REVIEW_RAG` | `src/selfhost/ai.ts` |",
   "| `LOOPOVER_REVIEW_SAFETY` | `src/selfhost/inert-config.ts` |",
-  "| `LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS` | `src/server.ts` |",
+  "| `LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_SINGLE_INSTANCE` | `src/selfhost/redis-cache.ts` |",
   "| `LOOPOVER_VERSION` | `src/selfhost/otel.ts` |",
   "| `MAINTENANCE_ADMISSION_DEFER_MS` | `src/selfhost/maintenance-admission.ts` |",

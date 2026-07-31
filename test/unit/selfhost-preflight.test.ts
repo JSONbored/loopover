@@ -355,6 +355,38 @@ describe("self-host environment preflight (#2080)", () => {
       expect(preflightEnv({ ...baseEnv, GITHUB_CACHE_TTL_SECONDS: "0" })).toEqual({ ok: true, problems: [] });
     });
 
+    it("rejects a malformed LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS instead of only warning at use time (#10056)", () => {
+      for (const LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS of ["30s", "30_000", "0.5", "-1"]) {
+        expect(preflightEnv({ ...baseEnv, LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS })).toEqual({
+          ok: false,
+          problems: [expect.objectContaining({ var: "LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS" })],
+        });
+      }
+    });
+
+    it("accepts unset / '' / '0' (wait-for-the-drain default) / a plain integer for LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS (#10056)", () => {
+      for (const value of [undefined, "", "0", "30000"]) {
+        const env = value === undefined ? { ...baseEnv } : { ...baseEnv, LOOPOVER_SHUTDOWN_LOCK_RELEASE_AFTER_MS: value };
+        expect(preflightEnv(env)).toEqual({ ok: true, problems: [] });
+      }
+    });
+
+    it("rejects a malformed OLLAMA_NUM_CTX, and additionally rejects '0' (not a meaningful context window) (#10056)", () => {
+      for (const OLLAMA_NUM_CTX of ["30s", "30_000", "0.5", "-1", "0"]) {
+        expect(preflightEnv({ ...baseEnv, OLLAMA_NUM_CTX })).toEqual({
+          ok: false,
+          problems: [expect.objectContaining({ var: "OLLAMA_NUM_CTX" })],
+        });
+      }
+    });
+
+    it("accepts unset / '' / '1' / a plain integer for OLLAMA_NUM_CTX (#10056)", () => {
+      for (const value of [undefined, "", "1", "65536"]) {
+        const env = value === undefined ? { ...baseEnv } : { ...baseEnv, OLLAMA_NUM_CTX: value };
+        expect(preflightEnv(env)).toEqual({ ok: true, problems: [] });
+      }
+    });
+
     it("rejects a unit-suffixed or separator-formatted value instead of silently NaN-ing", () => {
       for (const CRON_INTERVAL_MS of ["2m", "120s", "120_000", "12.5", "-5", "abc"]) {
         const result = preflightEnv({ ...baseEnv, CRON_INTERVAL_MS });

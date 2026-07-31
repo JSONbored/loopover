@@ -2522,6 +2522,14 @@ describe("ollama context window (#9478)", () => {
     process.env["OLLAMA_NUM_CTX"] = value;
     expect(ollamaNumCtx()).toBeGreaterThan(8_192); // must exceed the truncation-prone stock defaults
   });
+
+  it("REGRESSION (#10056): a fractional OLLAMA_NUM_CTX falls back to the default instead of flooring to 0, and a valid value still wins", () => {
+    process.env["OLLAMA_NUM_CTX"] = "0.5"; // bare Number() floored this to 0 (a disabled context window)
+    expect(ollamaNumCtx()).toBe(32_768);
+    process.env["OLLAMA_NUM_CTX"] = "65536";
+    expect(ollamaNumCtx()).toBe(65_536);
+    delete process.env["OLLAMA_NUM_CTX"];
+  });
 });
 
 describe("resolveClaudeOauthToken (#9543 — rotate the credential without recreating the container)", () => {

@@ -36,7 +36,7 @@ export const PROOF_MIN_DECISIONS = 20;
 export const PROOF_SAMPLE_RECORDS = 5;
 
 export type ProofLedgerStatus =
-  | { state: "verified"; tipSeq: number; totalCount: number; checkedAt: string }
+  | { state: "verified"; tipSeq: number; totalCount: number; checkedAt: string; prunedRecords: number; waivedContentMismatches: number; waivedUnchainedRecords: number }
   /** `brokenKind` travels alongside the position because the KIND of break is the actionable half: a
    *  pruned-preimage short tail and a row-hash mismatch are very different claims about this operator. */
   | { state: "broken"; tipSeq: number; totalCount: number; checkedAt: string; brokenAtSeq: number; brokenKind: string }
@@ -83,7 +83,11 @@ function round3(value: number): number {
  * PURE. `confirmed`/`decided` come from the already-public precision block; nothing new is computed here
  * and no new SQL surface exists for this page.
  */
-export function buildProofAccuracy(decided: number, confirmed: number, minimumDecisions: number = PROOF_MIN_DECISIONS): ProofAccuracy {
+export function buildProofAccuracy(decided: number, confirmed: number | null, minimumDecisions: number = PROOF_MIN_DECISIONS): ProofAccuracy {
+  // #10012: a null `confirmed` means the reversal read (its own section in loadProofSummary) FAILED. A rate
+  // must never be asserted on a failed read -- degrade to insufficient_data rather than treating the missing
+  // count as zero (which would publish a fabricated accuracy of 0).
+  if (confirmed === null) return { state: "insufficient_data", decided: Math.max(0, decided), minimumDecisions };
   // ONE guard for both reasons a rate is unpublishable, and both arms are reachable: `wilsonInterval`
   // returns null exactly when there are no trials, which IS the "nothing decided" case, so checking it
   // here rather than pre-empting it with a separate `decided <= 0` test avoids a branch no input can take.
@@ -115,12 +119,15 @@ export function buildProofAnchorStatus(anchors: readonly PublicLedgerAnchor[]): 
 /** Project a ledger-verify result onto the page's status. An empty ledger is `empty`, not `verified`:
  *  "nothing has been decided yet" and "everything checks out" are different claims. */
 export function buildProofLedgerStatus(
-  verify: { ok: boolean; tipSeq: number; totalCount: number; break?: { kind: string; atSeq: number } | undefined } | null,
+  verify: { ok: boolean; tipSeq: number; totalCount: number; prunedRecords: number; waivedContentMismatches: number; waivedUnchainedRecords: number; break?: { kind: string; atSeq: number } | undefined } | null,
   checkedAt: string,
 ): ProofLedgerStatus {
   if (!verify) return { state: "unavailable", checkedAt };
   if (verify.totalCount === 0) return { state: "empty", checkedAt };
-  if (verify.ok) return { state: "verified", tipSeq: verify.tipSeq, totalCount: verify.totalCount, checkedAt };
+  // #10012: carry the declared exclusions (pruned preimages + content/unchained waivers) so the badge can say
+  // "verified · N excluded" instead of a bare "verified" that hides them -- an internal verifier that reports
+  // waivers must not render as unqualified "verified" on the most public surface.
+  if (verify.ok) return { state: "verified", tipSeq: verify.tipSeq, totalCount: verify.totalCount, checkedAt, prunedRecords: verify.prunedRecords, waivedContentMismatches: verify.waivedContentMismatches, waivedUnchainedRecords: verify.waivedUnchainedRecords };
   return {
     state: "broken",
     tipSeq: verify.tipSeq,
@@ -144,8 +151,8 @@ export function buildProofSummary(input: {
   repoFullName: string;
   decisionCount: number;
   decided: number;
-  confirmed: number;
-  verify: { ok: boolean; tipSeq: number; totalCount: number; break?: { kind: string; atSeq: number } | undefined } | null;
+  confirmed: number | null;
+  verify: { ok: boolean; tipSeq: number; totalCount: number; prunedRecords: number; waivedContentMismatches: number; waivedUnchainedRecords: number; break?: { kind: string; atSeq: number } | undefined } | null;
   anchors: readonly PublicLedgerAnchor[];
   records: ReadonlyArray<{ pullNumber: number; action: string; reasonCode: string; decidedAt: string; recordDigest: string }>;
   checkedAt: string;
@@ -174,8 +181,13 @@ export function buildProofSummary(input: {
  *  scalar this module exists to avoid. */
 export function buildProofBadgeMessage(summary: ProofSummary): string {
   switch (summary.ledger.state) {
-    case "verified":
+    case "verified": {
+      // #10012: a clean chain that nonetheless carries declared exclusions (pruned preimages or content/
+      // unchained waivers) is "verified · N excluded", never a bare "verified · anchored" that hides them.
+      const excluded = summary.ledger.prunedRecords + summary.ledger.waivedContentMismatches + summary.ledger.waivedUnchainedRecords;
+      if (excluded > 0) return `verified · ${excluded} excluded`;
       return summary.anchor.state === "anchored" ? "verified · anchored" : "verified";
+    }
     case "broken":
       return "chain broken";
     case "empty":
@@ -187,8 +199,13 @@ export function buildProofBadgeMessage(summary: ProofSummary): string {
 
 export function buildProofBadgeColor(summary: ProofSummary): string {
   switch (summary.ledger.state) {
-    case "verified":
+    case "verified": {
+      // #10012: a "verified · N excluded" badge is neutral grey, not the confident green — the exclusions are
+      // exactly what the green would over-claim past.
+      const excluded = summary.ledger.prunedRecords + summary.ledger.waivedContentMismatches + summary.ledger.waivedUnchainedRecords;
+      if (excluded > 0) return "#9e9e9e";
       return summary.anchor.state === "anchored" ? "#3fb950" : "#2da44e";
+    }
     case "broken":
       return "#f85149";
     // Neutral, not alarming: a repo with nothing decided yet has not failed anything.
@@ -282,7 +299,7 @@ export async function loadProofSummary(
   env: Env,
   repoFullName: string,
   deps: {
-    verifyLedger: (env: Env) => Promise<{ ok: boolean; tipSeq: number; totalCount: number; break?: { kind: string; atSeq: number } | undefined }>;
+    verifyLedger: (env: Env) => Promise<{ ok: boolean; tipSeq: number; totalCount: number; prunedRecords: number; waivedContentMismatches: number; waivedUnchainedRecords: number; break?: { kind: string; atSeq: number } | undefined }>;
     loadAnchors: (env: Env) => Promise<{ anchors: PublicLedgerAnchor[] }>;
     now?: () => string;
   },
@@ -305,12 +322,36 @@ export async function loadProofSummary(
     () =>
       env.DB.prepare(
         `SELECT COUNT(*) AS decisionCount,
-                SUM(CASE WHEN action IN ('merge', 'close') THEN 1 ELSE 0 END) AS decided,
-                SUM(CASE WHEN action IN ('merge', 'close') AND reason_code NOT LIKE 'reversal%' THEN 1 ELSE 0 END) AS confirmed
+                SUM(CASE WHEN action IN ('merge', 'close') THEN 1 ELSE 0 END) AS decided
            FROM decision_records WHERE repo_full_name = ?`,
       )
         .bind(repoFullName)
-        .first<{ decisionCount: number | null; decided: number | null; confirmed: number | null }>(),
+        .first<{ decisionCount: number | null; decided: number | null }>(),
+    null,
+  );
+
+  // #10012: `confirmed` counts merge/close decisions this repo made that were NOT later reversed. Reversals
+  // are recorded as separate audit_events rows (reversal_reverted / reversal_reopened / reversal_superseded,
+  // per public-rule-precision's own treatment of the same events), NOT as a reason_code on the decision row --
+  // decision_records.reason_code is written once at decision time and can never be 'reversal…', so the old
+  // `reason_code NOT LIKE 'reversal%'` made confirmed === decided for every repo, publishing accuracy = 1 by
+  // construction. Anti-join against the reversal audit rows keyed by `<repo>#<pull>`. Its OWN section so a
+  // failing read degrades toward NOT asserting a rate (buildProofSummary reads a null `confirmed` as
+  // insufficient_data) rather than fabricating one.
+  const confirmedRow = await section(
+    () =>
+      env.DB.prepare(
+        `SELECT COUNT(*) AS confirmed
+           FROM decision_records d
+          WHERE d.repo_full_name = ? AND d.action IN ('merge', 'close')
+            AND NOT EXISTS (
+              SELECT 1 FROM audit_events a
+               WHERE a.event_type IN ('reversal_reverted', 'reversal_reopened', 'reversal_superseded')
+                 AND a.target_key = d.repo_full_name || '#' || d.pull_number
+            )`,
+      )
+        .bind(repoFullName)
+        .first<{ confirmed: number | null }>(),
     null,
   );
 
@@ -336,7 +377,11 @@ export async function loadProofSummary(
     // degrade to 0, which renders as the honest "no decisions yet" state rather than a fabricated rate.
     decisionCount: counts?.decisionCount ?? 0,
     decided: counts?.decided ?? 0,
-    confirmed: counts?.confirmed ?? 0,
+    // #10012: null (not 0) when the reversal read FAILED (section returned null), so buildProofAccuracy
+    // degrades to insufficient_data rather than publishing a fabricated rate. A successful read always has a
+    // numeric COUNT(*) (never SQL NULL), so the inner `?? 0` is a defensive floor no input reaches.
+    /* v8 ignore next -- COUNT(*) is never NULL on a successful read; the `?? 0` is a defensive floor */
+    confirmed: confirmedRow ? confirmedRow.confirmed ?? 0 : null,
     verify,
     anchors,
     records,
@@ -348,7 +393,7 @@ export async function loadProofSummary(
  *  bind failing ones, which is what makes the unavailable path a tested outcome rather than a hoped-for one. */
 export type ProofPageDeps = {
   loadManifest: (env: Env, repoFullName: string) => Promise<{ publicProof: { present: boolean; enabled: boolean } } | null>;
-  verifyLedger: (env: Env) => Promise<{ ok: boolean; tipSeq: number; totalCount: number; break?: { kind: string; atSeq: number } | undefined }>;
+  verifyLedger: (env: Env) => Promise<{ ok: boolean; tipSeq: number; totalCount: number; prunedRecords: number; waivedContentMismatches: number; waivedUnchainedRecords: number; break?: { kind: string; atSeq: number } | undefined }>;
   loadAnchors: (env: Env) => Promise<{ anchors: PublicLedgerAnchor[] }>;
   now?: (() => string) | undefined;
 };

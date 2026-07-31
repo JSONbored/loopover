@@ -117,7 +117,10 @@ export interface ExtractedReviewSummary {
   consensusBlocker: boolean;
 }
 
-/** Case-insensitive de-dup of concern lines (two reviewers often raise the same point). Preserves first wording. */
+/** Case-insensitive de-dup of concern lines (two reviewers often raise the same point). Preserves first wording.
+ *  Uncapped, mirroring dedupeLines (#10010): callers pass the FULL deduped set to truncateFindingsForDisplay,
+ *  which is the disclosed-truncation stage -- capping here instead silently dropped items 21+ from the
+ *  AI-context block and understated the "+N more" footer. */
 function dedupeConcerns(items: string[]): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -129,7 +132,7 @@ function dedupeConcerns(items: string[]): string[] {
     seen.add(key);
     out.push(t);
   }
-  return out.slice(0, 20);
+  return out;
 }
 
 function extractReviewSummary(reviews: DualReviewNote[]): ExtractedReviewSummary {

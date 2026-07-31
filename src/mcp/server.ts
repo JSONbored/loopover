@@ -859,8 +859,9 @@ export function isMcpAdminEnabled(env: Env): boolean {
 
 /** The MCP `serverInfo.name` this server reports, and the `$mcp_server_name` its analytics carry.
  *  One constant so the handshake a client sees and the dashboards an operator reads can never
- *  disagree about what this server is called. */
-export const MCP_SERVER_NAME = "loopover";
+ *  disagree about what this server is called. Module-local: both readers (the handshake's serverInfo and
+ *  the analytics property builder) live in this file, and #10177 exported it without a consumer outside it. */
+const MCP_SERVER_NAME = "loopover";
 
 export class LoopoverMcp {
   private accessScopePromise: Promise<ControlPanelAccessScope> | null = null;

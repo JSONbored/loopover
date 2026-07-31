@@ -37,6 +37,12 @@ import { CLAIM_STATUSES as MINER_CLAIM_STATUSES } from "../../packages/loopover-
 import { RUN_STATES as LIVE_MINER_RUN_STATES } from "../../packages/loopover-miner/lib/run-state";
 import { LocalStatusStructuredInput } from "@loopover/contract/tools";
 import { GetRepoContextInput } from "@loopover/contract/tools";
+import {
+  DraftPrBodyInput,
+  LocalBranchAnalysisInput,
+  StdioDraftPrBodyInput,
+  StdioLocalBranchAnalysisInput,
+} from "@loopover/contract/tools";
 import { PREFLIGHT_LIMITS as ENGINE_PREFLIGHT_LIMITS } from "../../packages/loopover-engine/src/signals/preflight-limits";
 import { PUBLIC_SURFACE_SKIP_REASONS as SERVER_PUBLIC_SURFACE_SKIP_REASONS } from "../../src/signals/settings-preview";
 import { AUTONOMY_LEVELS as ENGINE_AUTONOMY_LEVELS, AGENT_ACTION_CLASSES as ENGINE_AGENT_ACTION_CLASSES } from "../../packages/loopover-engine/src/settings/autonomy";
@@ -96,6 +102,57 @@ describe("contract tool registry", () => {
     expect(contract!.input.safeParse({ owner: "o", repo: "", title: "t" }).success).toBe(false);
     expect(contract!.input.safeParse({ owner: "o", repo: "r", title: "" }).success).toBe(false);
     expect(contract!.input.safeParse({ owner: "o", repo: "r", title: "t" }).success).toBe(true);
+  });
+
+  it("declares stdio local-branch narrowings derived from LocalBranchAnalysisInput (#10034)", () => {
+    const contractRequired = new Set(
+      ((z.toJSONSchema(LocalBranchAnalysisInput, { target: "draft-2020-12" }) as { required?: string[] }).required ?? []),
+    );
+    const eightTools = [
+      "loopover_preflight_current_branch",
+      "loopover_preview_current_branch_score",
+      "loopover_rank_local_next_actions",
+      "loopover_explain_local_blockers",
+      "loopover_remediation_plan",
+      "loopover_prepare_pr_packet",
+      "loopover_draft_pr_body",
+      "loopover_agent_prepare_pr_packet",
+    ] as const;
+    const narrowingByTool: Record<(typeof eightTools)[number], z.ZodObject> = {
+      loopover_preflight_current_branch: StdioLocalBranchAnalysisInput,
+      loopover_preview_current_branch_score: StdioLocalBranchAnalysisInput,
+      loopover_rank_local_next_actions: StdioLocalBranchAnalysisInput,
+      loopover_explain_local_blockers: StdioLocalBranchAnalysisInput,
+      loopover_remediation_plan: StdioLocalBranchAnalysisInput,
+      loopover_prepare_pr_packet: StdioLocalBranchAnalysisInput,
+      loopover_draft_pr_body: StdioDraftPrBodyInput,
+      loopover_agent_prepare_pr_packet: StdioLocalBranchAnalysisInput,
+    };
+    for (const toolName of eightTools) {
+      const contract = getToolContract(toolName);
+      expect(contract, toolName).toBeDefined();
+      const contractSchema = z.toJSONSchema(contract!.input, { target: "draft-2020-12" }) as {
+        properties?: Record<string, unknown>;
+        required?: string[];
+      };
+      const narrowing = narrowingByTool[toolName];
+      const narrowingSchema = z.toJSONSchema(narrowing, { target: "draft-2020-12" }) as {
+        properties?: Record<string, unknown>;
+        required?: string[];
+      };
+      const narrowingRequired = narrowingSchema.required ?? [];
+      expect(narrowingRequired, toolName).not.toContain("login");
+      expect(narrowingRequired, toolName).not.toContain("repoFullName");
+      for (const required of narrowingRequired) {
+        expect(contractRequired, `${toolName}.${required}`).toContain(required);
+      }
+      for (const property of Object.keys(narrowingSchema.properties ?? {})) {
+        expect(contractSchema.properties ?? {}, `${toolName}.${property}`).toHaveProperty(property);
+      }
+    }
+    expect(DraftPrBodyInput.safeParse({ login: "a", repoFullName: "o/r", format: "json" }).success).toBe(true);
+    expect(StdioDraftPrBodyInput.safeParse({ format: "markdown" }).success).toBe(true);
+    expect(StdioDraftPrBodyInput.safeParse({}).success).toBe(true);
   });
 });
 

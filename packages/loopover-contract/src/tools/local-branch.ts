@@ -239,7 +239,15 @@ export const reviewPrBeforePushTool = defineTool({
   output: PreflightCurrentBranchOutput,
 });
 
+/** What the STDIO server serves: resolves login/repo from session and reads branch metadata from the checkout. */
+export const StdioLocalBranchAnalysisInput = CurrentBranchInput;
+
 export const DraftPrBodyInput = LocalBranchAnalysisInput.extend({
+  format: z.enum(["json", "markdown"]).optional(),
+});
+
+/** What the STDIO server serves for draft_pr_body: the branch narrowing plus optional format. */
+export const StdioDraftPrBodyInput = CurrentBranchInput.extend({
   format: z.enum(["json", "markdown"]).optional(),
 });
 export const draftPrBodyTool = defineTool({

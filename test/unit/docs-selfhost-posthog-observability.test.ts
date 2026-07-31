@@ -40,6 +40,15 @@ describe("self-host PostHog observability docs (#8287)", () => {
     expect(operations).toContain("<provider>-default");
   });
 
+  it("documents content capture as opt-in, with the real env var names and the privacy warning (#10218)", () => {
+    // The page previously promised metadata-only unconditionally. That is now conditional, so the page must
+    // say WHICH var changes it and what enabling it actually sends -- a self-hoster's private diffs.
+    expect(operations).toContain("LOOPOVER_POSTHOG_AI_CONTENT");
+    expect(operations).toContain("LOOPOVER_POSTHOG_AI_CONTENT_MAX_CHARS");
+    expect(operations).toContain("Off by default");
+    expect(operations).toContain("private source code leaving your infrastructure");
+  });
+
   it("documents the cron-monitor heartbeat replacement with the real exported event name", () => {
     expect(operations).toContain("Cron Monitors");
     expect(operations).toContain(POSTHOG_MONITOR_HEARTBEAT_EVENT);

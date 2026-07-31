@@ -1559,6 +1559,19 @@ function isExpectedEmbeddingRoutingError(options: AiRunOptions, error: unknown):
   return requestKind(options) === "embedding" && EXPECTED_EMBEDDING_ROUTING_ERRORS.has(errorMessage(error));
 }
 
+/** The prompt, flattened to the `{role, content}` list PostHog's `$ai_input` expects (#10218).
+ *
+ *  Reuses `contentText`, so an image block is dropped rather than base64-encoded into a telemetry event --
+ *  the same projection the subscription CLIs already apply when building their stdin prompt, so what is
+ *  captured is what the provider was actually given. An embedding request has no messages at all; its
+ *  inputs are the raw texts, reported under the same synthetic `user` role so one property shape covers
+ *  both request kinds. Capture is gated in posthog.ts, so this always builds and is simply ignored when
+ *  the operator has not opted in. */
+function aiContentInput(options: AiRunOptions): Array<{ role: string; content: string }> {
+  if (Array.isArray(options.text)) return options.text.map((text) => ({ role: "user", content: text }));
+  return toMessages(options).map((message) => ({ role: message.role, content: contentText(message.content) }));
+}
+
 async function runProviderWithOtel(
   provider: { name: string; ai: SelfHostAi },
   model: string,
@@ -1619,6 +1632,8 @@ async function runProviderWithOtel(
       totalCostUsd: usage?.costUsd,
       effort: usage?.effort,
       context: { repo: options.repoFullName, pullNumber: options.pullNumber },
+      input: aiContentInput(options),
+      outputText: result.response,
     });
     return usage ? { ...result, usage } : result;
   } catch (error) {
@@ -1635,6 +1650,9 @@ async function runProviderWithOtel(
       isError: true,
       error,
       context: { repo: options.repoFullName, pullNumber: options.pullNumber },
+      // The prompt is what a failure needs most: a `claude_stalled_no_output` or a context-length rejection
+      // is only diagnosable against the input that produced it. There is no completion to report.
+      input: aiContentInput(options),
     });
     incr("loopover_ai_provider_failures_total", { provider: provider.name });
     incr("loopover_ai_provider_request_errors_total", { provider: provider.name, request_kind: requestKindLabel });
@@ -1809,6 +1827,8 @@ export function withAiGenerationCapture(providerName: string, ai: SelfHostAi): S
           outputTokens: usage?.outputTokens,
           totalCostUsd: usage?.costUsd,
           effort: usage?.effort,
+          input: aiContentInput(options),
+          outputText: result.response,
         });
         return usage ? { ...result, usage } : result;
       } catch (error) {
@@ -1819,6 +1839,7 @@ export function withAiGenerationCapture(providerName: string, ai: SelfHostAi): S
           latencyMs: Date.now() - startedAtMs,
           isError: true,
           error,
+          input: aiContentInput(options),
         });
         throw error;
       }

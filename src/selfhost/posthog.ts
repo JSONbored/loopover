@@ -74,6 +74,37 @@ function processEnvString(env: NodeJS.ProcessEnv, name: string): string | undefi
   return nonBlank(env[name]);
 }
 
+/** Truthy-string env flag, matching the repo-wide convention for a flag-gated capability that ships OFF. */
+const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
+
+/** Default ceiling on a single captured message's characters (#10218). A review prompt carries up to 120k
+ *  chars of diff plus a 240k-char aggregate context budget, so an uncapped capture would push events past
+ *  PostHog's own payload limits and be dropped wholesale -- a cap is what makes this survivable at all. */
+const DEFAULT_AI_CONTENT_MAX_CHARS = 10_000;
+
+/** #10218: whether `$ai_input`/`$ai_output_choices` are populated at all. OFF unless
+ *  `LOOPOVER_POSTHOG_AI_CONTENT` is explicitly truthy. Self-host-only, read off real process.env, matching
+ *  this file's precedent for every other self-host-exclusive knob. */
+let aiContentCapture = false;
+let aiContentMaxChars = DEFAULT_AI_CONTENT_MAX_CHARS;
+
+function resolveAiContentCapture(env: NodeJS.ProcessEnv): boolean {
+  return TRUE_ENV_VALUES.has((env.LOOPOVER_POSTHOG_AI_CONTENT ?? "").trim().toLowerCase());
+}
+
+/** Per-message character ceiling. A non-numeric, zero, negative or fractional override falls back to the
+ *  default rather than disabling the cap -- an operator typo must never become "send the whole diff". */
+function resolveAiContentMaxChars(env: NodeJS.ProcessEnv): number {
+  const raw = Number(env.LOOPOVER_POSTHOG_AI_CONTENT_MAX_CHARS);
+  return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_AI_CONTENT_MAX_CHARS;
+}
+
+/** Truncate to the configured ceiling, marking that it happened so a reader never mistakes a clipped prompt
+ *  for the whole one. */
+function boundedContent(value: string): string {
+  return value.length <= aiContentMaxChars ? value : `${value.slice(0, aiContentMaxChars)}…[truncated]`;
+}
+
 /** Resolve the PostHog release id: explicit override first, then the image-baked self-host version, matching
  *  {@link resolveSentryRelease}'s identical precedence in sentry.ts. */
 export function resolvePostHogRelease(env: NodeJS.ProcessEnv): string | undefined {
@@ -181,6 +212,11 @@ export async function initPostHog(env: NodeJS.ProcessEnv): Promise<boolean> {
   usingCentralPostHogKey = !explicitKey;
   await loadNodeHasher();
   const { PostHog } = await import("posthog-node");
+  // #10218: content capture is OFF unless the operator turns it on. Upgrading an ORB must never start
+  // shipping private PR diffs and model completions to a vendor as a side effect of a version bump, so the
+  // default stays metadata-only exactly as before -- see resolveAiContentCapture.
+  aiContentCapture = resolveAiContentCapture(env);
+  aiContentMaxChars = resolveAiContentMaxChars(env);
   posthogEnvironment = processEnvString(env, "POSTHOG_ENVIRONMENT") ?? "production";
   activeRelease = resolvePostHogRelease(env);
   const host = processEnvString(env, "POSTHOG_HOST") ?? DEFAULT_POSTHOG_HOST;
@@ -406,7 +442,33 @@ export type PostHogAiGenerationEvent = {
   /** Raw caught value on the error path (mirrors capturePostHogError's own `error` param) -- never a
    *  caller-preformatted string. Ignored when `isError` is false. */
   error?: unknown;
+  /** #10218: the prompt messages, already flattened to plain text by the caller (an image block has no
+   *  place in a telemetry event and is dropped upstream). IGNORED unless content capture is enabled --
+   *  passing it is always safe, the gate lives here rather than at every call site. */
+  input?: ReadonlyArray<{ role: string; content: string }> | undefined;
+  /** #10218: the model's completion text. Same gating as {@link PostHogAiGenerationEvent.input}. */
+  outputText?: string | undefined;
 };
+
+/** Build the `$ai_input`/`$ai_output_choices` properties PostHog's LLM-analytics views read (#10218).
+ *  Returns an EMPTY bag when content capture is off, which is the default and the pre-#10218 behavior
+ *  byte-for-byte. Every string is bounded here; the vendor-bound redaction pass still runs afterwards over
+ *  the whole properties bag via `before_send` (scrubPostHogEvent -> scrubRecord), so captured content goes
+ *  through exactly the same credential/vocabulary scrubbing as every other field in this file -- it is not
+ *  a second, weaker path. */
+function aiContentProperties(event: PostHogAiGenerationEvent): Record<string, unknown> {
+  if (!aiContentCapture) return {};
+  const properties: Record<string, unknown> = {};
+  if (event.input && event.input.length > 0) {
+    properties.$ai_input = event.input.map((message) => ({ role: message.role, content: boundedContent(message.content) }));
+  }
+  // PostHog's shape is a list of choices; the self-host providers are all single-completion, so this is
+  // always a one-element list rather than a fabricated multi-choice response.
+  if (event.outputText !== undefined && event.outputText !== "") {
+    properties.$ai_output_choices = [{ role: "assistant", content: boundedContent(event.outputText) }];
+  }
+  return properties;
+}
 
 /** Capture one AI provider attempt as PostHog's `$ai_generation` (`$ai_embedding` for an embedding
  *  request) event (#8296). No-op when PostHog is off -- same contract as every other capture function in
@@ -451,6 +513,7 @@ export function capturePostHogAiGeneration(event: PostHogAiGenerationEvent): voi
   const properties: Record<string, unknown> = {
     ...operational,
     ...aiTraceProperties(operational),
+    ...aiContentProperties(event),
     // Names the node in the trace tree. Provider-and-kind rather than the tool/feature name, because
     // that is what this function actually knows -- the feature lives in ai_usage_events, not here.
     $ai_span_name: `ai.${event.requestKind}/${nonBlank(event.provider) ?? "unknown"}`,
@@ -566,5 +629,7 @@ export function resetPostHogForTest(): void {
   activeRelease = undefined;
   usingCentralPostHogKey = false;
   centralKeyAnonSecret = undefined;
+  aiContentCapture = false;
+  aiContentMaxChars = DEFAULT_AI_CONTENT_MAX_CHARS;
   resetRedactionScrubForTest();
 }

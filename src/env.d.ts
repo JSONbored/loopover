@@ -614,6 +614,12 @@ declare global {
      *  when this is off -- see isProofPageEnabledForRepo's recorded decision in review/proof-summary.ts. */
     LOOPOVER_PUBLIC_PROOF?: string;
     LOOPOVER_PUBLIC_STATS?: string;
+    /** #9983: base URL of this deployment's Alertmanager (the source behind `/v1/public/service-status`).
+     *  Unset means the deployment has no alerting stack -- the hosted Worker -- and the route 404s rather
+     *  than publishing a board that reads "unknown" for every component forever. On the Orb this is the
+     *  compose-network address, never a public one: the app reads it server-side and publishes only a
+     *  component name and status, so the URL itself is internal topology and never leaves the process. */
+    LOOPOVER_ALERTMANAGER_URL?: string;
     /** Proof of Power (#1059): comma-separated allowlist of repo full-names ("owner/repo") whose OWN historical
      *  review ledger (audit_events "published a review surface" + pull_requests terminal state) counts toward
      *  the public stats counter. DELIBERATELY SEPARATE from LOOPOVER_REVIEW_REPOS (the live per-PR-feature

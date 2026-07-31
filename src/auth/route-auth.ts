@@ -44,6 +44,9 @@ export function requiresApiToken(path: string): boolean {
   // repos, no metadata beyond the one confidence field replay needs), so there is nothing here an
   // Authorization header would be protecting.
   if (path === "/v1/public/eval-corpus") return false;
+  // #9983: component name + status only, no host, instance or capacity detail -- added in the SAME PR as its
+  // route so the two cannot drift.
+  if (path === "/v1/public/service-status") return false;
   // #9269: the single-row read, added in the SAME PR as its route so the two can never drift the way #9120's
   // sibling did. Regex (not a literal) because of the :seq path parameter.
   if (/^\/v1\/public\/decision-ledger\/row\/[^/]+$/.test(path)) return false;

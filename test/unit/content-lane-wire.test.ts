@@ -92,14 +92,39 @@ describe("applySurfaceGate", () => {
 
     expect(applySurfaceGate(genericHold, surfaceMerge)).toBe(genericHold);
   });
-  it("lets a surface hard failure override a generic warning-only hold", () => {
-    const genericHold = gate({
-      conclusion: "neutral",
-      blockers: [],
-      warnings: [{ code: "oversized_pr", title: "Large change", severity: "warning", detail: "large" }],
-    });
+  it("lets a surface hard failure override a generic warning-only hold, preserving the generic gate's hold warnings", () => {
+    const oversizedPrFinding: AdvisoryFinding = { code: "oversized_pr", title: "Large change", severity: "warning", detail: "large" };
+    const genericHold = gate({ conclusion: "neutral", blockers: [], warnings: [oversizedPrFinding] });
 
-    expect(applySurfaceGate(genericHold, surfaceClose)).toBe(surfaceClose);
+    const out = applySurfaceGate(genericHold, surfaceClose);
+    expect(out?.conclusion).toBe("failure");
+    expect(out?.blockers).toEqual(surfaceClose.blockers);
+    expect(out?.warnings).toEqual([oversizedPrFinding]);
+  });
+  it("the unchanged sub-case: a success generic with warnings still returns the surface verbatim", () => {
+    const genericSuccess = gate({ conclusion: "success", blockers: [], warnings: [{ code: "quality_readiness_low", title: "Readiness is low", severity: "warning", detail: "" }] });
+    expect(applySurfaceGate(genericSuccess, surfaceClose)).toBe(surfaceClose);
+  });
+  it("the unchanged sub-case: a holding generic against a success surface still returns the generic verbatim", () => {
+    const oversizedPrFinding: AdvisoryFinding = { code: "oversized_pr", title: "Large change", severity: "warning", detail: "large" };
+    const genericHold = gate({ conclusion: "neutral", blockers: [], warnings: [oversizedPrFinding] });
+    const surfaceMerge = gate({ conclusion: "success", title: "Surface", summary: "valid entry" });
+    expect(applySurfaceGate(genericHold, surfaceMerge)).toBe(genericHold);
+  });
+  it("REGRESSION (#10011): preserves the generic gate's hold warnings when a non-success surface verdict overrides it", () => {
+    const oversizedPrFinding: AdvisoryFinding = { code: "oversized_pr", title: "Large change", severity: "warning", detail: "large" };
+    const genericHold = gate({ conclusion: "neutral", blockers: [], warnings: [oversizedPrFinding] });
+
+    const manual = surfaceVerdictToGate({ verdict: "manual", summary: "auth declared" }).evaluation;
+    const outManual = applySurfaceGate(genericHold, manual);
+    expect(outManual?.conclusion).toBe("neutral");
+    expect(outManual?.warnings.map((w) => w.code)).toEqual(["oversized_pr", "surface_lane_manual"]);
+
+    const close = surfaceVerdictToGate({ verdict: "close", summary: "bad entry" }).evaluation;
+    const outClose = applySurfaceGate(genericHold, close);
+    expect(outClose?.conclusion).toBe("failure");
+    expect(outClose?.blockers.map((b) => b.code)).toEqual(["surface_lane_reject"]);
+    expect(outClose?.warnings.map((w) => w.code)).toEqual(["oversized_pr"]);
   });
   it("PRESERVES a generic hard blocker over a surface merge (a committed secret can never merge)", () => {
     const secret: AdvisoryFinding = { code: "secret_leak", title: "Secret", severity: "critical", detail: "leaked key" };

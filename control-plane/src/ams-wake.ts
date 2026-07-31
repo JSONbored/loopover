@@ -44,6 +44,11 @@ export type AmsWakeResult = {
    *  silently coerced into a fake exit code). */
   exitCode: number | undefined;
   timedOut: boolean;
+  /** `true` when this tenant's wake threw at any point (`start()`, `pollForExitCode`'s `getState()`, or
+   *  either `registry.upsert()` call) and was caught so the rest of the tick could keep going. `exitCode` is
+   *  always `undefined` and `timedOut` is always `false` on a failed result -- neither one describes a wake
+   *  that never got the chance to finish. */
+  failed: boolean;
 };
 
 const HOSTED_ENTRY_BIN = "loopover-miner-hosted";
@@ -129,28 +134,51 @@ export async function wakeDueAmsTenants(config: AmsWakeConfig): Promise<AmsWakeR
     // Claim this tenant's next slot BEFORE starting its poll (#9143) -- see this function's own header
     // comment on why.
     const claimedNextDueAt = new Date(tickStartedAt.getTime() + schedule.intervalMs).toISOString();
-    await config.registry.upsert({
-      ...record,
-      amsSchedule: { ...schedule, nextDueAt: claimedNextDueAt },
-      updatedAt: now().toISOString(),
-    });
 
-    const stub = config.binding.getByName(instanceNameFor(record.tenant.name, record.product));
-    await stub.start({ entrypoint: [HOSTED_ENTRY_BIN, schedule.command, ...schedule.args] });
-    const { exitCode, timedOut } = await pollForExitCode(stub, pollIntervalMs, pollTimeoutMs);
+    // Isolate this one tenant's wake: a rejection from `start()`, from `pollForExitCode`'s `getState()`, or
+    // from either `upsert()` below must cost only this tenant its cycle, not the whole tick (#10063) --
+    // mirroring http-app.ts's `provisionTenant` failure seam, which likewise records a terminal state before
+    // letting its caller move on instead of losing the surrounding request.
+    try {
+      await config.registry.upsert({
+        ...record,
+        amsSchedule: { ...schedule, nextDueAt: claimedNextDueAt },
+        updatedAt: now().toISOString(),
+      });
 
-    const ranAt = now().toISOString();
-    await config.registry.upsert({
-      ...record,
-      amsSchedule: {
-        ...schedule,
-        lastRunAt: ranAt,
-        lastExitCode: exitCode,
-        nextDueAt: claimedNextDueAt,
-      },
-      updatedAt: ranAt,
-    });
-    results.push({ tenant: record.tenant, ranAt, exitCode, timedOut });
+      const stub = config.binding.getByName(instanceNameFor(record.tenant.name, record.product));
+      await stub.start({ entrypoint: [HOSTED_ENTRY_BIN, schedule.command, ...schedule.args] });
+      const { exitCode, timedOut } = await pollForExitCode(stub, pollIntervalMs, pollTimeoutMs);
+
+      const ranAt = now().toISOString();
+      await config.registry.upsert({
+        ...record,
+        amsSchedule: {
+          ...schedule,
+          lastRunAt: ranAt,
+          lastExitCode: exitCode,
+          nextDueAt: claimedNextDueAt,
+        },
+        updatedAt: ranAt,
+      });
+      results.push({ tenant: record.tenant, ranAt, exitCode, timedOut, failed: false });
+    } catch {
+      const ranAt = now().toISOString();
+      try {
+        // Still attempt the lastRunAt write so the record doesn't silently look like it never ran --
+        // whichever upsert above threw (or never ran at all), this is a fresh attempt of its own.
+        await config.registry.upsert({
+          ...record,
+          amsSchedule: { ...schedule, lastRunAt: ranAt, nextDueAt: claimedNextDueAt },
+          updatedAt: ranAt,
+        });
+      } catch {
+        // The failure write itself failed too -- nothing left to attempt this tick. The claimed
+        // `nextDueAt` (if that first upsert landed) still moved forward, so this tenant is retried next
+        // cycle rather than starving the rest of this one.
+      }
+      results.push({ tenant: record.tenant, ranAt, exitCode: undefined, timedOut: false, failed: true });
+    }
   }
 
   return results;

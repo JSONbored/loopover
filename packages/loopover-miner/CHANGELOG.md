@@ -1,5 +1,21 @@
 # Changelog
 
+## [3.20.0](https://github.com/JSONbored/loopover/compare/miner-v3.19.0...miner-v3.20.0) (2026-07-31)
+
+
+### Fixes
+
+* **mcp:** advertise _meta.category on all three servers ([#10162](https://github.com/JSONbored/loopover/issues/10162)) ([236907c](https://github.com/JSONbored/loopover/commit/236907c457c8184022cb885e7c8ef8a00db6d86f))
+* **miner:** scope recordRateLimit to the core-billed rate-limit resource ([#10201](https://github.com/JSONbored/loopover/issues/10201)) ([d308a9c](https://github.com/JSONbored/loopover/commit/d308a9cef80353bd748833aff306a13ad2e0085f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.19.0 to ^3.20.0
+    * @loopover/engine bumped from ^3.19.0 to ^3.20.0
+
 ## [3.19.0](https://github.com/JSONbored/loopover/compare/miner-v3.18.4...miner-v3.19.0) (2026-07-31)
 
 

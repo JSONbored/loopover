@@ -125,6 +125,91 @@ describe("ChartTooltipContent (recharts v3, #8610)", () => {
     expect(chart.getByText("$120")).toBeTruthy();
   });
 
+  // #10051: a numeric 0 is a real data point — the old `item.value &&` guard rendered it as a bare
+  // React text child (losing tabular-nums / toLocaleString). Pin both arms of the nullish guard and
+  // assert the digit sits inside the formatted span, not beside it.
+  it("REGRESSION (#10051): zero value renders inside the tabular-nums span, not as a bare text child", () => {
+    const zeroPayload = [
+      {
+        dataKey: "revenue",
+        name: "revenue",
+        value: 0,
+        color: "#0ea5e9",
+        payload: { month: "Jan", revenue: 0 },
+      },
+    ];
+    const chart = renderInChart(
+      <ChartTooltipContent active payload={zeroPayload} label="Jan" />,
+    );
+
+    const valueSpan = chart.slot().querySelector("span.tabular-nums");
+    expect(valueSpan).not.toBeNull();
+    expect(valueSpan!.className).toContain("font-mono");
+    expect(valueSpan!.className).toContain("tabular-nums");
+    expect(valueSpan!.textContent).toBe("0");
+
+    // The formatted "0" must be a descendant of the span — not a direct text child of the row.
+    const row = valueSpan!.closest(".flex.w-full");
+    expect(row).not.toBeNull();
+    const directZero = Array.from(row!.childNodes).some(
+      (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === "0",
+    );
+    expect(directZero).toBe(false);
+    expect(chart.getByText("Revenue")).toBeTruthy();
+  });
+
+  it("omits the value span only when value is undefined or null (#10051)", () => {
+    const undefinedPayload = [
+      {
+        dataKey: "revenue",
+        name: "revenue",
+        value: undefined,
+        color: "#0ea5e9",
+        payload: { month: "Jan", revenue: 0 },
+      },
+    ];
+    const missing = renderInChart(
+      <ChartTooltipContent active payload={undefinedPayload} label="Jan" />,
+    );
+    expect(missing.slot().textContent).toContain("Revenue");
+    expect(missing.slot().querySelector("span.tabular-nums")).toBeNull();
+    missing.unmount();
+
+    const nullPayload = [
+      {
+        dataKey: "revenue",
+        name: "revenue",
+        value: null,
+        color: "#0ea5e9",
+        payload: { month: "Jan", revenue: 0 },
+      },
+    ];
+    const nullish = renderInChart(
+      <ChartTooltipContent active payload={nullPayload as typeof payload} label="Jan" />,
+    );
+    expect(nullish.slot().textContent).toContain("Revenue");
+    expect(nullish.slot().querySelector("span.tabular-nums")).toBeNull();
+  });
+
+  it("renders an empty-string value through the tabular-nums span (#10051)", () => {
+    const emptyPayload = [
+      {
+        dataKey: "revenue",
+        name: "revenue",
+        value: "",
+        color: "#0ea5e9",
+        payload: { month: "Jan", revenue: "" },
+      },
+    ];
+    const chart = renderInChart(
+      <ChartTooltipContent active payload={emptyPayload} label="Jan" />,
+    );
+    const valueSpan = chart.slot().querySelector("span.tabular-nums");
+    expect(valueSpan).not.toBeNull();
+    expect(valueSpan!.textContent).toBe("");
+    expect(chart.getByText("Revenue")).toBeTruthy();
+  });
+
   it("resolves a series by nameKey when the payload's own key is not the config key", () => {
     const chart = renderInChart(
       <ChartTooltipContent

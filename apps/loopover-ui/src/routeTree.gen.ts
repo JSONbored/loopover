@@ -41,6 +41,7 @@ import { Route as DocsSlugRouteImport } from './routes/docs.$slug'
 import { Route as DocsFumadocsSpikeApiReferenceRouteImport } from './routes/docs.fumadocs-spike-api-reference'
 import { Route as InstallIndexRouteImport } from './routes/install.index'
 import { Route as InstallPermissionsRouteImport } from './routes/install.permissions'
+import { Route as ProofOwnerRepoRouteImport } from './routes/proof.$owner.$repo'
 import { Route as ReposOwnerRepoQualityRouteImport } from './routes/repos.$owner.$repo.quality'
 
 const IndexRoute = IndexRouteImport.update({
@@ -204,6 +205,11 @@ const InstallPermissionsRoute = InstallPermissionsRouteImport.update({
   path: '/permissions',
   getParentRoute: () => InstallRoute,
 } as any)
+const ProofOwnerRepoRoute = ProofOwnerRepoRouteImport.update({
+  id: '/proof/$owner/$repo',
+  path: '/proof/$owner/$repo',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ReposOwnerRepoQualityRoute = ReposOwnerRepoQualityRouteImport.update({
   id: '/repos/$owner/$repo/quality',
   path: '/repos/$owner/$repo/quality',
@@ -243,6 +249,7 @@ export interface FileRoutesByFullPath {
   '/app/': typeof AppIndexRoute
   '/docs/': typeof DocsIndexRoute
   '/install/': typeof InstallIndexRoute
+  '/proof/$owner/$repo': typeof ProofOwnerRepoRoute
   '/repos/$owner/$repo/quality': typeof ReposOwnerRepoQualityRoute
 }
 export interface FileRoutesByTo {
@@ -274,6 +281,7 @@ export interface FileRoutesByTo {
   '/app': typeof AppIndexRoute
   '/docs': typeof DocsIndexRoute
   '/install': typeof InstallIndexRoute
+  '/proof/$owner/$repo': typeof ProofOwnerRepoRoute
   '/repos/$owner/$repo/quality': typeof ReposOwnerRepoQualityRoute
 }
 export interface FileRoutesById {
@@ -310,6 +318,7 @@ export interface FileRoutesById {
   '/app/': typeof AppIndexRoute
   '/docs/': typeof DocsIndexRoute
   '/install/': typeof InstallIndexRoute
+  '/proof/$owner/$repo': typeof ProofOwnerRepoRoute
   '/repos/$owner/$repo/quality': typeof ReposOwnerRepoQualityRoute
 }
 export interface FileRouteTypes {
@@ -347,6 +356,7 @@ export interface FileRouteTypes {
     | '/app/'
     | '/docs/'
     | '/install/'
+    | '/proof/$owner/$repo'
     | '/repos/$owner/$repo/quality'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -378,6 +388,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/docs'
     | '/install'
+    | '/proof/$owner/$repo'
     | '/repos/$owner/$repo/quality'
   id:
     | '__root__'
@@ -413,6 +424,7 @@ export interface FileRouteTypes {
     | '/app/'
     | '/docs/'
     | '/install/'
+    | '/proof/$owner/$repo'
     | '/repos/$owner/$repo/quality'
   fileRoutesById: FileRoutesById
 }
@@ -428,6 +440,7 @@ export interface RootRouteChildren {
   MaintainersRoute: typeof MaintainersRoute
   MinersRoute: typeof MinersRoute
   RoadmapRoute: typeof RoadmapRoute
+  ProofOwnerRepoRoute: typeof ProofOwnerRepoRoute
   ReposOwnerRepoQualityRoute: typeof ReposOwnerRepoQualityRoute
 }
 
@@ -657,6 +670,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof InstallPermissionsRouteImport
       parentRoute: typeof InstallRoute
     }
+    '/proof/$owner/$repo': {
+      id: '/proof/$owner/$repo'
+      path: '/proof/$owner/$repo'
+      fullPath: '/proof/$owner/$repo'
+      preLoaderRoute: typeof ProofOwnerRepoRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/repos/$owner/$repo/quality': {
       id: '/repos/$owner/$repo/quality'
       path: '/repos/$owner/$repo/quality'
@@ -754,6 +774,7 @@ const rootRouteChildren: RootRouteChildren = {
   MaintainersRoute: MaintainersRoute,
   MinersRoute: MinersRoute,
   RoadmapRoute: RoadmapRoute,
+  ProofOwnerRepoRoute: ProofOwnerRepoRoute,
   ReposOwnerRepoQualityRoute: ReposOwnerRepoQualityRoute,
 }
 export const routeTree = rootRouteImport

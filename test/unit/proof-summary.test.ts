@@ -16,6 +16,7 @@ import {
 import { renderProofBadgeSvg } from "../../src/api/proof-badge";
 import { createApp } from "../../src/api/routes";
 import { appendDecisionLedger, persistDecisionRecord } from "../../src/review/decision-record";
+import { recordAuditEvent } from "../../src/db/repositories";
 import { loadPublicLedgerAnchors, recordLedgerAnchorAttempt } from "../../src/review/ledger-anchor-persistence";
 import { createTestEnv } from "../helpers/d1";
 import { loadProofPageRepoOverride, resolveProofPage, type ProofPageDeps } from "../../src/review/proof-summary";
@@ -89,18 +90,18 @@ describe("buildProofAnchorStatus (#9569)", () => {
 
 describe("buildProofLedgerStatus — honest boundary states (#9569)", () => {
   it("REGRESSION: an EMPTY ledger is `empty`, not `verified` — different claims", () => {
-    expect(buildProofLedgerStatus({ ok: true, tipSeq: 0, totalCount: 0 }, CHECKED_AT)).toEqual({ state: "empty", checkedAt: CHECKED_AT });
+    expect(buildProofLedgerStatus({ ok: true, tipSeq: 0, totalCount: 0, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }, CHECKED_AT)).toEqual({ state: "empty", checkedAt: CHECKED_AT });
   });
 
   it("verified, broken (with kind and position), and unavailable each render distinctly", () => {
-    expect(buildProofLedgerStatus({ ok: true, tipSeq: 9, totalCount: 9 }, CHECKED_AT)).toEqual({
-      state: "verified", tipSeq: 9, totalCount: 9, checkedAt: CHECKED_AT,
+    expect(buildProofLedgerStatus({ ok: true, tipSeq: 9, totalCount: 9, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }, CHECKED_AT)).toEqual({
+      state: "verified", tipSeq: 9, totalCount: 9, checkedAt: CHECKED_AT, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0,
     });
-    expect(buildProofLedgerStatus({ ok: false, tipSeq: 9, totalCount: 9, break: { kind: "row_hash_mismatch", atSeq: 4 } }, CHECKED_AT)).toEqual({
+    expect(buildProofLedgerStatus({ ok: false, tipSeq: 9, totalCount: 9, break: { kind: "row_hash_mismatch", atSeq: 4 }, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }, CHECKED_AT)).toEqual({
       state: "broken", tipSeq: 9, totalCount: 9, checkedAt: CHECKED_AT, brokenAtSeq: 4, brokenKind: "row_hash_mismatch",
     });
     // A break with no detail is still broken, marked unknown rather than silently claiming seq 0.
-    expect(buildProofLedgerStatus({ ok: false, tipSeq: 9, totalCount: 9 }, CHECKED_AT)).toMatchObject({ brokenAtSeq: -1, brokenKind: "unknown" });
+    expect(buildProofLedgerStatus({ ok: false, tipSeq: 9, totalCount: 9, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }, CHECKED_AT)).toMatchObject({ brokenAtSeq: -1, brokenKind: "unknown" });
     // A failed read is `unavailable` — not "broken", which would accuse the operator of tampering.
     expect(buildProofLedgerStatus(null, CHECKED_AT)).toEqual({ state: "unavailable", checkedAt: CHECKED_AT });
   });
@@ -113,7 +114,7 @@ describe("buildProofSummary — the structural privacy boundary (#9569)", () => 
       decisionCount: 30,
       decided: 30,
       confirmed: 29,
-      verify: { ok: true, tipSeq: 30, totalCount: 30 },
+      verify: { ok: true, tipSeq: 30, totalCount: 30, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 },
       anchors: [anchor()],
       records: [
         {
@@ -139,7 +140,7 @@ describe("buildProofSummary — the structural privacy boundary (#9569)", () => 
     }));
     const summary = buildProofSummary({
       repoFullName: "o/r", decisionCount: 25, decided: 25, confirmed: 25,
-      verify: { ok: true, tipSeq: 25, totalCount: 25 }, anchors: [], records: many, checkedAt: CHECKED_AT,
+      verify: { ok: true, tipSeq: 25, totalCount: 25, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }, anchors: [], records: many, checkedAt: CHECKED_AT,
     });
     expect(summary.sampleRecords).toHaveLength(PROOF_SAMPLE_RECORDS);
     // The caveat travels IN the payload, so a screenshot or embed cannot shed it the way a footer can.
@@ -153,8 +154,8 @@ describe("proof badge (#9569)", () => {
     ({ ledger, anchor: anchored ? { state: "anchored" } : { state: "not_yet_anchored" } }) as Parameters<typeof buildProofBadgeMessage>[0];
 
   it("reports the LEDGER state, never a bare accuracy percentage", () => {
-    expect(buildProofBadgeMessage(summaryWith({ state: "verified", tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT }, true))).toBe("verified · anchored");
-    expect(buildProofBadgeMessage(summaryWith({ state: "verified", tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT }, false))).toBe("verified");
+    expect(buildProofBadgeMessage(summaryWith({ state: "verified", tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }, true))).toBe("verified · anchored");
+    expect(buildProofBadgeMessage(summaryWith({ state: "verified", tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }, false))).toBe("verified");
     expect(buildProofBadgeMessage(summaryWith({ state: "broken", tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT, brokenAtSeq: 1, brokenKind: "k" }, false))).toBe("chain broken");
     expect(buildProofBadgeMessage(summaryWith({ state: "empty", checkedAt: CHECKED_AT }, false))).toBe("no decisions yet");
     expect(buildProofBadgeMessage(summaryWith({ state: "unavailable", checkedAt: CHECKED_AT }, false))).toBe("unavailable");
@@ -164,12 +165,12 @@ describe("proof badge (#9569)", () => {
     expect(buildProofBadgeColor(summaryWith({ state: "empty", checkedAt: CHECKED_AT }, false))).toBe("#9e9e9e");
     expect(buildProofBadgeColor(summaryWith({ state: "unavailable", checkedAt: CHECKED_AT }, false))).toBe("#9e9e9e");
     expect(buildProofBadgeColor(summaryWith({ state: "broken", tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT, brokenAtSeq: 1, brokenKind: "k" }, false))).toBe("#f85149");
-    expect(buildProofBadgeColor(summaryWith({ state: "verified", tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT }, true))).toBe("#3fb950");
-    expect(buildProofBadgeColor(summaryWith({ state: "verified", tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT }, false))).toBe("#2da44e");
+    expect(buildProofBadgeColor(summaryWith({ state: "verified", tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }, true))).toBe("#3fb950");
+    expect(buildProofBadgeColor(summaryWith({ state: "verified", tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }, false))).toBe("#2da44e");
   });
 
   it("renders valid SVG for both the summary and the null (unavailable) case, escaping its text", () => {
-    const svg = renderProofBadgeSvg(summaryWith({ state: "verified", tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT }, true));
+    const svg = renderProofBadgeSvg(summaryWith({ state: "verified", tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }, true));
     expect(svg.startsWith("<svg")).toBe(true);
     expect(svg).toContain("verified · anchored");
     expect(renderProofBadgeSvg(null)).toContain("unavailable");
@@ -224,7 +225,7 @@ describe("loadProofSummary + routes (#9569)", () => {
   it("composes from the real tables and degrades per section rather than failing the page", async () => {
     const env = await seeded();
     const summary = await loadProofSummary(env, "o/r", {
-      verifyLedger: async () => ({ ok: true, tipSeq: 3, totalCount: 3 }),
+      verifyLedger: async () => ({ ok: true, tipSeq: 3, totalCount: 3, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }),
       // A failing anchor read must degrade to not_yet_anchored, not blow up the page.
       loadAnchors: async () => { throw new Error("d1 down"); },
       now: () => CHECKED_AT,
@@ -252,7 +253,7 @@ describe("loadProofSummary + routes (#9569)", () => {
       throw new Error("d1 down");
     };
     const summary = await loadProofSummary(env, "o/r", {
-      verifyLedger: async () => ({ ok: true, tipSeq: 0, totalCount: 0 }),
+      verifyLedger: async () => ({ ok: true, tipSeq: 0, totalCount: 0, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }),
       loadAnchors: async () => ({ anchors: [] }),
       now: () => CHECKED_AT,
     });
@@ -271,7 +272,7 @@ describe("loadProofSummary + routes (#9569)", () => {
       }),
     });
     const summary = await loadProofSummary(env, "o/r", {
-      verifyLedger: async () => ({ ok: true, tipSeq: 0, totalCount: 0 }),
+      verifyLedger: async () => ({ ok: true, tipSeq: 0, totalCount: 0, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }),
       loadAnchors: async () => ({ anchors: [] }),
       now: () => CHECKED_AT,
     });
@@ -282,7 +283,7 @@ describe("loadProofSummary + routes (#9569)", () => {
   it("an unknown repo yields the honest empty page rather than a 404 or a fabricated rate", async () => {
     const env = await seeded();
     const summary = await loadProofSummary(env, "nobody/nothing", {
-      verifyLedger: async () => ({ ok: true, tipSeq: 0, totalCount: 0 }),
+      verifyLedger: async () => ({ ok: true, tipSeq: 0, totalCount: 0, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }),
       loadAnchors: async () => ({ anchors: [] }),
       now: () => CHECKED_AT,
     });
@@ -322,7 +323,7 @@ describe("loadProofSummary + routes (#9569)", () => {
       signature: "sig", keyId: "k1", backend: "rekor", status: "ok", backendRef: { uuid: "u" }, proofR2Key: null,
     });
     const summary = await loadProofSummary(env, "o/r", {
-      verifyLedger: async () => ({ ok: true, tipSeq: 3, totalCount: 3 }),
+      verifyLedger: async () => ({ ok: true, tipSeq: 3, totalCount: 3, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }),
       loadAnchors: (target) => loadPublicLedgerAnchors(target, {}),
       now: () => CHECKED_AT,
     });
@@ -375,7 +376,7 @@ describe("loadProofSummary + routes (#9569)", () => {
     const env = await seeded();
     const deps: ProofPageDeps = {
       loadManifest: async () => null,
-      verifyLedger: async () => ({ ok: true, tipSeq: 3, totalCount: 3 }),
+      verifyLedger: async () => ({ ok: true, tipSeq: 3, totalCount: 3, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }),
       loadAnchors: async () => ({ anchors: [] }),
       now: () => CHECKED_AT,
     };
@@ -440,5 +441,70 @@ describe("loadProofSummary + routes (#9569)", () => {
     });
     expect((await app.request("/v1/public/repos/o/r/proof", {}, broken)).status).toBe(200);
     expect((await app.request("/v1/public/repos/o/r/proof-badge.svg", {}, broken)).status).toBe(200);
+  });
+});
+
+describe("#10012: accuracy is derived from real reversals, and the badge surfaces declared exclusions", () => {
+  const okVerify = (over: Partial<{ prunedRecords: number; waivedContentMismatches: number; waivedUnchainedRecords: number }> = {}) =>
+    async () => ({ ok: true as const, tipSeq: 25, totalCount: 25, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0, ...over });
+  const noAnchors = async () => ({ anchors: [] });
+
+  async function seedDecisions(env: ReturnType<typeof createTestEnv>, count: number): Promise<void> {
+    for (let index = 1; index <= count; index += 1) {
+      await persistDecisionRecord(
+        env,
+        {
+          schemaVersion: "5", repoFullName: "o/r", pullNumber: index, headSha: `sha${index}`, baseSha: null,
+          action: "merge", reasonCode: "clean", configDigest: "c", settingsDigest: "s", gatePack: "oss-anti-slop",
+          ciState: "success", modelIds: null, promptDigest: null, aiConfidence: null, aiAgreement: null,
+          salvageability: null, divertedByHoldout: false, decidedAt: CHECKED_AT,
+        } as never,
+        String(index).padStart(64, "0"),
+      );
+    }
+  }
+
+  const reverse = (env: ReturnType<typeof createTestEnv>, pullNumber: number) =>
+    recordAuditEvent(env, { eventType: "reversal_reverted", actor: null, targetKey: `o/r#${pullNumber}`, outcome: "completed", detail: "reverted", metadata: { repoFullName: "o/r", pullNumber } });
+
+  it("REGRESSION: the published accuracy is derived from real reversals, not from reason_code — 25 decisions, 2 reversed → 0.92", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_PROOF: "true" });
+    await seedDecisions(env, 25);
+    await reverse(env, 3);
+    await reverse(env, 17);
+    const summary = await loadProofSummary(env, "o/r", { verifyLedger: okVerify(), loadAnchors: noAnchors, now: () => CHECKED_AT });
+    expect(summary.accuracy).toMatchObject({ state: "published", decided: 25, confirmed: 23, accuracy: 0.92 });
+  });
+
+  it("25 decisions with ZERO reversals still publishes accuracy 1 — the perfect case stays expressible", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_PROOF: "true" });
+    await seedDecisions(env, 25);
+    const summary = await loadProofSummary(env, "o/r", { verifyLedger: okVerify(), loadAnchors: noAnchors, now: () => CHECKED_AT });
+    expect(summary.accuracy).toMatchObject({ state: "published", decided: 25, confirmed: 25, accuracy: 1 });
+  });
+
+  it("a failing reversal read degrades to insufficient_data, never publishing a fabricated rate", async () => {
+    const env = createTestEnv({ LOOPOVER_PUBLIC_PROOF: "true" });
+    await seedDecisions(env, 25);
+    // Make only the reversal anti-join read throw; the decided/count read and the rest still compose.
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    env.DB.prepare = ((sql: string) => {
+      if (sql.includes("reversal_reverted")) throw new Error("d1 down");
+      return realPrepare(sql);
+    }) as never;
+    const summary = await loadProofSummary(env, "o/r", { verifyLedger: okVerify(), loadAnchors: noAnchors, now: () => CHECKED_AT });
+    expect(summary.accuracy.state).toBe("insufficient_data");
+  });
+
+  it("the badge renders 'verified · N excluded' + neutral colour when the ledger carries declared exclusions", () => {
+    const summary = { ledger: { state: "verified" as const, tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 231 }, anchor: { state: "anchored" as const } } as Parameters<typeof buildProofBadgeMessage>[0];
+    expect(buildProofBadgeMessage(summary)).toBe("verified · 231 excluded");
+    expect(buildProofBadgeColor(summary)).toBe("#9e9e9e");
+  });
+
+  it("a clean ledger with zero exclusions keeps today's exact badge strings and colours", () => {
+    const anchored = { ledger: { state: "verified" as const, tipSeq: 1, totalCount: 1, checkedAt: CHECKED_AT, prunedRecords: 0, waivedContentMismatches: 0, waivedUnchainedRecords: 0 }, anchor: { state: "anchored" as const } } as Parameters<typeof buildProofBadgeMessage>[0];
+    expect(buildProofBadgeMessage(anchored)).toBe("verified · anchored");
+    expect(buildProofBadgeColor(anchored)).toBe("#3fb950");
   });
 });

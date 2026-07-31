@@ -14,7 +14,7 @@ import {
 } from "./laptop-init.js";
 import { resolveMinerVersion } from "./version.js";
 import { checkStoreIntegrity, describeError } from "./store-maintenance.js";
-import { initEventLedger, resolveEventLedgerDbPath } from "./event-ledger.js";
+import { openEventLedgerReadOnly, resolveEventLedgerDbPath } from "./event-ledger.js";
 import { buildAmsBacktestProposals, readAmsThresholdBacktestRuns } from "./ams-calibration.js";
 import { resolveGovernorLedgerDbPath } from "./governor-ledger.js";
 import { hasGitHubTokenSource } from "./github-token-resolution.js";
@@ -533,25 +533,33 @@ export function checkCodingAgentCredential(
 /** #8186: current backtest-cleared min-rank proposals, mirrored from the ORB advisor's posture -- full
  *  evidence per line and an explicit nothing-applies-automatically stance baked into the detail. Always
  *  ok:true (informational -- a proposal is an opportunity, not a fault) and fail-open on a ledger blip
- *  (doctor must keep working on a box whose ledger is broken; store integrity has its own check). */
+ *  (doctor must keep working on a box whose ledger is broken; store integrity has its own check).
+ *  #10002: `doctor` is documented read-only, so this must never be the thing that creates, migrates, or
+ *  retention-prunes the event ledger -- a missing ledger file short-circuits to the same "nothing to propose"
+ *  detail without opening a handle, and an existing one is read through `openEventLedgerReadOnly`'s
+ *  driver-enforced read-only connection (mirrors `checkStoreIntegrity`'s `existsSync` + `readOnly: true`
+ *  pattern), never `initEventLedger`, which every *writer* still legitimately uses. */
 export function checkAmsBacktestProposals(env: Record<string, string | undefined> = process.env, nowMs: number = Date.now()): DoctorCheck {
+  const dbPath = resolveEventLedgerDbPath(env);
+  if (!existsSync(dbPath)) {
+    return { name: "ams-backtest-proposals", ok: true, detail: "no backtest-cleared min-rank proposals (nothing applies automatically)" };
+  }
+  let eventLedger: ReturnType<typeof openEventLedgerReadOnly> | undefined;
   try {
-    const eventLedger = initEventLedger(resolveEventLedgerDbPath(env));
-    try {
-      const proposals = buildAmsBacktestProposals(readAmsThresholdBacktestRuns(eventLedger), nowMs);
-      if (proposals.length === 0) {
-        return { name: "ams-backtest-proposals", ok: true, detail: "no backtest-cleared min-rank proposals (nothing applies automatically)" };
-      }
-      const lines = proposals.map(
-        (proposal) =>
-          `min-rank ${proposal.currentThreshold} -> ${proposal.candidateThreshold} (visible ${proposal.visibleVerdict}/${proposal.visibleCases}, held-out ${proposal.heldOutVerdict}/${proposal.heldOutCases})`,
-      );
-      return { name: "ams-backtest-proposals", ok: true, detail: `${lines.join("; ")} -- nothing applies automatically (apply-min-rank needs the config flag AND --approve)` };
-    } finally {
-      eventLedger.close();
+    eventLedger = openEventLedgerReadOnly(dbPath);
+    const proposals = buildAmsBacktestProposals(readAmsThresholdBacktestRuns(eventLedger), nowMs);
+    if (proposals.length === 0) {
+      return { name: "ams-backtest-proposals", ok: true, detail: "no backtest-cleared min-rank proposals (nothing applies automatically)" };
     }
+    const lines = proposals.map(
+      (proposal) =>
+        `min-rank ${proposal.currentThreshold} -> ${proposal.candidateThreshold} (visible ${proposal.visibleVerdict}/${proposal.visibleCases}, held-out ${proposal.heldOutVerdict}/${proposal.heldOutCases})`,
+    );
+    return { name: "ams-backtest-proposals", ok: true, detail: `${lines.join("; ")} -- nothing applies automatically (apply-min-rank needs the config flag AND --approve)` };
   } catch {
     return { name: "ams-backtest-proposals", ok: true, detail: "event ledger unreadable; proposals unavailable" };
+  } finally {
+    eventLedger?.close();
   }
 }
 

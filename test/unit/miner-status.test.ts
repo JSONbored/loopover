@@ -1,4 +1,4 @@
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { resolveEventLedgerDbPath } from "../../packages/loopover-miner/lib/event-ledger";
@@ -183,6 +183,17 @@ describe("loopover-miner status/doctor (#2288)", () => {
     const checks = runDoctorChecks(env);
     expect(checks.find((check) => check.name === "store-integrity:event-ledger")?.ok).toBe(false);
     expect(runDoctor([], env)).toBe(1); // a failed check makes doctor exit non-zero
+  });
+
+  it("doctor does not create the event ledger on a fresh laptop (#10002)", () => {
+    const env = { LOOPOVER_MINER_CONFIG_DIR: join(tempRoot(), "state") };
+    const eventLedgerPath = resolveEventLedgerDbPath(env);
+    const checks = runDoctorChecks(env);
+    // The read-only contract status.ts:37-39 declares: no doctor check may create the ledger file.
+    expect(existsSync(eventLedgerPath)).toBe(false);
+    const storeIntegrity = checks.find((check) => check.name === "store-integrity:event-ledger");
+    expect(storeIntegrity?.ok).toBe(true);
+    expect(storeIntegrity?.detail).toContain("not created yet");
   });
 
   it("doctor flags a corrupted laptop-state store via the deep integrity sweep (#8641)", () => {
@@ -592,11 +603,14 @@ describe("checkAmsBacktestProposals (#8186)", () => {
     const dir = mkdtempSync(join(tmpdir(), "miner-status-ams-"));
     try {
       const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+      const dbPath = resolveEventLedgerDbPath(env);
       const empty = checkAmsBacktestProposals(env);
       expect(empty.ok).toBe(true);
       expect(empty.detail).toContain("no backtest-cleared min-rank proposals");
+      // #10002: doctor is documented read-only -- it must never be the thing that creates the ledger file.
+      expect(existsSync(dbPath)).toBe(false);
 
-      const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+      const ledger = initEventLedger(dbPath);
       for (let i = 1; i <= 60; i += 1) {
         ledger.appendEvent({ type: "discovered_issue", repoFullName: "acme/widgets", payload: { issueNumber: i, rankScore: 0.15, title: "t", labels: [] } });
         ledger.appendEvent({ type: "pr_outcome", repoFullName: "acme/widgets", payload: { prNumber: 1000 + i, decision: "closed", closedAt: "2026-07-10T00:00:00Z", reason: null, issueNumber: i } });
@@ -610,9 +624,51 @@ describe("checkAmsBacktestProposals (#8186)", () => {
       expect(withProposal.detail).toContain("min-rank 0 -> 0.2");
       expect(withProposal.detail).toContain("nothing applies automatically");
 
-      const broken = checkAmsBacktestProposals({ LOOPOVER_MINER_EVENT_LEDGER_DB: "/dev/null/nope/ledger.sqlite" });
+      // Fail-open arm: a file that EXISTS at the ledger path but isn't a real SQLite database.
+      const brokenDbPath = join(dir, "broken-ledger.sqlite3");
+      writeFileSync(brokenDbPath, "this is not a sqlite database");
+      const broken = checkAmsBacktestProposals({ LOOPOVER_MINER_EVENT_LEDGER_DB: brokenDbPath });
       expect(broken.ok).toBe(true);
       expect(broken.detail).toContain("unavailable");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("REGRESSION: doctor does not create or retention-prune the event ledger (#10002)", async () => {
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { initEventLedger, resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger");
+    const { checkAmsBacktestProposals } = await import("../../packages/loopover-miner/lib/status");
+
+    const dir = mkdtempSync(join(tmpdir(), "miner-status-ams-regression-"));
+    try {
+      const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+      const dbPath = resolveEventLedgerDbPath(env);
+
+      // A legitimate writer -- never doctor -- creates and seeds the ledger.
+      const seedLedger = initEventLedger(dbPath);
+      seedLedger.appendEvent({ type: "discovered_issue", repoFullName: "acme/widgets", payload: { issueNumber: 1, rankScore: 0.1, title: "a", labels: [] } });
+      seedLedger.appendEvent({ type: "discovered_issue", repoFullName: "acme/widgets", payload: { issueNumber: 2, rankScore: 0.1, title: "b", labels: [] } });
+      seedLedger.appendEvent({ type: "discovered_issue", repoFullName: "acme/widgets", payload: { issueNumber: 3, rankScore: 0.1, title: "c", labels: [] } });
+      seedLedger.close();
+
+      // An operator has opted into retention pruning; doctor must not be a trigger for it.
+      vi.stubEnv("LOOPOVER_MINER_LEDGER_RETENTION_MAX_ROWS", "1");
+      try {
+        const result = checkAmsBacktestProposals(env);
+        expect(result.ok).toBe(true);
+      } finally {
+        vi.unstubAllEnvs();
+      }
+
+      const verifyLedger = initEventLedger(dbPath);
+      try {
+        expect(verifyLedger.readEvents().length).toBe(3);
+      } finally {
+        verifyLedger.close();
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

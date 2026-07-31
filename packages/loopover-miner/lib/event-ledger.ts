@@ -1,4 +1,4 @@
-import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
+import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { isDeepStrictEqual } from "node:util";
 import { normalizeLocalStoreDbPath, openLocalStoreDb, resolveLocalStoreDbPath } from "./local-store.js";
 import { applySchemaMigrations } from "./schema-version.js";
@@ -251,6 +251,48 @@ export function initEventLedger(dbPath: string = resolveEventLedgerDbPath()): Ev
       return purgeStoreByRepo(db, EVENT_LEDGER_PURGE_SPEC, normalized);
     },
     close() {
+      db.close();
+    },
+  };
+}
+
+export type ReadOnlyEventLedger = {
+  dbPath: string;
+  readEvents(): LedgerEntry[];
+  close(): void;
+};
+
+/**
+ * Strictly read-only ledger access for advisory-only callers (#10002) that must never create, migrate, or
+ * retention-prune the ledger file -- everything {@link initEventLedger} always does on open. Opens the DB file
+ * in SQLite's own `readonly` mode (driver-enforced: an attempted write throws, this isn't just a by-convention
+ * guarantee) and touches the filesystem in no other way -- no `mkdirSync`/`chmodSync`, no `CREATE TABLE IF NOT
+ * EXISTS`, no migrations, no retention pruning. Same pattern as claim-ledger.js's `openClaimLedgerReadOnly`. The
+ * caller MUST only call this against a path it has already confirmed exists (e.g. via `existsSync`); a
+ * read-only connection to a nonexistent file throws. Throws if the expected table is missing too (a file exists
+ * at this path but isn't a real event ledger) -- callers should treat that identically to any other open/query
+ * failure.
+ */
+export function openEventLedgerReadOnly(dbPath: string): ReadOnlyEventLedger {
+  const resolvedPath = normalizeDbPath(dbPath);
+  // `readOnly` (camelCase) -- node:sqlite silently IGNORES `readonly` (lowercase) as an unrecognized option and
+  // opens read-write anyway, defeating the entire point of this function.
+  const db = new DatabaseSync(resolvedPath, { readOnly: true });
+  let readAllStatement;
+  try {
+    readAllStatement = db.prepare("SELECT * FROM miner_event_ledger ORDER BY seq ASC");
+  } catch (error) {
+    // The table doesn't exist (a file exists at this path but isn't a real event ledger) -- close the
+    // connection we already opened before rethrowing, so this never leaks a file handle.
+    db.close();
+    throw error;
+  }
+  return {
+    dbPath: resolvedPath,
+    readEvents(): LedgerEntry[] {
+      return readAllStatement.all().map((row) => rowToEntry(asEventDbRow(row)));
+    },
+    close(): void {
       db.close();
     },
   };

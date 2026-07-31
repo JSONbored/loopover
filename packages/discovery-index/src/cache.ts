@@ -10,10 +10,16 @@ interface Entry<V> {
   expiresAt: number;
 }
 
+/** Default max-entry cap for a `TtlCache` constructed without an explicit one. */
+export const DEFAULT_CACHE_MAX_ENTRIES = 5_000;
+
 export class TtlCache<V> {
   private readonly store = new Map<string, Entry<V>>();
 
-  constructor(private readonly now: () => number = Date.now) {}
+  constructor(
+    private readonly now: () => number = Date.now,
+    private readonly maxEntries: number = DEFAULT_CACHE_MAX_ENTRIES,
+  ) {}
 
   /** Returns the cached value, or undefined if absent or expired (an expired entry is evicted on read). */
   get(key: string): V | undefined {
@@ -26,8 +32,28 @@ export class TtlCache<V> {
     return entry.value;
   }
 
+  /** A never-before-seen key first enforces the entry cap; an existing key is overwritten in place
+   *  without evicting anything (it isn't growing the store). */
   set(key: string, value: V, ttlMs: number): void {
+    if (!this.store.has(key)) {
+      this.evictForCapacity();
+    }
     this.store.set(key, { value, expiresAt: this.now() + Math.max(0, ttlMs) });
+  }
+
+  /** Drops every already-expired entry first, then evicts the oldest-inserted entry (the order a `Map`
+   *  already preserves) until the store is back under the cap, making room for the key `set` is about to add. */
+  private evictForCapacity(): void {
+    if (this.store.size < this.maxEntries) return;
+    const now = this.now();
+    for (const [key, entry] of this.store) {
+      if (entry.expiresAt <= now) this.store.delete(key);
+    }
+    while (this.store.size >= this.maxEntries) {
+      const oldestKey = this.store.keys().next().value;
+      if (oldestKey === undefined) break;
+      this.store.delete(oldestKey);
+    }
   }
 
   delete(key: string): void {

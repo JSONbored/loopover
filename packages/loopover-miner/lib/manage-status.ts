@@ -278,9 +278,34 @@ export function runManageStatus(
   const ownsPortfolioQueue = options.initPortfolioQueue === undefined;
   const ownsEventLedger = options.initEventLedger === undefined;
   const ownsRunStateStore = options.initRunStateStore === undefined;
-  const portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
-  const eventLedger = (options.initEventLedger ?? initEventLedger)();
-  const runStateStore = (options.initRunStateStore ?? initRunStateStore)();
+
+  // Each opener gets its OWN try/catch (mirroring runDiscover, discover-cli.ts:631-637): an opener throwing must
+  // return 2 via reportCliFailure instead of propagating an unhandled throw, and must close whatever sibling
+  // handles this function already opened, or those SQLite handles leak.
+  let portfolioQueue: PortfolioQueueStore;
+  try {
+    portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
+  } catch (error) {
+    return reportCliFailure(parsed.json, describeCliError(error));
+  }
+
+  let eventLedger: EventLedger;
+  try {
+    eventLedger = (options.initEventLedger ?? initEventLedger)();
+  } catch (error) {
+    if (ownsPortfolioQueue) portfolioQueue.close();
+    return reportCliFailure(parsed.json, describeCliError(error));
+  }
+
+  let runStateStore: RunStateStore;
+  try {
+    runStateStore = (options.initRunStateStore ?? initRunStateStore)();
+  } catch (error) {
+    if (ownsPortfolioQueue) portfolioQueue.close();
+    if (ownsEventLedger) eventLedger.close();
+    return reportCliFailure(parsed.json, describeCliError(error));
+  }
+
   try {
     const rows = collectManageStatus({ portfolioQueue, eventLedger });
     const runPortfolio = collectRunPortfolio({ portfolioQueue, eventLedger, runStateStore });

@@ -302,8 +302,24 @@ export async function runManagePoll(
 
   const ownsEventLedger = options.initEventLedger === undefined;
   const ownsPortfolioQueue = options.initPortfolioQueue === undefined;
-  const eventLedger = (options.initEventLedger ?? initEventLedger)();
-  const portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
+
+  // Each opener gets its OWN try/catch (mirroring runDiscover, discover-cli.ts:631-637): an opener throwing must
+  // return 2 via reportCliFailure instead of propagating an unhandled throw, and must close whatever sibling
+  // handle this function already opened, or that SQLite handle leaks.
+  let eventLedger: EventLedger;
+  try {
+    eventLedger = (options.initEventLedger ?? initEventLedger)();
+  } catch (error) {
+    return reportCliFailure(parsed.json, describeCliError(error));
+  }
+
+  let portfolioQueue: PortfolioQueueStore;
+  try {
+    portfolioQueue = (options.initPortfolioQueue ?? initPortfolioQueueStore)();
+  } catch (error) {
+    if (ownsEventLedger) eventLedger.close();
+    return reportCliFailure(parsed.json, describeCliError(error));
+  }
 
   try {
     const result = await recordManagePollSnapshot(

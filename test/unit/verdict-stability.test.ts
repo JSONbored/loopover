@@ -134,6 +134,24 @@ describe("shouldSkipStableVerdict", () => {
     expect(shouldSkipStableVerdict(fresh, 1001)).toBe(false);
   });
 
+  it("REGRESSION: only a HOLD is ever backed off — a pass that ACTED is never throttled", () => {
+    // "Same verdict" is not "nothing happened". A pass can take real actions (update-branch, cap accounting,
+    // assignment) and still produce an unchanged verdict; throttling that suppresses progress. Caught by the
+    // force-fresh-rebase test (#9497/#2552), where three deliberate identical passes spend the 24h
+    // update-branch cap and an earlier version of this backoff swallowed the third.
+    for (const action of ["merge", "close", "update_branch", "approve", "label"]) {
+      const acted: VerdictStabilityState = {
+        fingerprint: verdictFingerprint({ action, reasonCode: "success" }),
+        repeats: 99,
+        lastEvaluatedMs: 0,
+      };
+      expect(shouldSkipStableVerdict(acted, 1), action).toBe(false);
+    }
+    // ...while the hold this exists for still backs off.
+    const held: VerdictStabilityState = { fingerprint: verdictFingerprint(HOLD), repeats: 99, lastEvaluatedMs: 0 };
+    expect(shouldSkipStableVerdict(held, 1)).toBe(true);
+  });
+
   it("INVARIANT: a stuck PR is always revisited within the cap", () => {
     // The liveness guarantee stated as a property rather than trusted from the delay function.
     const veryStuck: VerdictStabilityState = { fingerprint: verdictFingerprint(HOLD), repeats: 9999, lastEvaluatedMs: 0 };

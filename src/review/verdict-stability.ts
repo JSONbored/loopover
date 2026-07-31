@@ -96,6 +96,16 @@ export function recordVerdict(prior: VerdictStabilityState | null, facts: Verdic
  */
 export function shouldSkipStableVerdict(prior: VerdictStabilityState | null, nowMs: number): boolean {
   if (prior === null) return false;
+  // HOLDS ONLY. "Same verdict" is not the same as "nothing happened": a pass can take real actions --
+  // update-branch, cap accounting, assignment -- and still produce an unchanged verdict, and throttling that
+  // suppresses actual progress. The force-fresh-rebase test (#9497/#2552) is exactly this shape: three
+  // identical passes deliberately spend the 24h update-branch cap, and an earlier version of this backoff
+  // silently swallowed the third.
+  //
+  // A `hold` is the one action that means "the gate declined to act", so repeating it genuinely produces
+  // nothing -- and it is the case this exists for (#8886: 56 identical holds on one commit). Everything else
+  // keeps its current behaviour exactly.
+  if (!prior.fingerprint.startsWith("hold|")) return false;
   const delay = verdictBackoffDelayMs(prior.repeats);
   if (delay <= 0) return false;
   return nowMs - prior.lastEvaluatedMs < delay;

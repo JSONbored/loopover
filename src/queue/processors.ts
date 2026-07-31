@@ -97,6 +97,7 @@ import {
   upsertRepositoryFromGitHub,
   getLatestAdvisoryForPullRequest,
 } from "../db/repositories";
+import { readVerdictStability, recordVerdict, shouldSkipStableVerdict, verdictStabilityKey, writeVerdictStability } from "../review/verdict-stability";
 import { withLinkedIssueMaintainerExemption, type LinkedIssueExemptionAuthor } from "../settings/linked-issue-exemption";
 import { resolveConfiguredRepoCandidates } from "../review/configured-repo-set";
 import { renameRepositoryIdentity } from "../db/repo-identity-rename";
@@ -3968,6 +3969,19 @@ async function runAgentMaintenancePlanAndExecute(
       { reason: deriveReevaluationReason(deliveryId) },
       holdCause,
     );
+    // #10184: fold this verdict into the PR's stability state, at the one place every verdict passes through
+    // so no caller can bypass it -- the same reasoning persistDecisionRecord itself uses for its
+    // reevaluation check. Keyed on the head SHA, so a new commit starts clean without an explicit reset.
+    // Best effort: a failed write means the next pass sees no prior state and evaluates normally.
+    if (record.headSha) {
+      const stabilityKey = verdictStabilityKey(repoFullName, pr.number, record.headSha);
+      const priorStability = await readVerdictStability(env.SELFHOST_TRANSIENT_CACHE, stabilityKey);
+      await writeVerdictStability(
+        env.SELFHOST_TRANSIENT_CACHE,
+        stabilityKey,
+        recordVerdict(priorStability, { action: record.action, reasonCode: record.reasonCode, holdCause }, Date.now()),
+      );
+    }
     // #8838: persist the evaluation's own exact inputs beside the record (PRIVATE sibling, migration 0182)
     // so the replay harness can re-derive this decision bit-exactly. Best-effort, like the record itself;
     // the no-replay no-op (synthetic content-lane/bridge evaluations) lives inside the helper. Keyed to the
@@ -4427,6 +4441,32 @@ export async function reReviewStoredPullRequest(
       metadata: { deliveryId, repoFullName },
     }).catch(() => undefined);
     throw new PrActuationLockContendedError(repoFullName, pr.number, "public-surface-publish");
+  }
+  // #10184: a PR whose answer has not changed does not need asking again yet. metagraphed#8886 produced 56
+  // identical `hold | missing_linked_issue` verdicts on ONE head SHA in 47 minutes; four such PRs made 66% of
+  // all decision records in a two-hour window, and that window exhausted the installation's REST quota.
+  //
+  // Placed AFTER the lock claim so the check itself is nearly free (one cache read on a pass that already
+  // owns the PR) and BEFORE the refresh, so a backed-off pass spends nothing. Returns rather than throws:
+  // this is not contention, there is no work to retry, and the state is already published and correct.
+  //
+  // Fails OPEN in every uncertain case -- no state, unreadable state, no cache -- see verdict-stability.ts.
+  // The delay is capped, so a stuck PR is still revisited; it just stops being asked 1.2x/minute.
+  if (pr.headSha) {
+    const stability = await readVerdictStability(env.SELFHOST_TRANSIENT_CACHE, verdictStabilityKey(repoFullName, pr.number, pr.headSha));
+    if (shouldSkipStableVerdict(stability, Date.now())) {
+      await recordAuditEvent(env, {
+        eventType: "github_app.review_skipped_stable_verdict",
+        actor: "loopover",
+        targetKey: `${repoFullName}#${pr.number}`,
+        outcome: "completed",
+        detail: `Verdict unchanged across ${stability?.repeats ?? 0} consecutive evaluations of this commit; backing off instead of re-deriving the same answer.`,
+        metadata: { deliveryId, repoFullName, repeats: stability?.repeats ?? 0 },
+      }).catch(() => undefined);
+      await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken).catch(() => undefined);
+      // false = "did not re-review", the same signal this function's other early bail uses.
+      return false;
+    }
   }
   // #2537 follow-up (gate-flagged): the durable review cache's only invalidation path is markPullRequestReviewsInvalidated
   // on a webhook (processors.ts). A "quiet" PR (no new pushes, slop evidence + manifest gate both off, no

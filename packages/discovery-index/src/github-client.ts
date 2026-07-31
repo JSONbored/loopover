@@ -58,16 +58,22 @@ function defaultSleep(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
 }
 
-function isRateLimitStatus(response: Response): boolean {
+async function isRateLimitStatus(response: Response): Promise<boolean> {
   if (response.status === 429) return true;
   if (response.status !== 403) return false;
   if (response.headers.get("retry-after") != null) return true;
   const remaining = response.headers.get("x-ratelimit-remaining");
-  return remaining != null && Number(remaining) === 0;
+  if (remaining != null && Number(remaining) === 0) return true;
+  try {
+    return /secondary rate limit|\babuse\b|api rate limit exceeded/i.test(await response.clone().text());
+    /* v8 ignore next 3 -- defensive: a cloned Response body that fails to read isn't reachable in practice */
+  } catch {
+    return false;
+  }
 }
 
-function isRetryableStatus(response: Response): boolean {
-  return response.status >= 500 || isRateLimitStatus(response);
+async function isRetryableStatus(response: Response): Promise<boolean> {
+  return response.status >= 500 || (await isRateLimitStatus(response));
 }
 
 function retryDelayMs(response: Response, attempt: number, backoffMs: (attempt: number) => number): number {
@@ -169,7 +175,7 @@ export class GitHubClient {
         this.requestTimeoutMs && this.requestTimeoutMs > 0 ? { ...init, signal: AbortSignal.timeout(this.requestTimeoutMs) } : init,
       );
       this.recordRateLimit(response);
-      if (!isRetryableStatus(response) || attempt >= this.maxAttempts) {
+      if (!(await isRetryableStatus(response)) || attempt >= this.maxAttempts) {
         incr("discovery_index_github_requests_total", { outcome: response.ok ? "ok" : "failed" });
         return response;
       }

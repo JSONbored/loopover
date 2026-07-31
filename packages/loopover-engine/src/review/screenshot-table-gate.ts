@@ -1,4 +1,4 @@
-import { matchesAnyWithExclusions } from "../signals/change-guardrail.js";
+import { hasUnsafeWildcardCount, matchesAnyWithExclusions } from "../signals/change-guardrail.js";
 import type { ScreenshotTableGateAction, ScreenshotTableGateConfig } from "../types/manifest-deps-types.js";
 
 export type { ScreenshotTableGateAction, ScreenshotTableGateConfig } from "../types/manifest-deps-types.js";
@@ -39,7 +39,7 @@ export function isScreenshotTableGateAction(value: unknown): value is Screenshot
   return typeof value === "string" && (VALID_ACTIONS as readonly string[]).includes(value);
 }
 
-function normalizeStringList(value: unknown, field: string, max: number, maxChars: number, warnings: string[]): string[] {
+function normalizeStringList(value: unknown, field: string, max: number, maxChars: number, warnings: string[], glob = false): string[] {
   if (value === undefined) return [];
   if (!Array.isArray(value)) {
     warnings.push(`settings.requireScreenshotTable.${field} must be an array; ignoring it.`);
@@ -55,7 +55,21 @@ function normalizeStringList(value: unknown, field: string, max: number, maxChar
       warnings.push(`settings.requireScreenshotTable.${field}[${index}] must be a non-empty string; ignoring it.`);
       continue;
     }
-    out.push(item.trim().slice(0, maxChars));
+    const trimmed = item.trim().slice(0, maxChars);
+    if (glob) {
+      // #9993: whenPaths back matchesAnyWithExclusions, whose include half FAILS TOWARD MATCHING for an
+      // over-complex glob (matchesAny returns true for every path). An unvalidated `apps/**/src/**/*.tsx`
+      // (3 groups) would silently put every PR in scope for a close-tier gate. Reject the same shape the
+      // other manifest glob surfaces reject (mirrors focus-manifest's normalizeOptionalGlob), measured on
+      // the glob BODY: an exclusion `!<body>` is compiled as `<body>`, so a bare `!` has no body to compile
+      // and matchesAnyWithExclusions would mis-route it into the include list -- drop it too.
+      const globBody = trimmed.startsWith("!") ? trimmed.slice(1) : trimmed;
+      if (globBody === "" || hasUnsafeWildcardCount(globBody)) {
+        warnings.push(`settings.requireScreenshotTable.${field}[${index}] has too many wildcards to compile safely; ignoring it.`);
+        continue;
+      }
+    }
+    out.push(trimmed);
   }
   return out;
 }
@@ -93,7 +107,7 @@ export function normalizeScreenshotTableGateConfig(input: unknown, warnings: str
   return {
     enabled,
     whenLabels: normalizeStringList(record.whenLabels, "whenLabels", MAX_LABELS, MAX_LABEL_CHARS, warnings),
-    whenPaths: normalizeStringList(record.whenPaths, "whenPaths", MAX_PATHS, MAX_PATH_CHARS, warnings),
+    whenPaths: normalizeStringList(record.whenPaths, "whenPaths", MAX_PATHS, MAX_PATH_CHARS, warnings, true),
     action,
     requireViewports: normalizeStringList(record.requireViewports, "requireViewports", MAX_MATRIX_DIMENSION, MAX_MATRIX_TOKEN_CHARS, warnings),
     requireThemes: normalizeStringList(record.requireThemes, "requireThemes", MAX_MATRIX_DIMENSION, MAX_MATRIX_TOKEN_CHARS, warnings),

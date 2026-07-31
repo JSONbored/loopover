@@ -1,0 +1,166 @@
+---
+title: Contributor relationships and recourse — the policy, and what enforces each part of it
+description: How contributor relationships are handled, and what recourse exists when you believe a verdict was wrong. Every claim on this page names the mechanism that enforces it, and the honest limits are stated as plainly as the guarantees.
+eyebrow: Contributors
+---
+
+Two things should be written down before anyone needs them: how contributor relationships are
+handled, and what you can do when you believe a verdict was wrong. Both existed in practice and in
+scattered discussion. This page is the one place to point at.
+
+Everything below names the thing that enforces it. A policy whose enforcement you cannot check is a
+promise, and the whole point of this project is to publish fewer promises and more mechanisms.
+Where a guarantee does not exist, this page says so rather than describing an aspiration.
+
+## The uniform pipeline
+
+**Every pull request goes through the same gate.** There is no per-contributor configuration, no
+allowlist that skips a check, and no reviewer discretion applied to one author and not another.
+
+That is not a matter of restraint. It is a property of the shape: the gate reads the diff, the
+linked issue, the repo's own `.loopover.yml`, and the calibrated thresholds — and none of those
+inputs contain the author's identity. There is no field for it to enter through.
+
+Where identity *is* read, it is read from the repository's own permissions at the moment of the
+event, never from a list maintained by anyone:
+
+- **Maintainer-of-record** is derived from the repo's GitHub permissions
+  (`src/review/priority-label-eligibility.ts`), so the rule generalizes to any repo the Orb manages
+  and cannot be edited to favour a person.
+- **Author class** — maintainer, contributor, or unknown — comes from GitHub's own
+  `author_association` on the event (`src/github/author-association.ts`). As the parity module puts
+  it: *no maintained list of people, and a permissions change upstream changes the class with no
+  code change here.*
+
+<Callout variant="note">
+  The absence of a per-contributor override is the load-bearing part, and it is the hardest thing to
+  prove by reading a policy page. The check that actually settles it is the published parity data
+  below: if some contributors were being treated differently, the per-author-class comparison is
+  where it would show up, and that comparison is computed from the ledger you can download.
+</Callout>
+
+## Label eligibility, and why it is a rule rather than a judgement
+
+`gittensor:priority` carries the highest scoring multiplier, which makes it the one label whose
+application cannot be left to discretion — otherwise the highest-value label is whatever anyone says
+it is. Two mechanical rules constrain it, both covered in full on the [label policy](/docs/label-policy)
+page:
+
+| Rule | What it does | Enforced by |
+| --- | --- | --- |
+| **Author-based eligibility** | `gittensor:priority` is only valid on a maintainer-authored issue. Applied to anyone else's issue — *by anyone, including a maintainer* — it is stripped and the reason stated once. | `src/review/priority-label-eligibility.ts` |
+| **Open window** | A PR closing a priority-labeled issue becomes gate-eligible only once the label has been publicly visible for the configured window (30 minutes by default, per repo). | `src/review/priority-eligibility-window.ts` |
+
+The window exists because first-come pickup is only fair if everyone can *see* an issue before
+anyone can act on it. A PR opened moments after the label lands means the gap between "this issue
+became valuable" and "this issue was claimed" was effectively zero for everyone else watching.
+
+A PR that arrives inside the window is **held, not rejected** — it gets a neutral comment stating
+the moment it becomes eligible, and proceeds from there. Being early costs you nothing but time.
+
+## Disclosure
+
+Personal relationships between maintainers and active contributors are disclosed to the project
+record. Associated pull requests follow the standard pipeline, with **no elevated label
+eligibility** — which, given the rules above, is not a commitment anyone has to be trusted to keep:
+priority eligibility is decided by issue authorship read from GitHub, and the window applies to
+every PR closing a priority issue regardless of who opened it.
+
+Disclosure is a process commitment rather than a mechanical one, and it is listed separately here
+for that reason. It is the one item on this page that a mechanism does not enforce.
+
+## Verdict immutability
+
+A verdict recorded against a given head SHA is not revised in place. Re-evaluating the *same* head
+SHA requires a declared cause from a closed set — `scheduled_recheck`, `pipeline_error`,
+`config_change`, `upstream_state_change`, `maintainer_request`
+(`REEVALUATION_REASONS`, `src/review/decision-record.ts`) — and the cause is written into the
+ledger row.
+
+The set is closed deliberately, so an outsider can **count re-evaluations by cause** without
+interpreting free text. That count is published: see `reviewParity.reevaluations` and the
+`byReason` breakdown at `/v1/public/stats`.
+
+This is the mechanism that makes the recourse section below honest rather than stingy. If verdicts
+could be quietly re-run on request, the selection problem returns immediately — re-running only the
+verdicts somebody complained about produces a published accuracy figure that means nothing.
+
+## The parity data
+
+Per-author-class rollups are computed from `decision_records` alone and published at
+`/v1/public/stats` under `reviewParity` (`src/review/review-parity-rollups.ts`). Because they are
+derived from the ledger and nothing else, you can recompute them yourself from an export rather than
+taking the published numbers on faith — that is what [verify this review](/docs/verify-this-review)
+walks through.
+
+`unknown` is reported as its own class rather than folded into either side. The comparison *is* the
+product, so quietly bucketing unknowns would bias exactly the thing being measured.
+
+The [automation rate](/docs/fairness-methodology) — the share of pull requests decided with no human
+in the path — is published on the same surface and from the same ledger.
+
+## Recourse
+
+Read this section as a description of what exists, not as an appeals process. Some of it is stronger
+than an appeals process and some of it is weaker, and both are stated plainly.
+
+### 1. Check the verdict yourself, offline
+
+Every verdict is independently verifiable without asking anyone's permission and without any
+credentials. Start at [verify this review](/docs/verify-this-review), or run:
+
+```bash
+npx -p @loopover/mcp loopover-verify
+```
+
+This is the first stop for "I think this is wrong", and it is deliberately first: it does not depend
+on anyone agreeing with you. If a published commitment does not recompute, that is a fact you can
+demonstrate rather than a position you have to argue.
+
+### 2. Wrong closes are detected without anyone filing anything
+
+The system audits its own mistakes. Outcome confirmation scans what actually happened to the pull
+requests the engine acted on — merged, reopened, reverted, superseded — and records a reversal when
+a human overturned a terminal engine action (`recordReversalSignals`, `src/review/outcomes-wire.ts`).
+Those reversal rates are published on [the fairness report](/fairness).
+
+So a wrong close is counted against the published accuracy figure whether or not you say anything.
+Reopening a PR the gate closed in error *is* the signal — no separate report is needed for it to
+register.
+
+<Callout variant="note">
+  This is the part that is genuinely stronger than an appeals queue. An appeals queue measures the
+  mistakes somebody bothered to contest; outcome confirmation measures the ones that actually
+  happened, including the ones nobody complained about, and publishes the rate either way.
+</Callout>
+
+### 3. The remedy for a contested close is resubmission
+
+A new head SHA earns a fresh verdict through the same pipeline. This is not a workaround — it is how
+the ledger is keyed: a decision record is `record:<owner/repo>#<pr>@<head sha>`, so a force-push or
+new commits produce a new verdict by definition, and the decision-record module says so explicitly:
+*a new head SHA is NOT a re-evaluation and needs no code — that path is a fresh verdict by
+definition.*
+
+Push a fix, or open a fresh PR. Both go through the identical gate.
+
+### 4. There is no human appeals queue, and why
+
+Two reasons, both structural:
+
+- **Timing.** In a first-come issue market, an open issue is typically re-solved by somebody else
+  before any appeal could conclude. An appeals process that resolves after the work has been redone
+  has not helped the person who filed it.
+- **Selection.** On-demand re-evaluation of judgement verdicts reintroduces exactly the problem
+  verdict immutability exists to prevent. If the verdicts that get re-run are the contested ones,
+  the published accuracy figure stops describing the system's behaviour and starts describing its
+  complaint volume.
+
+The honest summary: recourse here is verification, automatic detection, and resubmission. It is not
+someone re-deciding your case on request, and this page would rather say that than imply otherwise.
+
+## If something here is wrong
+
+If a claim on this page does not match what the code does, that is a defect in the page and worth
+reporting as one. Every mechanism is named above precisely so the claim and the code can be compared
+without taking anyone's word for it.

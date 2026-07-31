@@ -1566,7 +1566,7 @@ export async function recordGateScoreSignals(
   const occurredAt = nowIso();
   const writes: Promise<void>[] = [];
 
-  const slopMode = gateMode(effective.slopGateMode);
+  const slopMode = gateMode(effective.slopGateMode ?? "advisory");
   const slopRisk = normalizeScore(effective.slopRisk);
   if (slopMode === "block" && slopRisk !== null) {
     const slopMin = normalizeScore(effective.slopGateMinScore) ?? DEFAULT_SLOP_BLOCK_THRESHOLD;
@@ -1586,7 +1586,7 @@ export async function recordGateScoreSignals(
     );
   }
 
-  const qualityMode = gateMode(effective.qualityGateMode);
+  const qualityMode = gateMode(effective.qualityGateMode ?? "advisory");
   const readinessScore = normalizeScore(effective.readinessScore);
   const qualityMin = normalizeScore(effective.qualityGateMinScore);
   if (qualityMode !== "off" && readinessScore !== null && qualityMin !== null) {
@@ -1610,7 +1610,7 @@ export async function recordGateScoreSignals(
 }
 
 function buildQualityGateWarning(policy: GateCheckPolicy): AdvisoryFinding | null {
-  if (gateMode(policy.qualityGateMode) === "off") return null;
+  if (gateMode(policy.qualityGateMode ?? "advisory") === "off") return null;
   const score = normalizeScore(policy.readinessScore);
   const minScore = normalizeScore(policy.qualityGateMinScore);
   if (score === null || minScore === null || score >= minScore) return null;
@@ -1644,8 +1644,8 @@ function buildSlopGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
 }
 
 // #9167: fail CLOSED on a value that isn't one of the three real modes, matching the rest of this
-// codebase's fail-closed defaults -- every legitimate caller already supplies its own `?? "advisory"`
-// default before reaching here (see every `gateMode(policy.xGateMode ?? "advisory")` call site above), so
+// codebase's fail-closed defaults -- every call site now supplies its own `?? "advisory"` default
+// before reaching here (see every `gateMode(policy.xGateMode ?? "advisory")` call site above), so
 // this branch is only ever reached for a truly malformed value (e.g. a caller that bypassed
 // GateRuleMode's compile-time union via an untyped/JSON-decoded config). Previously coerced to
 // "advisory" -- a fail-OPEN default in a codebase whose other defaults are carefully fail-closed. This is

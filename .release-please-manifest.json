@@ -3,5 +3,5 @@
   "packages/loopover-mcp": "3.18.1",
   "packages/loopover-engine": "3.18.1",
   "packages/loopover-miner": "3.18.1",
-  "packages/loopover-ui-kit": "1.3.1"
+  "packages/loopover-ui-kit": "1.4.0"
 }

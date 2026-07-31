@@ -1,0 +1,21 @@
+-- #9991: WHY a pull request was held, so the manual-review surface can be split by cause.
+--
+-- 1,679 of 2,429 verdicts on the production Orb are holds, and the largest single bucket -- 518 of them,
+-- across 146 pull requests -- carries `reason_code = 'success'`. That is not a reason, it is a fall-through:
+-- deriveDecisionReasonCode ends with the gate conclusion when there is no blocker and no policy close, so a
+-- held PR whose gate passed records the conclusion as its cause. #9729 must loosen only what clears a
+-- backtest, per path, and cannot do that against a bucket conflating the seven inputs in MERGE_HOLD_INPUTS.
+--
+-- A SEPARATE COLUMN, NOT reason_code. `replayDecision` recomputes reason_code through the same derivation and
+-- reports a DIVERGENCE when it does not match the recorded value (decision-replay.ts). Changing that mapping
+-- would make every one of those 518 existing records replay as unreproducible -- a false "this decision
+-- cannot be re-derived" about records that are perfectly fine -- and would also change a value the public
+-- proof page publishes in its sample records.
+--
+-- OUTSIDE record_json for the same reason: that JSON is what recordDigest commits to, so adding a field to it
+-- would move the digest of every future record and put an operational analysis field inside a published
+-- commitment. This column is written alongside and read only by internal analysis.
+--
+-- NULL on historical rows, and left that way deliberately. Backfilling a guess would be worse than the gap:
+-- we genuinely do not know which input held those 518, which is the entire finding.
+ALTER TABLE decision_records ADD COLUMN hold_cause TEXT;

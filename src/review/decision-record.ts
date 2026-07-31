@@ -297,6 +297,11 @@ export async function persistDecisionRecord(
    *  every ordinary write. The check lives HERE, at the ledger-write layer, so no caller can bypass it by
    *  writing the row itself. */
   reevaluation?: ReevaluationContext | undefined,
+  /** #9991: which MERGE_HOLD_INPUTS suppressed this PR's merge, comma-joined, or null when none did.
+   *  Deliberately a COLUMN and not a field on `record`: `record` is what `recordDigest` commits to and what
+   *  `replayDecision` re-derives, so putting an operational analysis value in there would move every future
+   *  digest and drag a private field into a published commitment. */
+  holdCause?: string | null | undefined,
 ): Promise<string | null> {
   const baseId = `record:${record.repoFullName}#${record.pullNumber}@${record.headSha}`.slice(0, 250);
   try {
@@ -314,10 +319,10 @@ export async function persistDecisionRecord(
       const id = priorCount === 0 ? baseId : `${baseId}:rev${priorCount + 1}`;
       try {
         await env.DB.prepare(
-          `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at, reevaluation_reason, supersedes_record_id, reevaluation_actor, findings_count)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO decision_records (id, repo_full_name, pull_number, head_sha, action, reason_code, record_digest, record_json, created_at, reevaluation_reason, supersedes_record_id, reevaluation_actor, findings_count, hold_cause)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
-          .bind(id, record.repoFullName.slice(0, 200), record.pullNumber, record.headSha, record.action, record.reasonCode.slice(0, 200), recordDigest, canonicalJson(record), record.decidedAt, reevaluated?.reason ?? null, reevaluated?.supersedesRecordId ?? null, reevaluated?.actor ?? null, record.findingsCount ?? null)
+          .bind(id, record.repoFullName.slice(0, 200), record.pullNumber, record.headSha, record.action, record.reasonCode.slice(0, 200), recordDigest, canonicalJson(record), record.decidedAt, reevaluated?.reason ?? null, reevaluated?.supersedesRecordId ?? null, reevaluated?.actor ?? null, record.findingsCount ?? null, holdCause ?? null)
           .run();
       } catch (error) {
         if (attempt >= attempts) throw error;

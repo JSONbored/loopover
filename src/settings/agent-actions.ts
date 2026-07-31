@@ -819,33 +819,11 @@ function advisoryHoldComment(holds: ReadonlyArray<{ name: string; appSlug: strin
   return `Held for manual review: a maintainer-configured advisory check-run reported a non-passing result — ${parts.join("; ")}. This does not block CI, but a maintainer should review it. This is an automated maintenance action.`;
 }
 
-// #8758: name the non-required check(s) behind a GitHub "unstable" mergeable state, for the hold reason (audit)
-// and the public comment. Check names are already public on the PR's own Checks tab, so interpolating them is
-// safe; summaries/URLs are deliberately NOT interpolated (same public-safe-comment posture as advisoryHoldComment).
-// Falls back to generic wording when the CI aggregate couldn't itemize the source (the hold keys on
-// mergeable_state itself, never on this list being non-empty).
-function mergeUnstableHoldReason(failures: ReadonlyArray<{ name: string }> | undefined): string {
-  const names = (failures ?? []).map((f) => `"${f.name}"`);
-  return names.length > 0
-    ? `mergeable_state is unstable — non-required check(s) not passing: ${names.join("; ")}`
-    // #9810 follow-up: the un-itemized case used to say only "a non-required check or status is not passing",
-    // which tells a maintainer nothing they can act on -- not which check, not where to look. GitHub computes
-    // mergeable_state itself and never says why, and our aggregate can legitimately fail to itemize it (a
-    // COMMIT STATUS rather than a check-run, a check from an app whose page we couldn't read, or a run that
-    // appeared after the aggregate was taken). Name that ambiguity and point at the one place the answer
-    // always exists, instead of restating the state.
-    : "mergeable_state is unstable — GitHub reports a non-required check or status as not passing, but this pass could not itemize which one (it may be a commit status rather than a check-run, or it appeared after CI was read). See the PR's own Checks tab for the current list";
-}
-
-function mergeUnstableHoldComment(failures: ReadonlyArray<{ name: string }> | undefined): string {
-  const names = (failures ?? []).map((f) => `\`${f.name}\``);
-  const culprit = names.length > 0 ? ` — ${names.join(", ")} —` : "";
-  const whereToLook =
-    names.length > 0
-      ? ""
-      : " This pass could not identify which check (it may be a commit status rather than a check-run, or it appeared after CI was read) — the PR's own Checks tab has the current list.";
-  return `Held for manual review: the gate and required CI are green, but GitHub reports this pull request's mergeable state as \`unstable\` because a non-required check or status${culprit} is not passing, so LoopOver will not auto-merge.${whereToLook} A maintainer can resolve the failing check or review and merge manually. This is an automated maintenance action.`;
-}
+// #10116: `mergeUnstableHoldReason` and `mergeUnstableHoldComment` lived here. Both existed only to word the
+// manual-review hold that a GitHub "unstable" mergeable state used to trigger; with no such hold there is no
+// action left to hang either string on (there is no comment-only AgentActionClass — a comment always rides a
+// label/approve/merge). `nonRequiredCheckFailures` stays on the planner input: the ignored-check
+// reconciliation still reads it, and it is what #9810's `unstableExplainedByIgnoredChecks` is computed from.
 
 /**
  * Plan best-effort assignment of the PR's opening contributor (#3182), independent of merge/close/CI outcome.
@@ -1366,7 +1344,9 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     input.priorityEligibilityHold === undefined &&
     input.screenshotEvidenceHold === undefined &&
     input.unlinkedIssueMatchClose === undefined &&
-    !mergeableStateUnstable &&
+    // #10116: `!mergeableStateUnstable` deliberately REMOVED. An unstable state no longer applies this label,
+    // so it must not block lifting one either — leaving it here would strand the label on any PR whose CI
+    // happened to be red when an unrelated hold cleared. That is the latch #10098 was stuck in.
     !heldForManualReview &&
     !mergeTerminallyBlocked;
   if (
@@ -1472,21 +1452,26 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     });
   }
 
-  // 1f) unstable-mergeable-state manual-review fallback (#8758): mirrors 1d. When the dedicated
-  // review_state_label class isn't acting but merge is, a would-merge suppressed ONLY by GitHub's "unstable"
-  // mergeable state must still surface a visible hold — label + comment naming the non-required check —
-  // instead of the silent stall #8711 hit (approve posted, merge never planned, nothing on the PR saying why).
-  if (reviewGood && mergeableStateUnstable && !acting("review_state_label") && labels.manualReview !== null && acting("merge") && !hasLabelOrPlanned(input.pr.labels, actions, labels.manualReview)) {
-    actions.push({
-      actionClass: "label",
-      autonomyClass: "merge",
-      requiresApproval: approval("merge"),
-      reason: `verdict=${conclusion}; ${mergeUnstableHoldReason(input.nonRequiredCheckFailures)}`,
-      label: labels.manualReview,
-      labelOp: "add",
-      comment: sanitizePublicComment(mergeUnstableHoldComment(input.nonRequiredCheckFailures)),
-    });
-  }
+  // 1f) REMOVED (#10116). This was the unstable-mergeable-state manual-review fallback (#8758): when
+  // review_state_label was off but merge was acting, a would-merge suppressed only by GitHub's "unstable"
+  // state got the manual-review label plus a comment naming the non-required check.
+  //
+  // It was the dominant source of spurious holds. `reviewGood` means the GATE passed and REQUIRED CI passed,
+  // and `unstable` is GitHub's verdict on everything else — so the two are true together on any PR whose
+  // non-required checks are red OR STILL RUNNING. That is most PRs, most of the time, and each one got an
+  // ENFORCEMENT label: the executor denies merge and approve while it is present, and merge-train.ts evicts a
+  // labelled sibling from the train entirely, so the PR was skipped rather than queued. Worse, section 1b's
+  // release condition also tested this state, which made the label a LATCH — applied while CI was red, and
+  // then not liftable *because* CI was red. Observed on JSONbored/loopover#10098, stuck until a human
+  // removed the label by hand.
+  //
+  // Nothing replaces it, and that is deliberate. #8758's concern was the silent stall #8711 hit: approve
+  // posted, merge never planned, nothing on the PR saying why. All three legs stay closed without summoning
+  // anyone — `wouldApprove` conjoins `!unstableHolds` so no approval is posted, section 2 chooses NO
+  // disposition label rather than `ready-to-merge`, and the unified comment still refuses "safe to merge" via
+  // `mergeStateHeld`. Which checks are unhappy is on the PR's own Checks tab, where it is always current;
+  // restating it in a bot comment on every in-flight PR is noise, and the state resolves itself on the next
+  // push without anyone having read it.
 
   // 2) review_state_label (#label-scoping) — ready-to-merge (review-good, unguarded) / manual-review
   // (review-good but guarded) / changes-requested (not review-good → will be closed for a contributor, held for
@@ -1506,7 +1491,17 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
           ? labels.migrationCollision
           : heldForManualReview || mergeTerminallyBlocked
             ? labels.manualReview
-            : labels.readyToMerge;
+            : // #10116: an unstable merge state gets NEITHER disposition label. It no longer summons a human
+              // (see derivePrDisposition), but it must not claim `ready-to-merge` either — our own aggregate
+              // can read CI green while GitHub still reports unstable for a non-required check (#9810), and
+              // promising "ready" on a PR the merge then self-suppresses on is precisely #8711's "approved,
+              // labeled ready, never merged, nobody told". No label is the honest state: the PR is not held
+              // for a person and not ready to merge, it is waiting on checks. The unified comment still
+              // refuses "safe to merge" (via `mergeStateHeld`) and the Checks tab names the culprits, so
+              // nothing about this state is hidden from the contributor.
+              mergeableStateUnstable
+              ? null
+              : labels.readyToMerge;
     const reason = linkedIssueCloseInFlight
       ? `linked-issue hard rule: ${linkedIssueHardRule?.reason ?? "ineligible linked issue"}`
       : unlinkedIssueMatchViolated
@@ -1521,18 +1516,23 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
                 ? `verdict=${conclusion}; ${input.unlinkedIssueMatchClose.reason}`
                 : input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0
                   ? `verdict=${conclusion}; ${advisoryHoldReason(input.advisoryCheckHold)}`
-                  : mergeableStateUnstable
-                    ? `verdict=${conclusion}; ${mergeUnstableHoldReason(input.nonRequiredCheckFailures)}`
-                    : heldForManualReview
-                      ? `verdict=${conclusion}; ${guardrailReason}`
-                      : mergeTerminallyBlocked
-                        ? // #9012: the ONE place a terminal merge block becomes visible to a human. Everything
-                          // else about this PR reads healthy — gate passing, CI green, bot-approved — so
-                          // without naming the block here the label says "needs review" with no reason and the
-                          // maintainer has nothing to act on. mergeBlockedReason is executor-written and
-                          // already length-capped at persist time (280 chars).
-                          `verdict=${conclusion}; CI green, but a prior merge attempt failed and is held: ${input.pr.mergeBlockedReason ?? "reason unrecorded"}`
-                        : `verdict=${conclusion}; CI green`;
+                  : // #10116: the `mergeableStateUnstable` arm that used to sit HERE is gone. It PRECEDED
+                    // `heldForManualReview`, so once an unstable state stopped being a hold of its own, the
+                    // only way to reach it with a label attached was a PR held for some OTHER reason that
+                    // happened to also be unstable — and it would then have recorded "mergeable_state is
+                    // unstable" as the cause of a label the guardrail (or a migration collision, or a
+                    // terminal merge block) actually caused. A hold reason lands in the ledger and drives
+                    // #9729's per-path clearance; misattributing it is worse than the noise it replaced.
+                    heldForManualReview
+                    ? `verdict=${conclusion}; ${guardrailReason}`
+                    : mergeTerminallyBlocked
+                      ? // #9012: the ONE place a terminal merge block becomes visible to a human. Everything
+                        // else about this PR reads healthy — gate passing, CI green, bot-approved — so
+                        // without naming the block here the label says "needs review" with no reason and the
+                        // maintainer has nothing to act on. mergeBlockedReason is executor-written and
+                        // already length-capped at persist time (280 chars).
+                        `verdict=${conclusion}; CI green, but a prior merge attempt failed and is held: ${input.pr.mergeBlockedReason ?? "reason unrecorded"}`
+                      : `verdict=${conclusion}; CI green`;
     if (label !== null && !hasLabelOrPlanned(input.pr.labels, actions, label)) {
       actions.push({
         actionClass: "label",
@@ -1563,9 +1563,12 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
                     // hasLabelOrPlanned and the contributor would get a bare label with no reason.
                     input.screenshotEvidenceHold !== undefined
                     ? { comment: sanitizePublicComment(input.screenshotEvidenceHold.comment) }
-                    : mergeableStateUnstable
-                      ? { comment: sanitizePublicComment(mergeUnstableHoldComment(input.nonRequiredCheckFailures)) }
-                      : {}
+                    : // #10116: the trailing `mergeableStateUnstable` arm is gone with the label that carried
+                      // it. A comment here only reaches the PR when the ternary above chose a label, and an
+                      // unstable state now chooses none — so the arm was reachable only on a PR held for an
+                      // unrelated reason, where it would have replaced that hold's own message with one
+                      // about checks.
+                      {}
           : {}),
       });
     }
@@ -1640,9 +1643,12 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
   // safe to merge" review on a PR we're about to close is incoherent (and a stale approval strands the PR if it
   // later goes green). A `behind`/`blocked` PR is fine to approve (it is rebased pre-review or the approval clears
   // the block); only a hard `dirty` conflict is excluded here. (#ready-needs-mergeable, the #4220 report)
-  // An `unstable` PR is excluded too, via heldForManualReview's mergeableStateUnstable term (#8758): the merge
-  // below would self-suppress on it, and approve firing while merge silently never comes was exactly #8711's
-  // "approved, labeled ready, never merged, nobody told" incident. */
+  // An `unstable` PR is excluded too, now via wouldApprove's OWN `!unstableHolds` term (#10116 — it used to
+  // ride on heldForManualReview, until an unstable state stopped being a hold): the merge below would
+  // self-suppress on it, and approve firing while merge silently never comes was exactly #8711's "approved,
+  // labeled ready, never merged, nobody told" incident. #10116 dropped the manual-review LABEL for this state
+  // but deliberately kept this suppression — the two answer different questions ("does a human need to act",
+  // no; "may we say this is good to merge", not while GitHub disagrees). */
   // #8759: disposition.wouldApprove = reviewGood && !held && not-a-conflict — the shared core the executor's
   // live recheck mirrors; the terms conjoined here are planner-private (close-in-flight, autonomy, idempotency).
   if (disposition.wouldApprove && !linkedIssueCloseInFlight && acting("approve") && input.pr.reviewDecision !== "APPROVED" && !alreadyApprovedThisHead) {

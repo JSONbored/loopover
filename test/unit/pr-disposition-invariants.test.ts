@@ -60,12 +60,23 @@ describe("derivePrDisposition — module-level invariants over the full state ma
     }
   });
 
-  it("unstable holds by itself; behind/blocked/unknown never hold and stay approvable; conflict is unapprovable but never a hold", () => {
+  it("REGRESSION (#10116): unstable no longer summons a human, but is still unapprovable and unmergeable", () => {
+    // GitHub reports `unstable` for checks that are failing OR still running. Treating that as a manual-review
+    // hold labelled every PR whose CI had not finished and pulled it out of the merge train, which is the
+    // opposite of autonomous. Neither case wants a maintainer: a pending PR is not ready, and a failing one
+    // has already been answered by CI.
     const unstable = derivePrDisposition(dispositionInput({ mergeableState: "unstable" }));
-    expect(unstable.heldForManualReview).toBe(true);
+    expect(unstable.heldForManualReview).toBe(false);
+    // Still reported -- the comment surface reads it to refuse the "safe to merge" claim (#8758).
     expect(unstable.heldForUnstableMergeState).toBe(true);
+    // #8711 stays closed. `wouldApprove` now excludes unstable EXPLICITLY rather than via the hold term: our
+    // aggregate can read CI green while GitHub still reports unstable for a non-required check (#9810), so
+    // dropping the hold without this would approve a PR the merge then self-suppresses on.
     expect(unstable.wouldApprove).toBe(false);
+    expect(unstable.wouldMerge).toBe(false);
+  });
 
+  it("behind/blocked/unknown never hold and stay approvable; conflict is unapprovable but never a hold", () => {
     for (const raw of ["behind", "blocked", "unknown", undefined]) {
       const d = derivePrDisposition(dispositionInput({ mergeableState: raw as string | undefined }));
       expect(d.heldForManualReview, `state=${String(raw)}`).toBe(false);
@@ -134,6 +145,10 @@ describe("cross-surface: planner actions agree with the shared disposition (#875
       const stateLabel = actions.find((a) => a.actionClass === "label" && a.labelOp !== "remove");
       if (d.heldForManualReview) {
         expect(stateLabel?.label, `label state=${String(raw)}`).toBe(AGENT_LABEL_NEEDS_REVIEW);
+      } else if (d.heldForUnstableMergeState) {
+        // #10116: unstable earns NEITHER label. Not held for a person, and not ready to merge either --
+        // claiming ready here is #8711 ("approved, labeled ready, never merged, nobody told").
+        expect(stateLabel?.label, `label state=${String(raw)}`).toBeUndefined();
       } else {
         expect(stateLabel?.label, `label state=${String(raw)}`).toBe(AGENT_LABEL_READY);
       }
@@ -209,14 +224,19 @@ describe("unstable explained only by an IGNORED check (#9810 follow-up)", () => 
     expect(d.commentMergeStateHeld).toBe(false);
   });
 
-  it("INVARIANT: unstable from ANY other cause still holds — the flag is not a blanket override", () => {
+  it("INVARIANT: unstable from ANY other cause is still REPORTED — the flag is not a blanket override", () => {
+    // #10116 changed what an unstable state COSTS (no manual-review hold), not whether it is detected. The
+    // flag's job is still to say "this instability is explained by a check the maintainer declared
+    // meaningless", and that distinction has to survive — it is what still separates an approvable unstable
+    // PR from an unapprovable one.
     const d = derivePrDisposition({ ...base, mergeableState: "unstable", unstableExplainedByIgnoredChecks: false });
-    expect(d.heldForManualReview).toBe(true);
     expect(d.heldForUnstableMergeState).toBe(true);
+    expect(d.wouldApprove).toBe(false);
   });
 
-  it("INVARIANT: absent flag behaves exactly as before (byte-identical for every existing caller)", () => {
-    expect(derivePrDisposition({ ...base, mergeableState: "unstable" }).heldForManualReview).toBe(true);
+  it("INVARIANT: an explained-by-ignored-checks unstable state is not even reported as unstable", () => {
+    const d = derivePrDisposition({ ...base, mergeableState: "unstable", unstableExplainedByIgnoredChecks: true });
+    expect(d.heldForUnstableMergeState).toBe(false);
   });
 
   it("INVARIANT: the flag never rescues a PR held for a DIFFERENT reason", () => {
@@ -274,7 +294,9 @@ describe("guardrail hold released by a clean escalated review (#9808 second half
       { migrationCollisionHold: true },
       { unlinkedIssueMatchHold: true },
       { advisoryCheckHold: true },
-      { mergeableState: "unstable" },
+      // `{ mergeableState: "unstable" }` deliberately REMOVED (#10116): an unstable state is no longer a
+      // manual-review hold at all, so it is not one of the "other holds" this invariant is about. Its own
+      // behaviour -- reported, unapprovable, unmergeable, but never a human summons -- has a dedicated test.
     ]) {
       const d = derivePrDisposition({ ...base, guardrailEscalationCleared: true, ...extra });
       expect(d.heldForManualReview, JSON.stringify(extra)).toBe(true);

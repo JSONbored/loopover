@@ -14,7 +14,7 @@
 //
 // INVARIANT CONTRACT (pinned by test/unit/pr-disposition-invariants.test.ts): for any input state,
 //   • approve is never allowed while the state is one merge would refuse for a reason no other rail
-//     resolves (assessment "conflict" → the close path owns it; "unstable" → the manual hold owns it);
+//     resolves (assessment "conflict" → the close path owns it; "unstable" → CI itself owns it, #10116);
 //   • "behind" never holds (the rebase rail owns it) and stays approvable;
 //   • "blocked"/"unknown"/absent stay approvable (the bot's own approval can be the unblocking act,
 //     and a transient null must not spray hold labels);
@@ -29,8 +29,11 @@ export type MergeableAssessment =
   | "conflict"
   /** Behind the base — the rebase rail's business; approvable, never a manual hold. */
   | "behind"
-  /** Required checks green but a non-required check/status is not (#8711/#8758): merge self-suppresses,
-   *  so the PR must be HELD loudly (manual-review label + comment) and never approved into a stall. */
+  /** Required checks green but a non-required check/status is not, OR checks are still running — GitHub
+   *  reports the same string for both. Merge self-suppresses, so approve must too, or the PR lands in
+   *  #8711's "approved, labeled ready, never merged, nobody told" stall. It is NOT a manual hold (#10116):
+   *  the state is visible on the PR's own Checks tab and resolves itself on the next push, so no maintainer
+   *  is summoned for something CI has already answered. */
   | "unstable"
   /** blocked / unknown / null / anything else: not mergeable YET, but approvable — the missing piece may
    *  be the bot's own approval (blocked) or a transient computation (unknown). Never a hold. */
@@ -108,9 +111,11 @@ export type PrDisposition = {
    *  suppressor is the unstable mergeable state — that is GitHub's computation, not one of our declared hold
    *  inputs, and it is reported by `heldForUnstableMergeState` instead. */
   heldBy: MergeHoldInput[];
-  /** True when the ONLY thing suppressing a would-merge is the unstable mergeable state (#8758's loud
-   *  hold): the planner uses it to attach the check-naming comment; the comment surface uses it to
-   *  downgrade "safe to merge". */
+  /** True when the ONLY thing suppressing a would-merge is the unstable mergeable state. Since #10116 this
+   *  is REPORTING, not a hold: the planner reads it to choose NO disposition label (neither `manual-review`
+   *  nor `ready-to-merge`), and the comment surface reads it to refuse the "safe to merge" claim. It is a
+   *  separate field from `heldForManualReview` precisely so those two can differ — "not ready" and "a human
+   *  must act" were conflated here, and the conflation is what labelled every in-flight PR. */
   heldForUnstableMergeState: boolean;
   /** reviewGood && not held && not the close path's conflict — the approve gate's shared core. The
    *  planner still conjoins its own idempotency/autonomy terms (reviewDecision, approvedHeadSha,
@@ -149,9 +154,29 @@ export function derivePrDisposition(input: PrDispositionInput): PrDisposition {
   // automatically -- restatement is the thing that table exists to remove. Order is the table's own
   // declaration order, which makes the recorded cause deterministic for identical inputs.
   const heldBy = MERGE_HOLD_INPUT_KEYS.filter((key) => input[key] === true && releasedHolds[key] !== true);
-  const heldForManualReview = heldBy.length > 0 || unstableHolds;
+  // #10116: an unstable merge state NO LONGER summons a human. GitHub reports `unstable` for checks that are
+  // failing OR still running, so this term was labelling `manual-review` on every PR whose CI had not finished
+  // -- the dominant cause of the held-with-`reason_code: success` records on the production Orb, and pure
+  // noise on a repo meant to run autonomously. Neither case wants a maintainer: a pending PR is simply not
+  // ready, and a failing one has already been answered by CI, so the contributor fixes CI rather than a human
+  // reviewing something that cannot merge.
+  //
+  // This does NOT make an unstable PR mergeable. `wouldMerge` requires `mergeable === "clean"` independently,
+  // and `reviewGood` requires green CI, so both remain false. What changes is only whether a human is summoned.
+  const heldForManualReview = heldBy.length > 0;
+  // Still reported, and still true: the comment surface reads it to refuse the "safe to merge" claim (#8758).
+  // Saying "this is not ready" is useful; escalating it to a maintainer is not.
   const heldForUnstableMergeState = unstableHolds;
-  const wouldApprove = input.reviewGood && !heldForManualReview && mergeable !== "conflict";
+  // `!unstableHolds` is now EXPLICIT rather than riding on heldForManualReview. It used to be implied by the
+  // unstable term above, and dropping that term without restating it here would let approve fire on an
+  // unstable PR while merge self-suppressed -- exactly #8711's "approved, labeled ready, never merged, nobody
+  // told" incident. `reviewGood` alone does not cover it: our own CI aggregate can read passed while GitHub
+  // still reports unstable for a non-required check.
+  //
+  // Keyed on `unstableHolds`, NOT on `mergeable === "unstable"`. The difference is #9810: an instability
+  // explained solely by a check the maintainer declared meaningless must stay APPROVABLE, and a blanket
+  // mergeable-state test would silently un-fix that. Caught by its own test when I first wrote it too broadly.
+  const wouldApprove = input.reviewGood && !heldForManualReview && mergeable !== "conflict" && !unstableHolds;
   const wouldMerge = input.reviewGood && !heldForManualReview && mergeable === "clean";
   // The comment's historical downgrade set, byte-identical to deriveUnifiedStatus's own
   // {dirty, behind, unstable} check (#ready-needs-mergeable / #pr-5288-confusing-verdict): "behind"

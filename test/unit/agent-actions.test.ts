@@ -755,38 +755,44 @@ describe("planAgentMaintenanceActions (#778)", () => {
       pr: { labels: [], mergeableState: "unstable", reviewDecision: "APPROVED" as const },
     };
 
-    it("the #8711 regression: does NOT approve, does NOT merge, and surfaces a manual-review label + comment naming the check (review_state_label not acting)", () => {
+    it("REGRESSION (#10116): the #8711 protections hold with NO label at all, on the MERGE-autonomy path", () => {
+      // One of TWO sites #8758 labelled this state from. This is the fallback authorized by merge autonomy,
+      // for one-shot repos that configure manualReviewLabel without the ready/changes disposition labels;
+      // the next test covers section 2's disposition ternary. Removing only one would have left half the
+      // repos exactly as stuck, so each removal is pinned independently.
+      //
+      // What #8758 actually existed to prevent is asserted and unchanged: no approve, no merge. The stall it
+      // feared -- approve posted, merge never planned, nothing saying why -- cannot happen without the approve.
       const plan = planAgentMaintenanceActions(input({ ...unstable, autonomy: { approve: "auto", merge: "auto" } }));
       expect(classes(plan)).not.toContain("approve");
       expect(classes(plan)).not.toContain("merge");
-      const label = plan.find((a) => a.actionClass === "label");
-      expect(label?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
-      expect(label?.reason).toContain("unstable");
-      expect(label?.reason).toContain("Third-Party Trust Check");
-      expect(label?.comment).toContain("unstable");
-      expect(label?.comment).toContain("Third-Party Trust Check");
-      expect(label?.comment).toContain("will not auto-merge");
+      expect(plan.find((a) => a.actionClass === "label" && a.labelOp !== "remove")).toBeUndefined();
     });
 
-    it("labels manual-review (never ready-to-merge) with the unstable reason + comment when review_state_label IS acting", () => {
-      const plan = planAgentMaintenanceActions(input({ ...unstable, autonomy: { review_state_label: "auto", merge: "auto" } }));
-      const label = plan.find((a) => a.actionClass === "label");
-      expect(label?.label).toBe(AGENT_LABEL_NEEDS_REVIEW);
-      expect(label?.label).not.toBe(AGENT_LABEL_READY);
-      expect(label?.reason).toContain("unstable");
-      expect(label?.reason).toContain("Third-Party Trust Check");
-      expect(label?.comment).toContain("Third-Party Trust Check");
+    it("REGRESSION (#10116): applies NEITHER disposition label when review_state_label IS acting", () => {
+      // The other site. `manual-review` summoned a maintainer for a PR whose checks were merely unfinished
+      // AND evicted it from the merge train (merge-train.ts filters on heldForManualReview) -- the behaviour
+      // that made the repo look non-autonomous. `ready-to-merge` would be the opposite error: promising a
+      // merge that self-suppresses. Neither is right, so neither is emitted.
+      const plan = planAgentMaintenanceActions(input({ ...unstable, autonomy: { review_state_label: "auto", merge: "auto", approve: "auto" } }));
+      const label = plan.find((a) => a.actionClass === "label" && a.labelOp !== "remove");
+      expect(label?.label).toBeUndefined();
       expect(classes(plan)).not.toContain("merge");
+      expect(classes(plan)).not.toContain("approve");
     });
 
-    it("still holds with GENERIC wording when the CI aggregate could not itemize the culprit (empty/absent failures list)", () => {
+    it("REGRESSION (#10116): behaves identically when the CI aggregate could not itemize the culprit", () => {
+      // #8758 branched on whether `nonRequiredCheckFailures` named the check, to pick specific vs generic
+      // wording for the hold comment. With no hold and no comment that branch is gone -- and the reason to
+      // keep this case is that the un-itemized path must not be the one that still labels. It is the MORE
+      // common shape in production (a commit status rather than a check-run, or a run that appeared after CI
+      // was read), so a fallback surviving only here would look fixed in tests and stay broken on the Orb.
       const plan = planAgentMaintenanceActions(
         input({ conclusion: "success", ciState: "passed", autonomy: { approve: "auto", merge: "auto" }, pr: { labels: [], mergeableState: "unstable", reviewDecision: "APPROVED" } }),
       );
       expect(classes(plan)).not.toContain("approve");
       expect(classes(plan)).not.toContain("merge");
-      const label = plan.find((a) => a.actionClass === "label");
-      expect(label?.comment).toContain("a non-required check or status");
+      expect(plan.find((a) => a.actionClass === "label" && a.labelOp !== "remove")).toBeUndefined();
     });
 
     it("never CLOSES on unstable — the hold only downgrades a would-merge, close semantics untouched", () => {
@@ -2878,7 +2884,10 @@ describe("manual-review release must not fire while a hold is still live (#9939 
     ["an unlinked-issue match hold", { unlinkedIssueMatchHold: { reason: "matches an unlinked issue", comment: "c" } }],
     ["a priority-eligibility hold", { priorityEligibilityHold: { reason: "outside the priority window", comment: "c" } }],
     ["an unlinked-issue close", { unlinkedIssueMatchClose: { reason: "unlinked close", comment: "c" } }],
-    ["an unstable merge state", { pr: { labels: [AGENT_LABEL_NEEDS_REVIEW], mergeableState: "unstable" } }],
+    // "an unstable merge state" deliberately REMOVED (#10116) -- it is no longer a manual-review hold, so it
+    // must not block the release either. Leaving it here would strand the label on any PR whose CI happened
+    // to be red when an unrelated hold cleared, which is the one-way latch #9942 fixed. Its release behaviour
+    // is asserted directly below instead.
   ];
 
   for (const [name, over] of liveHolds) {
@@ -2886,6 +2895,13 @@ describe("manual-review release must not fire while a hold is still live (#9939 
       expect(releases(held(over))).toBe(false);
     });
   }
+
+  it("REGRESSION (#10116): RELEASES the label when the only thing left is an unstable merge state", () => {
+    // The stuck-PR case from production (#10098): CI finished red, the label stayed, the PR left the merge
+    // train, and it needed a human to strip the label by hand. An unstable state no longer wants the label,
+    // so the planner takes back the one it applied.
+    expect(releases(held({ pr: { labels: [AGENT_LABEL_NEEDS_REVIEW], mergeableState: "unstable" } }))).toBe(true);
+  });
 
   it("still releases when nothing at all holds the PR — the #9935 case this must not regress", () => {
     // The counterweight: making the guard too broad would silently restore the one-way latch #9942 fixed.

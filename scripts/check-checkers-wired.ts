@@ -109,6 +109,22 @@ export type CheckerHome =
   | { kind: "allowed"; via: string }
   | { kind: "none" };
 
+/** Drop line (`//`) and block comments so a prose mention of a checker is not treated as an import (#10048). */
+function stripScriptComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+}
+
+/**
+ * True when `source` has a real import, re-export, or dynamic-import of `./base` (optional .ts or .js).
+ * Specifier must sit in statement position — a bare substring or comment mention does not count (#10048).
+ */
+function sourceImportsChecker(source: string, base: string): boolean {
+  const code = stripScriptComments(source);
+  const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const specifier = `\\./${escaped}(?:\\.(?:ts|js))?`;
+  return new RegExp(`(?:(?:import|export)\\s[^;]*?\\sfrom\\s*|import\\s*\\(\\s*)['"]${specifier}['"]`).test(code);
+}
+
 /** Where a checker actually runs, or `none`. Pure, so every branch is testable without a filesystem. */
 export function resolveCheckerHome(input: {
   file: string;
@@ -126,10 +142,10 @@ export function resolveCheckerHome(input: {
   const workflowRef = invokers.find((name) => input.workflowText.includes(name)) ?? (input.workflowText.includes(input.file) ? input.file : undefined);
   if (workflowRef !== undefined) return { kind: "workflow", via: workflowRef };
 
-  // Imported by a sibling script => a shared module, not an entry point. Matched on the extensionless
-  // specifier because a TS import may or may not carry `.ts`/`.js`.
+  // Imported by a sibling script => a shared module, not an entry point. Require an actual import /
+  // re-export / dynamic-import statement after stripping comments — a prose mention must not count (#10048).
   const base = input.file.replace(/\.ts$/, "");
-  if (input.otherScriptSources.some((source) => source.includes(`${base}.ts`) || source.includes(`${base}.js`) || source.includes(`./${base}"`) || source.includes(`./${base}'`))) {
+  if (input.otherScriptSources.some((source) => sourceImportsChecker(source, base))) {
     return { kind: "imported", via: base };
   }
 

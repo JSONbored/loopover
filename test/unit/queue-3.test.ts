@@ -5,7 +5,7 @@ import { clearReviewSuppressionCacheForTest } from "../../src/review/review-memo
 import { } from "../../src/github/comments";
 import * as repositoriesModule from "../../src/db/repositories";
 import * as visualCaptureModule from "../../src/review/visual/capture";
-import { MAX_PREVIEW_POLL_ATTEMPTS } from "../../src/review/visual/preview-poll-budget";
+import { MAX_CAPTURE_RETRY_ATTEMPTS, MAX_PREVIEW_POLL_ATTEMPTS, recordCaptureRetryAttempt } from "../../src/review/visual/preview-poll-budget";
 import * as repositorySettingsModule from "../../src/settings/repository-settings";
 import { } from "../../src/selfhost/queue-common";
 import {
@@ -52,6 +52,30 @@ vi.mock("../../src/github/pr-freshness", async (importOriginal) => {
 
 
 
+
+// #10061: a minimal etag-aware in-memory R2 stand-in for the capture-retry budget (mirrors
+// preview-poll-budget.test.ts's own memoryBudgetStore), used by the screenshot-table gate tests below that
+// now need a REAL REVIEW_AUDIT binding to seed/observe scheduleVisualCaptureRetry's durable per-head counter.
+function memoryBudgetStore(): R2Bucket {
+  const store = new Map<string, { value: string; etag: string }>();
+  let etagSeq = 0;
+  return {
+    async get(key: string) {
+      const entry = store.get(key);
+      return entry === undefined ? null : ({ body: new Response(entry.value).body, httpEtag: entry.etag } as unknown as R2ObjectBody);
+    },
+    async put(key: string, value: unknown, putOptions?: R2PutOptions) {
+      const onlyIf = putOptions?.onlyIf as R2Conditional | undefined;
+      const current = store.get(key);
+      if (onlyIf?.etagMatches !== undefined && current?.etag !== onlyIf.etagMatches) return null;
+      if (onlyIf?.etagDoesNotMatch === "*" && current !== undefined) return null;
+      etagSeq += 1;
+      const etag = `etag-${etagSeq}`;
+      store.set(key, { value: await new Response(value as BodyInit).text(), etag });
+      return { key, etag } as unknown as R2Object;
+    },
+  } as unknown as R2Bucket;
+}
 
 function queueMinerSnapshot(login: string) {
   return {
@@ -2169,6 +2193,83 @@ describe("queue processors", () => {
     expect(sentJobs).toContainEqual(expect.objectContaining({ type: "recapture-preview", repoFullName: "JSONbored/gittensory", prNumber: 64, attempt: 1 }));
   });
 
+  // #10061 invariant: the previewPending path's own budget accounting (inside buildCapture, via
+  // previewPollAttemptCount/recordPreviewPollAttempt) is explicitly OUT of scope for this fix and must keep
+  // behaving exactly as it did before -- a single still-building preview still schedules exactly one
+  // recapture-preview retry and still marks the latch, unaffected by the NEW capture-retry budget this fix
+  // adds for the renderFailed / thrown-capture chain.
+  it("screenshot-table gate (#10061 invariant): a single previewPending capture still schedules exactly one recapture-preview and marks the latch", async () => {
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockResolvedValueOnce({ routes: [{ path: "/app", afterUrl: "https://worker.example/loopover/shot?url=x", afterUrlMobile: "https://worker.example/loopover/shot?url=x" }], interactions: [], previewPending: true, renderFailed: false, previewUnobtainable: false });
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      LOOPOVER_REVIEW_SCREENSHOTS: "true",
+    });
+    const sentJobs: Array<Record<string, unknown>> = [];
+    env.JOBS = { async send(message: Record<string, unknown>) { sentJobs.push(message); } } as unknown as Queue;
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autonomy: { close: "auto", label: "auto" },
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", screenshotTableGate: { enabled: true, whenLabels: ["visual"] }, reviewCheckMode: "required" } }, "repo_file");
+    const seen = { closed: false };
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/82/files")) return Response.json([{ filename: "apps/loopover-ui/src/routes/app.index.tsx", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/82/reviews")) return Response.json([]);
+      if (url.includes("/pulls/82/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/82") && method === "PATCH") { seen.closed = JSON.parse(String(init?.body ?? "{}")).state === "closed"; return Response.json({ number: 82, state: "closed" }); }
+      if (url.endsWith("/pulls/82")) return Response.json({ number: 82, state: "open", user: { login: "visual-contributor" }, head: { sha: "vis82" }, mergeable_state: "clean" });
+      if (url.includes("/commits/vis82/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/vis82/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/vis82/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/82/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/82/comments")) return Response.json([]);
+      if (url.endsWith("/labels") && method === "POST") return Response.json([]);
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 952 }, { status: 201 });
+      if (url.includes("/check-runs/952") && method === "PATCH") return Response.json({ id: 952 });
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "screenshot-table-preview-pending-82",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: {
+            number: 82,
+            title: "Update the app index route",
+            state: "open",
+            user: { login: "visual-contributor" },
+            head: { sha: "vis82" },
+            labels: [{ name: "visual" }],
+            body: "Changed the route layout, no table here.",
+            mergeable_state: "clean",
+            reviewDecision: "APPROVED",
+          },
+        },
+      });
+    } finally {
+      buildCaptureSpy.mockRestore();
+    }
+
+    expect(seen.closed).toBe(false);
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 82);
+    expect(stored?.visualCaptureRetryPendingSha).toBe("vis82");
+    expect(sentJobs).toContainEqual(expect.objectContaining({ type: "recapture-preview", repoFullName: "JSONbored/gittensory", prNumber: 82, attempt: 1 }));
+    expect(sentJobs.filter((job) => job.type === "recapture-preview")).toHaveLength(1);
+  });
+
   // #9464 INVARIANT / #4110 guard: the fix must not neuter the gate. The single distinguishing bit is
   // `renderFailed` -- an identical no-evidence capture from a HEALTHY renderer is a true negative and must
   // still close. This is the test that an earlier "infer the blip from zero pairs" attempt broke.
@@ -2253,7 +2354,13 @@ describe("queue processors", () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
       LOOPOVER_REVIEW_SCREENSHOTS: "true",
+      REVIEW_AUDIT: memoryBudgetStore(),
     });
+    // #10061: exhaustion is now decided by the durable, headSha-keyed capture-retry counter, not the
+    // recapture-preview job's own `attempt` payload field -- pre-spend the budget for this head directly.
+    for (let i = 0; i < MAX_CAPTURE_RETRY_ATTEMPTS; i += 1) {
+      await recordCaptureRetryAttempt(env, "vis61");
+    }
     const sentJobs: Array<Record<string, unknown>> = [];
     env.JOBS = { async send(message: Record<string, unknown>) { sentJobs.push(message); } } as unknown as Queue;
     await upsertInstallation(env, {
@@ -2297,9 +2404,10 @@ describe("queue processors", () => {
     });
 
     try {
-      // attempt: MAX_PREVIEW_POLL_ATTEMPTS -> previewPollAttempt >= MAX_PREVIEW_POLL_ATTEMPTS -> the budget
-      // check bails BEFORE scheduling yet another retry or persisting the marker (see scheduleVisualCaptureRetry).
-      await processJob(env, { type: "recapture-preview", deliveryId: "screenshot-table-capture-error-exhausted", repoFullName: "JSONbored/gittensory", prNumber: 61, installationId: 123, attempt: MAX_PREVIEW_POLL_ATTEMPTS });
+      // The durable captureRetryAttemptCount(env, "vis61") already reads MAX_CAPTURE_RETRY_ATTEMPTS -> the
+      // budget check bails BEFORE scheduling yet another retry or persisting the marker (see
+      // scheduleVisualCaptureRetry) regardless of what `attempt` this delivery itself carries.
+      await processJob(env, { type: "recapture-preview", deliveryId: "screenshot-table-capture-error-exhausted", repoFullName: "JSONbored/gittensory", prNumber: 61, installationId: 123, attempt: 0 });
     } finally {
       buildCaptureSpy.mockRestore();
     }
@@ -2322,6 +2430,7 @@ describe("queue processors", () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
       LOOPOVER_REVIEW_SCREENSHOTS: "true",
+      REVIEW_AUDIT: memoryBudgetStore(),
     });
     const sentJobs: Array<Record<string, unknown>> = [];
     env.JOBS = { async send(message: Record<string, unknown>) { sentJobs.push(message); } } as unknown as Queue;
@@ -2365,9 +2474,17 @@ describe("queue processors", () => {
     });
 
     try {
-      // Attempt 0 errors -> the marker IS written for this head and a retry is scheduled.
+      // Attempt 0 errors -> the marker IS written for this head and a retry is scheduled (the durable
+      // capture-retry counter for "vis62" goes from 0 -> 1).
       await processJob(env, { type: "recapture-preview", deliveryId: "screenshot-marker-clear-first", repoFullName: "JSONbored/gittensory", prNumber: 62, installationId: 123, attempt: 0 });
       expect((await getPullRequest(env, "JSONbored/gittensory", 62))?.visualCaptureRetryPendingSha).toBe("vis62");
+
+      // #10061: spend the REST of the durable budget directly (simulating the remaining independent retries
+      // that would otherwise have to run through the full webhook pipeline), so the NEXT delivery is the one
+      // that finds the counter already at MAX_CAPTURE_RETRY_ATTEMPTS and exhausts it.
+      for (let i = 1; i < MAX_CAPTURE_RETRY_ATTEMPTS; i += 1) {
+        await recordCaptureRetryAttempt(env, "vis62");
+      }
 
       // The final attempt exhausts the budget while the pipeline is still failing.
       await processJob(env, { type: "recapture-preview", deliveryId: "screenshot-marker-clear-exhausted", repoFullName: "JSONbored/gittensory", prNumber: 62, installationId: 123, attempt: MAX_PREVIEW_POLL_ATTEMPTS });
@@ -2387,7 +2504,12 @@ describe("queue processors", () => {
     const env = createTestEnv({
       GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
       LOOPOVER_REVIEW_SCREENSHOTS: "true",
+      REVIEW_AUDIT: memoryBudgetStore(),
     });
+    // #10061: pre-spend the durable capture-retry budget for this head so the delivery below finds it exhausted.
+    for (let i = 0; i < MAX_CAPTURE_RETRY_ATTEMPTS; i += 1) {
+      await recordCaptureRetryAttempt(env, "vis63");
+    }
     env.JOBS = { async send() {} } as unknown as Queue;
     await upsertInstallation(env, {
       installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
@@ -2435,6 +2557,178 @@ describe("queue processors", () => {
       clearSpy.mockRestore();
       buildCaptureSpy.mockRestore();
     }
+  });
+
+  // #10061: THE regression this fix closes. Independent triggers (a CI-completion webhook, a
+  // deployment_status webhook, the maintenance sweep) all reach scheduleVisualCaptureRetry WITHOUT threading
+  // previewPollAttempt, so before this fix each one independently re-armed a fresh 5-attempt budget and a
+  // sustained renderer outage produced an UNBOUNDED number of retries. Drive MAX_PREVIEW_POLL_ATTEMPTS + 1
+  // independent `pull_request` webhook deliveries (each one a fresh delivery carrying no previewPollAttempt,
+  // exactly like a real CI-completion/deployment_status/sweep trigger) against a renderer that never
+  // recovers: the durable per-head capture-retry budget must still cap the TOTAL number of recapture-preview
+  // jobs enqueued across ALL of them at MAX_CAPTURE_RETRY_ATTEMPTS.
+  it("screenshot-table gate (#10061): independent triggers with NO previewPollAttempt still bound the renderFailed retry chain to MAX_CAPTURE_RETRY_ATTEMPTS jobs total", async () => {
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockResolvedValue({
+      routes: [{ path: "/app", afterUrl: "https://worker.example/loopover/shot?url=x", afterUrlMobile: "https://worker.example/loopover/shot?url=x" }],
+      interactions: [],
+      previewPending: false,
+      renderFailed: true,
+      previewUnobtainable: false,
+    });
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      LOOPOVER_REVIEW_SCREENSHOTS: "true",
+      REVIEW_AUDIT: memoryBudgetStore(),
+    });
+    const sentJobs: Array<Record<string, unknown>> = [];
+    env.JOBS = { async send(message: Record<string, unknown>) { sentJobs.push(message); } } as unknown as Queue;
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autonomy: { close: "auto", label: "auto" },
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", screenshotTableGate: { enabled: true, whenLabels: ["visual"] }, reviewCheckMode: "required" } }, "repo_file");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/80/files")) return Response.json([{ filename: "apps/loopover-ui/src/routes/app.index.tsx", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/80/reviews")) return Response.json([]);
+      if (url.includes("/pulls/80/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/80") && method === "PATCH") return Response.json({ number: 80, state: "closed" });
+      if (url.endsWith("/pulls/80")) return Response.json({ number: 80, state: "open", user: { login: "visual-contributor" }, head: { sha: "vis80" }, mergeable_state: "clean" });
+      if (url.includes("/commits/vis80/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/vis80/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/vis80/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/80/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/80/comments")) return Response.json([]);
+      if (url.endsWith("/labels") && method === "POST") return Response.json([]);
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 950 }, { status: 201 });
+      if (url.includes("/check-runs/950") && method === "PATCH") return Response.json({ id: 950 });
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      // MAX_PREVIEW_POLL_ATTEMPTS + 1 independent triggers -- each a plain `pull_request` delivery, so each
+      // reaches scheduleVisualCaptureRetry with previewPollAttempt undefined (-> 0), exactly like the bug.
+      for (let i = 0; i < MAX_PREVIEW_POLL_ATTEMPTS + 1; i += 1) {
+        await processJob(env, {
+          type: "github-webhook",
+          deliveryId: `screenshot-multi-trigger-render-failed-80-${i}`,
+          eventName: "pull_request",
+          payload: {
+            action: "opened",
+            installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+            repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+            pull_request: {
+              number: 80,
+              title: "Update the app index route",
+              state: "open",
+              user: { login: "visual-contributor" },
+              head: { sha: "vis80" },
+              labels: [{ name: "visual" }],
+              body: "Changed the route layout, no table here.",
+              mergeable_state: "clean",
+              reviewDecision: "APPROVED",
+            },
+          },
+        });
+      }
+    } finally {
+      buildCaptureSpy.mockRestore();
+    }
+
+    // At most MAX_CAPTURE_RETRY_ATTEMPTS recapture-preview jobs total, no matter how many independent
+    // triggers fired -- the durable per-head budget, not any one trigger's own payload counter, bounded it.
+    const recaptureJobs = sentJobs.filter((job) => job.type === "recapture-preview");
+    expect(recaptureJobs).toHaveLength(MAX_CAPTURE_RETRY_ATTEMPTS);
+  });
+
+  // #10061 regression (named for this bug): the failure mode was not merely "too many retries" -- it was that
+  // `visual_capture_retry_pending_at` kept getting RE-STAMPED by every independent trigger's mark write,
+  // continually resetting VISUAL_CAPTURE_RETRY_LATCH_MAX_AGE_MS's deadline so the latch's own age bound could
+  // never elapse either. Once the durable budget is spent, the LAST trigger must CLEAR both latch columns
+  // instead of re-stamping them, so the latch genuinely becomes releasable (by this clear, or by its age bound
+  // as a backstop) instead of being held open forever by a clock that never stops moving.
+  it("screenshot-table gate (#10061): once independent triggers spend the budget, the latch is cleared instead of the clock being kept moving forever", async () => {
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockResolvedValue({
+      routes: [{ path: "/app", afterUrl: "https://worker.example/loopover/shot?url=x", afterUrlMobile: "https://worker.example/loopover/shot?url=x" }],
+      interactions: [],
+      previewPending: false,
+      renderFailed: true,
+      previewUnobtainable: false,
+    });
+    const env = createTestEnv({
+      GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+      LOOPOVER_REVIEW_SCREENSHOTS: "true",
+      REVIEW_AUDIT: memoryBudgetStore(),
+    });
+    env.JOBS = { async send() {} } as unknown as Queue;
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, {
+      repoFullName: "JSONbored/gittensory",
+      autonomy: { close: "auto", label: "auto" },
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", screenshotTableGate: { enabled: true, whenLabels: ["visual"] }, reviewCheckMode: "required" } }, "repo_file");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/81/files")) return Response.json([{ filename: "apps/loopover-ui/src/routes/app.index.tsx", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/81/reviews")) return Response.json([]);
+      if (url.includes("/pulls/81/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/81") && method === "PATCH") return Response.json({ number: 81, state: "closed" });
+      if (url.endsWith("/pulls/81")) return Response.json({ number: 81, state: "open", user: { login: "visual-contributor" }, head: { sha: "vis81" }, mergeable_state: "clean" });
+      if (url.includes("/commits/vis81/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/vis81/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/vis81/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/81/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/81/comments")) return Response.json([]);
+      if (url.endsWith("/labels") && method === "POST") return Response.json([]);
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 951 }, { status: 201 });
+      if (url.includes("/check-runs/951") && method === "PATCH") return Response.json({ id: 951 });
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      for (let i = 0; i < MAX_PREVIEW_POLL_ATTEMPTS + 1; i += 1) {
+        await processJob(env, {
+          type: "github-webhook",
+          deliveryId: `screenshot-multi-trigger-latch-81-${i}`,
+          eventName: "pull_request",
+          payload: {
+            action: "opened",
+            installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+            repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+            pull_request: {
+              number: 81,
+              title: "Update the app index route",
+              state: "open",
+              user: { login: "visual-contributor" },
+              head: { sha: "vis81" },
+              labels: [{ name: "visual" }],
+              body: "Changed the route layout, no table here.",
+              mergeable_state: "clean",
+              reviewDecision: "APPROVED",
+            },
+          },
+        });
+      }
+    } finally {
+      buildCaptureSpy.mockRestore();
+    }
+
+    const stored = await getPullRequest(env, "JSONbored/gittensory", 81);
+    expect(stored?.visualCaptureRetryPendingSha).toBeNull();
+    expect(stored?.visualCaptureRetryPendingAt).toBeNull();
   });
 
   // #9876 regression, and the one that reached production: the #9462 clear above is UNREACHABLE in the case

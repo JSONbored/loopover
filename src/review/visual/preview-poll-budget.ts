@@ -21,6 +21,12 @@
 import { sha256Hex } from "../../utils/crypto";
 
 const BUDGET_R2_NAMESPACE = "loopover/preview-poll-budget/";
+// #10061: a SECOND, independent budget for the capture-RETRY chain (scheduleVisualCaptureRetry's renderFailed /
+// thrown-capture retries), living under its own R2 namespace so recording a capture-retry attempt never
+// advances -- or is advanced by -- the previewPending budget above, which buildCapture already accounts for
+// itself. Keeping the two namespaces (and therefore the two R2 keys, since the key is derived from
+// `headSha + ':' + <this string>`) apart is what makes the two budgets independently reasonable.
+const CAPTURE_RETRY_BUDGET_R2_NAMESPACE = "loopover/capture-retry-budget/";
 // A stale marker must eventually stop mattering even if nothing ever explicitly resets it (an abandoned PR,
 // a repo whose preview pipeline was reconfigured) -- 24h comfortably outlives any real preview-build wait,
 // well past actions-fallback.ts's own 18-minute dispatch-marker expiry for the same reason.
@@ -29,6 +35,11 @@ const BUDGET_MARKER_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 // combined -- the single source of truth processors.ts's own scheduling logic also imports, so the two
 // never drift out of sync.
 export const MAX_PREVIEW_POLL_ATTEMPTS = 5;
+// #10061: scheduleVisualCaptureRetry's exhausted-budget behaviour must stay exactly what it was when the
+// bound lived in the `attempt` payload field -- same cap, just read from a durable per-head counter instead.
+// Sharing the constant (rather than inventing a second, separately-tunable number) keeps that guarantee true
+// by construction.
+export const MAX_CAPTURE_RETRY_ATTEMPTS = MAX_PREVIEW_POLL_ATTEMPTS;
 // The delay between those attempts (reviewbot PREVIEW_POLL_SECONDS parity): when a PR's preview deploy isn't
 // live at review time, re-review after this long to re-capture the AFTER shot. Lives beside the attempt cap
 // rather than in processors.ts (#9876) because the two together ARE the retry budget: the latch deadline in
@@ -48,9 +59,9 @@ type BudgetRead = { marker: BudgetMarker | null; etag: string | null };
 // module already accepts for a genuine write failure.
 const BUDGET_CAS_MAX_ATTEMPTS = 3;
 
-async function budgetR2Key(headSha: string): Promise<string> {
-  const fingerprint = await sha256Hex(`${headSha}:preview-poll-budget`);
-  return `${BUDGET_R2_NAMESPACE}${fingerprint.slice(0, 40)}.json`;
+async function budgetR2Key(r2Namespace: string, keySuffix: string, headSha: string): Promise<string> {
+  const fingerprint = await sha256Hex(`${headSha}:${keySuffix}`);
+  return `${r2Namespace}${fingerprint.slice(0, 40)}.json`;
 }
 
 /** Validate a raw stored payload into a BudgetMarker, or null when it's malformed or older than
@@ -63,13 +74,13 @@ function parseBudgetMarker(text: string): BudgetMarker | null {
   return { count: marker.count, firstAttemptAt: marker.firstAttemptAt };
 }
 
-/** Shared read path for both public functions below. Returns a fail-open read (marker null, etag null) on any
- *  read error or a malformed/stale marker. Also surfaces the object's httpEtag so the increment path can do a
+/** Shared read path for every budget below. Returns a fail-open read (marker null, etag null) on any read
+ *  error or a malformed/stale marker. Also surfaces the object's httpEtag so the increment path can do a
  *  compare-and-swap write against exactly the version it read (#7780). */
-async function readBudgetMarker(env: Env, headSha: string): Promise<BudgetRead> {
+async function readBudgetMarker(env: Env, r2Namespace: string, keySuffix: string, headSha: string): Promise<BudgetRead> {
   if (!env.REVIEW_AUDIT) return { marker: null, etag: null };
   try {
-    const object = await env.REVIEW_AUDIT.get(await budgetR2Key(headSha));
+    const object = await env.REVIEW_AUDIT.get(await budgetR2Key(r2Namespace, keySuffix, headSha));
     if (!object) return { marker: null, etag: null };
     return { marker: parseBudgetMarker(await new Response(object.body).text()), etag: object.httpEtag };
   } catch {
@@ -77,25 +88,18 @@ async function readBudgetMarker(env: Env, headSha: string): Promise<BudgetRead> 
   }
 }
 
-/** How many preview-poll attempts have already been recorded for `headSha` -- 0 when no marker exists,
- *  storage is unavailable, or the existing marker has expired. Consulted by buildCapture BEFORE treating a
- *  "still building" preview state as worth another attempt. */
-export async function previewPollAttemptCount(env: Env, headSha: string): Promise<number> {
-  return (await readBudgetMarker(env, headSha)).marker?.count ?? 0;
-}
-
-/** Record one more preview-poll attempt for `headSha`, preserving the marker's original `firstAttemptAt`
- *  across increments so BUDGET_MARKER_MAX_AGE_MS expires from the FIRST attempt in this cycle, not resets on
- *  every poll (which would let a marker live forever as long as attempts keep arriving inside the window).
- *  Best effort -- a failed write just means this specific attempt doesn't count toward the budget, degrading
+/** Shared increment path for every budget below, preserving the marker's original `firstAttemptAt` across
+ *  increments so BUDGET_MARKER_MAX_AGE_MS expires from the FIRST attempt in this cycle, not resets on every
+ *  attempt (which would let a marker live forever as long as attempts keep arriving inside the window). Best
+ *  effort -- a failed write just means this specific attempt doesn't count toward the budget, degrading
  *  toward "keep trying a bit longer" rather than toward "stuck forever", the safer failure direction for a
  *  budget whose whole purpose is bounding retries, not enabling them. */
-export async function recordPreviewPollAttempt(env: Env, headSha: string): Promise<void> {
+async function recordBudgetAttempt(env: Env, r2Namespace: string, keySuffix: string, headSha: string): Promise<void> {
   if (!env.REVIEW_AUDIT) return;
   try {
-    const key = await budgetR2Key(headSha);
+    const key = await budgetR2Key(r2Namespace, keySuffix, headSha);
     for (let attempt = 0; attempt < BUDGET_CAS_MAX_ATTEMPTS; attempt += 1) {
-      const existing = await readBudgetMarker(env, headSha);
+      const existing = await readBudgetMarker(env, r2Namespace, keySuffix, headSha);
       const marker: BudgetMarker = { count: (existing.marker?.count ?? 0) + 1, firstAttemptAt: existing.marker?.firstAttemptAt ?? Date.now() };
       // Compare-and-swap against exactly the version we just read: only overwrite the existing object if its
       // etag is unchanged (etagMatches), or -- when we read no object -- only create one if none exists yet
@@ -110,4 +114,29 @@ export async function recordPreviewPollAttempt(env: Env, headSha: string): Promi
   } catch {
     // best effort -- see doc comment above
   }
+}
+
+/** How many preview-poll attempts have already been recorded for `headSha` -- 0 when no marker exists,
+ *  storage is unavailable, or the existing marker has expired. Consulted by buildCapture BEFORE treating a
+ *  "still building" preview state as worth another attempt. */
+export async function previewPollAttemptCount(env: Env, headSha: string): Promise<number> {
+  return (await readBudgetMarker(env, BUDGET_R2_NAMESPACE, "preview-poll-budget", headSha)).marker?.count ?? 0;
+}
+
+/** Record one more preview-poll attempt for `headSha`. See recordBudgetAttempt for the shared contract. */
+export async function recordPreviewPollAttempt(env: Env, headSha: string): Promise<void> {
+  return recordBudgetAttempt(env, BUDGET_R2_NAMESPACE, "preview-poll-budget", headSha);
+}
+
+/** How many capture-RETRY attempts (scheduleVisualCaptureRetry's renderFailed / thrown-capture chain) have
+ *  already been recorded for `headSha` -- 0 when no marker exists, storage is unavailable, or the existing
+ *  marker has expired. Lives in its own R2 namespace (CAPTURE_RETRY_BUDGET_R2_NAMESPACE), so it is never
+ *  double-charged by, or double-charges, previewPollAttemptCount's own budget above (#10061). */
+export async function captureRetryAttemptCount(env: Env, headSha: string): Promise<number> {
+  return (await readBudgetMarker(env, CAPTURE_RETRY_BUDGET_R2_NAMESPACE, "capture-retry-budget", headSha)).marker?.count ?? 0;
+}
+
+/** Record one more capture-retry attempt for `headSha`. See recordBudgetAttempt for the shared contract. */
+export async function recordCaptureRetryAttempt(env: Env, headSha: string): Promise<void> {
+  return recordBudgetAttempt(env, CAPTURE_RETRY_BUDGET_R2_NAMESPACE, "capture-retry-budget", headSha);
 }

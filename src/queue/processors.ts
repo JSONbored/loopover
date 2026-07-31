@@ -4369,6 +4369,27 @@ export async function reReviewStoredPullRequest(
     ))
   )
     return false;
+  // #10222: back off AFTER the readiness gate, but BEFORE onReachedReadiness and the retrigger consumption
+  // just below. #10204 placed it after the actuation-lock claim, past both -- so a backed-off pass had already
+  // consumed the user's one-shot "Re-run LoopOver review" marker and charged regatePullRequest's repair budget
+  // for work it never did. It must not move EARLIER than readiness either: readiness legitimately defers a
+  // pass (rebase fired, CI still running), and the screenshot-table gate's bounded recapture chain (#10061)
+  // depends on those deferrals continuing to happen, so a pre-readiness guard silently truncates that retry
+  // budget. Between the two is the only correct place.
+  //
+  // `force` is an operator's manual re-gate and `previewPollAttempt` is a visual poll's own next tick -- both
+  // are explicit requests for THIS pass, and backoff must never suppress a pass a human or a bounded retry
+  // chain asked for.
+  if (
+    await stableVerdictBackoffEngaged(env, {
+      repoFullName,
+      prNumber,
+      headSha: pr.headSha,
+      deliveryId,
+      explicitlyRequested: options.force === true || previewPollAttempt !== undefined,
+    })
+  )
+    return false;
   // Fire BEFORE any further (throwable) work below -- this is the one instant readiness is confirmed, so a
   // caller learns it even if this call goes on to THROW instead of returning (see the JSDoc above).
   options.onReachedReadiness?.();
@@ -4447,32 +4468,6 @@ export async function reReviewStoredPullRequest(
       metadata: { deliveryId, repoFullName },
     }).catch(() => undefined);
     throw new PrActuationLockContendedError(repoFullName, pr.number, "public-surface-publish");
-  }
-  // #10184: a PR whose answer has not changed does not need asking again yet. metagraphed#8886 produced 56
-  // identical `hold | missing_linked_issue` verdicts on ONE head SHA in 47 minutes; four such PRs made 66% of
-  // all decision records in a two-hour window, and that window exhausted the installation's REST quota.
-  //
-  // Placed AFTER the lock claim so the check itself is nearly free (one cache read on a pass that already
-  // owns the PR) and BEFORE the refresh, so a backed-off pass spends nothing. Returns rather than throws:
-  // this is not contention, there is no work to retry, and the state is already published and correct.
-  //
-  // Fails OPEN in every uncertain case -- no state, unreadable state, no cache -- see verdict-stability.ts.
-  // The delay is capped, so a stuck PR is still revisited; it just stops being asked 1.2x/minute.
-  if (pr.headSha) {
-    const stability = await readVerdictStability(env.SELFHOST_TRANSIENT_CACHE, verdictStabilityKey(repoFullName, pr.number, pr.headSha));
-    if (shouldSkipStableVerdict(stability, Date.now())) {
-      await recordAuditEvent(env, {
-        eventType: "github_app.review_skipped_stable_verdict",
-        actor: "loopover",
-        targetKey: `${repoFullName}#${pr.number}`,
-        outcome: "completed",
-        detail: `Verdict unchanged across ${stability?.repeats ?? 0} consecutive evaluations of this commit; backing off instead of re-deriving the same answer.`,
-        metadata: { deliveryId, repoFullName, repeats: stability?.repeats ?? 0 },
-      }).catch(() => undefined);
-      await releasePrActuationLock(env, repoFullName, pr.number, actuationLock.ownerToken).catch(() => undefined);
-      // false = "did not re-review", the same signal this function's other early bail uses.
-      return false;
-    }
   }
   // #2537 follow-up (gate-flagged): the durable review cache's only invalidation path is markPullRequestReviewsInvalidated
   // on a webhook (processors.ts). A "quiet" PR (no new pushes, slop evidence + manifest gate both off, no
@@ -5142,6 +5137,51 @@ async function consumePendingPrPanelRetrigger(
  * varies by call (#selfhost-ci-deferral-staleness). A missing cache / cache hiccup degrades to `false` (never
  * force-finalize → keeps the safe old defer rather than acting early).
  */
+/**
+ * #10222: should this publish-and-maintain pass back off, because this PR's verdict has not changed (#10184)?
+ *
+ * Shared by BOTH sites that run the unit -- `reReviewStoredPullRequest` (sweep / CI completion) and
+ * `handlePullRequestWebhookEvent` (the `pull_request` webhook). #10204 guarded only the first, which left the
+ * DOMINANT source unthrottled: over 24h on the Orb, 293 of 344 repeat evaluations carried
+ * `upstream_state_change` -- `deriveReevaluationReason`'s mapping for a RAW GitHub delivery, i.e. the webhook
+ * path. A label write the engine itself caused arrives there, not on the sweep.
+ *
+ * Call this BEFORE the readiness gate at either site. Readiness fires `onReachedReadiness` (which charges
+ * regatePullRequest's repair budget) and consumes the one-shot panel-retrigger marker, and a pass that backs
+ * off after those has silently eaten a user's "Re-run LoopOver review" click with nothing left to re-trigger
+ * it. Before the lock claim, too: there is no lock to take or release on a pass that is not going to run.
+ *
+ * `explicitlyRequested` is the escape hatch and the reason this takes a flag at all -- backoff exists to stop
+ * the machine asking itself the same question, and must NEVER suppress a pass a human asked for.
+ *
+ * Fails OPEN everywhere: no head SHA, no state, unreadable state, no cache, or a throwing read all return
+ * false and evaluate normally (see verdict-stability.ts). The delay is capped, so even a stuck PR is still
+ * revisited -- it just stops being asked 1.2x/minute.
+ */
+async function stableVerdictBackoffEngaged(
+  env: Env,
+  args: { repoFullName: string; prNumber: number; headSha: string | null | undefined; deliveryId: string; explicitlyRequested: boolean },
+): Promise<boolean> {
+  const { repoFullName, prNumber, headSha, deliveryId, explicitlyRequested } = args;
+  // The `!headSha` half is enforced by TSC, not by a test: verdictStabilityKey takes a `string`, so removing
+  // it does not compile. Mutation testing confirms no RUNTIME test can distinguish its absence -- with no head
+  // SHA the lookup would miss and shouldSkipStableVerdict would return false anyway -- so it is an early-out
+  // that saves a pointless cache round-trip, not a safety guard. Recorded here so nobody later mistakes it for
+  // one (same reasoning as verdict-stability.ts's removed exponent clamp).
+  if (explicitlyRequested || !headSha) return false;
+  const stability = await readVerdictStability(env.SELFHOST_TRANSIENT_CACHE, verdictStabilityKey(repoFullName, prNumber, headSha)).catch(() => null);
+  if (!shouldSkipStableVerdict(stability, Date.now())) return false;
+  await recordAuditEvent(env, {
+    eventType: "github_app.review_skipped_stable_verdict",
+    actor: "loopover",
+    targetKey: `${repoFullName}#${prNumber}`,
+    outcome: "completed",
+    detail: `Verdict unchanged across ${stability?.repeats ?? 0} consecutive evaluations of this commit; backing off instead of re-deriving the same answer.`,
+    metadata: { deliveryId, repoFullName, repeats: stability?.repeats ?? 0 },
+  }).catch(() => undefined);
+  return true;
+}
+
 async function ciPendingDeferStuck(
   env: Env,
   repoFullName: string,

@@ -12208,6 +12208,9 @@ async function maybePublishPrPublicSurface(
               // gates on the AI verdict, so there is nothing to shop for there. Best-effort/fail-open by
               // construction (recordVerdictFlip never throws); a persistable placeholder never counts as a roll.
               if (aiReview && aiReview.persistable !== false && settings.aiReviewMode === "block") {
+                /* v8 ignore next -- aiReview here is always cachedReview or runAiReviewForAdvisory's result (see the
+                 * assignments above), both of which always populate `findings` as a real array; the `?? []` is a
+                 * type-level fallback for the outer `aiReview` declaration's wider (optional) field type only. */
                 const verdictFlip = await recordVerdictFlip(env, repoFullName, pr.number, aiReview.findings ?? [], inputFingerprint);
                 if (verdictFlip.escalate) {
                   advisory.findings.push({
@@ -12224,7 +12227,7 @@ async function maybePublishPrPublicSurface(
                     targetKey: `${repoFullName}#${pr.number}`,
                     outcome: "completed",
                     detail: `verdict flipped ${verdictFlip.flipCount} times; held for human review`,
-                    metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null, flipCount: verdictFlip.flipCount },
+                    metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null, flipCount: verdictFlip.flipCount },
                   }).catch(() => undefined);
                 }
               }
@@ -12233,6 +12236,8 @@ async function maybePublishPrPublicSurface(
               // scheduling race, not a real AI opinion, and the concurrent pass it deferred to persists the real
               // result within seconds — writing this placeholder (even non-durably) could replay a stale "another
               // pass is running" message for the rest of the cooldown window, well after that race resolved.
+              /* v8 ignore next -- aiReview is always defined here (cachedReview or runAiReviewForAdvisory's result,
+               * assigned just above); the truthy check is a type-level guard for an unreachable branch. */
               if (aiReview && aiReview.persistable !== false) {
                 // A dynamic-context result is never durably cacheable (see the comment above); otherwise defer to
                 // the review's own verdict (consensus defect / inconclusive → false).

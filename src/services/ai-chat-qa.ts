@@ -1,4 +1,5 @@
 import { recordAiUsageEvent, recordAuditEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
+import { estimateNeurons, extractAiText } from "./ai-usage-estimate";
 import { sanitizePublicComment } from "../queue-intelligence";
 import type { AdvisoryAiRoutingConfig } from "../types";
 import type { AgentRunBundle } from "./agent-orchestrator";
@@ -130,7 +131,7 @@ export async function generateChatQaAnswer(env: Env, req: ChatQaRequest): Promis
   const model = env.WORKERS_AI_SUMMARY_MODEL || "";
   const maxOutputTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 64, 512);
   const prompt = buildChatPrompt(question, grounding);
-  const estimatedNeurons = estimateNeurons(prompt, maxOutputTokens);
+  const estimatedNeurons = estimateNeurons(prompt.length, maxOutputTokens);
   // Shared daily neuron budget: the SAME counter every AI feature sums into (ai-review / ai-slop / ai-summaries,
   // #1369). Default HIGH (10M) and clamp to 10M so chat Q&A never starves — or is starved by — the shared pool.
   const rawNeuronBudget = Number(env.AI_DAILY_NEURON_BUDGET);
@@ -155,7 +156,14 @@ export async function generateChatQaAnswer(env: Env, req: ChatQaRequest): Promis
     // without masking a real, persistent failure: if it's STILL empty on the second try, the loop falls
     // through with rawText === "" and the check below throws exactly as it always did.
     let rawText = "";
+    // #10169: count the calls actually made. `estimatedNeurons` above is the PRE-FLIGHT figure (one call, all
+    // that is knowable before the first attempt) and is what the budget gate compares -- but the same value
+    // was also being RECORDED, so a retry spent two calls and reported one into the very counter
+    // sumAiEstimatedNeuronsSince adds up as the shared daily budget. Under-reporting there is the wrong
+    // direction: it hides spend from the backstop meant to notice runaway usage.
+    let providerCalls = 0;
     for (let attempt = 0; attempt < 2 && !rawText; attempt += 1) {
+      providerCalls += 1;
       const response = await ai.run(model, {
         messages: [
           { role: "system", content: CHAT_QA_SYSTEM_PROMPT },
@@ -167,11 +175,13 @@ export async function generateChatQaAnswer(env: Env, req: ChatQaRequest): Promis
       rawText = extractAiText(response) ?? "";
     }
     if (!rawText) throw new Error("empty_chat_answer");
+    // Recorded spend, as opposed to the pre-flight estimate above.
+    const spentNeurons = estimateNeurons(prompt.length, maxOutputTokens, providerCalls);
     if (containsPublicForbiddenText(rawText)) {
-      await recordChatAi(env, req, { model, status: "unsafe", estimatedNeurons, detail: "chat answer failed public sanitizer", usedFrontier });
+      await recordChatAi(env, req, { model, status: "unsafe", estimatedNeurons: spentNeurons, detail: "chat answer failed public sanitizer", usedFrontier });
       return { status: "unsafe", model, estimatedNeurons, reason: "chat answer failed public sanitizer" };
     }
-    await recordChatAi(env, req, { model, status: "ok", estimatedNeurons, detail: "chat answer generated", usedFrontier });
+    await recordChatAi(env, req, { model, status: "ok", estimatedNeurons: spentNeurons, detail: "chat answer generated", usedFrontier });
     return { status: "ok", model, estimatedNeurons, text: rawText.trim() };
   } catch (error) {
     const reason = error instanceof Error ? error.message : "chat_answer_failed";
@@ -222,20 +232,7 @@ function containsPublicForbiddenText(value: string): boolean {
   return PUBLIC_FORBIDDEN_TEXT_PATTERN.test(value);
 }
 
-function estimateNeurons(prompt: string, maxOutputTokens: number): number {
-  const inputTokens = Math.ceil(prompt.length / 4);
-  return Math.max(1, Math.ceil((inputTokens + maxOutputTokens) * 0.035));
-}
 
-function extractAiText(response: unknown): string {
-  if (typeof response === "string") return response;
-  if (!response || typeof response !== "object") return "";
-  const record = response as Record<string, unknown>;
-  if (typeof record.response === "string") return record.response;
-  if (typeof record.text === "string") return record.text;
-  if (typeof record.result === "string") return record.result;
-  return "";
-}
 
 function clampNumber(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;

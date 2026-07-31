@@ -189,8 +189,8 @@ describe("__intentRouterInternals", () => {
   });
 
   it("estimates neurons from prompt length and output tokens, with a floor of 1", () => {
-    expect(estimateNeurons("a".repeat(400), 32)).toBeGreaterThanOrEqual(1);
-    expect(estimateNeurons("", 0)).toBe(1);
+    expect(estimateNeurons("a".repeat(400).length, 32)).toBeGreaterThanOrEqual(1);
+    expect(estimateNeurons("".length, 0)).toBe(1);
   });
 
   it("extracts text from every recognized response shape and falls back to empty otherwise", () => {

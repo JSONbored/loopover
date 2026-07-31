@@ -684,6 +684,11 @@ three standalone bindings (`AI_EMBED`, `AI_VISION`, `AI_ADVISORY`).
         "$ai_model is always the model the provider actually resolved — on the failure path too. The core passes a Workers-AI model id that every self-host provider discards, so it is resolved to the real one (or <provider>-default) before capture and never reported verbatim.",
     },
     {
+      title: "Trace naming",
+      description:
+        "$ai_trace names the whole review in PostHog's Traces view. Emitted once per trace, by the outermost pipeline span, and only when at least one AI call actually ran under it — a pipeline span with no generations is never given a trace row.",
+    },
+    {
       title: "Degraded requests",
       description:
         "selfhost_ai_degraded is emitted for a request that reached NO model: reason=circuit_open (a provider skipped while its breaker is in cooldown) or reason=chain_exhausted (every provider in AI_PROVIDER threw). It shares the $ai_trace_id of the surrounding attempts, and is deliberately NOT an $ai_generation — no model ran, so none is credited with the failure and the spend/token aggregates stay a record of real calls.",

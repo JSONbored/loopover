@@ -214,6 +214,22 @@ describe("extractContentDuplicateSignals + strict match", () => {
     const m = findStrictContentDuplicateMatch(a, [b]);
     expect(m?.reasons.some((r) => r.includes("same normalized description"))).toBe(true);
   });
+
+  it("REGRESSION (#9992): an entry whose only URL frontmatter key is documentation_url still yields a non-empty urls signal", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/skills/doc-only.mdx",
+      content: mdx({ title: "Doc Only", slug: "doc-only", documentation_url: "https://docs.acme.example/guide" }),
+    });
+    expect(sig.urls).toContain("https://docs.acme.example/guide");
+  });
+
+  it("does not pick up an unrelated non-URL frontmatter key into the urls signal", () => {
+    const sig = extractContentDuplicateSignals({
+      filePath: "content/skills/no-url.mdx",
+      content: mdx({ title: "No Url", slug: "no-url", pricing_model: "https://example.com/pricing-not-a-url-field" }),
+    });
+    expect(sig.urls).toEqual([]);
+  });
 });
 
 describe("normalizeUrl — RFC 3986 percent-encoding canonicalization for duplicate detection", () => {

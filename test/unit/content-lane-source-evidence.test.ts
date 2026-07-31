@@ -67,11 +67,23 @@ describe("extractSubmittedSourceUrls", () => {
     // was invisible to the source-evidence gate even though duplicates.ts (which reads urlFields) saw it.
     const pairs = extractSubmittedSourceUrls(mdx({ source_url: "https://github.com/acme/y" })).map((u) => `${u.field}:${u.url}`);
     expect(pairs).toContain("source_url:https://github.com/acme/y");
-    // Every snake_case alias urlFields carries is now recognized here too.
-    for (const field of ["docs_url", "download_url", "github_url", "package_url", "repo_url", "repository_url", "source_url", "website_url"]) {
-      expect(AWESOME_CLAUDE_CONTENT_SPEC.sourceUrlFields).toContain(field);
-      expect(AWESOME_CLAUDE_CONTENT_SPEC.urlFields.has(field)).toBe(true);
+  });
+
+  it("every camelCase urlFields member has its snake_case alias present in both urlFields and sourceUrlFields (mirrors #7250/#7445's pairing assertion; #9992)", () => {
+    // Derived, not hand-enumerated: a hard-coded list here (as before #9992) cannot catch the next URL field
+    // that gets added to urlFields without a matching snake_case alias — it would silently pass regardless.
+    const toSnakeCase = (field: string): string => field.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
+    for (const field of AWESOME_CLAUDE_CONTENT_SPEC.urlFields) {
+      if (!/[A-Z]/.test(field)) continue;
+      const snakeCase = toSnakeCase(field);
+      expect(AWESOME_CLAUDE_CONTENT_SPEC.urlFields.has(snakeCase)).toBe(true);
+      expect(AWESOME_CLAUDE_CONTENT_SPEC.sourceUrlFields).toContain(snakeCase);
     }
+  });
+
+  it("REGRESSION (#9992): extracts documentation_url the same way as documentationUrl", () => {
+    const urls = extractSubmittedSourceUrls(mdx({ documentation_url: "https://docs.acme.example/guide" }));
+    expect(urls).toEqual([{ field: "documentation_url", url: "https://docs.acme.example/guide" }]);
   });
 });
 

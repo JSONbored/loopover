@@ -5408,17 +5408,6 @@ export async function countRecentMergedPullRequests(env: Env, fullName: string):
   return Number(row?.count ?? 0);
 }
 
-export async function listContributorRecentMergedPullRequests(env: Env, login: string): Promise<RecentMergedPullRequestRecord[]> {
-  const db = getDb(env.DB);
-  const rows = await db
-    .select()
-    .from(recentMergedPullRequests)
-    .where(loginMatches(recentMergedPullRequests.authorLogin, login))
-    .orderBy(desc(recentMergedPullRequests.mergedAt))
-    .limit(1000);
-  return rows.map(toRecentMergedPullRequestRecord);
-}
-
 export async function upsertContributor(env: Env, contributor: ContributorRecord): Promise<void> {
   const db = getDb(env.DB);
   await db

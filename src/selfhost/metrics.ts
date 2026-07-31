@@ -147,6 +147,13 @@ export const DEFAULT_METRIC_META: readonly (readonly [string, MetricMeta])[] = [
   ["loopover_review_end_to_end_latency_seconds", { help: "Real end-to-end review latency in seconds, from the PR's current head SHA becoming ready for review (open + non-draft) to this pass's comment publish -- distinct from a single queue job's own claim-to-completion latency_ms, this spans every queueing/deferral wait in between.", type: "histogram" }],
   ["loopover_github_branch_protection_permission_denied_total", { help: "GitHub branch-protection reads denied by permissions.", type: "counter" }],
   ["loopover_github_pull_request_files_fetch_total", { help: "GitHub pull-request file fetch attempts.", type: "counter" }],
+  [
+    "loopover_github_open_data_backfill_skipped_total",
+    {
+      help: "Scheduled open-data backfills skipped by the freshness/error-backoff gate, by reason (fresh_success/recent_error). A repo whose crawl is genuinely starved shows a sustained fresh_success rate with no matching segment progress (#10193).",
+      type: "counter",
+    },
+  ],
   ["loopover_pr_state_cache_total", { help: "Pull-request state cache outcomes.", type: "counter" }],
   ["loopover_ci_state_cache_total", { help: "CI-state snapshot cache outcomes.", type: "counter" }],
   ["loopover_ops_anomaly_total", { help: "Ops anomaly scan detections (review burst / review failure burst), by repo and kind.", type: "counter" }],

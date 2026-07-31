@@ -10,7 +10,6 @@ import {
   listCollisionEdges,
   listContributorIssues,
   listContributorPullRequests,
-  listContributorRecentMergedPullRequests,
   listContributorRepoStats,
   listInstallationHealth,
   listInstallations,
@@ -196,7 +195,6 @@ describe("data spine repositories", () => {
     });
     expect(await listContributorRepoStats(env, "oktofeesh1")).toMatchObject([{ repoFullName: "JSONbored/loopover", dominantLabels: ["bug"] }]);
     expect(await listContributorRepoStats(env, "OKTOFEESH1")).toMatchObject([{ repoFullName: "JSONbored/loopover", dominantLabels: ["bug"] }]);
-    expect(await listContributorRecentMergedPullRequests(env, "OKTOFEESH1")).toMatchObject([{ repoFullName: "JSONbored/loopover", number: 4 }]);
     await env.DB.prepare(
       "insert into contributor_repo_stats (id, login, repo_full_name, pull_requests, merged_pull_requests, open_pull_requests, issues, stale_pull_requests, unlinked_pull_requests, dominant_labels_json, last_activity_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )

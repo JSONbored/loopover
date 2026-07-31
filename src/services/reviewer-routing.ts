@@ -43,6 +43,35 @@ export type RoutingShadowDecision = {
 };
 
 /**
+ * PURE: the shadow decision as PostHog `$ai_metric` measurements (#10265), joined by the caller to the
+ * review's own AI trace so the routing evidence reads against the cost and model of the run that produced it.
+ *
+ * Deliberately NOT "did the shadow agree with what ran": `computeWouldHaveRouted` picks its leader OUT of
+ * `actualProviders`, so a preferred provider is by construction always one that ran, and an agreement metric
+ * would be a constant 1. What varies — and what the shadow actually measures — is how DECISIVELY the evidence
+ * favours the leader, so that is what is reported:
+ *
+ * - `routing_shadow_precision_margin` — leader precision minus runner-up. Strictly > 0 (a tie yields no
+ *   decision at all), and a margin near zero says the preference is real but weak.
+ * - `routing_shadow_preferred_precision` — the leader's own precision, without which the margin cannot be
+ *   read (0.02 between 0.97 and 0.95 is a different claim than between 0.05 and 0.03).
+ *
+ * `basis` arrives in `actualProviders` order rather than ranked, so the top two are taken by sorting here.
+ * A decision always carries at least two entries — the null guards upstream (lone reviewer, missing/floor-shy
+ * row, tie) mean this is only ever reached with a strict leader over a runner-up.
+ */
+export function routingShadowMetrics(decision: RoutingShadowDecision): Array<{ name: string; value: number }> {
+  const ranked = [...decision.basis].sort((a, b) => b.precision - a.precision);
+  const leader = ranked[0];
+  const runnerUp = ranked[1];
+  if (!leader || !runnerUp) return [];
+  return [
+    { name: "routing_shadow_precision_margin", value: leader.precision - runnerUp.precision },
+    { name: "routing_shadow_preferred_precision", value: leader.precision },
+  ];
+}
+
+/**
  * PURE: what would evidence-weighted routing have preferred for this repo, given the current track
  * records and the providers the review ACTUALLY used? Null — record nothing — unless EVERY actual
  * provider has a repo-scoped row at/above the decided floor with a non-null precision, and exactly one

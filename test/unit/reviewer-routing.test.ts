@@ -10,6 +10,7 @@ import {
   REVIEWER_VOTE_EVENT_TYPE,
   REVIEWER_VOTE_SCAN_LIMIT,
   ROUTING_MIN_DECIDED,
+  routingShadowMetrics,
 } from "../../src/services/reviewer-routing";
 import { buildRoutingRecapSection } from "../../src/services/maintainer-recap-routing";
 import { formatMaintainerRecap, runMaintainerRecap } from "../../src/services/maintainer-recap";
@@ -65,6 +66,37 @@ describe("computeWouldHaveRouted (#8229 stage 1)", () => {
     expect(computeWouldHaveRouted([dense[0]!, record("codex", { decided: ROUTING_MIN_DECIDED - 1 })], REPO, PAIR)).toBeNull();
     expect(computeWouldHaveRouted([dense[0]!, record("codex", { precision: null })], REPO, PAIR)).toBeNull();
     expect(computeWouldHaveRouted([record("claude-code"), record("codex")], REPO, PAIR)).toBeNull(); // 0.7 === 0.7
+  });
+});
+
+describe("routingShadowMetrics (#10265)", () => {
+  const PAIR = ["claude-code", "codex"];
+
+  it("reports the leader's margin over the runner-up AND the leader's own precision", () => {
+    const decision = computeWouldHaveRouted([record("claude-code", { precision: 0.9 }), record("codex", { precision: 0.6 })], REPO, PAIR)!;
+    expect(routingShadowMetrics(decision)).toEqual([
+      { name: "routing_shadow_precision_margin", value: 0.9 - 0.6 },
+      { name: "routing_shadow_preferred_precision", value: 0.9 },
+    ]);
+  });
+
+  it("ranks the basis itself rather than trusting its order -- basis arrives in actualProviders order, not by precision", () => {
+    // codex leads, but claude-code is first in `basis` because that is the order the review ran them in.
+    const decision = computeWouldHaveRouted([record("claude-code", { precision: 0.4 }), record("codex", { precision: 0.95 })], REPO, PAIR)!;
+    expect(decision.basis[0]?.provider).toBe("claude-code"); // unranked, as the decision contract states
+    expect(decision.preferredProvider).toBe("codex");
+    expect(routingShadowMetrics(decision)).toEqual([
+      { name: "routing_shadow_precision_margin", value: 0.95 - 0.4 },
+      { name: "routing_shadow_preferred_precision", value: 0.95 },
+    ]);
+  });
+
+  it("reports nothing without a leader AND a runner-up to compare -- a margin needs two", () => {
+    // Unreachable through computeWouldHaveRouted (its lone-reviewer guard fires first), so constructed
+    // directly: the helper must not invent a margin from a one-sided basis if a caller ever hands it one.
+    const base = { repoFullName: REPO, preferredProvider: "claude-code", actualProviders: PAIR };
+    expect(routingShadowMetrics({ ...base, basis: [] })).toEqual([]);
+    expect(routingShadowMetrics({ ...base, basis: [{ provider: "claude-code", decided: 12, precision: 0.9 }] })).toEqual([]);
   });
 });
 

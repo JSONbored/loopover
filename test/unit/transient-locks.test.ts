@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { heldLockCountForTest, releaseAllHeldLocksAtShutdown } from "../../src/queue/held-lock-registry";
 import { SubmissionLock } from "../../src/queue/submission-lock";
 import {
   claimContributorCapLock,
@@ -501,15 +502,18 @@ describe("domain wrappers + PrActuationLockContendedError (#8896)", () => {
     });
     delete env.SUBMISSION_LOCK;
 
-    await claimPrActuationLock(env, "acme/widgets", 7);
+    const prClaim = await claimPrActuationLock(env, "acme/widgets", 7);
     const [actuationTtl] = ttlCalls;
     ttlCalls.length = 0;
 
-    await claimContributorCapLock(env, "acme/widgets", "alice");
+    const capClaim = await claimContributorCapLock(env, "acme/widgets", "alice");
     const [capTtl] = ttlCalls;
 
     expect(capTtl).toBe(actuationTtl);
     expect(capTtl).toBe(600);
+
+    await releasePrActuationLock(env, "acme/widgets", 7, prClaim.ownerToken);
+    await releaseContributorCapLock(env, "acme/widgets", "alice", capClaim.ownerToken);
   });
 
   it("builds a fast-retry contended error with a distinct retryKind", () => {
@@ -839,5 +843,154 @@ describe("lock heartbeat end-to-end (#9467)", () => {
     beat.stop();
     await releaseTransientLockIfOwner(env, "lock:pr", held.ownerToken);
     expect((await claimTransientLock(env, "lock:pr", 60)).acquired).toBe(true);
+  });
+});
+
+// #10021: register actuation and contributor-cap locks in the shutdown held-lock registry (same shape as
+// claimAiReviewLock / releaseAiReviewLock in ai-review-orchestration.ts).
+describe("claimPrActuationLock / releasePrActuationLock register with the held-lock registry (#10021)", () => {
+  afterEach(async () => {
+    await releaseAllHeldLocksAtShutdown();
+  });
+
+  function cacheWithReleaseTracking() {
+    const releases: Array<{ key: string; value: string }> = [];
+    const held = new Map<string, string>();
+    const cache = {
+      get: async (key: string) => held.get(key) ?? null,
+      set: async () => undefined,
+      claim: async (key: string, value: string) => {
+        if (held.has(key)) return false;
+        held.set(key, value);
+        return true;
+      },
+      releaseIfValue: async (key: string, value: string) => {
+        releases.push({ key, value });
+        if (held.get(key) !== value) return false;
+        held.delete(key);
+        return true;
+      },
+    };
+    return { cache, releases };
+  }
+
+  it("registers a real claim, and shutdown release issues releaseIfValue for the pr-actuation-lock key", async () => {
+    const { cache, releases } = cacheWithReleaseTracking();
+    const env = createTestEnv({ SELFHOST_TRANSIENT_CACHE: cache });
+    delete env.SUBMISSION_LOCK;
+
+    const before = heldLockCountForTest();
+    const claim = await claimPrActuationLock(env, "acme/widgets", 7);
+    expect(claim.acquired).toBe(true);
+    expect(heldLockCountForTest()).toBe(before + 1);
+    expect(releases).toHaveLength(0);
+
+    expect(await releaseAllHeldLocksAtShutdown()).toBe(before + 1);
+    expect(releases).toEqual([
+      { key: "pr-actuation-lock:acme/widgets#7", value: claim.ownerToken },
+    ]);
+  });
+
+  it("unregisters on the normal release path with a matching owner token", async () => {
+    const env = createTestEnv();
+    const before = heldLockCountForTest();
+    const claim = await claimPrActuationLock(env, "acme/widgets", 8);
+    await releasePrActuationLock(env, "acme/widgets", 8, claim.ownerToken);
+    expect(heldLockCountForTest()).toBe(before);
+  });
+
+  it("does not register a fail-open claim — there is nothing real to release", async () => {
+    const env = createTestEnv();
+    delete (env as { SELFHOST_TRANSIENT_CACHE?: unknown }).SELFHOST_TRANSIENT_CACHE;
+    const before = heldLockCountForTest();
+    const claim = await claimPrActuationLock(env, "acme/widgets", 10);
+    expect(claim.ownerToken).toBeNull();
+    expect(heldLockCountForTest()).toBe(before);
+  });
+
+  it("a null-token release does not unregister a real held entry", async () => {
+    const env = createTestEnv();
+    const before = heldLockCountForTest();
+    await claimPrActuationLock(env, "acme/widgets", 11);
+    await releasePrActuationLock(env, "acme/widgets", 11, null);
+    expect(heldLockCountForTest()).toBe(before + 1);
+  });
+
+  it("#10021 releasePrActuationLock with a non-matching ownerToken does not evict the registry entry (#9468)", async () => {
+    const env = createTestEnv();
+    const before = heldLockCountForTest();
+    await claimPrActuationLock(env, "acme/widgets", 9);
+    expect(heldLockCountForTest()).toBe(before + 1);
+    await releasePrActuationLock(env, "acme/widgets", 9, "tok-someone-else");
+    expect(heldLockCountForTest()).toBe(before + 1);
+  });
+});
+
+describe("claimContributorCapLock / releaseContributorCapLock register with the held-lock registry (#10021)", () => {
+  afterEach(async () => {
+    await releaseAllHeldLocksAtShutdown();
+  });
+
+  function cacheWithReleaseTracking() {
+    const releases: Array<{ key: string; value: string }> = [];
+    const held = new Map<string, string>();
+    const cache = {
+      get: async (key: string) => held.get(key) ?? null,
+      set: async () => undefined,
+      claim: async (key: string, value: string) => {
+        if (held.has(key)) return false;
+        held.set(key, value);
+        return true;
+      },
+      releaseIfValue: async (key: string, value: string) => {
+        releases.push({ key, value });
+        if (held.get(key) !== value) return false;
+        held.delete(key);
+        return true;
+      },
+    };
+    return { cache, releases };
+  }
+
+  it("registers a real claim, and shutdown release issues releaseIfValue for the contributor-cap-lock key", async () => {
+    const { cache, releases } = cacheWithReleaseTracking();
+    const env = createTestEnv({ SELFHOST_TRANSIENT_CACHE: cache });
+    delete env.SUBMISSION_LOCK;
+
+    const before = heldLockCountForTest();
+    const claim = await claimContributorCapLock(env, "Acme/Widgets", "Alice");
+    expect(claim.acquired).toBe(true);
+    expect(heldLockCountForTest()).toBe(before + 1);
+    expect(releases).toHaveLength(0);
+
+    expect(await releaseAllHeldLocksAtShutdown()).toBe(before + 1);
+    expect(releases).toEqual([
+      { key: "contributor-cap-lock:acme/widgets:alice", value: claim.ownerToken },
+    ]);
+  });
+
+  it("unregisters on the normal release path with a matching owner token", async () => {
+    const env = createTestEnv();
+    const before = heldLockCountForTest();
+    const claim = await claimContributorCapLock(env, "acme/widgets", "bob");
+    await releaseContributorCapLock(env, "acme/widgets", "bob", claim.ownerToken);
+    expect(heldLockCountForTest()).toBe(before);
+  });
+
+  it("does not register a fail-open claim — there is nothing real to release", async () => {
+    const env = createTestEnv();
+    delete (env as { SELFHOST_TRANSIENT_CACHE?: unknown }).SELFHOST_TRANSIENT_CACHE;
+    const before = heldLockCountForTest();
+    const claim = await claimContributorCapLock(env, "acme/widgets", "dave");
+    expect(claim.ownerToken).toBeNull();
+    expect(heldLockCountForTest()).toBe(before);
+  });
+
+  it("a null-token release does not unregister a real held entry", async () => {
+    const env = createTestEnv();
+    const before = heldLockCountForTest();
+    await claimContributorCapLock(env, "acme/widgets", "carol");
+    await releaseContributorCapLock(env, "acme/widgets", "carol", null);
+    expect(heldLockCountForTest()).toBe(before + 1);
   });
 });

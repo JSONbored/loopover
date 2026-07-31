@@ -273,4 +273,51 @@ describe("MCP server telemetry", () => {
     expect(response.status).toBe(200);
     await expect(response.clone().json()).resolves.toEqual({ ok: true, result: "unchanged" });
   });
+
+  // REGRESSION (#10190): the #10175 handshake read called `c.req.raw.clone()` AFTER createMcpHandler had
+  // consumed the body. The Fetch spec forbids cloning a request whose body is already disturbed, so it threw
+  // `TypeError: unusable`, handleMcpRequest's catch rethrew, and a correct 2xx MCP response was replaced by an
+  // unhandled 500 -- on every `initialize`, i.e. the first call of every MCP session. The telemetry key gate
+  // did not save it: the handshake read is an ARGUMENT to recordMcpInitialize, evaluated before its no-op check.
+  const runInitialize = async (params: unknown): Promise<Response> => {
+    vi.resetModules();
+    // A handler that CONSUMES the request body, exactly as the real MCP transport does -- the whole point of
+    // the regression. A handler that ignored the body would pass even with the bug reintroduced.
+    vi.doMock("agents/mcp", () => ({
+      createMcpHandler: () => async (request: Request) => {
+        await request.text();
+        return Response.json({ jsonrpc: "2.0", id: "init", result: { protocolVersion: "2024-11-05" } });
+      },
+    }));
+    const { handleMcpRequest } = await import("../../src/mcp/server");
+    const env = createTestEnv({ PRODUCT_USAGE_HASH_SALT: "mcp-initialize-clone-salt" });
+    const request = new Request("https://api.test/mcp", {
+      method: "POST",
+      headers: { authorization: `Bearer ${env.LOOPOVER_MCP_TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: "init", method: "initialize", ...(params === undefined ? {} : { params }) }),
+    });
+    return handleMcpRequest({
+      env,
+      executionCtx: { waitUntil() {}, passThroughOnException() {} },
+      req: { method: "POST", raw: request, header: (name: string) => request.headers.get(name) ?? undefined },
+      json: (body: unknown, status?: number) => Response.json(body, status === undefined ? undefined : { status }),
+    } as never);
+  };
+
+  it("REGRESSION (#10190): an initialize whose body the handler consumed still returns the handler's response, not a 500", async () => {
+    const response = await runInitialize({
+      protocolVersion: "2024-11-05",
+      capabilities: {},
+      clientInfo: { name: "claude-code", version: "2.1.0" },
+    });
+    expect(response.status).toBe(200);
+    await expect(response.clone().json()).resolves.toMatchObject({ result: { protocolVersion: "2024-11-05" } });
+  });
+
+  it("REGRESSION (#10190): an initialize with no params, and one whose clientInfo fields are not strings, still succeed", async () => {
+    // The handshake fields are optional by contract -- a client that omits them must not be failed over
+    // LoopOver's own instrumentation.
+    await expect(runInitialize(undefined)).resolves.toMatchObject({ status: 200 });
+    await expect(runInitialize({ clientInfo: { name: 42, version: null } })).resolves.toMatchObject({ status: 200 });
+  });
 });

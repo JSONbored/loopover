@@ -172,3 +172,33 @@ jobs:
           curl -sf http://127.0.0.1:8787/metrics | grep -q 'loopover_uptime_seconds'
           docker logs gt 2>&1 | grep -q 'selfhost_migrations_applied'
           echo "self-host smoke test passed"
+
+  # #10146: a post-merge workflow going red blocks nothing and pages no one. This one caught migration 0209's
+  # SQLite-only AUTOINCREMENT correctly on the very first push (#10138) and then stayed red across five
+  # consecutive runs while PRs kept merging, because the only signal was a red check on a branch nobody was
+  # watching. #9951 had already solved this exact class for the publish workflows; the escalation is now a
+  # shared script rather than a second copy of it.
+  #
+  # Deliberately `failure()` and not `always()`: a success must never file anything. Deliberately consecutive
+  # -- one red run is a flake and alerting on it is how an alert gets muted.
+  escalate-persistent-failure:
+    name: escalate persistent failure
+    needs: build-boot
+    if: ${{ failure() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      # The one thing this job does that build-boot cannot: file the tracking issue.
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version-file: .nvmrc
+      - name: Escalate if this workflow has failed on consecutive runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node --experimental-strip-types scripts/escalate-workflow-outage.ts --workflow selfhost.yml

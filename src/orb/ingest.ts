@@ -10,6 +10,7 @@ const MAX_INSTANCE_ID_CHARS = 64;
 const MAX_HASH_CHARS = 128;
 const MAX_BUCKET_CHARS = 64;
 const MAX_VERDICT_CHARS = 32;
+const MAX_TIMESTAMP_CHARS = 64;
 const VALID_OUTCOMES = new Set(["merged", "closed"]);
 const VALID_REVERSALS = new Set(["none", "reopened", "reverted", "superseded"]);
 // gate_verdict is read downstream as a CLOSED enum by exact equality (analytics.ts foldInstance branches on
@@ -120,6 +121,17 @@ function clampReuseCount(value: unknown): number | null {
   return rounded;
 }
 
+/** Validate a sender-supplied timestamp (#10028). Returns the string unchanged only when it is a
+ *  length-capped, `Date.parse`-able instant; otherwise null. decision_timestamp is the day bucket for the
+ *  public fleet-accuracy trend and the retention rollup key, so a non-instant string would sort above every
+ *  ISO date in the lexicographic window bound, be dropped in JS, and leave a permanent junk `day` in the
+ *  rollup PK. Null lets `COALESCE(decision_timestamp, received_at)` fall back to the server clock, so the
+ *  signal still counts. Mirrors the REUSE_DAY_PATTERN + clampReuseCount pair one field family over. */
+export function normalizeIngestTimestamp(value: unknown): string | null {
+  if (typeof value !== "string" || value.length > MAX_TIMESTAMP_CHARS) return null;
+  return Number.isFinite(Date.parse(value)) ? value : null;
+}
+
 export type OrbIngestResult = { accepted: number } | { error: string };
 
 /** Clamp a sender-supplied cycle time to a plausible range; null for anything implausible/absent. */
@@ -223,9 +235,9 @@ export async function handleOrbIngest(body: string, db: D1Database, presentedIns
           reversal,
           typeof event.gate_reasoncode_bucket === "string" && event.gate_reasoncode_bucket.length <= MAX_BUCKET_CHARS && VALID_REASONCODE_BUCKETS.has(event.gate_reasoncode_bucket) ? event.gate_reasoncode_bucket : null,
           clampCycleMs(event.time_to_close_ms),
-          typeof event.decision_timestamp === "string" ? event.decision_timestamp : null,
-          typeof event.outcome_timestamp === "string" ? event.outcome_timestamp : null,
-          typeof event.outcome_timestamp === "string" ? event.outcome_timestamp : null,
+          normalizeIngestTimestamp(event.decision_timestamp),
+          normalizeIngestTimestamp(event.outcome_timestamp),
+          normalizeIngestTimestamp(event.outcome_timestamp),
         )
         .run();
       if (result.meta.changes > 0) accepted++;

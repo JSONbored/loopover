@@ -3061,6 +3061,326 @@ describe("queue processors", () => {
     // PR still exists afterwards.
   });
 
+  // #10227: the visual-capture block is now a named obligation (runVisualCaptureObligation) that a
+  // verdict-backed-off pass runs before it returns, so the three outcomes below are reachable from two call
+  // sites rather than one. They were never directly covered while the block was inline; each is a real branch
+  // of the capture pipeline, and each decides something the screenshot-table gate downstream acts on.
+
+  it("screenshot-table gate: a PR with NO web-visible files never reaches the capture pipeline at all", async () => {
+    // The cheap half of the capture guard. Screenshots are ON for this repo, so only isVisualPath's verdict
+    // stands between a backend-only PR and a browserless render nobody asked for.
+    const seen90 = { commented: false };
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture");
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_SCREENSHOTS: "true" });
+    env.JOBS = { async send() {} } as unknown as Queue;
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto", label: "auto" } });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", screenshotTableGate: { enabled: true, whenLabels: ["visual"] }, reviewCheckMode: "required" } }, "repo_file");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      // Backend-only diff: isVisualPath rejects every path here.
+      if (url.includes("/pulls/90/files")) return Response.json([{ filename: "src/queue/processors.ts", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/90/reviews")) return Response.json([]);
+      if (url.includes("/pulls/90/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/90") && method === "PATCH") return Response.json({ number: 90, state: "closed" });
+      if (url.endsWith("/pulls/90")) return Response.json({ number: 90, state: "open", user: { login: "visual-contributor" }, head: { sha: "vis90" }, mergeable_state: "clean" });
+      if (url.includes("/commits/vis90/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/vis90/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/vis90/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/90/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/90/comments")) { if (method === "POST") seen90.commented = true; return Response.json([]); }
+      if (url.endsWith("/labels") && method === "POST") return Response.json([]);
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 960 }, { status: 201 });
+      if (url.includes("/check-runs/960") && method === "PATCH") return Response.json({ id: 960 });
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "screenshot-no-visual-files-90",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 90, title: "Refactor the queue processor", state: "open", user: { login: "visual-contributor" }, head: { sha: "vis90" }, labels: [{ name: "visual" }], body: "Backend only, no table here.", mergeable_state: "clean", reviewDecision: "APPROVED" },
+        },
+      });
+    } finally {
+      buildCaptureSpy.mockRestore();
+    }
+
+    // Asserted first, and deliberately: without it the buildCapture assertion below passes for the wrong
+    // reason -- any setup that never reaches the comment publish at all would satisfy it vacuously.
+    expect(seen90.commented, "the pass must reach the comment publish, or the assertion below proves nothing").toBe(true);
+    expect(buildCaptureSpy, "a backend-only PR must not pay for a render").not.toHaveBeenCalled();
+  });
+
+  it("screenshot-table gate (#4110/#4112): a successful capture marks the head satisfied and pins the fallback dispatch to the stored default branch", async () => {
+    // Two things at once because one capture proves both: a REAL before+after pair is the evidence the gate
+    // treats as equivalent to a hand-authored table (#4110), and the stored default branch is what the
+    // actions_fallback dispatch is pinned to (#4112) -- a capture on a repo whose default branch was never
+    // stored simply never fires that dispatch, so only a stored one exercises the threading.
+    const capturedTargets: unknown[] = [];
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockImplementation(async (_e, _t, target) => { capturedTargets.push(target); return {
+      routes: [{ path: "/app", beforeUrl: "https://worker.example/loopover/shot?key=before-90", afterUrl: "https://worker.example/loopover/shot?key=after-90" }],
+      interactions: [],
+      previewPending: false,
+      renderFailed: false,
+      previewUnobtainable: false,
+    }; });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_SCREENSHOTS: "true" });
+    env.JOBS = { async send() {} } as unknown as Queue;
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" }, default_branch: "trunk" }, 123);
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto", label: "auto" } });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", screenshotTableGate: { enabled: true, whenLabels: ["visual"] }, reviewCheckMode: "required" } }, "repo_file");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/91/files")) return Response.json([{ filename: "apps/loopover-ui/src/routes/app.index.tsx", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/91/reviews")) return Response.json([]);
+      if (url.includes("/pulls/91/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/91")) return Response.json({ number: 91, state: "open", user: { login: "visual-contributor" }, head: { sha: "vis91" }, mergeable_state: "clean" });
+      if (url.includes("/commits/vis91/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/vis91/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/vis91/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/91/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/91/comments")) return Response.json([]);
+      if (url.endsWith("/labels") && method === "POST") return Response.json([]);
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 961 }, { status: 201 });
+      if (url.includes("/check-runs/961") && method === "PATCH") return Response.json({ id: 961 });
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "screenshot-successful-capture-91",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 91, title: "Update the app index route", state: "open", user: { login: "visual-contributor" }, head: { sha: "vis91" }, labels: [{ name: "visual" }], body: "Changed the route layout, no table here.", mergeable_state: "clean", reviewDecision: "APPROVED" },
+        },
+      });
+    } finally {
+      buildCaptureSpy.mockRestore();
+    }
+
+    expect((await getPullRequest(env, "JSONbored/gittensory", 91))?.visualCaptureSatisfiedSha).toBe("vis91");
+    // #4112: captured here rather than off the spy, because mockRestore() in the finally above clears mock.calls.
+    expect(capturedTargets[0]).toMatchObject({ defaultBranchRef: "trunk" });
+  });
+
+  it("screenshot-table gate (#9881): a capture that proves the repo has NO preview pipeline marks the head unobtainable", async () => {
+    // The third capture conclusion, and the one that keeps the gate from destroying a PR over evidence no
+    // contributor action could ever produce: nothing pending, nothing broken, and no preview deployment to
+    // render against at all.
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockResolvedValue({
+      routes: [],
+      interactions: [],
+      previewPending: false,
+      renderFailed: false,
+      previewUnobtainable: true,
+    });
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_SCREENSHOTS: "true" });
+    env.JOBS = { async send() {} } as unknown as Queue;
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto", label: "auto" } });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", screenshotTableGate: { enabled: true, whenLabels: ["visual"] }, reviewCheckMode: "required" } }, "repo_file");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/92/files")) return Response.json([{ filename: "apps/loopover-ui/src/routes/app.index.tsx", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\n+const ok = true;" }]);
+      if (url.includes("/pulls/92/reviews")) return Response.json([]);
+      if (url.includes("/pulls/92/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/92") && method === "PATCH") return Response.json({ number: 92, state: "closed" });
+      if (url.endsWith("/pulls/92")) return Response.json({ number: 92, state: "open", user: { login: "visual-contributor" }, head: { sha: "vis92" }, mergeable_state: "clean" });
+      if (url.includes("/commits/vis92/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/vis92/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/vis92/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/92/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/92/comments")) return Response.json([]);
+      if (url.endsWith("/labels") && method === "POST") return Response.json([]);
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 962 }, { status: 201 });
+      if (url.includes("/check-runs/962") && method === "PATCH") return Response.json({ id: 962 });
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      await processJob(env, {
+        type: "github-webhook",
+        deliveryId: "screenshot-preview-unobtainable-92",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 92, title: "Update the app index route", state: "open", user: { login: "visual-contributor" }, head: { sha: "vis92" }, labels: [{ name: "visual" }], body: "Changed the route layout, no table here.", mergeable_state: "clean", reviewDecision: "APPROVED" },
+        },
+      });
+    } finally {
+      buildCaptureSpy.mockRestore();
+    }
+
+    // Asserted against the COLUMN, not the record: the row->record mapper never surfaces this field, so
+    // `pr.visualCaptureUnobtainableSha` reads undefined at every reader and #9881's degrade has never fired.
+    // That is a separate bug (#10270); reading the record here would pin the bug instead of the write.
+    const unobtainable = await env.DB.prepare("select visual_capture_unobtainable_sha as sha from pull_requests where repo_full_name = ? and number = ?")
+      .bind("JSONbored/gittensory", 92)
+      .first<{ sha: string | null }>();
+    expect(unobtainable?.sha).toBe("vis92");
+  });
+
+  // Both mark writes are best-effort by design -- the capture already happened, and losing the bookkeeping
+  // must degrade the gate's evidence, never crash the pass that produced it. Mirrors the fail-safe pairs the
+  // clear path already has (#9462 / #9876).
+
+  it("screenshot-table gate (#4110): a failed capture-satisfied write after a REAL capture is swallowed -- the pass still completes", async () => {
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockResolvedValue({
+      routes: [{ path: "/app", beforeUrl: "https://worker.example/loopover/shot?key=before-93", afterUrl: "https://worker.example/loopover/shot?key=after-93" }],
+      interactions: [],
+      previewPending: false,
+      renderFailed: false,
+      previewUnobtainable: false,
+    });
+    const markSpy = vi.spyOn(repositoriesModule, "markPullRequestVisualCaptureSatisfied").mockRejectedValue(new Error("D1 write failed"));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_SCREENSHOTS: "true" });
+    env.JOBS = { async send() {} } as unknown as Queue;
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto", label: "auto" } });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", screenshotTableGate: { enabled: true, whenLabels: ["visual"] }, reviewCheckMode: "required" } }, "repo_file");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/93/files")) return Response.json([{ filename: "apps/loopover-ui/src/routes/app.index.tsx", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\\n+const ok = true;" }]);
+      if (url.includes("/pulls/93/reviews")) return Response.json([]);
+      if (url.includes("/pulls/93/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/93") && method === "PATCH") return Response.json({ number: 93, state: "closed" });
+      if (url.endsWith("/pulls/93")) return Response.json({ number: 93, state: "open", user: { login: "visual-contributor" }, head: { sha: "vis93" }, mergeable_state: "clean" });
+      if (url.includes("/commits/vis93/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/vis93/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/vis93/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/93/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/93/comments")) return Response.json([]);
+      if (url.endsWith("/labels") && method === "POST") return Response.json([]);
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 963 }, { status: 201 });
+      if (url.includes("/check-runs/963") && method === "PATCH") return Response.json({ id: 963 });
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      await expect(
+        processJob(env, {
+        type: "github-webhook",
+        deliveryId: "screenshot-satisfied-write-failed-93",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 93, title: "Update the app index route", state: "open", user: { login: "visual-contributor" }, head: { sha: "vis93" }, labels: [{ name: "visual" }], body: "Changed the route layout, no table here.", mergeable_state: "clean", reviewDecision: "APPROVED" },
+        },
+        }),
+      ).resolves.not.toThrow();
+      expect(markSpy).toHaveBeenCalled();
+    } finally {
+      markSpy.mockRestore();
+      buildCaptureSpy.mockRestore();
+    }
+
+    // The write lost, so the head is NOT recorded as satisfied and the gate falls back to requiring a table.
+    expect((await getPullRequest(env, "JSONbored/gittensory", 93))?.visualCaptureSatisfiedSha).toBeNull();
+  });
+
+  it("screenshot-table gate (#9881): a failed capture-unobtainable write is swallowed -- the pass still completes", async () => {
+    const buildCaptureSpy = vi.spyOn(visualCaptureModule, "buildCapture").mockResolvedValue({
+      routes: [],
+      interactions: [],
+      previewPending: false,
+      renderFailed: false,
+      previewUnobtainable: true,
+    });
+    const markSpy = vi.spyOn(repositoriesModule, "markPullRequestVisualCaptureUnobtainable").mockRejectedValue(new Error("D1 write failed"));
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(), LOOPOVER_REVIEW_SCREENSHOTS: "true" });
+    env.JOBS = { async send() {} } as unknown as Queue;
+    await upsertInstallation(env, {
+      installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" }, target_type: "User", repository_selection: "all", permissions: { metadata: "read", pull_requests: "write", issues: "write" }, events: ["pull_request"] },
+      repositories: [{ name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } }],
+    });
+    await upsertRepositorySettings(env, { repoFullName: "JSONbored/gittensory", autonomy: { close: "auto", label: "auto" } });
+    await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_only", checkRunMode: "off", screenshotTableGate: { enabled: true, whenLabels: ["visual"] }, reviewCheckMode: "required" } }, "repo_file");
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      if (url === "https://api.gittensor.io/miners") return Response.json([]);
+      if (url.includes("/access_tokens")) return Response.json({ token: "installation-token" });
+      if (url.includes("/pulls/94/files")) return Response.json([{ filename: "apps/loopover-ui/src/routes/app.index.tsx", status: "modified", additions: 5, deletions: 1, changes: 6, patch: "@@\\n+const ok = true;" }]);
+      if (url.includes("/pulls/94/reviews")) return Response.json([]);
+      if (url.includes("/pulls/94/commits")) return Response.json([]);
+      if (url.endsWith("/pulls/94") && method === "PATCH") return Response.json({ number: 94, state: "closed" });
+      if (url.endsWith("/pulls/94")) return Response.json({ number: 94, state: "open", user: { login: "visual-contributor" }, head: { sha: "vis94" }, mergeable_state: "clean" });
+      if (url.includes("/commits/vis94/status")) return Response.json({ state: "success", statuses: [] });
+      if (url.includes("/commits/vis94/check-runs")) return Response.json({ total_count: 0, check_runs: [] });
+      if (url.includes("/commits/vis94/check-suites")) return Response.json({ check_suites: [] });
+      if (url.includes("/issues/94/labels") && method === "GET") return Response.json([]);
+      if (url.includes("/issues/94/comments")) return Response.json([]);
+      if (url.endsWith("/labels") && method === "POST") return Response.json([]);
+      if (url.endsWith("/check-runs") && method === "POST") return Response.json({ id: 964 }, { status: 201 });
+      if (url.includes("/check-runs/964") && method === "PATCH") return Response.json({ id: 964 });
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      await expect(
+        processJob(env, {
+        type: "github-webhook",
+        deliveryId: "screenshot-unobtainable-write-failed-94",
+        eventName: "pull_request",
+        payload: {
+          action: "opened",
+          installation: { id: 123, account: { login: "JSONbored", id: 1, type: "User" } },
+          repository: { name: "gittensory", full_name: "JSONbored/gittensory", private: false, owner: { login: "JSONbored" } },
+          pull_request: { number: 94, title: "Update the app index route", state: "open", user: { login: "visual-contributor" }, head: { sha: "vis94" }, labels: [{ name: "visual" }], body: "Changed the route layout, no table here.", mergeable_state: "clean", reviewDecision: "APPROVED" },
+        },
+        }),
+      ).resolves.not.toThrow();
+      expect(markSpy).toHaveBeenCalled();
+    } finally {
+      markSpy.mockRestore();
+      buildCaptureSpy.mockRestore();
+    }
+
+    const unobtainable94 = await env.DB.prepare("select visual_capture_unobtainable_sha as sha from pull_requests where repo_full_name = ? and number = ?")
+      .bind("JSONbored/gittensory", 94)
+      .first<{ sha: string | null }>();
+    expect(unobtainable94?.sha).toBeNull();
+  });
+
   describe("live migrations/** collision recheck (#2550)", () => {
     // Full merge-eligible stub set (clean + green + approved), reused across scenarios — a positive test proves
     // the collision hold actually suppresses what would otherwise merge; a negative test proves the check

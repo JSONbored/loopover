@@ -4369,27 +4369,6 @@ export async function reReviewStoredPullRequest(
     ))
   )
     return false;
-  // #10222: back off AFTER the readiness gate, but BEFORE onReachedReadiness and the retrigger consumption
-  // just below. #10204 placed it after the actuation-lock claim, past both -- so a backed-off pass had already
-  // consumed the user's one-shot "Re-run LoopOver review" marker and charged regatePullRequest's repair budget
-  // for work it never did. It must not move EARLIER than readiness either: readiness legitimately defers a
-  // pass (rebase fired, CI still running), and the screenshot-table gate's bounded recapture chain (#10061)
-  // depends on those deferrals continuing to happen, so a pre-readiness guard silently truncates that retry
-  // budget. Between the two is the only correct place.
-  //
-  // `force` is an operator's manual re-gate and `previewPollAttempt` is a visual poll's own next tick -- both
-  // are explicit requests for THIS pass, and backoff must never suppress a pass a human or a bounded retry
-  // chain asked for.
-  if (
-    await stableVerdictBackoffEngaged(env, {
-      repoFullName,
-      prNumber,
-      headSha: pr.headSha,
-      deliveryId,
-      explicitlyRequested: options.force === true || previewPollAttempt !== undefined,
-    })
-  )
-    return false;
   // Fire BEFORE any further (throwable) work below -- this is the one instant readiness is confirmed, so a
   // caller learns it even if this call goes on to THROW instead of returning (see the JSDoc above).
   options.onReachedReadiness?.();
@@ -5164,21 +5143,22 @@ async function consumePendingPrPanelRetrigger(
  * force-finalize → keeps the safe old defer rather than acting early).
  */
 /**
- * #10222: should this publish-and-maintain pass back off, because this PR's verdict has not changed (#10184)?
+ * #10227: should this pass stop before DERIVING a verdict, because this PR's answer has not changed (#10184)?
  *
- * Shared by BOTH sites that run the unit -- `reReviewStoredPullRequest` (sweep / CI completion) and
- * `handlePullRequestWebhookEvent` (the `pull_request` webhook). #10204 guarded only the first, which left the
- * DOMINANT source unthrottled: over 24h on the Orb, 293 of 344 repeat evaluations carried
- * `upstream_state_change` -- `deriveReevaluationReason`'s mapping for a RAW GitHub delivery, i.e. the webhook
- * path. A label write the engine itself caused arrives there, not on the sweep.
- *
- * Call this BEFORE the readiness gate at either site. Readiness fires `onReachedReadiness` (which charges
- * regatePullRequest's repair budget) and consumes the one-shot panel-retrigger marker, and a pass that backs
- * off after those has silently eaten a user's "Re-run LoopOver review" click with nothing left to re-trigger
- * it. Before the lock claim, too: there is no lock to take or release on a pass that is not going to run.
+ * ONE caller by design: the verdict-derivation choke point inside `maybePublishPrPublicSurface` (see the
+ * banner comment there). Both entry points that run the publish-and-maintain unit -- `reReviewStoredPullRequest`
+ * (sweep / CI completion) and `handlePullRequestWebhookEvent` (the `pull_request` webhook) -- reach a verdict
+ * only through that function, so guarding it covers both without either having to remember to opt in. That
+ * matters: the webhook path is the DOMINANT source (over 24h on the Orb, 293 of 344 repeat evaluations carried
+ * `upstream_state_change` -- `deriveReevaluationReason`'s mapping for a RAW GitHub delivery) and it was never
+ * guarded at all while the guard lived at the callers' pass entry, because no pass-entry guard could be made
+ * to spare #10061's recapture chain. `scripts/check-verdict-backoff-chokepoint.ts` fails the build if a second
+ * call site appears, or if a publish-and-maintain entry point stops routing through the choke point.
  *
  * `explicitlyRequested` is the escape hatch and the reason this takes a flag at all -- backoff exists to stop
- * the machine asking itself the same question, and must NEVER suppress a pass a human asked for.
+ * the machine asking itself the same question, and must NEVER suppress a pass a human asked for. It has exactly
+ * one caller-supplied value now (`webhook.forceAiReview`); a bounded retry chain needs no exemption, because
+ * every obligation runs ABOVE the choke point.
  *
  * Fails OPEN everywhere: no head SHA, no state, unreadable state, no cache, or a throwing read all return
  * false and evaluate normally (see verdict-stability.ts). The delay is capped, so even a stuck PR is still
@@ -10237,6 +10217,190 @@ async function scheduleVisualCaptureRetry(
   }
 }
 
+/** The visual before/after capture, and the bounded self-heal recapture chain it schedules (#9030 / #9464 /
+ *  #10061). Extracted from `maybePublishPrPublicSurface`'s comment-publish block so BOTH the ordinary publish
+ *  path and a verdict-backed-off pass (#10227) can run it -- the capture chain is an OBLIGATION of the pass,
+ *  not part of deriving the verdict, and its 5-attempt budget is spent across separate passes. A pass that
+ *  skipped it would silently truncate that budget to VERDICT_BACKOFF_MIN_REPEATS attempts, which is exactly
+ *  what the two `screenshot-table gate (#10061)` cases in test/unit/queue-3.test.ts pin. */
+async function runVisualCaptureObligation(
+  env: Env,
+  args: {
+    installationId: number;
+    repoFullName: string;
+    pr: Awaited<ReturnType<typeof upsertPullRequestFromGitHub>>;
+    repo: Awaited<ReturnType<typeof getRepository>>;
+    mode: Awaited<ReturnType<typeof resolveRepoActionMode>>;
+    repoFocusManifestForComment: Awaited<ReturnType<typeof loadRepoFocusManifest>>;
+    /** The pass's memoized file resolver, not a resolved list: the converged-feature check below is the cheap
+     *  one, and a backed-off pass (#10227) must not pay for a diff fetch on a repo that has screenshots off. */
+    getUnifiedFiles: () => Promise<Awaited<ReturnType<typeof listPullRequestFiles>>>;
+    webhook: { deliveryId: string; previewPollAttempt?: number | undefined };
+  },
+): Promise<{ beforeAfter: CaptureRoute[]; interactionPreviews: CaptureInteractionRoute[]; bugAnalysisEnabled: boolean }> {
+  const { installationId, repoFullName, pr, repo, mode, repoFocusManifestForComment, getUnifiedFiles, webhook } = args;
+  // Visual before/after capture (visual-capture port). Fires ONLY when (1) the "screenshots" converged
+  // feature resolves active for this repo (resolveConvergedFeature — the global flag AND (a per-repo
+  // `features.screenshots` override OR the cutover allowlist default), #4616; the caller threads in the
+  // manifest it already loaded, so this costs no extra fetch) AND (2) the PR touches WEB-VISIBLE files
+  // (isVisualPath — frontend pages / public OG images; backend .ts/.md/.json PRs never qualify). Fully
+  // wrapped in try/catch + defaults to [] so a capture failure (render timeout, missing binding, GitHub
+  // hiccup) can NEVER sink the review — it just omits the "Visual preview" section. Flag-OFF (default) ⇒
+  // this returns empty and the unified comment is byte-identical.
+  let beforeAfter: CaptureRoute[] = [];
+  // review.visual.bugAnalysis — resolved inside the try block below alongside the rest of reviewVisualConfig,
+  // but needed at the runVisualVisionForAdvisory call OUTSIDE that block's scope (that call is deliberately
+  // independent of the capture try/catch above, see its own comment) — mirrors beforeAfter's own
+  // declared-outer/assigned-inner pattern. false (unresolved, or resolution never ran) ⇒ byte-identical
+  // default-prompt behavior, same fail-safe direction as every other config-as-code read here.
+  let bugAnalysisEnabled = false;
+  let interactionPreviews: CaptureInteractionRoute[] = [];
+  if (!resolveConvergedFeature(env, repoFocusManifestForComment, "screenshots", repoFullName))
+    return { beforeAfter, interactionPreviews, bugAnalysisEnabled };
+  const unifiedFiles = await getUnifiedFiles();
+  const visualFiles = unifiedFiles
+    .map((file) => file.path)
+    .filter(isVisualPath);
+  // #auto-interaction-detection: only ever read by buildCapture when review.visual.autoDetectInteractions
+  // is on for this repo -- carries each changed file's own diff patch text (visualFiles above is bare
+  // paths), the same file.payload?.patch shape review-diff.ts/grounding-wire.ts already read elsewhere.
+  const changedCssFiles = unifiedFiles.map((file) => ({
+    path: file.path,
+    patch: typeof file.payload?.patch === "string" ? file.payload.patch : undefined,
+  }));
+  if (visualFiles.length > 0) {
+    try {
+      const token = await createInstallationToken(env, installationId);
+      // review.visual (#3609 / #3610): an explicit per-repo preview-URL template / route list. Absent config
+      // (the default for every repo today) ⇒ EMPTY_VISUAL_CONFIG ⇒ buildCapture's discovery/inference
+      // behavior is byte-identical to pre-#3609.
+      const reviewVisualConfig = await resolveVisualCaptureConfig(env, repoFullName);
+      bugAnalysisEnabled = reviewVisualConfig.bugAnalysis === true;
+      const captureTarget = {
+        repoFullName,
+        prNumber: pr.number,
+        ...(pr.headSha ? { headSha: pr.headSha } : {}),
+        ...(pr.headRef ? { headRef: pr.headRef } : {}),
+        previewFromChecks: true,
+        // Pins the actions_fallback dispatch (#4112) to a trusted ref -- see buildCapture. Absent (no
+        // stored default branch yet) ⇒ that dispatch just never fires, same as leaving it unconfigured.
+        ...(repo?.defaultBranch ? { defaultBranchRef: repo.defaultBranch } : {}),
+        // #9067: the actions_fallback dispatch is a real GitHub write and must obey dry_run/paused.
+        mode,
+      };
+      // review.visual.enabled (#4083): a config-as-code override layered on top of the screenshotsAllowed
+      // env-var gate resolveConvergedFeature applies, not a replacement for it. Unset/true ⇒ defer to that gate (buildCapture
+      // runs exactly as before); explicit `false` (global default or per-repo, VPS-only) ⇒ force capture off
+      // for this repo -- a no-routes, non-pending sentinel result, so every line below behaves exactly as an
+      // ordinary "nothing found" capture would, with no separate code path to maintain.
+      const capture =
+        reviewVisualConfig.enabled === false
+          ? { routes: [], interactions: [], previewPending: false, renderFailed: false, previewUnobtainable: false }
+          : await buildCapture(env, token, captureTarget, visualFiles, githubRateLimitAdmissionKeyForInstallation(installationId), reviewVisualConfig, changedCssFiles);
+      beforeAfter = capture.routes;
+      interactionPreviews = capture.interactions;
+      // Screenshot-table gate satisfaction (#4110): a successful capture (a real before+after render pair
+      // on at least one route) is evidence equivalent to a hand-authored before/after table -- persist the
+      // head SHA it was proven at so the LATER maintenance pass (runAgentMaintenancePlanAndExecute, which
+      // re-reads this PR row fresh) can see it without re-running the capture or threading a new return
+      // value through every caller of this function. Best-effort: a write failure here just means the gate
+      // falls back to requiring a body table, never blocks the rest of the review.
+      if (pr.headSha && hasSuccessfulBotCapture(beforeAfter)) {
+        await markPullRequestVisualCaptureSatisfied(env, repoFullName, pr.number, pr.headSha).catch((error) => {
+          console.log(
+            JSON.stringify({
+              event: "visual_capture_satisfied_mark_failed",
+              repoFullName,
+              pull: pr.number,
+              message: errorMessage(error).slice(0, 200),
+            }),
+          );
+        });
+      }
+      // Visual self-poll: the FIRST capture returns a "loading" placeholder for the AFTER shot when the
+      // preview deploy isn't live yet (capture.previewPending). Schedule a delayed re-review to re-capture
+      // the now-ready shot — bounded by `attempt` so a never-resolving preview can't loop (the deployment_status
+      // webhook also refills it; this is the backstop when that event is missed/late).
+      //
+      // #9464: `capture.renderFailed` joins previewPending here as a SECOND blip class. captureShot
+      // swallows a renderer error per shot and returns a null PNG, so buildCapture used to return
+      // normally -- previewPending false, nothing thrown -- and neither the #9030 nor the #9207 guard
+      // fired. The maintenance pass then read "no evidence, no retry pending" and CLOSED the PR one-shot.
+      // A browserless outage now degrades to "we could not capture evidence, holding" instead.
+      //
+      // #9876: the `else` below is the half that was missing, and it is the half that froze three
+      // contributor PRs. Reaching it means this capture CONCLUDED -- no successful pair, but also nothing
+      // still pending and nothing broken -- which is a definite answer to the question the latch was
+      // deferring. Without it, a latch written by an earlier attempt outlived the chain that justified it:
+      // the durable per-head poll budget ends that chain by suppressing `previewPending`, so the final
+      // attempt takes neither branch above, `scheduleVisualCaptureRetry` is never called, and the
+      // budget-exhausted clear that #9462 put INSIDE it never runs. The release belongs to the capture
+      // outcome, where every conclusion passes, not to a scheduler that by definition stops being called.
+      const previewPollAttempt = webhook.previewPollAttempt ?? 0;
+      if (capture.previewPending || capture.renderFailed) {
+        await scheduleVisualCaptureRetry(env, {
+          webhook,
+          repoFullName,
+          pr,
+          installationId,
+          previewPollAttempt,
+        });
+      } else if (pr.headSha) {
+        // #9881: this capture concluded, and it concluded because the repo has no preview pipeline at all
+        // (build state `absent` across every poll, budget now spent) -- not because a deploy was late or
+        // a renderer blipped. Record it so the screenshot-table gate degrades its CLOSE instead of
+        // destroying a PR over evidence no contributor action could produce.
+        if (capture.previewUnobtainable) {
+          await markPullRequestVisualCaptureUnobtainable(env, repoFullName, pr.number, pr.headSha).catch((error) => {
+            console.log(
+              JSON.stringify({
+                event: "visual_capture_unobtainable_mark_failed",
+                repoFullName,
+                pull: pr.number,
+                message: errorMessage(error).slice(0, 200),
+              }),
+            );
+          });
+        }
+        // Conclusive: release any latch this head still carries. Best-effort and idempotent -- the common
+        // case is that there is no latch to clear, and a failed clear only leaves the age bound in
+        // visual-capture-retry-latch.ts to end the deferral instead of ending it now.
+        await clearPullRequestVisualCaptureRetryPending(env, repoFullName, pr.number, pr.headSha).catch((error) => {
+          console.log(
+            JSON.stringify({
+              event: "visual_capture_retry_pending_clear_failed",
+              repoFullName,
+              pull: pr.number,
+              message: errorMessage(error).slice(0, 200),
+            }),
+          );
+        });
+      }
+    } catch (error) {
+      console.log(
+        JSON.stringify({
+          event: "visual_capture_error",
+          repoFullName,
+          pull: pr.number,
+          message: errorMessage(error).slice(0, 200),
+        }),
+      );
+      // #9030: a capture-pipeline ERROR (browserless down, timeout, a GitHub hiccup fetching a token) must
+      // not be silently indistinguishable from a legitimate "no visual routes found" result -- the
+      // screenshotTableGate's CLOSE action would otherwise fire on a false positive purely because an
+      // internal service blipped. Schedule the SAME bounded self-heal retry previewPending already uses.
+      await scheduleVisualCaptureRetry(env, {
+        webhook,
+        repoFullName,
+        pr,
+        installationId,
+        previewPollAttempt: webhook.previewPollAttempt ?? 0,
+      });
+    }
+  }
+  return { beforeAfter, interactionPreviews, bugAnalysisEnabled };
+}
+
 async function maybePublishPrPublicSurface(
   env: Env,
   installationId: number,
@@ -10689,6 +10853,73 @@ async function maybePublishPrPublicSurface(
       willCheckRun: false,
     };
 
+  // The PR's changed files are needed by the slop/manifest gates, the AI review + grounding + RAG, the secret
+  // scan, the check-run, and the unified comment. Resolve them AT MOST ONCE per review and share across the
+  // gate phase (inside the try) AND the publish phase (check-run + comment, after the try): memoize the first
+  // resolve so a repo that needs files anywhere pays a single resolve, and a gate-only repo that never needs
+  // them pays nothing. resolvePullRequestFilesForReview prefers the stored rows and, when they are empty at
+  // review time (the webhook beat detail-sync), fetches + persists them inline — so the FIRST review sees the
+  // real diff instead of "0 files / No diff provided" (FIX B). Fail-safe by construction.
+  let reviewFiles: Awaited<ReturnType<typeof listPullRequestFiles>> | null =
+    null;
+  const getReviewFiles = async (): Promise<
+    Awaited<ReturnType<typeof listPullRequestFiles>>
+  > => {
+    if (reviewFiles === null)
+      reviewFiles = await resolvePullRequestFilesForReview(env, {
+        installationId,
+        repoFullName,
+        pullNumber: pr.number,
+      });
+    return reviewFiles;
+  };
+  // ── THE VERDICT-DERIVATION CHOKE POINT (#10227) ──────────────────────────────────────────────────────
+  // Everything ABOVE this line is what the pass OWES regardless of whether its answer has changed: the
+  // type-label decision, the miner/contributor resolution, the readiness bookkeeping its callers already did.
+  // Everything BELOW it derives and publishes a verdict -- the pending gate check-run, the AI review, the gate
+  // evaluation, the comment/label publish, and (via the `gate` this returns) the maintenance pass's ledger
+  // write. So this is the one boundary a settled verdict should stop at, and it is deliberately the same KIND
+  // of place the `record` half already sits in: the single point every verdict passes through.
+  //
+  // #10204/#10229 guarded the ENTRY of the whole publish-and-maintain pass instead, at both call sites. That
+  // suppressed obligations along with the derivation, so every bounded retry chain needed an entry in an
+  // `explicitlyRequested` allowlist and any chain that forgot to join it was silently truncated the day it
+  // shipped -- measurably, the #10061 recapture chain lost 2 of its 5 attempts. Guarding here needs no
+  // allowlist: a chain that runs before this line cannot be truncated by construction, and one entry point is
+  // covered instead of two (the webhook path, 293 of 344 repeat evaluations in a 24h Orb window, was never
+  // guarded at all because there was no way to exempt #10061 from a pass-entry guard).
+  //
+  // The recapture chain is the one obligation that lived BELOW this line (inside the comment publish), so it
+  // is run explicitly here before returning -- see runVisualCaptureObligation.
+  //
+  // Returning `undefined` is already the "no verdict this pass" signal: maybeRunAgentMaintenance early-returns
+  // on `if (!gate) return;`, and the webhook path's own comment states the same contract. No sentinel needed.
+  //
+  // `webhook.forceAiReview` is the WHOLE allowlist now, and it means exactly one thing: a human asked for this
+  // pass. Both of its producers are human-initiated -- an operator's manual re-gate (reReviewStoredPullRequest's
+  // `options.force`) and a consumed "Re-run LoopOver review" panel click (#7626). `previewPollAttempt` needed
+  // an exemption only because the old guard sat above the recapture chain; it does not need one here.
+  if (
+    await stableVerdictBackoffEngaged(env, {
+      repoFullName,
+      prNumber: pr.number,
+      headSha: pr.headSha,
+      deliveryId: webhook.deliveryId,
+      explicitlyRequested: webhook.forceAiReview === true,
+    })
+  ) {
+    await runVisualCaptureObligation(env, {
+      installationId,
+      repoFullName,
+      pr,
+      repo,
+      mode,
+      repoFocusManifestForComment: await loadRepoFocusManifest(env, repoFullName),
+      getUnifiedFiles: getReviewFiles,
+      webhook,
+    });
+    return undefined;
+  }
   // #ops-review-burst: the LAST completed gate-check conclusion recorded for this EXACT head SHA, captured
   // BEFORE this pass writes anything -- recordPublishedGateCheckSummary upserts keyed on
   // [repoFullName, headSha, name], so a row only exists here at all if THIS SAME COMMIT was already
@@ -10830,26 +11061,6 @@ async function maybePublishPrPublicSurface(
       throw new RetryablePullRequestFreshnessUnavailableError();
     }
     return true;
-  };
-  // The PR's changed files are needed by the slop/manifest gates, the AI review + grounding + RAG, the secret
-  // scan, the check-run, and the unified comment. Resolve them AT MOST ONCE per review and share across the
-  // gate phase (inside the try) AND the publish phase (check-run + comment, after the try): memoize the first
-  // resolve so a repo that needs files anywhere pays a single resolve, and a gate-only repo that never needs
-  // them pays nothing. resolvePullRequestFilesForReview prefers the stored rows and, when they are empty at
-  // review time (the webhook beat detail-sync), fetches + persists them inline — so the FIRST review sees the
-  // real diff instead of "0 files / No diff provided" (FIX B). Fail-safe by construction.
-  let reviewFiles: Awaited<ReturnType<typeof listPullRequestFiles>> | null =
-    null;
-  const getReviewFiles = async (): Promise<
-    Awaited<ReturnType<typeof listPullRequestFiles>>
-  > => {
-    if (reviewFiles === null)
-      reviewFiles = await resolvePullRequestFilesForReview(env, {
-        installationId,
-        repoFullName,
-        pullNumber: pr.number,
-      });
-    return reviewFiles;
   };
   // #6724 (review-burst): contentChanged defaults true so every existing caller (the three early-return call
   // sites below, none of which reach the comment/label publish steps) keeps recording pr_public_surface_published
@@ -13182,162 +13393,19 @@ async function maybePublishPrPublicSurface(
         // #4745: same reused slop band as the legacy commentArgs above -- the two panel builders never diverge.
         slopBand: slopBand ?? undefined,
       });
-      // Visual before/after capture (visual-capture port). Fires ONLY when (1) the "screenshots" converged
-      // feature resolves active for this repo (resolveConvergedFeature — the global flag AND (a per-repo
-      // `features.screenshots` override OR the cutover allowlist default), #4616; reuses the manifest this
-      // pass already loaded above, no extra fetch) AND (2) the PR touches WEB-VISIBLE files (isVisualPath —
-      // frontend pages / public OG images; backend .ts/.md/.json PRs never qualify). Fully wrapped in
-      // try/catch + defaults to [] so a capture failure (render timeout, missing binding, GitHub hiccup) can
-      // NEVER sink the review — it just omits the "Visual preview" section. Flag-OFF (default) ⇒ this block is
-      // skipped entirely and the unified comment is byte-identical.
-      let beforeAfter: CaptureRoute[] = [];
-      // review.visual.bugAnalysis — resolved inside the try block below alongside the rest of reviewVisualConfig,
-      // but needed at the runVisualVisionForAdvisory call OUTSIDE that block's scope (that call is deliberately
-      // independent of the capture try/catch above, see its own comment) — mirrors beforeAfter's own
-      // declared-outer/assigned-inner pattern. false (unresolved, or resolution never ran) ⇒ byte-identical
-      // default-prompt behavior, same fail-safe direction as every other config-as-code read here.
-      let bugAnalysisEnabled = false;
-      let interactionPreviews: CaptureInteractionRoute[] = [];
-      const visualFiles = unifiedFiles
-        .map((file) => file.path)
-        .filter(isVisualPath);
-      // #auto-interaction-detection: only ever read by buildCapture when review.visual.autoDetectInteractions
-      // is on for this repo -- carries each changed file's own diff patch text (visualFiles above is bare
-      // paths), the same file.payload?.patch shape review-diff.ts/grounding-wire.ts already read elsewhere.
-      const changedCssFiles = unifiedFiles.map((file) => ({
-        path: file.path,
-        patch: typeof file.payload?.patch === "string" ? file.payload.patch : undefined,
-      }));
-      if (resolveConvergedFeature(env, repoFocusManifestForComment, "screenshots", repoFullName) && visualFiles.length > 0) {
-        try {
-          const token = await createInstallationToken(env, installationId);
-          // review.visual (#3609 / #3610): an explicit per-repo preview-URL template / route list. Absent config
-          // (the default for every repo today) ⇒ EMPTY_VISUAL_CONFIG ⇒ buildCapture's discovery/inference
-          // behavior is byte-identical to pre-#3609.
-          const reviewVisualConfig = await resolveVisualCaptureConfig(env, repoFullName);
-          bugAnalysisEnabled = reviewVisualConfig.bugAnalysis === true;
-          const captureTarget = {
-            repoFullName,
-            prNumber: pr.number,
-            ...(pr.headSha ? { headSha: pr.headSha } : {}),
-            ...(pr.headRef ? { headRef: pr.headRef } : {}),
-            previewFromChecks: true,
-            // Pins the actions_fallback dispatch (#4112) to a trusted ref -- see buildCapture. Absent (no
-            // stored default branch yet) ⇒ that dispatch just never fires, same as leaving it unconfigured.
-            ...(repo?.defaultBranch ? { defaultBranchRef: repo.defaultBranch } : {}),
-            // #9067: the actions_fallback dispatch is a real GitHub write and must obey dry_run/paused.
-            mode,
-          };
-          // review.visual.enabled (#4083): a config-as-code override layered on top of the screenshotsAllowed
-          // env-var gate above, not a replacement for it. Unset/true ⇒ defer to that gate's decision (buildCapture
-          // runs exactly as before); explicit `false` (global default or per-repo, VPS-only) ⇒ force capture off
-          // for this repo -- a no-routes, non-pending sentinel result, so every line below behaves exactly as an
-          // ordinary "nothing found" capture would, with no separate code path to maintain.
-          const capture =
-            reviewVisualConfig.enabled === false
-              ? { routes: [], interactions: [], previewPending: false, renderFailed: false, previewUnobtainable: false }
-              : await buildCapture(env, token, captureTarget, visualFiles, githubRateLimitAdmissionKeyForInstallation(installationId), reviewVisualConfig, changedCssFiles);
-          beforeAfter = capture.routes;
-          interactionPreviews = capture.interactions;
-          // Screenshot-table gate satisfaction (#4110): a successful capture (a real before+after render pair
-          // on at least one route) is evidence equivalent to a hand-authored before/after table -- persist the
-          // head SHA it was proven at so the LATER maintenance pass (runAgentMaintenancePlanAndExecute, which
-          // re-reads this PR row fresh) can see it without re-running the capture or threading a new return
-          // value through every caller of this function. Best-effort: a write failure here just means the gate
-          // falls back to requiring a body table, never blocks the rest of the review.
-          if (pr.headSha && hasSuccessfulBotCapture(beforeAfter)) {
-            await markPullRequestVisualCaptureSatisfied(env, repoFullName, pr.number, pr.headSha).catch((error) => {
-              console.log(
-                JSON.stringify({
-                  event: "visual_capture_satisfied_mark_failed",
-                  repoFullName,
-                  pull: pr.number,
-                  message: errorMessage(error).slice(0, 200),
-                }),
-              );
-            });
-          }
-          // Visual self-poll: the FIRST capture returns a "loading" placeholder for the AFTER shot when the
-          // preview deploy isn't live yet (capture.previewPending). Schedule a delayed re-review to re-capture
-          // the now-ready shot — bounded by `attempt` so a never-resolving preview can't loop (the deployment_status
-          // webhook also refills it; this is the backstop when that event is missed/late).
-          //
-          // #9464: `capture.renderFailed` joins previewPending here as a SECOND blip class. captureShot
-          // swallows a renderer error per shot and returns a null PNG, so buildCapture used to return
-          // normally -- previewPending false, nothing thrown -- and neither the #9030 nor the #9207 guard
-          // fired. The maintenance pass then read "no evidence, no retry pending" and CLOSED the PR one-shot.
-          // A browserless outage now degrades to "we could not capture evidence, holding" instead.
-          //
-          // #9876: the `else` below is the half that was missing, and it is the half that froze three
-          // contributor PRs. Reaching it means this capture CONCLUDED -- no successful pair, but also nothing
-          // still pending and nothing broken -- which is a definite answer to the question the latch was
-          // deferring. Without it, a latch written by an earlier attempt outlived the chain that justified it:
-          // the durable per-head poll budget ends that chain by suppressing `previewPending`, so the final
-          // attempt takes neither branch above, `scheduleVisualCaptureRetry` is never called, and the
-          // budget-exhausted clear that #9462 put INSIDE it never runs. The release belongs to the capture
-          // outcome, where every conclusion passes, not to a scheduler that by definition stops being called.
-          const previewPollAttempt = webhook.previewPollAttempt ?? 0;
-          if (capture.previewPending || capture.renderFailed) {
-            await scheduleVisualCaptureRetry(env, {
-              webhook,
-              repoFullName,
-              pr,
-              installationId,
-              previewPollAttempt,
-            });
-          } else if (pr.headSha) {
-            // #9881: this capture concluded, and it concluded because the repo has no preview pipeline at all
-            // (build state `absent` across every poll, budget now spent) -- not because a deploy was late or
-            // a renderer blipped. Record it so the screenshot-table gate degrades its CLOSE instead of
-            // destroying a PR over evidence no contributor action could produce.
-            if (capture.previewUnobtainable) {
-              await markPullRequestVisualCaptureUnobtainable(env, repoFullName, pr.number, pr.headSha).catch((error) => {
-                console.log(
-                  JSON.stringify({
-                    event: "visual_capture_unobtainable_mark_failed",
-                    repoFullName,
-                    pull: pr.number,
-                    message: errorMessage(error).slice(0, 200),
-                  }),
-                );
-              });
-            }
-            // Conclusive: release any latch this head still carries. Best-effort and idempotent -- the common
-            // case is that there is no latch to clear, and a failed clear only leaves the age bound in
-            // visual-capture-retry-latch.ts to end the deferral instead of ending it now.
-            await clearPullRequestVisualCaptureRetryPending(env, repoFullName, pr.number, pr.headSha).catch((error) => {
-              console.log(
-                JSON.stringify({
-                  event: "visual_capture_retry_pending_clear_failed",
-                  repoFullName,
-                  pull: pr.number,
-                  message: errorMessage(error).slice(0, 200),
-                }),
-              );
-            });
-          }
-        } catch (error) {
-          console.log(
-            JSON.stringify({
-              event: "visual_capture_error",
-              repoFullName,
-              pull: pr.number,
-              message: errorMessage(error).slice(0, 200),
-            }),
-          );
-          // #9030: a capture-pipeline ERROR (browserless down, timeout, a GitHub hiccup fetching a token) must
-          // not be silently indistinguishable from a legitimate "no visual routes found" result -- the
-          // screenshotTableGate's CLOSE action would otherwise fire on a false positive purely because an
-          // internal service blipped. Schedule the SAME bounded self-heal retry previewPending already uses.
-          await scheduleVisualCaptureRetry(env, {
-            webhook,
-            repoFullName,
-            pr,
-            installationId,
-            previewPollAttempt: webhook.previewPollAttempt ?? 0,
-          });
-        }
-      }
+      // Visual before/after capture + its bounded recapture chain -- see runVisualCaptureObligation. Runs on
+      // every pass that reaches here, including a verdict-backed-off one (#10227), because the chain's budget
+      // is spent across passes rather than within one.
+      const { beforeAfter, interactionPreviews, bugAnalysisEnabled } = await runVisualCaptureObligation(env, {
+        installationId,
+        repoFullName,
+        pr,
+        repo,
+        mode,
+        repoFocusManifestForComment,
+        getUnifiedFiles: getReviewFiles,
+        webhook,
+      });
       // AI-vision analysis of a confirmed visual regression (#4111 wiring) — see runVisualVisionForAdvisory's
       // own doc comment. Deliberately independent of the capture block above (its own try/catch there) so a
       // vision failure can never affect the "Visual preview" section that block already rendered.

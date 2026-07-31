@@ -290,6 +290,7 @@ import {
   MAX_REVIEW_NAG_COOLDOWN_DAYS,
   isProtectedAutomationAuthor,
   planAgentMaintenanceActions,
+  resolveHoldCause,
   planContributorCapClose,
   resolveAgentDispositionLabels,
   type AgentActionPlanInput,
@@ -3752,8 +3753,9 @@ async function runAgentMaintenancePlanAndExecute(
     duplicateWinnerEnabled && openDuplicateSiblings.length > 0
       ? await resolveScopedLinkedIssueClaimedAt(env, repoFullName, pr, openDuplicateSiblings)
       : pr.linkedIssueClaimedAt;
-  const planned = planAgentMaintenanceActions(
-    buildAgentMaintenancePlanInput({
+  // #9991: named, so the finalize site below can recompute the hold cause from the SAME input the planner
+  // consumed rather than from a second construction that could drift from it.
+  const agentPlanInput = buildAgentMaintenancePlanInput({
       gate,
       settings,
       changedPaths,
@@ -3783,8 +3785,8 @@ async function runAgentMaintenancePlanAndExecute(
       scopedLinkedIssueClaimedAt,
       manualReviewLockContentionResolved: hadPriorLockContentionHold && !aiReviewLockContentionThisPass,
       decisionNowMs: decisionClock.nowMs,
-    }),
-  );
+  });
+  const planned = planAgentMaintenanceActions(agentPlanInput);
   // Accuracy circuit-breakers (#self-improve / GAP-4): two INDEPENDENT, fail-open precision breakers, chained.
   //   • MERGE breaker (holdonly:<scope>): when set, convert a would-MERGE into a human HOLD before executing.
   //   • CLOSE breaker (closehold:<scope>): when set, convert a HEURISTIC would-CLOSE into a human HOLD (the
@@ -3956,9 +3958,18 @@ async function runAgentMaintenancePlanAndExecute(
     // job's own delivery id -- the scheduled sweep, a repair fan-out, an operator's manual re-gate,
     // or (no synthetic prefix) a real webhook event that moved something the verdict depends on. The
     // writer ignores it entirely on a first evaluation, which is the overwhelming majority of writes.
-    const recordId = await persistDecisionRecord(env, record, recordDigest, 3, {
-      reason: deriveReevaluationReason(deliveryId),
-    });
+    // #9991: the hold cause, recomputed from the SAME plan input the planner consumed. A hold's defining
+    // shape is that nothing was planned, so there is no action carrying the reason -- and without this the
+    // record falls back to the gate conclusion and files a held PR under reason "success".
+    const holdCause = disposition.actionClass === "hold" ? resolveHoldCause(agentPlanInput).join(",") || null : null;
+    const recordId = await persistDecisionRecord(
+      env,
+      record,
+      recordDigest,
+      3,
+      { reason: deriveReevaluationReason(deliveryId) },
+      holdCause,
+    );
     // #8838: persist the evaluation's own exact inputs beside the record (PRIVATE sibling, migration 0182)
     // so the replay harness can re-derive this decision bit-exactly. Best-effort, like the record itself;
     // the no-replay no-op (synthetic content-lane/bridge evaluations) lives inside the helper. Keyed to the

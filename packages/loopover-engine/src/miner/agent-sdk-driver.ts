@@ -101,7 +101,18 @@ function finiteNonNegativeNumber(value: unknown): number | undefined {
  *  aggregate. */
 function tokensFromResultMessage(resultMessage: Record<string, unknown> | null): CodingAgentTokenUsage {
   const usage = asRecord(resultMessage?.usage);
-  const inputTokens = finiteNonNegativeNumber(usage?.input_tokens);
+  // #10246: Anthropic splits one prompt across three counters -- `input_tokens` carries only the portion
+  // neither read from nor written to the prompt cache. Summed, matching the ORB side's own totalInputTokens
+  // (#10251), so both parsers report the same thing for the same envelope. Absence stays absence; a tier that
+  // is present but zero contributes a real zero.
+  const inputTiers = [
+    finiteNonNegativeNumber(usage?.input_tokens),
+    finiteNonNegativeNumber(usage?.cache_read_input_tokens),
+    finiteNonNegativeNumber(usage?.cache_creation_input_tokens),
+  ];
+  const inputTokens = inputTiers.every((tier) => tier === undefined)
+    ? undefined
+    : inputTiers.reduce<number>((sum, tier) => sum + (tier ?? 0), 0);
   const outputTokens = finiteNonNegativeNumber(usage?.output_tokens);
   if (inputTokens === undefined && outputTokens === undefined) return {};
   return {

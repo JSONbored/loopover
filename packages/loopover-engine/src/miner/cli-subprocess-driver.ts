@@ -2,6 +2,7 @@ import type {
   CodingAgentDriver,
   CodingAgentDriverResult,
   CodingAgentDriverTask,
+  CodingAgentTokenUsage,
 } from "./coding-agent-driver.js";
 import { buildAllowlistedEnv, redactSecrets } from "../subprocess-env.js";
 
@@ -206,10 +207,18 @@ function extractCliUsage(stdout: string): CliUsage {
 /** Real token count (input + output) from `extractCliUsage`'s CliUsage, when either is present -- prefers an
  *  explicit `totalTokens` key if the CLI reported one directly (never double-counted against input+output),
  *  otherwise sums input+output. Undefined (never a fabricated 0) when neither is present. */
-function totalTokensFromUsage(usage: CliUsage): number | undefined {
-  if (usage.totalTokens !== undefined) return usage.totalTokens;
-  if (usage.inputTokens === undefined && usage.outputTokens === undefined) return undefined;
-  return (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+/** #10198: carries the input/output split through alongside the blended total. The CLI reports the two sides
+ *  separately and this used to return only their sum, so the miner could not populate PostHog's own
+ *  `$ai_input_tokens`/`$ai_output_tokens`. A CLI that reports ONLY `totalTokens` still yields just the blended
+ *  figure -- the split stays absent rather than being invented from it. */
+function totalTokensFromUsage(usage: CliUsage): CodingAgentTokenUsage {
+  const split = {
+    ...(usage.inputTokens === undefined ? {} : { inputTokens: usage.inputTokens }),
+    ...(usage.outputTokens === undefined ? {} : { outputTokens: usage.outputTokens }),
+  };
+  if (usage.totalTokens !== undefined) return { tokensUsed: usage.totalTokens, ...split };
+  if (usage.inputTokens === undefined && usage.outputTokens === undefined) return {};
+  return { tokensUsed: (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0), ...split };
 }
 
 /** Claude Code's `--output-format json` sometimes exits non-zero while still emitting a structured
@@ -282,10 +291,9 @@ export function createCliSubprocessCodingAgentDriver(options: CliSubprocessDrive
       // below report spend symmetrically with the success path and with agent-sdk-driver.ts, preventing
       // attempt-metering budget-ceiling undercounting (#8871). extractCliUsage tolerates unparseable/empty stdout.
       const usage = extractCliUsage(spawned.stdout);
-      const tokensUsed = totalTokensFromUsage(usage);
       const usageFields = {
         ...(usage.costUsd !== undefined ? { costUsd: usage.costUsd } : {}),
-        ...(tokensUsed !== undefined ? { tokensUsed } : {}),
+        ...totalTokensFromUsage(usage),
       };
 
       if (spawned.timedOut && spawned.stalledNoOutput) {

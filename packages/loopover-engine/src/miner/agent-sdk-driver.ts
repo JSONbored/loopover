@@ -16,6 +16,7 @@ import type {
   CodingAgentDriver,
   CodingAgentDriverResult,
   CodingAgentDriverTask,
+  CodingAgentTokenUsage,
 } from "./coding-agent-driver.js";
 
 /**
@@ -91,13 +92,23 @@ function finiteNonNegativeNumber(value: unknown): number | undefined {
  *  as `total_cost_usd`. `NonNullableUsage`'s `input_tokens`/`output_tokens` are themselves non-nullable numbers
  *  once `usage` exists, but this driver reads `resultMessage` as a loosely-typed record (like every other field
  *  read here), so both are re-validated defensively (finite + non-negative, #5827) rather than trusted from an
- *  untyped source. Returns undefined (never a fabricated 0) when `usage` is absent or malformed. */
-function tokensFromResultMessage(resultMessage: Record<string, unknown> | null): number | undefined {
+ *  untyped source. Returns an EMPTY usage (never a fabricated 0) when `usage` is absent or malformed.
+ *
+ *  #10198: returns the split alongside the blended total rather than only the sum. Both sides were already read
+ *  here and then added together, discarding the parts -- which left the miner with nothing to put in PostHog's
+ *  own `$ai_input_tokens`/`$ai_output_tokens`, the properties its cost views read. Each field is omitted rather
+ *  than zeroed when the provider did not report it: a fabricated 0 is indistinguishable from a real one in an
+ *  aggregate. */
+function tokensFromResultMessage(resultMessage: Record<string, unknown> | null): CodingAgentTokenUsage {
   const usage = asRecord(resultMessage?.usage);
   const inputTokens = finiteNonNegativeNumber(usage?.input_tokens);
   const outputTokens = finiteNonNegativeNumber(usage?.output_tokens);
-  if (inputTokens === undefined && outputTokens === undefined) return undefined;
-  return (inputTokens ?? 0) + (outputTokens ?? 0);
+  if (inputTokens === undefined && outputTokens === undefined) return {};
+  return {
+    tokensUsed: (inputTokens ?? 0) + (outputTokens ?? 0),
+    ...(inputTokens === undefined ? {} : { inputTokens }),
+    ...(outputTokens === undefined ? {} : { outputTokens }),
+  };
 }
 
 async function listWorktreeChangedFiles(cwd: string): Promise<string[]> {
@@ -197,7 +208,7 @@ export function createAgentSdkCodingAgentDriver(
       // `total_cost_usd: number` unconditionally -- present whenever a result message arrived at all, success
       // or not (the session was billed either way), absent only when the stream produced no result message.
       const costUsd = finiteNonNegativeNumber(resultMessage?.total_cost_usd);
-      const tokensUsed = tokensFromResultMessage(resultMessage);
+      const tokenUsage = tokensFromResultMessage(resultMessage);
       const resultText =
         typeof resultMessage?.result === "string" ? redactSecrets(resultMessage.result) : "";
       const transcript = redactSecrets(
@@ -224,7 +235,7 @@ export function createAgentSdkCodingAgentDriver(
           transcript,
           turnsUsed,
           costUsd,
-          tokensUsed,
+          ...tokenUsage,
           error: `agent_sdk_${subtype === "success" ? "errored" : subtype}`,
         };
       }
@@ -241,7 +252,7 @@ export function createAgentSdkCodingAgentDriver(
           transcript,
           turnsUsed,
           costUsd,
-          tokensUsed,
+          ...tokenUsage,
           error: `agent_sdk_changed_files_unavailable: ${detail}`,
         };
       }
@@ -254,7 +265,7 @@ export function createAgentSdkCodingAgentDriver(
         transcript,
         turnsUsed,
         costUsd,
-        tokensUsed,
+        ...tokenUsage,
       };
     },
   };

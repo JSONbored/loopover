@@ -529,6 +529,52 @@ describe("createCliSubprocessCodingAgentDriver (#4266)", () => {
   });
 
   describe("REGRESSION: real token-usage extraction, ported from src/selfhost/ai.ts's extractCliUsage (#5653)", () => {
+    // #10198: the driver read both sides and returned only their sum, so the miner's PostHog capture had
+    // nothing for `$ai_input_tokens`/`$ai_output_tokens` -- the properties PostHog's own cost views read.
+    it("reports the input/output split alongside the blended total (#10198)", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: JSON.stringify({ type: "result", subtype: "success", result: "done", input_tokens: 1000, output_tokens: 234 }),
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      const result = await driver.run(TASK);
+      expect(result.tokensUsed).toBe(1234);
+      expect(result.inputTokens).toBe(1000);
+      expect(result.outputTokens).toBe(234);
+    });
+
+    it("keeps an explicit total_tokens as the blended figure WITHOUT inventing a split from it (#10198)", async () => {
+      // A CLI that reports only a total genuinely has no split to report; deriving one would be a fabrication.
+      const { spawn } = fakeSpawn({ stdout: JSON.stringify({ total_tokens: 999 }), code: 0 });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      const result = await driver.run(TASK);
+      expect(result.tokensUsed).toBe(999);
+      expect(result.inputTokens).toBeUndefined();
+      expect(result.outputTokens).toBeUndefined();
+    });
+
+    it("carries the split through when total_tokens AND the two sides are all reported (#10198)", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: JSON.stringify({ input_tokens: 100, output_tokens: 50, total_tokens: 999 }),
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      const result = await driver.run(TASK);
+      // The CLI's own total still wins over the sum -- unchanged from before the split existed.
+      expect(result.tokensUsed).toBe(999);
+      expect(result.inputTokens).toBe(100);
+      expect(result.outputTokens).toBe(50);
+    });
+
+    it("leaves a side ABSENT rather than zeroed when the CLI reported only one of them (#10198)", async () => {
+      const { spawn } = fakeSpawn({ stdout: JSON.stringify({ input_tokens: 42 }), code: 0 });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      const result = await driver.run(TASK);
+      expect(result.tokensUsed).toBe(42);
+      expect(result.inputTokens).toBe(42);
+      expect(result.outputTokens).toBeUndefined();
+    });
+
     it("sums claude's top-level input_tokens + output_tokens from its single JSON result on success", async () => {
       const { spawn } = fakeSpawn({
         stdout: JSON.stringify({ type: "result", subtype: "success", result: "done", input_tokens: 1000, output_tokens: 234 }),

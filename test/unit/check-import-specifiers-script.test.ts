@@ -131,4 +131,12 @@ describe("check-import-specifiers script", () => {
     expect(multi.map((v) => v.file)).toEqual(["src/a.ts", "src/z.ts", "src/z.ts"]);
     expect(multi.map((v) => v.specifier)).toEqual(["./c.js", "./a.js", "./b.js"]);
   });
+
+  // #9649: the real repo, scanned with the checker's default roots, must have zero import-specifier
+  // violations -- #9240 and #9249 are two drifts that reached main while this guard was enforced only by
+  // a local `npm run import-specifiers:check`, never by CI or a real-tree test. If this fails, a genuine
+  // drift has landed -- fix the specifier, don't weaken this check.
+  it("the real repo has zero import-specifier violations (regression guard)", () => {
+    expect(findImportSpecifierViolations()).toEqual([]);
+  });
 });

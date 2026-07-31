@@ -507,9 +507,108 @@ function repoGroup(operational: Record<string, unknown>): { groups?: { repo: str
   return typeof operational.repo === "string" ? { groups: { repo: operational.repo } } : {};
 }
 
+/** #10221: PostHog's Traces view takes a trace's NAME from a trace-level `$ai_trace` event, not from any
+ *  property on the generations underneath it (confirmed upstream in PostHog/posthog#33179 -- an
+ *  `$ai_span_name` on a generation does not populate that column). This project emitted only generations, so
+ *  every trace read as an anonymous id with no way to tell a gate review from an embedding batch.
+ *
+ *  Per in-flight trace: how deeply {@link withPostHogAiTrace} is nested, and whether any generation actually
+ *  landed underneath. Both matter -- see that function for why. */
+const aiTraceState = new Map<string, { depth: number; generations: number }>();
+
+/** Note that a generation landed under `traceId`, so its enclosing pipeline span knows the trace is worth
+ *  naming. A generation captured outside any pipeline span has no entry and is simply ignored. */
+function markAiTraceGeneration(traceId: unknown): void {
+  if (typeof traceId !== "string") return;
+  const state = aiTraceState.get(traceId);
+  if (state) state.generations += 1;
+}
+
+export const POSTHOG_AI_TRACE_EVENT = "$ai_trace";
+
+/**
+ * Name the AI trace a pipeline span represents (#10221), emitting one `$ai_trace` as the OUTERMOST span for
+ * that trace completes.
+ *
+ * Two conditions guard the emit, and both are load-bearing:
+ *
+ * - **Outermost only.** `withReviewPipelineSpan` is called from several sites that can nest, and PostHog
+ *   expects one `$ai_trace` per trace id. A depth counter means the inner calls contribute nothing and the
+ *   name that survives is the outermost one -- the whole operation, not whichever leaf happened to finish.
+ * - **Only when generations exist.** Not every pipeline span wraps an AI call (the gate, for one). Emitting
+ *   unconditionally would manufacture trace rows with zero generations under them, which is a worse reading
+ *   than an unnamed trace.
+ *
+ * A no-op when PostHog is off or there is no ambient OTel trace to name -- in both cases the callback runs
+ * untouched, so this never changes what the wrapped work does or what it throws.
+ */
+export async function withPostHogAiTrace<T>(
+  name: string,
+  context: Record<string, unknown> | undefined,
+  fn: () => T | Promise<T>,
+): Promise<T> {
+  const traceId = currentOtelTraceIds()?.trace_id;
+  // Pin the client that was active when the span opened, rather than re-reading the module binding in the
+  // `finally` below -- it also lets the emit helper stay free of a second, unreachable off-switch check.
+  const target = client;
+  if (!active || !target || !traceId) return await fn();
+  const state = aiTraceState.get(traceId) ?? { depth: 0, generations: 0 };
+  if (state.depth === 0) aiTraceState.set(traceId, state);
+  state.depth += 1;
+  const startedAtMs = Date.now();
+  let failure: unknown;
+  try {
+    return await fn();
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    state.depth -= 1;
+    if (state.depth === 0) {
+      aiTraceState.delete(traceId);
+      if (state.generations > 0) captureAiTraceEnvelope(target, name, context, traceId, Date.now() - startedAtMs, failure);
+    }
+  }
+}
+
+/** Emit the trace-level envelope. Separate from {@link withPostHogAiTrace} only so the bookkeeping above
+ *  reads as bookkeeping. */
+function captureAiTraceEnvelope(
+  target: PostHogClient,
+  name: string,
+  context: Record<string, unknown> | undefined,
+  traceId: string,
+  latencyMs: number,
+  failure: unknown,
+): void {
+  const operational = operationalProperties(context);
+  const properties: Record<string, unknown> = {
+    ...operational,
+    // The trace id is the one the generations already carry -- taken from the SAME ambient OTel trace, so the
+    // envelope and its children can never disagree about which trace they belong to.
+    $ai_trace_id: traceId,
+    $ai_span_name: name,
+    $ai_latency: latencyMs / 1000,
+    $ai_is_error: failure !== undefined,
+    environment: posthogEnvironment,
+  };
+  if (failure !== undefined) {
+    const error = failure instanceof Error ? failure : new Error(String(failure));
+    properties.$ai_error = error.message.slice(0, 500);
+  }
+  target.capture({
+    distinctId: POSTHOG_DISTINCT_ID,
+    event: POSTHOG_AI_TRACE_EVENT,
+    properties,
+    ...repoGroup(operational),
+  });
+}
+
 export function capturePostHogAiGeneration(event: PostHogAiGenerationEvent): void {
   if (!active || !client) return;
   const operational = operationalProperties(event.context);
+  // #10221: tells the enclosing pipeline span this trace has real AI work under it and is worth naming.
+  markAiTraceGeneration(operational.trace_id);
   const properties: Record<string, unknown> = {
     ...operational,
     ...aiTraceProperties(operational),
@@ -677,5 +776,7 @@ export function resetPostHogForTest(): void {
   centralKeyAnonSecret = undefined;
   aiContentCapture = false;
   aiContentMaxChars = DEFAULT_AI_CONTENT_MAX_CHARS;
+  // #10221: in-flight trace bookkeeping, so one test's pipeline span cannot leak into the next.
+  aiTraceState.clear();
   resetRedactionScrubForTest();
 }

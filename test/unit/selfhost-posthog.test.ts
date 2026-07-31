@@ -35,7 +35,9 @@ import {
   capturePostHogAiMetric,
   POSTHOG_AI_DEGRADED_EVENT,
   POSTHOG_AI_METRIC_EVENT,
+  POSTHOG_AI_TRACE_EVENT,
   POSTHOG_MONITOR_HEARTBEAT_EVENT,
+  withPostHogAiTrace,
   resetPostHogForTest,
   resolvePostHogRelease,
   scrubPostHogEvent,
@@ -1016,6 +1018,122 @@ describe("capturePostHogAiMetric (#10226 — review quality, joined to the AI tr
     const keys = Object.keys(mocks.capture.mock.calls[0]?.[0].properties);
     expect(keys).not.toContain("$ai_input");
     expect(keys).not.toContain("$ai_output_choices");
+  });
+});
+
+describe("withPostHogAiTrace (#10221 — naming the trace PostHog's Traces view shows)", () => {
+  const GENERATION = { provider: "claude-code", model: "claude-sonnet-5", requestKind: "review" as const, latencyMs: 1500, isError: false };
+  const traceEvents = (): Array<{ properties: Record<string, unknown>; groups?: unknown }> =>
+    mocks.capture.mock.calls.map((call) => call[0]).filter((call) => call.event === POSTHOG_AI_TRACE_EVENT);
+
+  it("is a transparent pass-through when PostHog is unconfigured", async () => {
+    await expect(withPostHogAiTrace("review.gate", undefined, async () => "result")).resolves.toBe("result");
+    expect(mocks.capture).not.toHaveBeenCalled();
+  });
+
+  it("is a pass-through when there is no ambient OTel trace to name", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue(undefined);
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await expect(withPostHogAiTrace("review.gate", undefined, async () => "result")).resolves.toBe("result");
+    expect(traceEvents()).toHaveLength(0);
+  });
+
+  it("names the trace once a generation has landed under it", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "review-trace-1", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await withPostHogAiTrace("review.pipeline", { repo: "owner/repo", pullNumber: 7 }, async () => {
+      capturePostHogAiGeneration({ ...GENERATION, context: { repo: "owner/repo", pullNumber: 7 } });
+    });
+    const [envelope] = traceEvents();
+    // The envelope must claim the SAME trace id the generation carries, or the two never join up.
+    expect(envelope?.properties.$ai_trace_id).toBe("review-trace-1");
+    expect(envelope?.properties.$ai_span_name).toBe("review.pipeline");
+    expect(envelope?.properties.$ai_is_error).toBe(false);
+    expect(envelope?.properties.repo).toBe("owner/repo");
+    expect(envelope?.groups).toEqual({ repo: "owner/repo" });
+  });
+
+  it("does NOT name a pipeline span that ran no AI calls at all", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "gate-trace", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    // The gate is a real pipeline span with no generation under it. Naming it would manufacture a trace row
+    // with nothing in it, which reads worse than an unnamed trace.
+    await withPostHogAiTrace("review.gate", { repo: "owner/repo" }, async () => "no ai here");
+    expect(traceEvents()).toHaveLength(0);
+  });
+
+  it("emits exactly ONE envelope for nested spans, named by the OUTERMOST one", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "nested-trace", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await withPostHogAiTrace("review.outer", { repo: "owner/repo" }, async () => {
+      await withPostHogAiTrace("review.inner", { repo: "owner/repo" }, async () => {
+        capturePostHogAiGeneration({ ...GENERATION, context: { repo: "owner/repo" } });
+      });
+    });
+    const envelopes = traceEvents();
+    expect(envelopes).toHaveLength(1);
+    // The whole operation, not whichever leaf happened to finish.
+    expect(envelopes[0]?.properties.$ai_span_name).toBe("review.outer");
+  });
+
+  it("marks the trace errored and rethrows when the wrapped work throws", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "failing-trace", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await expect(
+      withPostHogAiTrace("review.pipeline", { repo: "owner/repo" }, async () => {
+        capturePostHogAiGeneration({ ...GENERATION, context: { repo: "owner/repo" } });
+        throw new Error("reviewer exploded");
+      }),
+    ).rejects.toThrow("reviewer exploded");
+    const [envelope] = traceEvents();
+    expect(envelope?.properties.$ai_is_error).toBe(true);
+    expect(envelope?.properties.$ai_error).toBe("reviewer exploded");
+  });
+
+  it("handles a non-Error thrown value, and bounds the recorded message", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "string-throw-trace", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await expect(
+      withPostHogAiTrace("review.pipeline", undefined, async () => {
+        capturePostHogAiGeneration(GENERATION);
+        throw "a string failure";
+      }),
+    ).rejects.toBe("a string failure");
+    expect(traceEvents()[0]?.properties.$ai_error).toBe("a string failure");
+
+    mocks.capture.mockClear();
+    await expect(
+      withPostHogAiTrace("review.pipeline", undefined, async () => {
+        capturePostHogAiGeneration(GENERATION);
+        throw new Error("y".repeat(600));
+      }),
+    ).rejects.toThrow();
+    expect(traceEvents()[0]?.properties.$ai_error).toHaveLength(500);
+  });
+
+  it("omits the repo group when the span has no repo, and still names the trace", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "no-repo-trace", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await withPostHogAiTrace("ai.advisory", undefined, async () => {
+      capturePostHogAiGeneration(GENERATION);
+    });
+    const [envelope] = traceEvents();
+    expect(envelope?.properties.$ai_span_name).toBe("ai.advisory");
+    expect(envelope && "groups" in envelope).toBe(false);
+  });
+
+  it("a second, later span over the SAME trace id starts from a clean slate", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "reused-trace", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await withPostHogAiTrace("first", undefined, async () => {
+      capturePostHogAiGeneration(GENERATION);
+    });
+    // The bookkeeping entry is deleted on completion, so the second span must not inherit the first's
+    // generation count and name an empty trace.
+    await withPostHogAiTrace("second", undefined, async () => "no ai here");
+    const envelopes = traceEvents();
+    expect(envelopes).toHaveLength(1);
+    expect(envelopes[0]?.properties.$ai_span_name).toBe("first");
   });
 });
 

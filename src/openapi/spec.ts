@@ -1970,6 +1970,24 @@ export function buildOpenApiSpec() {
       404: { description: "No decision record persisted yet for this PR" },
     },
   });
+  // #9983 (slice of #9747): the public status board, sourced from this deployment's own Alertmanager -- the
+  // same alerting stack that pages the on-call rotation -- so the page cannot disagree with what actually
+  // fires. 404s where no alerting source is configured rather than publishing an all-unknown board.
+  registry.registerPath({
+    method: "get",
+    path: "/v1/public/service-status",
+    operationId: "getPublicServiceStatus",
+    tags: ["Public"],
+    summary: "Per-component service status — is each component healthy right now",
+    responses: {
+      200: {
+        description:
+          "{ generatedAt, overall, components: [{ component, label, status, since, reason? }] } — `status` is `operational` | `degraded` | `outage` | `unknown`, and `overall` is the worst of them. `unknown` means the alerting source could not be read and is NEVER reported as healthy; `reason` is then a category, never a URL or hostname. `since` is the earliest firing alert's start for a non-operational component, else null. Public-safe: no host names, instance ids, capacity figures or raw alert labels",
+      },
+      404: { description: "This deployment has no alerting source configured, so it publishes no status board" },
+    },
+  });
+
   registry.registerPath({
     method: "get",
     path: "/v1/public/eval-corpus",

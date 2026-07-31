@@ -266,6 +266,10 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/selfhost/preflight.ts",
   },
   {
+    name: "LOOPOVER_ALERTMANAGER_URL",
+    firstReference: "src/selfhost/service-status.ts",
+  },
+  {
     name: "LOOPOVER_API_TOKEN",
     firstReference: "src/selfhost/preflight.ts",
   },
@@ -783,6 +787,7 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `GITHUB_WEBHOOK_SECRET` | `src/selfhost/preflight.ts` |",
   "| `HOME` | `src/selfhost/ai.ts` |",
   "| `INTERNAL_JOB_TOKEN` | `src/selfhost/preflight.ts` |",
+  "| `LOOPOVER_ALERTMANAGER_URL` | `src/selfhost/service-status.ts` |",
   "| `LOOPOVER_API_TOKEN` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_CENTRAL_POSTHOG_KEY` | `src/selfhost/posthog.ts` |",
   "| `LOOPOVER_ENABLE_PAGERDUTY` | `src/services/notify-pagerduty.ts` |",

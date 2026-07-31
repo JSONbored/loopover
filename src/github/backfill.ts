@@ -1712,6 +1712,11 @@ async function fetchPagedSegment<T>(
   expectedCount: number | undefined,
   persistPage: (payloads: T[], scanStartedAt: string) => Promise<number>,
   options: {
+    /** Marks a segment as a BOUNDED RECENT-WINDOW SAMPLE rather than an exhaustive crawl: when the page budget
+     *  runs out with more pages upstream, the run settles as `sampled` instead of `running`, and records no
+     *  continuation cursor because none can be consumed (#10209 — see the fuller note at the `sampled` branch).
+     *  The name is historical and reads as "walks deeper each run"; it does not. Coverage grows only by
+     *  accretion as the underlying `sort=updated` window slides. */
     progressiveHistory?: boolean;
     countPersisted?: () => Promise<number>;
     reconcileOnComplete?: (scanStartedAt: string) => Promise<number>;
@@ -1814,6 +1819,25 @@ async function fetchPagedSegment<T>(
   if (status === "complete") {
     if (hasMore && options.progressiveHistory) {
       status = "sampled";
+      // #10209: a `sampled` segment is NOT resumable, so a nextCursor recorded here is written and never read.
+      // Three independent gates make that so: this branch maps complete+hasMore to `sampled` rather than
+      // `running`; `canResumePreviousScan` accepts only running/partial/waiting_rate_limit, so both
+      // `previous.nextCursor` and an explicitly passed `cursor` are ignored and startPage falls back to 1; and
+      // the automatic resume re-send below is scoped to labels/open_issues/open_pull_requests, with the
+      // scheduled cron only ever dispatching light/full. Confirmed live on edge-nl-01: a `resume` run with an
+      // explicit cursor: "11" against a segment at next_cursor=11 re-crawled pages 1-10 and persisted nothing
+      // new, returning the same nextCursor: "11" it started with.
+      //
+      // Clearing it makes the stored row describe what this segment actually IS -- a bounded window over the
+      // most-recently-updated closed PRs, re-crawled from page 1 every run, whose coverage grows by accretion
+      // as the window slides (and is trimmed by the 30-day updated_at retention in src/db/retention.ts). That
+      // is a defensible design; recording a continuation position no scheduled or manual path can consume is
+      // not, because it invites a reader to conclude the crawl is advancing when it never can.
+      //
+      // `expectedCount` is deliberately KEPT: "this window holds N of the M closed PRs GitHub reports" is a
+      // true and useful coverage statement. It is only misleading when read as progress toward M, which is
+      // what the absent cursor now signals.
+      nextCursor = undefined;
     } else if (hasMore) {
       status = "running";
     } else {

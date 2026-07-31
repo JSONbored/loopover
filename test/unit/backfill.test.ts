@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import {
   getInstallationHealth,
+  getRepoSyncSegment,
   listCheckSummaries,
   listContributorRepoStats,
   listIssues,
@@ -4052,6 +4053,56 @@ describe("GitHub backfill", () => {
 
     expect(result).toMatchObject({ status: "sampled", fetchedCount: 10, expectedCount: 2000 });
     expect(await listRecentMergedPullRequests(env, "JSONbored/gittensory")).toHaveLength(10);
+
+    // REGRESSION (#10209): a `sampled` segment records NO continuation cursor. It is not resumable --
+    // canResumePreviousScan accepts only running/partial/waiting_rate_limit -- so a stored nextCursor would be
+    // written and never read, describing a continuation no scheduled or manual path can perform. expectedCount
+    // is deliberately still recorded: "10 of 2000" is a true coverage statement, just not a progress one.
+    expect(result.nextCursor ?? null).toBeNull();
+    const stored = await getRepoSyncSegment(env, "JSONbored/gittensory", "recent_merged_pull_requests");
+    expect(stored?.status).toBe("sampled");
+    expect(stored?.nextCursor ?? null).toBeNull();
+    expect(stored?.expectedCount).toBe(2000);
+  });
+
+  it("REGRESSION (#10209): a resume dispatched against a sampled segment restarts at page 1 rather than advancing", async () => {
+    // Pins the behaviour the absent cursor now advertises honestly. Verified live on edge-nl-01 before the
+    // change: a resume run with an explicit cursor: "11" against next_cursor=11 re-crawled pages 1-10 and
+    // persisted nothing new. The segment is a rolling most-recently-updated window, not a deepening crawl.
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    const pagesRequested: number[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 2000, closedPullRequests: 0, labels: 0 });
+      if (/\/pulls\/\d+\/files/.test(url)) return Response.json([]);
+      if (url.includes("/pulls?state=closed")) {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        pagesRequested.push(page);
+        return Response.json(
+          [{ number: page, title: `Merged ${page}`, state: "closed", merged_at: "2026-05-20T00:00:00.000Z", user: { login: "oktofeesh1" }, labels: [], body: "" }],
+          { headers: { link: `<https://api.github.com/repositories/1/pulls?page=${page + 1}>; rel="next"` } },
+        );
+      }
+      return Response.json([]);
+    });
+
+    await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "recent_merged_pull_requests", mode: "full" });
+    pagesRequested.length = 0;
+
+    const resumed = await backfillRepositorySegment(env, {
+      repoFullName: "JSONbored/gittensory",
+      segment: "recent_merged_pull_requests",
+      mode: "resume",
+      cursor: "11",
+    });
+
+    // The explicitly-passed cursor is ignored: the crawl restarts from page 1, so nothing beyond the window
+    // is ever reachable and the run settles as `sampled` again with no cursor to hand back.
+    expect(pagesRequested[0]).toBe(1);
+    expect(pagesRequested).not.toContain(11);
+    expect(resumed).toMatchObject({ status: "sampled" });
+    expect(resumed.nextCursor ?? null).toBeNull();
   });
 
   it("hydrates PR files and reviews through GraphQL when public-token REST detail endpoints are hidden", async () => {

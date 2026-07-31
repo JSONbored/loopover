@@ -5,7 +5,7 @@ import {
   selectUnrelatedVisualFindings,
 } from "../../src/review/visual/visual-followup";
 import { VISUAL_FOLLOWUP_COMMENT_MARKER } from "../../src/github/comments";
-import { VISUAL_REGRESSION_FINDING_CODE, VISUAL_UNRELATED_ISSUE_FINDING_CODE } from "../../src/review/visual/visual-findings";
+import { buildVisualRegressionFindings, parseVisualVisionResponse, VISUAL_REGRESSION_FINDING_CODE, VISUAL_UNRELATED_ISSUE_FINDING_CODE } from "../../src/review/visual/visual-findings";
 import type { AdvisoryFinding } from "../../src/types";
 
 const unrelatedFinding = (overrides: Partial<AdvisoryFinding> = {}): AdvisoryFinding => ({
@@ -134,5 +134,15 @@ describe("buildVisualFollowupComment", () => {
     const body = buildVisualFollowupComment([regressionFinding(), unrelatedFinding()], ["jsonbored"]);
     expect(body).not.toContain("Possible visual regression");
     expect(body).toContain("Possible unrelated visual issue");
+  });
+
+  it("REGRESSION (#10062): a hostile model path is scrubbed at parse time and never reaches the follow-up body as live markup", () => {
+    const hostile = JSON.stringify({
+      findings: [{ path: "/app [pwn](http://evil.example) @maintainer", body: "Layout looks off, unrelated to this change.", category: "unrelated" }],
+    });
+    const built = buildVisualRegressionFindings(parseVisualVisionResponse(hostile));
+    const body = buildVisualFollowupComment(built, ["jsonbored"]);
+    expect(body).not.toBeNull();
+    expect(body!).not.toContain("](http://evil.example)"); // the injected link never renders live
   });
 });

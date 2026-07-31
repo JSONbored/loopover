@@ -10453,6 +10453,10 @@
               "proceed",
               null
             ]
+          },
+          "linkedIssueMaintainerExempt": {
+            "type": "boolean",
+            "nullable": true
           }
         },
         "required": [

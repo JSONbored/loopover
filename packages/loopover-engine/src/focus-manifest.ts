@@ -87,6 +87,22 @@ export type FocusManifestGateConfig = {
   checkMode: ReviewCheckMode | null;
   pack: GatePolicyPack | null;
   linkedIssue: GateRuleMode | null;
+  /** `gate.linkedIssueMaintainerExempt` (#10158): exempt MAINTAINER-authored PRs from the missing-linked-issue
+   *  penalty, without weakening it for contributors and without giving up any linked-issue analysis.
+   *
+   *  It clamps `linkedIssue` from `block` to `advisory` for those authors and nothing else. That one clamp is
+   *  the whole feature, because the two halves are already separate concerns: the `missing_linked_issue`
+   *  finding is PRODUCED on `requireLinkedIssue` (true whenever the mode is not `off`), and only BLOCKS when
+   *  the resolved mode is `block`. Clamping to `advisory` therefore keeps the finding visible in the review
+   *  comment while removing its power to fail the gate, hold the PR, or close it.
+   *
+   *  Everything that inspects an issue that IS linked -- `linkedIssueSatisfaction`, `linkedIssueHardRules`,
+   *  `linkedIssueLabelPropagation` -- is untouched by construction: each only fires when the PR cites at
+   *  least one issue, which is precisely the case this knob says nothing about.
+   *
+   *  null (unset) ⇒ byte-identical to before this existed. Deliberately scoped to the MISSING case: a
+   *  maintainer who does link an issue gets the same scrutiny anyone else would. */
+  linkedIssueMaintainerExempt: boolean | null;
   duplicates: GateRuleMode | null;
   /** `gate.readiness.mode`/`gate.readiness.minScore` -- this engine-layer pair folds into
    *  `RepositorySettings.qualityGateMode`/`qualityGateMinScore` (src/signals/focus-manifest.ts), a third
@@ -1364,6 +1380,7 @@ const EMPTY_GATE_CONFIG: FocusManifestGateConfig = {
   pack: null,
   closeAuditHoldoutPct: null,
   linkedIssue: null,
+  linkedIssueMaintainerExempt: null,
   duplicates: null,
   readinessMode: null,
   readinessMinScore: null,
@@ -1837,6 +1854,7 @@ const GATE_TOP_LEVEL_KEYS = new Set<string>([
   "checkMode",
   "pack",
   "linkedIssue",
+  "linkedIssueMaintainerExempt",
   "duplicates",
   "readiness",
   "aiReview",
@@ -1916,6 +1934,7 @@ function parseGateConfig(value: JsonValue | undefined, warnings: string[]): Focu
     checkMode: normalizeOptionalEnum(record.checkMode, "gate.checkMode", ["required", "visible", "disabled"] as const, warnings),
     pack: normalizeOptionalEnum(record.pack, "gate.pack", ["gittensor", "oss-anti-slop"] as const, warnings),
     linkedIssue: normalizeOptionalGateMode(record.linkedIssue, "gate.linkedIssue", warnings),
+    linkedIssueMaintainerExempt: normalizeOptionalBoolean(record.linkedIssueMaintainerExempt, "gate.linkedIssueMaintainerExempt", warnings),
     duplicates: normalizeOptionalGateMode(record.duplicates, "gate.duplicates", warnings),
     readinessMode: normalizeReadinessGateMode(readinessRecord?.mode, "gate.readiness.mode", warnings),
     readinessMinScore: normalizeOptionalScore(readinessRecord?.minScore, "gate.readiness.minScore", warnings),
@@ -2064,6 +2083,7 @@ export function gateConfigToJson(gate: FocusManifestGateConfig): JsonValue {
   if (gate.checkMode !== null) out.checkMode = gate.checkMode;
   if (gate.pack !== null) out.pack = gate.pack;
   if (gate.linkedIssue !== null) out.linkedIssue = gate.linkedIssue;
+  if (gate.linkedIssueMaintainerExempt !== null) out.linkedIssueMaintainerExempt = gate.linkedIssueMaintainerExempt;
   if (gate.duplicates !== null) out.duplicates = gate.duplicates;
   if (gate.readinessMode !== null || gate.readinessMinScore !== null) {
     const readiness: Record<string, JsonValue> = {};

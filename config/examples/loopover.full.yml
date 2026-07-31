@@ -175,6 +175,25 @@ gate:
   # that is a separate, deterministic rule, not this gate.
   linkedIssue: advisory
 
+  # Exempt MAINTAINER-authored PRs from the missing-linked-issue penalty above, without weakening it for
+  # contributors and without giving up any linked-issue analysis. Off (unset) by default.
+  #
+  # With `linkedIssue: block` a maintainer's own quick fix is failed/held for the same reason a drive-by
+  # contributor PR is, which is rarely what the block is for — it exists to stop unlinked contributor work,
+  # not to make the maintainer file an issue against themselves before touching their own repo.
+  #
+  # Set this true and, for MAINTAINER-authored PRs only (repo owner, per-repo admins, and your automation
+  # bots — the same protected-author set that is already exempt from auto-close), the gate is clamped from
+  # `block` to `advisory`:
+  #   • the "No linked issue detected" finding is STILL raised and still shown in the review comment
+  #   • it no longer fails the gate, holds the PR, or closes it
+  #   • contributors are completely unaffected — `linkedIssue: block` keeps its full force for them
+  #
+  # It changes nothing about a PR that DOES link an issue. Every linked-issue analysis — satisfaction
+  # (`linkedIssueSatisfaction`), the hard rules (`settings.linkedIssueHardRules`), and label propagation —
+  # only runs when an issue is cited, so all of it applies to maintainers exactly as before.
+  linkedIssueMaintainerExempt: false
+
   # Duplicate-PR gate — detects duplicate/superseding PRs.
   # off | advisory | block. Default: block.
   duplicates: block

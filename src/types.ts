@@ -972,6 +972,21 @@ export type RepositorySettings = {
    *  status for scoring only). `oss-anti-slop` runs the deterministic rules against any author on any repo. */
   gatePack: GatePolicyPack;
   linkedIssueGateMode: GateRuleMode;
+  /** #10158: exempt MAINTAINER-authored PRs from {@link linkedIssueGateMode}'s missing-linked-issue penalty,
+   *  without weakening it for contributors and without giving up any linked-issue analysis. Config-as-code
+   *  only (`.loopover.yml gate.linkedIssueMaintainerExempt`, global or per-repo), like {@link hardGuardrailGlobs}
+   *  -- no DB column, so no dashboard toggle can silently disagree with the file.
+   *
+   *  Resolved by {@link effectiveLinkedIssueGateMode} (src/settings/linked-issue-exemption.ts), which clamps
+   *  `block` to `advisory` for those authors and does nothing else. The clamp IS the feature: the
+   *  `missing_linked_issue` finding is produced on `requireLinkedIssue` (true for any mode but `off`) and only
+   *  blocks at `block`, so `advisory` keeps the finding visible while stripping its power to fail the gate,
+   *  hold, or close.
+   *
+   *  Scoped to the MISSING case on purpose. A maintainer who DOES link an issue is analysed exactly like
+   *  anyone else -- `linkedIssueSatisfactionGateMode`, `linkedIssueHardRules` and `linkedIssueLabelPropagation`
+   *  all key on a cited issue and are untouched by this. Absent/false ⇒ byte-identical to before it existed. */
+  linkedIssueMaintainerExempt?: boolean | null | undefined;
   duplicatePrGateMode: GateRuleMode;
   qualityGateMode: GateRuleMode;
   qualityGateMinScore?: number | null | undefined;

@@ -495,6 +495,8 @@ function applyGateConfigOverrides(effective: RepositorySettings, gate: FocusMani
   else if (gate.enabled !== null) effective.reviewCheckMode = gate.enabled ? "required" : "disabled";
   if (gate.pack !== null) effective.gatePack = gate.pack;
   if (gate.linkedIssue !== null) effective.linkedIssueGateMode = gate.linkedIssue;
+  // #10158: config-as-code only, so an unset key leaves whatever the caller spread in (undefined ⇒ off).
+  if (gate.linkedIssueMaintainerExempt !== null) effective.linkedIssueMaintainerExempt = gate.linkedIssueMaintainerExempt;
   if (gate.duplicates !== null) effective.duplicatePrGateMode = gate.duplicates;
   if (gate.readinessMode !== null) effective.qualityGateMode = gate.readinessMode;
   if (gate.readinessMinScore !== null) effective.qualityGateMinScore = gate.readinessMinScore;

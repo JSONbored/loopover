@@ -61,6 +61,7 @@ describe("issue-rag retrieve route (#4293)", () => {
     const app = createApp();
     const env = createTestEnv();
 
+    // #10040: empty title fails IssueRagRetrieveRequestSchema.min(1) → invalid_body before the hand-rolled pass.
     const invalid = await app.request(
       ISSUE_RAG_PATH,
       {
@@ -71,7 +72,20 @@ describe("issue-rag retrieve route (#4293)", () => {
       env,
     );
     expect(invalid.status).toBe(400);
-    await expect(invalid.json()).resolves.toMatchObject({ status: "invalid_request", reason: "title_required" });
+    await expect(invalid.json()).resolves.toMatchObject({ status: "invalid_request", reason: "invalid_body" });
+
+    // Whitespace-only title clears the schema min(1) then fails validateIssueRagInput's post-trim check.
+    const whitespaceTitle = await app.request(
+      ISSUE_RAG_PATH,
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify({ owner: "repo-owner", repo: "owned-repo", title: "   " }),
+      },
+      env,
+    );
+    expect(whitespaceTitle.status).toBe(400);
+    await expect(whitespaceTitle.json()).resolves.toMatchObject({ status: "invalid_request", reason: "title_required" });
 
     const malformed = await app.request(
       ISSUE_RAG_PATH,
@@ -83,7 +97,7 @@ describe("issue-rag retrieve route (#4293)", () => {
       env,
     );
     expect(malformed.status).toBe(400);
-    await expect(malformed.json()).resolves.toMatchObject({ status: "invalid_request", reason: "owner_and_repo_required" });
+    await expect(malformed.json()).resolves.toMatchObject({ status: "invalid_request", reason: "invalid_body" });
   });
 
   it("allows sessions through the path allowlist and scopes repo access", async () => {

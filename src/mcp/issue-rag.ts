@@ -7,9 +7,6 @@ import { buildIssueRagQuery } from "../../packages/loopover-engine/src/issue-rag
 import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
 import { emptyIssueRagTelemetry, normalizeIssueRagTopK, retrieveIssueRagContext, type IssueRagTelemetry } from "../review/issue-rag-retrieval";
 
-export const MAX_ISSUE_RAG_OWNER_LENGTH = 39;
-export const MAX_ISSUE_RAG_REPO_LENGTH = 100;
-
 export type IssueRagInput = {
   owner: string;
   repo: string;
@@ -26,32 +23,39 @@ export type IssueRagResult = {
   telemetry: IssueRagTelemetry;
 };
 
-function cleanLabels(labels: string[] | undefined): string[] | undefined {
-  if (!labels) return undefined;
-  const cleaned = labels.map((label) => label.trim()).filter(Boolean).slice(0, PREFLIGHT_LIMITS.labels);
-  return cleaned.length > 0 ? cleaned : undefined;
+function cleanLabels(labels: string[] | undefined): { ok: true; value: string[] | undefined } | { ok: false; reason: string } {
+  if (!labels) return { ok: true, value: undefined };
+  // #10040: do not silently truncate — over-long arrays are rejected by RetrieveIssueContextInput
+  // before this runs; here we only trim/filter empties and enforce per-label length after trim.
+  const cleaned: string[] = [];
+  for (const label of labels) {
+    const value = label.trim();
+    if (!value) continue;
+    if (value.length > PREFLIGHT_LIMITS.labelChars) return { ok: false, reason: "invalid_labels" };
+    cleaned.push(value);
+  }
+  return { ok: true, value: cleaned.length > 0 ? cleaned : undefined };
 }
 
 export function validateIssueRagInput(
   input: IssueRagInput,
 ): { ok: true; value: IssueRagInput & { repoFullName: string } } | { ok: false; reason: string } {
+  // #10040: bound/type checks live on RetrieveIssueContextInput. This helper keeps trimming and the
+  // post-trim emptiness checks zod cannot see (whitespace-only owner/repo/title), and refuses
+  // over-long body instead of slicing it.
   const owner = typeof input.owner === "string" ? input.owner.trim() : "";
   const repo = typeof input.repo === "string" ? input.repo.trim() : "";
   const title = typeof input.title === "string" ? input.title.trim() : "";
   if (!owner || !repo) return { ok: false, reason: "owner_and_repo_required" };
   if (!title) return { ok: false, reason: "title_required" };
-  if (owner.length > MAX_ISSUE_RAG_OWNER_LENGTH) return { ok: false, reason: "owner_too_long" };
-  if (repo.length > MAX_ISSUE_RAG_REPO_LENGTH) return { ok: false, reason: "repo_too_long" };
-  if (title.length > PREFLIGHT_LIMITS.titleChars) return { ok: false, reason: "title_too_long" };
-  const body = typeof input.body === "string" ? input.body.slice(0, PREFLIGHT_LIMITS.bodyChars) : undefined;
-  const labels = cleanLabels(input.labels);
-  if (labels) {
-    for (const label of labels) {
-      if (label.length > PREFLIGHT_LIMITS.labelChars) return { ok: false, reason: "invalid_labels" };
-    }
+  if (typeof input.body === "string" && input.body.length > PREFLIGHT_LIMITS.bodyChars) {
+    return { ok: false, reason: "body_too_long" };
   }
+  const body = typeof input.body === "string" ? input.body : undefined;
+  const labelsResult = cleanLabels(input.labels);
+  if (!labelsResult.ok) return labelsResult;
   const topK = input.topK;
-  if (topK !== undefined && (!Number.isFinite(topK) || topK < 1 || topK > 12)) {
+  if (topK !== undefined && (!Number.isFinite(topK) || topK < 1 || topK > 12 || !Number.isInteger(topK))) {
     return { ok: false, reason: "invalid_top_k" };
   }
   return {
@@ -61,7 +65,7 @@ export function validateIssueRagInput(
       repo,
       title,
       ...(body !== undefined ? { body } : {}),
-      ...(labels ? { labels } : {}),
+      ...(labelsResult.value ? { labels: labelsResult.value } : {}),
       ...(topK !== undefined ? { topK: normalizeIssueRagTopK(topK) } : {}),
       repoFullName: `${owner}/${repo}`,
     },

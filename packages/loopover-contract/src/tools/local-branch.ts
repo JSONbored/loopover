@@ -527,9 +527,11 @@ export const findOpportunitiesTool = defineTool({
 
 /** Same: the remote copy carried the bounds, the stdio copy carried none. */
 export const RetrieveIssueContextInput = z.object({
-  owner: z.string().max(39),
-  repo: z.string().max(100),
-  title: z.string().max(PREFLIGHT_LIMITS.titleChars),
+  // #10040: `.min(1)` matches `ownerRepoInput` and the hand-rolled `owner_and_repo_required` /
+  // `title_required` checks — the catalog previously published empty strings as valid.
+  owner: z.string().min(1).max(39),
+  repo: z.string().min(1).max(100),
+  title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars),
   body: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
   labels: z.array(z.string().max(PREFLIGHT_LIMITS.labelChars)).max(PREFLIGHT_LIMITS.labels).optional(),
   topK: z.number().int().min(1).max(12).optional(),

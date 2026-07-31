@@ -1451,7 +1451,8 @@ describe("api routes", () => {
     expect(invalidIssueRag.status).toBe(400);
     await expect(invalidIssueRag.json()).resolves.toMatchObject({
       status: "invalid_request",
-      reason: "title_required",
+      // #10040: empty title fails RetrieveIssueContextInput.min(1) at the published schema.
+      reason: "invalid_body",
     });
 
     const { token: minerSessionToken } = await createSessionForGitHubUser(env, { login: "ordinary-mcp-user", id: 4243 });
@@ -6670,6 +6671,106 @@ describe("api routes", () => {
 
     const unauth = await app.request("/v1/repos/entrius/allways-ui/live-gate-thresholds", {}, env);
     expect(unauth.status).toBe(401);
+  });
+
+  it("REGRESSION: discovery routes validate against the schemas their OpenAPI publishes (#10040)", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const findTargets = [{ owner: "acme", repo: "widgets" }];
+    const { PREFLIGHT_LIMITS: limits } = await import("@loopover/contract");
+
+    for (const [label, body] of [
+      ["non-integer limit", { targets: findTargets, limit: 7.9 }],
+      ["over-max limit", { targets: findTargets, limit: 999 }],
+      ["empty searchQuery", { targets: findTargets, searchQuery: "" }],
+    ] as const) {
+      const response = await app.request(
+        "/v1/opportunities/find",
+        { method: "POST", headers: apiHeaders(env), body: JSON.stringify(body) },
+        env,
+      );
+      expect(response.status, label).toBe(400);
+      await expect(response.json(), label).resolves.toMatchObject({
+        status: "invalid_request",
+        ranked: [],
+        totalCandidates: 0,
+        reason: "invalid_body",
+      });
+    }
+
+    const emptyFind = await app.request(
+      "/v1/opportunities/find",
+      { method: "POST", headers: apiHeaders(env), body: JSON.stringify({}) },
+      env,
+    );
+    expect(emptyFind.status).toBe(400);
+    await expect(emptyFind.json()).resolves.toMatchObject({
+      status: "invalid_request",
+      reason: "targets_or_search_query_required",
+    });
+
+    // Unparseable JSON falls back to `{}` before the schema parse, same cross-field 400 as an empty body.
+    const malformedFind = await app.request(
+      "/v1/opportunities/find",
+      { method: "POST", headers: apiHeaders(env), body: "{not json" },
+      env,
+    );
+    expect(malformedFind.status).toBe(400);
+    await expect(malformedFind.json()).resolves.toMatchObject({
+      status: "invalid_request",
+      reason: "targets_or_search_query_required",
+    });
+
+    for (const [label, body] of [
+      ["non-integer topK", { owner: "acme", repo: "widgets", title: "Add observability context for self-hosted review planning failures", topK: 3.5 }],
+      [
+        "over-long labels",
+        {
+          owner: "acme",
+          repo: "widgets",
+          title: "Add observability context for self-hosted review planning failures",
+          labels: Array.from({ length: limits.labels + 1 }, (_, i) => `label${i}`),
+        },
+      ],
+      [
+        "over-long body",
+        {
+          owner: "acme",
+          repo: "widgets",
+          title: "Add observability context for self-hosted review planning failures",
+          body: "x".repeat(limits.bodyChars + 1),
+        },
+      ],
+      ["empty owner", { owner: "", repo: "widgets", title: "Add observability context for self-hosted review planning failures" }],
+    ] as const) {
+      const response = await app.request(
+        "/v1/issue-rag/retrieve",
+        { method: "POST", headers: apiHeaders(env), body: JSON.stringify(body) },
+        env,
+      );
+      expect(response.status, label).toBe(400);
+      await expect(response.json(), label).resolves.toMatchObject({
+        status: "invalid_request",
+        repoFullName: "",
+        reason: "invalid_body",
+        telemetry: { attempted: false, injected: false, retrievedPaths: [] },
+      });
+    }
+
+    const whitespaceTitle = await app.request(
+      "/v1/issue-rag/retrieve",
+      {
+        method: "POST",
+        headers: apiHeaders(env),
+        body: JSON.stringify({ owner: "acme", repo: "widgets", title: "   " }),
+      },
+      env,
+    );
+    expect(whitespaceTitle.status).toBe(400);
+    await expect(whitespaceTitle.json()).resolves.toMatchObject({
+      status: "invalid_request",
+      reason: "title_required",
+    });
   });
 });
 

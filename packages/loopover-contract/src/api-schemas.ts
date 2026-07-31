@@ -11,6 +11,7 @@ import { z } from "zod";
 import { checkBeforeStartSchema, slopRiskSchema, validateFocusManifestSchema, validateLinkedIssueSchema } from "./api-requests.js";
 import { AGENT_ACTION_CLASSES, AUTONOMY_LEVELS } from "./enums.js";
 import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP, MAX_PRIORITY_ELIGIBILITY_WINDOW_MINUTES, MAX_REVIEW_NAG_COOLDOWN_DAYS } from "./limits.js";
+import { FindOpportunitiesInput, RetrieveIssueContextInput } from "./tools/local-branch.js";
 
 export const FindingSchema = z
   .object({
@@ -433,6 +434,7 @@ export const RepositorySettingsSchema = z
     autoProjectMilestoneMatchBackend: z.enum(["github", "linear"]).optional(),
     gatePack: z.enum(["gittensor", "oss-anti-slop"]),
     linkedIssueGateMode: z.enum(["off", "advisory", "block"]),
+    linkedIssueMaintainerExempt: z.boolean().nullable().optional(),
     duplicatePrGateMode: z.enum(["off", "advisory", "block"]),
     qualityGateMode: z.enum(["off", "advisory", "block"]),
     qualityGateMinScore: z.number().nullable().optional(),
@@ -1053,11 +1055,14 @@ export const ScoreBreakdownResponseSchema = z
     highestLeverageLever: z.unknown().optional(),
   });
 
-// #9310 — request/response schemas for the two discovery routes below, mirroring the MCP tools'
-// own Zod shapes verbatim (src/mcp/server.ts's findOpportunitiesShape/issueRagShape, and
-// FindOpportunitiesOutput/RetrieveIssueContextOutput in @loopover/contract) so the OpenAPI contract
-// can't silently drift from what the
-// MCP tools actually validate.
+/**
+ * Request body for POST /v1/opportunities/find. Field-level parity with `FindOpportunitiesInput` in
+ * @loopover/contract (the `loopover_find_opportunities` MCP tool `inputSchema`) — #10040. Re-wrapped
+ * through the local `z.object` so `.openapi(...)` lands on the OpenAPI-extended zod, same pattern as
+ * `CheckBeforeStartRequestSchema`.
+ */
+export const FindOpportunitiesRequestSchema = z.object(FindOpportunitiesInput.shape);
+
 export const FindOpportunitiesResponseSchema = z
   .object({
     status: z.string().optional(),
@@ -1092,6 +1097,12 @@ export const FindOpportunitiesResponseSchema = z
       )
       .optional(),
   });
+
+/**
+ * Request body for POST /v1/issue-rag/retrieve. Field-level parity with `RetrieveIssueContextInput` in
+ * @loopover/contract (the `loopover_retrieve_issue_context` MCP tool `inputSchema`) — #10040.
+ */
+export const IssueRagRetrieveRequestSchema = z.object(RetrieveIssueContextInput.shape);
 
 export const IssueRagRetrieveResponseSchema = z
   .object({
@@ -2301,12 +2312,14 @@ export const CLI_PARAMETERISED_RESPONSE_SCHEMAS = {
  * live in @loopover/contract/api-requests.
  */
 export const CLI_REQUEST_SCHEMAS = {
+  "POST /v1/issue-rag/retrieve": IssueRagRetrieveRequestSchema,
   "POST /v1/lint/boundary-tests": SuggestBoundaryTestsRequestSchema,
   "POST /v1/lint/improvement-potential": CheckImprovementPotentialRequestSchema,
   "POST /v1/lint/issue-slop": CheckIssueSlopRequestSchema,
   "POST /v1/lint/open-pr-pressure": SimulateOpenPrPressureRequestSchema,
   "POST /v1/lint/pr-text": LintPrTextRequestSchema,
   "POST /v1/lint/slop-risk": CheckSlopRiskRequestSchema,
+  "POST /v1/opportunities/find": FindOpportunitiesRequestSchema,
   "POST /v1/repos/{owner}/{repo}/agent/pending-actions": ProposeActionRequestSchema,
   "POST /v1/repos/{owner}/{repo}/check-before-start": CheckBeforeStartRequestSchema,
   "POST /v1/repos/{owner}/{repo}/validate-linked-issue": ValidateLinkedIssueRequestSchema,

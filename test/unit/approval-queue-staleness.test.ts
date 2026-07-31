@@ -87,6 +87,35 @@ describe("sweepStaleApprovalQueue (#9032)", () => {
     expect(deliveries.every((delivery) => delivery.recipientLogin === "alice")).toBe(true);
   });
 
+  it("#10025: a row aged past the reminder interval enqueues exactly one notify-deliver; a second sweep in the same bucket enqueues none", async () => {
+    const env = createTestEnv();
+    const sent: Array<{ type: string; deliveryId?: string }> = [];
+    (env as unknown as { JOBS: { send: (msg: unknown) => Promise<void> } }).JOBS = { send: async (msg) => void sent.push(msg as { type: string; deliveryId?: string }) };
+    const id = await stage(env, 3);
+    const stagedAt = Date.parse((await getPendingAgentAction(env, id))!.createdAt);
+
+    await sweepStaleApprovalQueue(env, stagedAt + APPROVAL_REMINDER_INTERVAL_MS);
+    const notifyJobs = sent.filter((m) => m.type === "notify-deliver");
+    expect(notifyJobs).toHaveLength(1);
+    const reminder = (await listNotificationDeliveriesForRecipient(env, "alice", { limit: 50 })).find((d) => d.title.includes("Still waiting"));
+    expect(notifyJobs[0]?.deliveryId).toBe(reminder?.id);
+
+    // A second sweep inside the SAME reminder bucket hits the dedup (created:false) → no further enqueue.
+    await sweepStaleApprovalQueue(env, stagedAt + APPROVAL_REMINDER_INTERVAL_MS + 60_000);
+    expect(sent.filter((m) => m.type === "notify-deliver")).toHaveLength(1);
+  });
+
+  it("#10025: a rejected notify-deliver send is caught, warns, and the sweep still counts the reminder", async () => {
+    const env = createTestEnv();
+    (env as unknown as { JOBS: { send: (msg: unknown) => Promise<void> } }).JOBS = { send: async () => { throw new Error("queue down"); } };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const id = await stage(env, 4);
+    const stagedAt = Date.parse((await getPendingAgentAction(env, id))!.createdAt);
+    expect(await sweepStaleApprovalQueue(env, stagedAt + APPROVAL_REMINDER_INTERVAL_MS)).toEqual({ reminded: 1, expired: 0 });
+    expect(warn.mock.calls.map((c) => String(c[0])).some((m) => m.includes("approval_notification_enqueue_failed"))).toBe(true);
+    warn.mockRestore();
+  });
+
   it("still writes a readable reminder for a row staged without a reason", async () => {
     const env = createTestEnv();
     const { action } = await createPendingAgentActionIfAbsent(env, {

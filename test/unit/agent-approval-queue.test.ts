@@ -84,6 +84,7 @@ import {
   upsertRepositorySettings,
 } from "../../src/db/repositories";
 import { AGENT_LABEL_NEEDS_REVIEW, type PlannedAgentAction } from "../../src/settings/agent-actions";
+import { buildNotificationFeed, deliverNotification } from "../../src/notifications/service";
 import { createTestEnv } from "../helpers/d1";
 
 function ctx(over: Partial<AgentActionExecutionContext> = {}): AgentActionExecutionContext {
@@ -150,6 +151,49 @@ describe("agent approval queue (#779)", () => {
     expect(await listPendingAgentActions(env, { repoFullName: "owner/repo" })).toHaveLength(1);
     const deliveries = (await listNotificationDeliveriesForRecipient(env, "owner")).filter((d) => d.eventType === "agent.pending_action");
     expect(deliveries).toHaveLength(1);
+  });
+
+  // #10025: capture the notify-deliver jobs the staging path enqueues.
+  const withJobsCapture = (env: Env): Array<{ type: string; deliveryId?: string }> => {
+    const sent: Array<{ type: string; deliveryId?: string }> = [];
+    (env as unknown as { JOBS: { send: (msg: unknown) => Promise<void> } }).JOBS = { send: async (msg) => void sent.push(msg as { type: string; deliveryId?: string }) };
+    return sent;
+  };
+
+  it("#10025: staging enqueues exactly one notify-deliver job for the created badge; a second staging enqueues none", async () => {
+    const env = createTestEnv({});
+    const sent = withJobsCapture(env);
+    await executeAgentMaintenanceActions(env, ctx(), [mergeApproval]);
+    const notifyJobs = sent.filter((m) => m.type === "notify-deliver");
+    expect(notifyJobs).toHaveLength(1);
+    const delivery = (await listNotificationDeliveriesForRecipient(env, "owner")).find((d) => d.eventType === "agent.pending_action" && d.pullNumber === 7);
+    expect(notifyJobs[0]?.deliveryId).toBe(delivery?.id);
+
+    // A second staging hits the dedup (created:false) → enqueues nothing more.
+    await executeAgentMaintenanceActions(env, ctx(), [mergeApproval]);
+    expect(sent.filter((m) => m.type === "notify-deliver")).toHaveLength(1);
+  });
+
+  it("#10025: a rejected notify-deliver send is caught, warns, and staging still returns queued", async () => {
+    const env = createTestEnv({});
+    (env as unknown as { JOBS: { send: (msg: unknown) => Promise<void> } }).JOBS = { send: async () => { throw new Error("queue down"); } };
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const outcomes = await executeAgentMaintenanceActions(env, ctx(), [mergeApproval]);
+    expect(outcomes[0]?.outcome).toBe("queued"); // the send failure did not abort staging
+    expect(warn.mock.calls.map((c) => String(c[0])).some((m) => m.includes("approval_notification_enqueue_failed"))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("#10025 REGRESSION: after staging + delivering the enqueued job, the recipient's feed contains the staged-action item", async () => {
+    const env = createTestEnv({});
+    const sent = withJobsCapture(env);
+    await executeAgentMaintenanceActions(env, ctx(), [mergeApproval]);
+    const deliveryId = sent.find((m) => m.type === "notify-deliver")?.deliveryId;
+    expect(deliveryId).toBeDefined();
+    // Run the job that promotes the pending row to delivered.
+    await deliverNotification(env, deliveryId!);
+    const feed = buildNotificationFeed("owner", await listNotificationDeliveriesForRecipient(env, "owner"));
+    expect(feed.notifications.some((item) => item.eventType === "agent.pending_action" && item.pullNumber === 7)).toBe(true);
   });
 
   it("createPendingAgentActionIfAbsent reports created vs already-staged", async () => {

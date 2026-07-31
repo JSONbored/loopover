@@ -361,9 +361,11 @@ async function mintInstallationToken(
     throw new Error(
       "GitHub installation token response did not include a token.",
     );
-  const expiresAtMs = payload.expires_at
-    ? Date.parse(payload.expires_at)
-    : Date.now() + 50 * 60_000;
+  // A present-but-UNPARSEABLE expires_at must fall back like an absent one (#10026): Date.parse returns NaN for
+  // a malformed string, and a NaN expiry makes `expiresAtMs - MARGIN > Date.now()` forever false — silently
+  // disabling the cache so every job re-mints and re-triggers the thundering-herd this cache exists to prevent.
+  const parsedExpiry = payload.expires_at ? Date.parse(payload.expires_at) : Number.NaN;
+  const expiresAtMs = Number.isFinite(parsedExpiry) ? parsedExpiry : Date.now() + 50 * 60_000;
   await writeCachedToken(installationId, { token: payload.token, expiresAtMs });
   return payload.token;
 }

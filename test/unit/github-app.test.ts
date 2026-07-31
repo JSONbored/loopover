@@ -200,6 +200,47 @@ describe("GitHub check runs", () => {
     expect(mints).toBe(1);
   });
 
+  it("REGRESSION: an unparseable expires_at must not disable the installation-token cache (#10026)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let mints = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        mints += 1;
+        return Response.json({ token: `installation-token-${mints}`, expires_at: "not-a-date" }); // present but unparseable
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    const first = await createInstallationToken(env, 777);
+    const second = await createInstallationToken(env, 777);
+    // The NaN expiry used to make every cache comparison false, re-minting on every call. With the finite
+    // fallback the entry is honored: exactly one mint, the same token reused.
+    expect(first).toBe("installation-token-1");
+    expect(second).toBe("installation-token-1");
+    expect(mints).toBe(1); // NOT re-minted
+  });
+
+  it("a well-formed expires_at is unchanged: token reused on the second call (#10026)", async () => {
+    const privateKey = await generatePrivateKeyPem();
+    let mints = 0;
+    const expiresAt = "2030-01-01T00:00:00Z";
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/access_tokens")) {
+        mints += 1;
+        return Response.json({ token: `installation-token-${mints}`, expires_at: expiresAt });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const env = createTestEnv({ GITHUB_APP_PRIVATE_KEY: privateKey });
+    expect(await createInstallationToken(env, 888)).toBe("installation-token-1");
+    expect(await createInstallationToken(env, 888)).toBe("installation-token-1");
+    expect(mints).toBe(1); // cached against the far-future, well-formed expiry
+  });
+
   it("(#3811) samples clock skew from the installation-token mint response's Date header", async () => {
     const privateKey = await generatePrivateKeyPem();
     vi.useFakeTimers();

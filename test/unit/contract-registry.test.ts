@@ -87,6 +87,16 @@ describe("contract tool registry", () => {
     expect(getToolContract(first.name)).toBe(first);
     expect(getToolContract("loopover_not_a_real_tool")).toBeUndefined();
   });
+
+  it("rejects empty owner/repo/title on RetrieveIssueContextInput and stays a ZodObject (#10040)", () => {
+    const contract = getToolContract("loopover_retrieve_issue_context");
+    expect(contract).toBeDefined();
+    expect(contract!.input).toBeInstanceOf(z.ZodObject);
+    expect(contract!.input.safeParse({ owner: "", repo: "x", title: "t" }).success).toBe(false);
+    expect(contract!.input.safeParse({ owner: "o", repo: "", title: "t" }).success).toBe(false);
+    expect(contract!.input.safeParse({ owner: "o", repo: "r", title: "" }).success).toBe(false);
+    expect(contract!.input.safeParse({ owner: "o", repo: "r", title: "t" }).success).toBe(true);
+  });
 });
 
 describe("contract projection", () => {

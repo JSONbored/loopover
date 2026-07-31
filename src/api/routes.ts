@@ -225,6 +225,7 @@ import {
 } from "../services/control-panel-roles";
 import { runFindOpportunities, validateFindOpportunitiesInput, type FindOpportunitiesInput } from "../mcp/find-opportunities";
 import { runIssueRagRetrieval, validateIssueRagInput, type IssueRagInput } from "../mcp/issue-rag";
+import { FindOpportunitiesRequestSchema, IssueRagRetrieveRequestSchema } from "../openapi/schemas";
 import { buildBoundaryTestGenerationFinding, buildBoundaryTestGenerationSpec } from "../signals/boundary-test-generation";
 import { buildTestEvidenceReport } from "../signals/test-evidence";
 import { buildStructuralImprovementAssessment } from "../signals/improvement";
@@ -3592,7 +3593,13 @@ export function createApp() {
     /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before route-specific guards. */
     if (!identity) return c.json({ error: "unauthorized" }, 401);
     const body = await c.req.json().catch(() => null);
-    const parsed = validateFindOpportunitiesInput((body ?? {}) as FindOpportunitiesInput);
+    // #10040: same zod object the OpenAPI document publishes — refuse before the hand-rolled
+    // cross-field / normalisation pass, and keep the existing invalid_request body shape.
+    const schemaParsed = FindOpportunitiesRequestSchema.safeParse(body ?? {});
+    if (!schemaParsed.success) {
+      return c.json({ status: "invalid_request", ranked: [], totalCandidates: 0, reason: "invalid_body" }, 400);
+    }
+    const parsed = validateFindOpportunitiesInput(schemaParsed.data as FindOpportunitiesInput);
     if (!parsed.ok) {
       return c.json({ status: "invalid_request", ranked: [], totalCandidates: 0, reason: parsed.reason }, 400);
     }
@@ -3617,7 +3624,15 @@ export function createApp() {
     /* v8 ignore next -- Protected middleware rejects unauthenticated private routes before route-specific guards. */
     if (!identity) return c.json({ error: "unauthorized" }, 401);
     const body = await c.req.json().catch(() => null);
-    const parsed = validateIssueRagInput((body ?? {}) as IssueRagInput);
+    // #10040: same zod object the OpenAPI document publishes — refuse before the hand-rolled pass.
+    const schemaParsed = IssueRagRetrieveRequestSchema.safeParse(body ?? {});
+    if (!schemaParsed.success) {
+      return c.json(
+        { status: "invalid_request", repoFullName: "", reason: "invalid_body", telemetry: { attempted: false, injected: false, retrievedPaths: [] } },
+        400,
+      );
+    }
+    const parsed = validateIssueRagInput(schemaParsed.data as IssueRagInput);
     if (!parsed.ok) {
       return c.json({ status: "invalid_request", repoFullName: "", reason: parsed.reason, telemetry: { attempted: false, injected: false, retrievedPaths: [] } }, 400);
     }

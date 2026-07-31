@@ -6,15 +6,7 @@ import { checkBeforeStartSchema, slopRiskSchema, validateFocusManifestSchema, va
 import { MAX_REVIEW_NAG_COOLDOWN_DAYS } from "../settings/agent-actions";
 import { MAX_PRIORITY_ELIGIBILITY_WINDOW_MINUTES } from "../review/priority-eligibility-window";
 import { MAX_CONTRIBUTOR_OPEN_ITEM_CAP } from "../types";
-import {
-  MAX_FIND_OPPORTUNITIES_TARGETS,
-  MAX_FIND_OPPORTUNITIES_OWNER_LENGTH,
-  MAX_FIND_OPPORTUNITIES_REPO_LENGTH,
-  MAX_FIND_OPPORTUNITIES_LANGUAGES,
-  MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH,
-} from "../mcp/find-opportunities";
-import { MAX_ISSUE_RAG_OWNER_LENGTH, MAX_ISSUE_RAG_REPO_LENGTH } from "../mcp/issue-rag";
-import { PREFLIGHT_LIMITS } from "../signals/preflight-limits";
+import { FindOpportunitiesInput, RetrieveIssueContextInput } from "@loopover/contract/tools";
 import { extendZodWithOpenApi } from "@asteasolutions/zod-to-openapi";
 import { PublicStatsSchema as PublicStatsShape } from "@loopover/contract/public-api";
 
@@ -2027,31 +2019,13 @@ export const ScoreBreakdownResponseSchema = z
   })
   .openapi("ScoreBreakdownResponse");
 
-// #9310 — request/response schemas for the two discovery routes below, mirroring the MCP tools'
-// own Zod shapes verbatim (src/mcp/server.ts's findOpportunitiesShape/issueRagShape, and
-// FindOpportunitiesOutput/RetrieveIssueContextOutput in @loopover/contract) so the OpenAPI contract
-// can't silently drift from what the
-// MCP tools actually validate.
-export const FindOpportunitiesRequestSchema = z.object({
-  targets: z
-    .array(
-      z.object({
-        owner: z.string().min(1).max(MAX_FIND_OPPORTUNITIES_OWNER_LENGTH),
-        repo: z.string().min(1).max(MAX_FIND_OPPORTUNITIES_REPO_LENGTH),
-      }),
-    )
-    .max(MAX_FIND_OPPORTUNITIES_TARGETS)
-    .optional(),
-  searchQuery: z.string().min(1).max(500).optional(),
-  goalSpec: z
-    .object({
-      lane: z.string().min(1).optional(),
-      minRankScore: z.number().min(0).max(100).optional(),
-      languages: z.array(z.string().min(1).max(MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH)).max(MAX_FIND_OPPORTUNITIES_LANGUAGES).optional(),
-    })
-    .optional(),
-  limit: z.number().int().min(1).max(50).optional(),
-});
+/**
+ * Request body for POST /v1/opportunities/find. Field-level parity with `FindOpportunitiesInput` in
+ * @loopover/contract (the `loopover_find_opportunities` MCP tool `inputSchema`) — #10040. Re-wrapped
+ * through the local `z.object` so `.openapi(...)` lands on the OpenAPI-extended zod, same pattern as
+ * `CheckBeforeStartRequestSchema`.
+ */
+export const FindOpportunitiesRequestSchema = z.object(FindOpportunitiesInput.shape).openapi("FindOpportunitiesRequest");
 
 export const FindOpportunitiesResponseSchema = z
   .object({
@@ -2089,14 +2063,11 @@ export const FindOpportunitiesResponseSchema = z
   })
   .openapi("FindOpportunitiesResponse");
 
-export const IssueRagRetrieveRequestSchema = z.object({
-  owner: z.string().max(MAX_ISSUE_RAG_OWNER_LENGTH),
-  repo: z.string().max(MAX_ISSUE_RAG_REPO_LENGTH),
-  title: z.string().max(PREFLIGHT_LIMITS.titleChars),
-  body: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
-  labels: z.array(z.string().max(PREFLIGHT_LIMITS.labelChars)).max(PREFLIGHT_LIMITS.labels).optional(),
-  topK: z.number().int().min(1).max(12).optional(),
-});
+/**
+ * Request body for POST /v1/issue-rag/retrieve. Field-level parity with `RetrieveIssueContextInput` in
+ * @loopover/contract (the `loopover_retrieve_issue_context` MCP tool `inputSchema`) — #10040.
+ */
+export const IssueRagRetrieveRequestSchema = z.object(RetrieveIssueContextInput.shape).openapi("IssueRagRetrieveRequest");
 
 export const IssueRagRetrieveResponseSchema = z
   .object({

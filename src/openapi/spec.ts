@@ -1786,6 +1786,8 @@ export function buildOpenApiSpec() {
     operationId: "postOpportunitiesFind",
     tags: ["Discovery"],
     summary: "Find cross-repo contribution opportunities (#9310)",
+    description:
+      "Rank contribution opportunities across the given targets or search query. At least one of `targets` (non-empty) or `searchQuery` is required — JSON Schema cannot express that cross-field rule, so an empty body is rejected with reason `targets_or_search_query_required` (#10040).",
     request: {
       body: {
         content: { "application/json": { schema: FindOpportunitiesRequestSchema } },

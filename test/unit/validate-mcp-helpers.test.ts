@@ -91,13 +91,22 @@ describe("validate-mcp invariants", () => {
     });
   });
 
-  describe("an advertised input may only narrow the contract's (#9662)", () => {
-    const projected = (properties: string[], required: string[] = []): McpToolDefinition =>
-      ({ name: "a", inputSchema: { type: "object", properties: Object.fromEntries(properties.map((k) => [k, {}])), required } }) as unknown as McpToolDefinition;
-    const advertised = (properties: string[], required: string[] = []) => ({
-      name: "a",
-      inputSchema: { type: "object", properties: Object.fromEntries(properties.map((k) => [k, {}])), required },
-    });
+  describe("an advertised input may only narrow the contract's (#9662, #10041)", () => {
+    const projected = (
+      properties: Record<string, unknown> | string[],
+      required: string[] = [],
+    ): McpToolDefinition => {
+      const props = Array.isArray(properties)
+        ? Object.fromEntries(properties.map((k) => [k, {}]))
+        : properties;
+      return { name: "a", inputSchema: { type: "object", properties: props, required } } as unknown as McpToolDefinition;
+    };
+    const advertised = (properties: Record<string, unknown> | string[], required: string[] = []) => {
+      const props = Array.isArray(properties)
+        ? Object.fromEntries(properties.map((k) => [k, {}]))
+        : properties;
+      return { name: "a", inputSchema: { type: "object", properties: props, required } };
+    };
 
     it("passes when the advertised schema is the contract's", () => {
       expect(checkInputNarrowing([projected(["login", "repo"], ["repo"])], [advertised(["login", "repo"], ["repo"])])).toEqual([]);
@@ -125,6 +134,126 @@ describe("validate-mcp invariants", () => {
     it("stays quiet about a tool the server never registered, or one advertising no input schema", () => {
       expect(checkInputNarrowing([projected(["login"])], [])).toEqual([]);
       expect(checkInputNarrowing([projected(["login"])], [{ name: "a" }])).toEqual([]);
+    });
+
+    it("passes when a shared property's subtree is identical", () => {
+      expect(
+        checkInputNarrowing(
+          [projected({ login: { type: "string", minLength: 1 } })],
+          [advertised({ login: { type: "string", minLength: 1 } })],
+        ),
+      ).toEqual([]);
+    });
+
+    it("passes when the advertisement removes a nested property", () => {
+      expect(
+        checkInputNarrowing(
+          [projected({ meta: { type: "object", properties: { a: { type: "string" }, b: { type: "number" } } } })],
+          [advertised({ meta: { type: "object", properties: { a: { type: "string" } } } })],
+        ),
+      ).toEqual([]);
+    });
+
+    it("passes when the advertisement tightens a bound", () => {
+      expect(
+        checkInputNarrowing(
+          [projected({ title: { type: "string", maxLength: 100 } })],
+          [advertised({ title: { type: "string", maxLength: 50 } })],
+        ),
+      ).toEqual([]);
+    });
+
+    it("passes when the advertisement's enum is a subset of the contract's", () => {
+      expect(
+        checkInputNarrowing(
+          [projected({ status: { type: "string", enum: ["a", "b", "c"] } })],
+          [advertised({ status: { type: "string", enum: ["a", "c"] } })],
+        ),
+      ).toEqual([]);
+    });
+
+    it("reports a shared property whose type diverges", () => {
+      expect(
+        checkInputNarrowing(
+          [projected({ login: { type: "string" } })],
+          [advertised({ login: { type: "number" } })],
+        ),
+      ).toEqual(["a advertises input property login, which is not a narrowing of its contract"]);
+    });
+
+    it("reports a nested property the contract never declared", () => {
+      expect(
+        checkInputNarrowing(
+          [projected({ meta: { type: "object", properties: { a: { type: "string" } } } })],
+          [advertised({ meta: { type: "object", properties: { a: { type: "string" }, invented: { type: "boolean" } } } })],
+        ),
+      ).toEqual(["a advertises input property meta, which is not a narrowing of its contract"]);
+    });
+
+    it("reports a loosened bound on a shared property", () => {
+      expect(
+        checkInputNarrowing(
+          [projected({ title: { type: "string", maxLength: 50 } })],
+          [advertised({ title: { type: "string", maxLength: 100 } })],
+        ),
+      ).toEqual(["a advertises input property title, which is not a narrowing of its contract"]);
+    });
+
+    it("reports an enum member the contract does not list", () => {
+      expect(
+        checkInputNarrowing(
+          [projected({ status: { type: "string", enum: ["a", "b"] } })],
+          [advertised({ status: { type: "string", enum: ["a", "invented"] } })],
+        ),
+      ).toEqual(["a advertises input property status, which is not a narrowing of its contract"]);
+    });
+
+    it("reports a difference nested two levels deep under items.properties (#10041)", () => {
+      // The hole the name-only check left open: both sides advertise `variants`, both require it,
+      // and the divergence lives only inside the element type.
+      expect(
+        checkInputNarrowing(
+          [
+            projected({
+              variants: {
+                type: "array",
+                items: { type: "object", properties: { repo: { type: "string" } } },
+              },
+            }),
+          ],
+          [
+            advertised({
+              variants: {
+                type: "array",
+                items: {
+                  type: "object",
+                  properties: { repo: { type: "string" }, invented: { type: "number" } },
+                },
+              },
+            }),
+          ],
+        ),
+      ).toEqual(["a advertises input property variants, which is not a narrowing of its contract"]);
+    });
+
+    it("treats additionalProperties:false on the contract as equal to the SDK omitting it", () => {
+      // z.toJSONSchema emits the closed-object keyword; the MCP SDK's wire schema drops it. Same zod
+      // input, two converters -- not a widening.
+      expect(
+        checkInputNarrowing(
+          [projected({ meta: { type: "object", properties: { a: { type: "string" } }, additionalProperties: false } })],
+          [advertised({ meta: { type: "object", properties: { a: { type: "string" } } } })],
+        ),
+      ).toEqual([]);
+    });
+
+    it("still reports additionalProperties:true as a non-narrowing difference", () => {
+      expect(
+        checkInputNarrowing(
+          [projected({ meta: { type: "object", properties: { a: { type: "string" } }, additionalProperties: false } })],
+          [advertised({ meta: { type: "object", properties: { a: { type: "string" } }, additionalProperties: true } })],
+        ),
+      ).toEqual(["a advertises input property meta, which is not a narrowing of its contract"]);
     });
   });
 

@@ -136,6 +136,17 @@ describe("loopover_miner_get_metrics_snapshot (#9523)", () => {
     expect(result).toBeTruthy();
   });
 
+  it("surfaces a ledger that will not open as isError rather than an SDK schema rejection", async () => {
+    const client = await connect({
+      initPredictionLedger: () => {
+        throw new Error("prediction ledger unreadable");
+      },
+    });
+    const result = (await client.callTool({ name: "loopover_miner_get_metrics_snapshot", arguments: {} })) as ToolResult;
+    expect(result.isError).toBe(true);
+    expect(structured(result).error).toMatchObject({ message: "prediction ledger unreadable" });
+  });
+
   it("emits every counter even for an empty ledger, so the surface is well-formed before any prediction", async () => {
     const client = await connect({
       initPredictionLedger: () => ({ readPredictions: () => [], close: () => undefined }) as never,

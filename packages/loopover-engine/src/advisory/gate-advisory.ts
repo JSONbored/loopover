@@ -229,7 +229,14 @@ export function buildPullRequestAdvisory(
       action: "Re-deliver the webhook or wait for the next sync.",
     });
   } else {
-    addPullRequestFindings(repo, pr, findings, context.otherOpenPullRequests ?? [], Boolean(context.requireLinkedIssue), Boolean(context.duplicateWinnerEnabled), context.linkedIssueAuthorLogins ?? [], Boolean(context.confirmedNoOpenLinkedIssue), context.supersededBy);
+    addPullRequestFindings(repo, pr, findings, {
+      otherOpenPullRequests: context.otherOpenPullRequests ?? [],
+      requireLinkedIssue: Boolean(context.requireLinkedIssue),
+      duplicateWinnerEnabled: Boolean(context.duplicateWinnerEnabled),
+      linkedIssueAuthorLogins: context.linkedIssueAuthorLogins ?? [],
+      confirmedNoOpenLinkedIssue: Boolean(context.confirmedNoOpenLinkedIssue),
+      supersededBy: context.supersededBy,
+    });
   }
   return advisory("pull_request", targetKey, repoFullName, findings, "Pull request advisory generated.", pr?.number, undefined, pr?.headSha ?? undefined);
 }
@@ -295,18 +302,23 @@ function hasDuplicateOverlapCorroboration(pr: PullRequestRecord, otherPr: PullRe
   return Boolean(theirsFiles && theirsFiles.length > 0);
 }
 
-function addPullRequestFindings(
-  repo: RepositoryRecord | null,
-  pr: PullRequestRecord,
-  findings: AdvisoryFinding[],
-  otherOpenPullRequests: PullRequestRecord[],
-  requireLinkedIssue: boolean,
-  duplicateWinnerEnabled: boolean,
-  linkedIssueAuthorLogins: (string | null | undefined)[],
-  confirmedNoOpenLinkedIssue: boolean,
-  // #10168: present only when the caller proved a rival merged after this PR opened and closed its issue.
-  supersededBy?: { issueNumber: number; rivalPullNumber: number } | null | undefined,
-): void {
+/** #10210 (host-parity): the resolved per-PR signals {@link addPullRequestFindings} evaluates, as ONE object
+ *  rather than a positional tail. See the host copy (src/rules/advisory.ts) for the full rationale — in short,
+ *  the tail had to be threaded in identical ORDER through both twins on every addition, and transposing two
+ *  same-typed arguments compiled cleanly. Declared locally rather than shared with the host: keeping these two
+ *  files free of a common import is precisely what the divergence exists for (#4518/#4881). */
+type PullRequestFindingSignals = {
+  otherOpenPullRequests: PullRequestRecord[];
+  requireLinkedIssue: boolean;
+  duplicateWinnerEnabled: boolean;
+  linkedIssueAuthorLogins: (string | null | undefined)[];
+  confirmedNoOpenLinkedIssue: boolean;
+  /** #10168: present only when the caller proved a rival merged after this PR opened and closed its issue. */
+  supersededBy?: { issueNumber: number; rivalPullNumber: number } | null | undefined;
+};
+
+function addPullRequestFindings(repo: RepositoryRecord | null, pr: PullRequestRecord, findings: AdvisoryFinding[], signals: PullRequestFindingSignals): void {
+  const { otherOpenPullRequests, requireLinkedIssue, duplicateWinnerEnabled, linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue, supersededBy } = signals;
   if (pr.state !== "open") {
     findings.push({
       code: "pr_not_open",

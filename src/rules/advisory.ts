@@ -448,20 +448,17 @@ export function buildPullRequestAdvisory(
       action: "Re-deliver the webhook or wait for the next sync.",
     });
   } else {
-    addPullRequestFindings(
-      repo,
-      pr,
-      findings,
-      context.otherOpenPullRequests ?? [],
-      Boolean(context.requireLinkedIssue),
-      Boolean(context.duplicateWinnerEnabled),
-      context.linkedIssueAuthorLogins ?? [],
-      Boolean(context.confirmedNoOpenLinkedIssue),
-      context.copycatGateMode,
-      context.copycatGateMinScore,
-      context.scopedLinkedIssueClaimedAt,
-      context.supersededBy,
-    );
+    addPullRequestFindings(repo, pr, findings, {
+      otherOpenPullRequests: context.otherOpenPullRequests ?? [],
+      requireLinkedIssue: Boolean(context.requireLinkedIssue),
+      duplicateWinnerEnabled: Boolean(context.duplicateWinnerEnabled),
+      linkedIssueAuthorLogins: context.linkedIssueAuthorLogins ?? [],
+      confirmedNoOpenLinkedIssue: Boolean(context.confirmedNoOpenLinkedIssue),
+      copycatGateMode: context.copycatGateMode,
+      copycatGateMinScore: context.copycatGateMinScore,
+      scopedLinkedIssueClaimedAt: context.scopedLinkedIssueClaimedAt,
+      supersededBy: context.supersededBy,
+    });
   }
   return advisory("pull_request", targetKey, repoFullName, findings, "Pull request advisory generated.", pr?.number, undefined, pr?.headSha ?? undefined);
 }
@@ -1049,27 +1046,49 @@ function hasDuplicateOverlapCorroboration(pr: PullRequestRecord, otherPr: PullRe
   return Boolean(theirsFiles && theirsFiles.length > 0);
 }
 
+/** #10210: the resolved per-PR signals {@link addPullRequestFindings} evaluates, as ONE object rather than a
+ *  positional tail. The tail had reached twelve arguments and had to be threaded in the identical ORDER
+ *  through this file and its deliberately-divergent engine twin
+ *  (packages/loopover-engine/src/advisory/gate-advisory.ts) on every addition -- a shape where transposing
+ *  two same-typed arguments compiles cleanly and silently changes the verdict. Named members make that
+ *  class of mistake unrepresentable, and cost nothing at the single call site, which already had a
+ *  `context` object to unpack. Declared locally, NOT shared with the twin: keeping the two files free of a
+ *  common import is the whole point of the divergence (#4518/#4881). */
+type PullRequestFindingSignals = {
+  otherOpenPullRequests: PullRequestRecord[];
+  requireLinkedIssue: boolean;
+  duplicateWinnerEnabled: boolean;
+  linkedIssueAuthorLogins: (string | null | undefined)[];
+  confirmedNoOpenLinkedIssue: boolean;
+  copycatGateMode: CopycatGateMode | null | undefined;
+  copycatGateMinScore: number | null | undefined;
+  /** #9160: pr's claim time, ALREADY SCOPED by the caller (queue/duplicate-detection.ts's
+   *  resolveScopedLinkedIssueClaimedAt) to only the issue(s) actually contested with an open sibling, instead
+   *  of pr.linkedIssueClaimedAt's blended-across-every-linked-issue value -- see that function's own doc
+   *  comment for why the blended column lets an unrelated, already-linked issue backdate a newly-added one's
+   *  claim. `undefined` (every non-DB caller, like decision-replay.ts) falls back to pr.linkedIssueClaimedAt. */
+  scopedLinkedIssueClaimedAt?: string | null | undefined;
+  /** #10168: present only when the caller proved a rival merged after this PR opened and closed its issue. */
+  supersededBy?: SupersededByRival | null | undefined;
+};
+
 function addPullRequestFindings(
   repo: RepositoryRecord | null,
   pr: PullRequestRecord,
   findings: AdvisoryFinding[],
-  otherOpenPullRequests: PullRequestRecord[],
-  requireLinkedIssue: boolean,
-  duplicateWinnerEnabled: boolean,
-  linkedIssueAuthorLogins: (string | null | undefined)[],
-  confirmedNoOpenLinkedIssue: boolean,
-  copycatGateMode: CopycatGateMode | null | undefined,
-  copycatGateMinScore: number | null | undefined,
-  // #9160: pr's claim time, ALREADY SCOPED by the caller (queue/duplicate-detection.ts's
-  // resolveScopedLinkedIssueClaimedAt) to only the issue(s) actually contested with an open sibling, instead of
-  // pr.linkedIssueClaimedAt's blended-across-every-linked-issue value -- see that function's own doc comment
-  // for why the blended column lets an unrelated, already-linked issue backdate a newly-added one's claim.
-  // `undefined` (every caller that hasn't been updated, and every non-DB caller like decision-replay.ts) falls
-  // back to pr.linkedIssueClaimedAt, byte-identical to before this existed.
-  scopedLinkedIssueClaimedAt?: string | null | undefined,
-  // #10168: present only when the caller proved a rival merged after this PR opened and closed its issue.
-  supersededBy?: SupersededByRival | null | undefined,
+  signals: PullRequestFindingSignals,
 ): void {
+  const {
+    otherOpenPullRequests,
+    requireLinkedIssue,
+    duplicateWinnerEnabled,
+    linkedIssueAuthorLogins,
+    confirmedNoOpenLinkedIssue,
+    copycatGateMode,
+    copycatGateMinScore,
+    scopedLinkedIssueClaimedAt,
+    supersededBy,
+  } = signals;
   if (pr.state !== "open") {
     findings.push({
       code: "pr_not_open",

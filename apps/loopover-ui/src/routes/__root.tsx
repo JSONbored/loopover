@@ -12,6 +12,7 @@ import { useEffect, useRef, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { captureBrowserError } from "../lib/browser-sentry";
+import { initAnalytics, capturePageview } from "../lib/analytics";
 import { SiteHeader } from "@/components/site/site-header";
 import { SiteFooter } from "@/components/site/site-footer";
 import { BackToTop } from "@/components/site/back-to-top";
@@ -82,38 +83,6 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
   );
 }
 
-const ANALYTICS_BEACON_SCRIPT = `
-(function () {
-  var website = "2ec37da2-e519-4bd5-bc16-76e17b03a458";
-  var endpoint = "/stats/api/send";
-  function send() {
-    if (navigator.doNotTrack === "1") return;
-    var payload = JSON.stringify({
-      type: "event",
-      payload: {
-        website: website,
-        hostname: location.hostname,
-        screen: screen.width + "x" + screen.height,
-        language: navigator.language,
-        title: document.title,
-        url: location.pathname + location.search,
-        referrer: document.referrer,
-      },
-    });
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon(endpoint, new Blob([payload], { type: "application/json" }));
-      return;
-    }
-    fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: payload, keepalive: true });
-  }
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", send, { once: true });
-  } else {
-    send();
-  }
-})();
-`;
-
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
   head: () => ({
     meta: [
@@ -158,12 +127,6 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
             "Agents automate the entire development lifecycle — write, review, merge, learn — end to end, with a published safety record.",
         }),
       },
-      // Local, cookieless analytics beacon. Do not load the mutable remote
-      // Umami tracker as first-party JavaScript; only the event payload is
-      // forwarded through /stats/api/send by the Worker proxy.
-      {
-        children: ANALYTICS_BEACON_SCRIPT,
-      },
     ],
   }),
   shellComponent: RootShell,
@@ -188,6 +151,23 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const router = useRouter();
+
+  // PostHog web analytics (#8293). `capture_pageview` is disabled in
+  // lib/analytics.ts's own init call -- an SPA's auto-pageview only ever
+  // covers the very first load -- so every pageview, including this initial
+  // one, is captured explicitly here: once on mount, then once per navigation
+  // whose URL actually changed. `onResolved` also fires when a route
+  // re-resolves without navigating (e.g. after `router.invalidate()`), which
+  // is not a new pageview, hence the `hrefChanged` guard.
+  useEffect(() => {
+    initAnalytics();
+    capturePageview(window.location.href);
+    return router.subscribe("onResolved", (event) => {
+      if (!event.hrefChanged) return;
+      capturePageview(window.location.href);
+    });
+  }, [router]);
 
   return (
     <QueryClientProvider client={queryClient}>

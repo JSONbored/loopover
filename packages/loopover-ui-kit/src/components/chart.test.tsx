@@ -152,7 +152,8 @@ describe("ChartTooltipContent (recharts v3, #8610)", () => {
     const row = valueSpan!.closest(".flex.w-full");
     expect(row).not.toBeNull();
     const directZero = Array.from(row!.childNodes).some(
-      (node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === "0",
+      (node) =>
+        node.nodeType === Node.TEXT_NODE && node.textContent?.trim() === "0",
     );
     expect(directZero).toBe(false);
     expect(chart.getByText("Revenue")).toBeTruthy();
@@ -185,7 +186,11 @@ describe("ChartTooltipContent (recharts v3, #8610)", () => {
       },
     ];
     const nullish = renderInChart(
-      <ChartTooltipContent active payload={nullPayload as typeof payload} label="Jan" />,
+      <ChartTooltipContent
+        active
+        payload={nullPayload as typeof payload}
+        label="Jan"
+      />,
     );
     expect(nullish.slot().textContent).toContain("Revenue");
     expect(nullish.slot().querySelector("span.tabular-nums")).toBeNull();

@@ -4,7 +4,7 @@
 // both sides of every gate, and the guarantee that a sink failure never reaches the tool caller.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { McpToolCallTelemetry } from "@loopover/contract";
-import { createDispatchTelemetrySink, type DispatchTelemetryEnv } from "../../src/mcp/dispatch-telemetry-sink";
+import { createDispatchTelemetrySink, recordMcpInitialize, recordMcpToolsList, type DispatchTelemetryEnv } from "../../src/mcp/dispatch-telemetry-sink";
 import {
   getMcpDispatchSpanRunner,
   resetMcpDispatchSpanRunnerForTest,
@@ -148,4 +148,68 @@ describe("LoopoverMcp telemetry-sink injection (#9525)", () => {
     expect(recorded).toHaveLength(1);
     expect(recorded[0]).toMatchObject({ tool: "loopover_get_repo_context", category: "maintainer", surface: "remote" });
   }, 30_000);
+});
+
+describe("PostHog canonical MCP event recorders (#10175)", () => {
+  const handshake = { clientName: "claude-code", clientVersion: "1.2.3" };
+  const context = { sessionId: "ses_abc", serverName: "loopover", serverVersion: "3.18.4" };
+
+  it("records no handshake and defers nothing when POSTHOG_API_KEY is unset", () => {
+    const deferred: Promise<unknown>[] = [];
+    recordMcpInitialize(env(), (work) => deferred.push(work), handshake, context);
+    expect(deferred).toEqual([]);
+  });
+
+  it("treats a blank POSTHOG_API_KEY as unset for the handshake", () => {
+    const deferred: Promise<unknown>[] = [];
+    recordMcpInitialize(env({ POSTHOG_API_KEY: "   " }), (work) => deferred.push(work), handshake, context);
+    expect(deferred).toEqual([]);
+  });
+
+  it("defers one handshake capture when the key is set, and never rejects", async () => {
+    const deferred: Promise<unknown>[] = [];
+    recordMcpInitialize(env({ POSTHOG_API_KEY: "phc_test", POSTHOG_HOST: "http://127.0.0.1:1" }), (work) => deferred.push(work), handshake, context);
+    expect(deferred).toHaveLength(1);
+    await expect(deferred[0]).resolves.toBeUndefined();
+  });
+
+  it("records a handshake with no context argument at all (the default)", async () => {
+    const deferred: Promise<unknown>[] = [];
+    recordMcpInitialize(env({ POSTHOG_API_KEY: "phc_test", POSTHOG_HOST: "http://127.0.0.1:1" }), (work) => deferred.push(work), {});
+    expect(deferred).toHaveLength(1);
+    await expect(deferred[0]).resolves.toBeUndefined();
+  });
+
+  it("records no tools/list and defers nothing when POSTHOG_API_KEY is unset", () => {
+    const deferred: Promise<unknown>[] = [];
+    recordMcpToolsList(env(), (work) => deferred.push(work), ["a_tool"], context);
+    expect(deferred).toEqual([]);
+  });
+
+  it("treats a blank POSTHOG_API_KEY as unset for tools/list", () => {
+    const deferred: Promise<unknown>[] = [];
+    recordMcpToolsList(env({ POSTHOG_API_KEY: " " }), (work) => deferred.push(work), ["a_tool"], context);
+    expect(deferred).toEqual([]);
+  });
+
+  it("defers one tools/list capture when the key is set, and never rejects", async () => {
+    const deferred: Promise<unknown>[] = [];
+    recordMcpToolsList(env({ POSTHOG_API_KEY: "phc_test", POSTHOG_HOST: "http://127.0.0.1:1" }), (work) => deferred.push(work), ["a_tool", "b_tool"], context);
+    expect(deferred).toHaveLength(1);
+    await expect(deferred[0]).resolves.toBeUndefined();
+  });
+
+  it("records a tools/list with no context argument at all (the default)", async () => {
+    const deferred: Promise<unknown>[] = [];
+    recordMcpToolsList(env({ POSTHOG_API_KEY: "phc_test", POSTHOG_HOST: "http://127.0.0.1:1" }), (work) => deferred.push(work), []);
+    expect(deferred).toHaveLength(1);
+    await expect(deferred[0]).resolves.toBeUndefined();
+  });
+
+  it("carries the per-request analytics context on the sink, defaulting to an empty one", () => {
+    // The context lives on the sink because it is per-REQUEST: the remote server builds one sink per
+    // request, which is exactly the scope an MCP session id has.
+    expect(createDispatchTelemetrySink(env(), () => undefined).context).toEqual({});
+    expect(createDispatchTelemetrySink(env(), () => undefined, undefined, context).context).toBe(context);
+  });
 });

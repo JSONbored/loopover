@@ -19,6 +19,7 @@
 // does. Telemetry must never turn a working tool call into a failed one.
 import {
   buildMcpToolCallProperties,
+  type McpAnalyticsContext,
   buildMcpToolSpanAttributes,
   buildUsageEventProperties,
   getToolContract,
@@ -49,6 +50,15 @@ export type DispatchTelemetrySink = {
   captureException: (error: unknown, call: McpToolCallTelemetry) => void;
   /** Wrap the call in a span when tracing is on; a no-op passthrough when it is not. */
   withSpan: <T>(name: string, attributes: Record<string, unknown>, fn: () => Promise<T>) => Promise<T>;
+  /**
+   * Session/server/client identity for the canonical `$mcp_*` events (#10175).
+   *
+   * On the SINK rather than threaded through every handler because it is per-REQUEST, not per-call:
+   * the remote server already builds one sink per request (so deferred work rides that request's
+   * `waitUntil`), which is exactly the scope an MCP session id has. Optional so the stdio and miner
+   * sinks, which have no HTTP session, can omit it.
+   */
+  context?: McpAnalyticsContext;
 };
 
 /** A sink that does nothing, used when nothing is configured. Exported for tests. */
@@ -87,7 +97,7 @@ export function instrumentToolDispatch<TArgs extends unknown[], TResult extends 
       try {
         sink.recordToolCall(call, {
           usage: buildUsageEventProperties(call),
-          mcpToolCall: buildMcpToolCallProperties(call, { ...payloads, excluded }),
+          mcpToolCall: buildMcpToolCallProperties(call, { ...payloads, excluded }, sink.context ?? {}),
         });
       } catch {
         // Telemetry must never surface into the tool caller.

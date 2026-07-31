@@ -91,6 +91,19 @@ afterEach(async () => {
   configDir = null;
 });
 
+// #10175: the three events per call now speak TWO deliberate vocabularies -- `usage_event` and the
+// legacy `mcp_tool_call` keep LoopOver's snake_case keys, while `$mcp_tool_call` carries PostHog's
+// reserved `$mcp_*` names because their built-in dashboards read those literally. These read
+// whichever one an event uses, so the invariants below stay about BEHAVIOR (which tool, did it
+// succeed) rather than about key spelling.
+function toolOf(event: { event?: string; properties?: Record<string, unknown> }): unknown {
+  return event.properties?.$mcp_tool_name ?? event.properties?.tool;
+}
+function okOf(event: { event?: string; properties?: Record<string, unknown> }): unknown {
+  const isError = event.properties?.$mcp_is_error;
+  return isError === undefined ? event.properties?.ok : !isError;
+}
+
 describe("loopover-mcp local telemetry chokepoint (#6238)", () => {
   it("sends NOTHING by default, even with an API key configured, and the tool still works", async () => {
     configDir = mkdtempSync(join(tmpdir(), "loopover-telemetry-off-"));
@@ -150,19 +163,27 @@ describe("loopover-mcp local telemetry chokepoint (#6238)", () => {
       // No `arguments`/`result`: payloads are excluded for every tool by default (#9525). This test
       // is what established that -- the first design included them, and this assertion found a real
       // commit message on the wire.
-      $mcp_tool_call: ["category", "duration_ms", "ok", "payloads_excluded", "surface", "tool", "transport"],
+      $mcp_tool_call: ["category", "payloads_excluded", "surface", "transport"],
     };
+    // #10175: the `$mcp_*` keys `$mcp_tool_call` is REQUIRED to carry, because PostHog's built-in MCP
+    // dashboards read these names literally. Asserted separately from the vendor's own `$` metadata
+    // so a canonical key can never be mistaken for library noise (or vice versa).
+    // `$session_id`/`$mcp_server_*`/`$mcp_client_*` are absent on purpose: the stdio server has no
+    // HTTP session, so it passes no analytics context.
+    const canonicalByEvent: Record<string, string[]> = {
+      mcp_tool_call: [],
+      usage_event: [],
+      $mcp_tool_call: ["$mcp_duration_ms", "$mcp_is_error", "$mcp_source", "$mcp_tool_name"],
+    };
+    // The PostHog SDK's own library metadata -- vendor provenance, not anything about the user.
+    const vendorKeys = ["$geoip_disable", "$is_server", "$lib", "$lib_version"];
     for (const event of received) {
       const properties = Object.keys(event.properties ?? {});
       const ours = properties.filter((key) => !key.startsWith("$")).sort();
       const allowed = allowedByEvent[event.event]!;
       expect(ours.filter((key) => !allowed.includes(key)), `${event.event} carries a field outside the allowlist`).toEqual([]);
-      expect(properties.filter((key) => key.startsWith("$") && key !== "$mcp_tool_call").sort()).toEqual([
-        "$geoip_disable",
-        "$is_server",
-        "$lib",
-        "$lib_version",
-      ]);
+      expect(properties.filter((key) => key.startsWith("$") && !vendorKeys.includes(key)).sort()).toEqual(canonicalByEvent[event.event]!);
+      expect(properties.filter((key) => vendorKeys.includes(key)).sort()).toEqual(vendorKeys);
       expect(event.properties?.$geoip_disable).toBe(true);
       // Anonymous by construction: one shared handle, never a per-user id.
       expect(event.distinct_id).toBe("loopover-mcp");
@@ -188,7 +209,7 @@ describe("loopover-mcp local telemetry chokepoint (#6238)", () => {
     // process emitter would produce three here, not six.
     expect(received).toHaveLength(6);
     expect(received.filter((event) => event.event === "usage_event")).toHaveLength(2);
-    expect(received.every((event) => event.properties?.tool === "loopover_lint_pr_text")).toBe(true);
+    expect(received.every((event) => toolOf(event) === "loopover_lint_pr_text")).toBe(true);
   }, 45_000);
 
   it("`telemetry disable` returns the server to sending nothing", async () => {
@@ -225,8 +246,8 @@ describe("loopover-mcp local telemetry chokepoint (#6238)", () => {
     // rather than answering (#9525). Every one of them reports ok=false, and the exception carries
     // the grouping properties an operator can actually act on -- the tool and the closed error code
     // -- and nothing about the call's content.
-    expect(received.every((event) => event.event === "$exception" || event.properties?.ok === false)).toBe(true);
-    expect(received.every((event) => event.event === "$exception" || event.properties?.tool === "loopover_get_repo_context")).toBe(true);
+    expect(received.every((event) => event.event === "$exception" || okOf(event) === false)).toBe(true);
+    expect(received.every((event) => event.event === "$exception" || toolOf(event) === "loopover_get_repo_context")).toBe(true);
     const usage = received.find((event) => event.event === "usage_event")!;
     expect(usage.properties?.error_code).toBeTypeOf("string");
   }, 45_000);

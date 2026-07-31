@@ -114,4 +114,18 @@ describe("autonomy never overrides the higher-precedence ladder steps (#6560)", 
       expect(noProgress.abandonReason).toBe("no_progress");
     },
   );
+
+  it("#9997: a clean pass at or past a ceiling still hands off — the pass branch precedes both ceilings", () => {
+    // The field docs used to claim the ceilings abandon "regardless of self-review outcome"; the precedence
+    // list (step 3 before steps 4-5) is the real contract, so a clean pass wins over a reached ceiling.
+    for (const state of [
+      passingState({ iterationNumber: 5, maxIterations: 5 }),
+      passingState({ costCeilingReached: true }),
+      passingState({ iterationNumber: 5, maxIterations: 5, costCeilingReached: true }),
+    ]) {
+      const decision = decideNextActionWithReason(state);
+      expect(decision.action).toBe("handoff");
+      expect(decision.abandonReason).toBeUndefined();
+    }
+  });
 });

@@ -249,3 +249,35 @@ test("autonomy #6560: rejectionSignaled and an ambiguous self-review still win o
   );
   assert.equal(ambiguous.abandonReason, "self_review_ambiguous");
 });
+
+// #9997: the `maxIterations`/`costCeilingReached` field docs claimed the ceilings abandon "regardless of
+// self-review outcome", but the precedence list puts the `pass` branch (step 3) AHEAD of both ceilings
+// (steps 4-5), so a clean pass at or past a ceiling still hands off. These pin that precedence end to end so
+// a future reordering fails the suite instead of silently discarding a passing attempt.
+test("#9997: a clean pass AT the iteration ceiling still hands off (pass precedes the ceiling)", () => {
+  const decision = decideNextActionWithReason(passingState({ iterationNumber: 5, maxIterations: 5 }));
+  assert.equal(decision.action, "handoff");
+  assert.equal(decision.abandonReason, undefined);
+});
+
+test("#9997: a clean pass with the cost ceiling reached still hands off", () => {
+  const decision = decideNextActionWithReason(passingState({ costCeilingReached: true }));
+  assert.equal(decision.action, "handoff");
+  assert.equal(decision.abandonReason, undefined);
+});
+
+test("#9997: a clean pass with BOTH ceilings reached still hands off", () => {
+  const decision = decideNextActionWithReason(passingState({ iterationNumber: 5, maxIterations: 5, costCeilingReached: true }));
+  assert.equal(decision.action, "handoff");
+  assert.equal(decision.abandonReason, undefined);
+});
+
+test("#9997: the two branches that DO win over a pass still do, pinning the ladder end to end", () => {
+  // rejectionSignaled (step 1) beats a pass...
+  const rejected = decideNextActionWithReason(passingState({ rejectionSignaled: true }));
+  assert.equal(rejected.abandonReason, "rejection_signaled");
+  // ...and autonomy "observe" narrows the pass->handoff transition to an abandon, NOT max_iterations_reached,
+  // even at a reached ceiling (the pass branch is entered first, and observe abandons inside it).
+  const observed = decideNextActionWithReason(passingState({ autonomyLevel: "observe", iterationNumber: 5, maxIterations: 5 }));
+  assert.equal(observed.abandonReason, "autonomy_observe_only");
+});

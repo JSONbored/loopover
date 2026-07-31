@@ -71,14 +71,20 @@ export type IterationState = {
   /** 1-indexed count of iterations attempted so far, INCLUDING this one. */
   iterationNumber: number;
   /** Hard ceiling enforced INSIDE this policy (#2333's own deliverable: not left to an external caller to
-   *  remember to enforce). `iterationNumber >= maxIterations` abandons regardless of self-review outcome. */
+   *  remember to enforce). `iterationNumber >= maxIterations` abandons when the self-review has NOT reached a
+   *  clean pass; a clean pass at or past the ceiling still hands off (subject to `autonomyLevel`), because the
+   *  `pass` branch precedes both ceilings in `decideNextActionWithReason`'s numbered precedence list -- see
+   *  that list for the one canonical statement of the ladder. */
   maxIterations: number;
   /** True when the loop's own cumulative cost ceiling (e.g. total driver turns spent across every iteration of
    *  this attempt so far, not just this one) has been reached or exceeded -- the loop mechanics' (#2333) OWN
    *  "max-cost ceiling enforced inside the loop" deliverable, alongside the iteration ceiling above. This
    *  policy has no notion of what "cost" means; the caller computes the boolean from whatever cost signal it
-   *  tracks. Optional and defaults to not-reached, so `IterationState` fixtures that predate this field remain
-   *  valid. */
+   *  tracks. Like the iteration ceiling, it abandons only when the self-review has NOT reached a clean pass; a
+   *  clean pass at or past the ceiling still hands off (subject to `autonomyLevel`), because the `pass` branch
+   *  precedes both ceilings in `decideNextActionWithReason`'s numbered precedence list -- see that list for the
+   *  one canonical statement of the ladder. Optional and defaults to not-reached, so `IterationState` fixtures
+   *  that predate this field remain valid. */
   costCeilingReached?: boolean | undefined;
   selfReview: SelfReviewOutcome;
   /** The prior iteration's `fail` blocker codes, for the no-progress detector -- `null` when there is no prior

@@ -189,3 +189,45 @@ test("parseAmsPolicySpecContent: JSON and YAML both parse, malformed content deg
   assert.equal(oversized.present, false);
   assert.match(oversized.warnings.join(" "), /exceeded/i);
 });
+
+test("REGRESSION (#9995): parsed capLimits/convergenceThresholds are fresh copies, never aliased to the frozen DEFAULT singleton", () => {
+  const parsed = parseAmsPolicySpec({ submissionMode: "enforce" }).spec;
+  // VALUES are unchanged...
+  assert.deepEqual(parsed.capLimits, DEFAULT_AMS_POLICY_SPEC.capLimits);
+  assert.deepEqual(parsed.convergenceThresholds, DEFAULT_AMS_POLICY_SPEC.convergenceThresholds);
+  // ...but the objects are distinct, not the shared frozen singleton returned by reference.
+  assert.notStrictEqual(parsed.capLimits, DEFAULT_AMS_POLICY_SPEC.capLimits);
+  assert.notStrictEqual(parsed.convergenceThresholds, DEFAULT_AMS_POLICY_SPEC.convergenceThresholds);
+  // The returned sub-objects are writable, and mutating them cannot corrupt the shared DEFAULT.
+  assert.equal(Object.isFrozen(parsed.capLimits), false);
+  assert.equal(Object.isFrozen(parsed.convergenceThresholds), false);
+  parsed.capLimits.budget = 999;
+  parsed.convergenceThresholds.maxReenqueues = 999;
+  assert.notEqual(DEFAULT_AMS_POLICY_SPEC.capLimits.budget, 999);
+  assert.notEqual(DEFAULT_AMS_POLICY_SPEC.convergenceThresholds.maxReenqueues, 999);
+});
+
+test("REGRESSION (#9995): the not-a-mapping fallback paths also return fresh, non-aliased copies", () => {
+  const parsed = parseAmsPolicySpec({ capLimits: "nope", convergenceThresholds: [] }).spec;
+  assert.deepEqual(parsed.capLimits, DEFAULT_AMS_POLICY_SPEC.capLimits);
+  assert.deepEqual(parsed.convergenceThresholds, DEFAULT_AMS_POLICY_SPEC.convergenceThresholds);
+  assert.notStrictEqual(parsed.capLimits, DEFAULT_AMS_POLICY_SPEC.capLimits);
+  assert.notStrictEqual(parsed.convergenceThresholds, DEFAULT_AMS_POLICY_SPEC.convergenceThresholds);
+
+  // With ANOTHER field configured (so the parser returns the normalized spec rather than the all-defaults
+  // clone), the not-a-mapping fallback is the path that actually reaches the caller — it must be fresh too.
+  const configured = parseAmsPolicySpec({ submissionMode: "enforce", capLimits: "nope", convergenceThresholds: [] }).spec;
+  assert.deepEqual(configured.capLimits, DEFAULT_AMS_POLICY_SPEC.capLimits);
+  assert.deepEqual(configured.convergenceThresholds, DEFAULT_AMS_POLICY_SPEC.convergenceThresholds);
+  assert.notStrictEqual(configured.capLimits, DEFAULT_AMS_POLICY_SPEC.capLimits);
+  assert.notStrictEqual(configured.convergenceThresholds, DEFAULT_AMS_POLICY_SPEC.convergenceThresholds);
+  assert.equal(Object.isFrozen(configured.capLimits), false);
+});
+
+test("DEFAULT_AMS_POLICY_SPEC and its three sub-objects remain deep-frozen after parsing (#9995)", () => {
+  parseAmsPolicySpec({ submissionMode: "enforce" });
+  assert.equal(Object.isFrozen(DEFAULT_AMS_POLICY_SPEC), true);
+  assert.equal(Object.isFrozen(DEFAULT_AMS_POLICY_SPEC.capLimits), true);
+  assert.equal(Object.isFrozen(DEFAULT_AMS_POLICY_SPEC.convergenceThresholds), true);
+  assert.equal(Object.isFrozen(DEFAULT_AMS_POLICY_SPEC.networkAllowlist), true);
+});

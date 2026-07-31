@@ -433,6 +433,7 @@ export const RepositorySettingsSchema = z
     autoProjectMilestoneMatchBackend: z.enum(["github", "linear"]).optional(),
     gatePack: z.enum(["gittensor", "oss-anti-slop"]),
     linkedIssueGateMode: z.enum(["off", "advisory", "block"]),
+    linkedIssueMaintainerExempt: z.boolean().nullable().optional(),
     duplicatePrGateMode: z.enum(["off", "advisory", "block"]),
     qualityGateMode: z.enum(["off", "advisory", "block"]),
     qualityGateMinScore: z.number().nullable().optional(),

@@ -6,11 +6,24 @@
 #
 # Push-to-main only since 2026-07-24 (was also per-PR): at this repo's PR volume the ~5-minute
 # build-boot fired ~100x/week (its path list includes migrations/**, which nearly every backend PR
-# touches) and was a top runner-queue consumer. Pre-merge, ci.yml already validates everything except
-# the docker boot itself (db:migrations:check, schema drift, the selfhost pg integration suites); a
-# boot-breaking merge is caught by this run minutes after landing, and self-host users only ever
-# consume tagged releases (release-selfhost.yml), never main -- so the pre-merge boot smoke bought
-# almost nothing at real cost. Revisit if a hosted deploy ever tracks main directly.
+# touches) and was a top runner-queue consumer. A boot-breaking merge is caught by this run minutes
+# after landing, and self-host users only ever consume tagged releases (release-selfhost.yml), never
+# main. Revisit if a hosted deploy ever tracks main directly.
+#
+# #10138 CORRECTION. This header used to claim ci.yml validated "the selfhost pg integration suites"
+# pre-merge. It does not, and cannot: those suites require a real Postgres, ci.yml has no service
+# container, and without PG_TEST_URL they SKIP. The only place they run is this workflow -- post-merge.
+#
+# That gap shipped an outage. Migration 0209 used SQLite `AUTOINCREMENT`, which Postgres cannot parse,
+# so every Orb upgrading past 0208 crash-looped on boot. The "applies every migration" test here caught
+# it correctly on the very first push -- and then this workflow stayed red across five consecutive runs
+# while PRs kept merging, because a post-merge failure blocks nothing and pages no one.
+#
+# The pre-merge counterpart is test/unit/migration-dialect-portability.test.ts: it applies translateDdl
+# to every migration and fails if a SQLite-only construct survives. No Postgres, no service container,
+# ~11ms inside the unit run that already happens -- deliberately NOT a second PG job, because CI
+# runtime is the constraint that moved this workflow post-merge in the first place. It proves parseable,
+# not correct; this workflow remains the only real-Postgres coverage, and its red is worth acting on.
 name: self-host
 
 on:

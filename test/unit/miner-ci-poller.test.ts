@@ -604,4 +604,140 @@ describe("miner CI check-run poller (#2323)", () => {
       vi.useRealTimers();
     }
   });
+
+  it('REGRESSION: a never-ending rel="next" chain stops at the page cap instead of looping forever (#10007)', async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/pulls/18")) return prResponse("cap-sha");
+      if (url.includes("/check-runs")) {
+        // Always advertise another page with a non-empty body — the pre-fix while(true) never exits.
+        return checksResponse([checkRun("validate", "completed", "success")], {
+          totalCount: 10_000,
+          headers: {
+            link: `<${API}/repos/acme/widgets/commits/cap-sha/check-runs?per_page=100&page=999>; rel="next"`,
+          },
+        });
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    await expect(
+      pollCheckRuns("acme/widgets", 18, {
+        apiBaseUrl: API,
+        fetchFn,
+        maxPages: 3,
+        sleepFn: vi.fn(async () => {}),
+      }),
+    ).rejects.toThrow("github_check_runs_pagination_page_cap");
+
+    const checkRunCalls = fetchFn.mock.calls.filter((call) => String(call[0]).includes("/check-runs"));
+    expect(checkRunCalls).toHaveLength(3);
+  });
+
+  it("still returns every check run across a two-page response under the default maxPages (#10007)", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/pulls/19")) return prResponse("two-page-sha");
+      if (url.includes("&page=1")) {
+        return checksResponse([checkRun("a", "completed", "success")], {
+          totalCount: 2,
+          headers: {
+            link: `<${API}/repos/acme/widgets/commits/two-page-sha/check-runs?per_page=100&page=2>; rel="next"`,
+          },
+        });
+      }
+      if (url.includes("&page=2")) {
+        return checksResponse([checkRun("b", "completed", "failure")], { totalCount: 2 });
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const result = await pollCheckRuns("acme/widgets", 19, {
+      apiBaseUrl: API,
+      fetchFn,
+      sleepFn: vi.fn(async () => {}),
+      // omit maxPages — default must still allow a normal two-page follow
+    });
+    expect(result.checks.map((check) => check.name)).toEqual(["a", "b"]);
+    expect(result.conclusion).toBe("failure");
+  });
+
+  it("still throws github_check_runs_pagination_incomplete on an empty mid-stream page (#10007)", async () => {
+    const fetchFn = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/pulls/20")) return prResponse("empty-page-sha");
+      if (url.includes("&page=1")) {
+        return checksResponse([checkRun("a", "completed", "success")], {
+          totalCount: 2,
+          headers: {
+            link: `<${API}/repos/acme/widgets/commits/empty-page-sha/check-runs?per_page=100&page=2>; rel="next"`,
+          },
+        });
+      }
+      if (url.includes("&page=2")) {
+        return checksResponse([], { totalCount: 2 });
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    await expect(
+      pollCheckRuns("acme/widgets", 20, {
+        apiBaseUrl: API,
+        fetchFn,
+        sleepFn: vi.fn(async () => {}),
+      }),
+    ).rejects.toThrow("github_check_runs_pagination_incomplete");
+  });
+
+  it("clamps maxPages to the floor of 1 and the ceiling of 100 (#10007)", async () => {
+    const endless = (sha: string) =>
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.includes("/pulls/")) return prResponse(sha);
+        if (url.includes("/check-runs")) {
+          return checksResponse([checkRun("validate", "completed", "success")], {
+            totalCount: 10_000,
+            headers: {
+              link: `<${API}/repos/acme/widgets/commits/${sha}/check-runs?per_page=100&page=999>; rel="next"`,
+            },
+          });
+        }
+        return jsonResponse({}, { status: 404 });
+      });
+
+    // Floor: non-finite / sub-1 values fall back or clamp to 1 → exactly one check-runs page before the cap error.
+    const floorFetch = endless("floor-sha");
+    await expect(
+      pollCheckRuns("acme/widgets", 21, {
+        apiBaseUrl: API,
+        fetchFn: floorFetch,
+        maxPages: 0,
+        sleepFn: vi.fn(async () => {}),
+      }),
+    ).rejects.toThrow("github_check_runs_pagination_page_cap");
+    expect(floorFetch.mock.calls.filter((call) => String(call[0]).includes("/check-runs"))).toHaveLength(1);
+
+    // Omitted maxPages uses the default (10): ten check-runs pages, then the cap error.
+    const defaultFetch = endless("default-sha");
+    await expect(
+      pollCheckRuns("acme/widgets", 22, {
+        apiBaseUrl: API,
+        fetchFn: defaultFetch,
+        sleepFn: vi.fn(async () => {}),
+      }),
+    ).rejects.toThrow("github_check_runs_pagination_page_cap");
+    expect(defaultFetch.mock.calls.filter((call) => String(call[0]).includes("/check-runs"))).toHaveLength(10);
+
+    // Ceiling: values above 100 clamp to 100.
+    const ceilingFetch = endless("ceiling-sha");
+    await expect(
+      pollCheckRuns("acme/widgets", 23, {
+        apiBaseUrl: API,
+        fetchFn: ceilingFetch,
+        maxPages: 10_000,
+        sleepFn: vi.fn(async () => {}),
+      }),
+    ).rejects.toThrow("github_check_runs_pagination_page_cap");
+    expect(ceilingFetch.mock.calls.filter((call) => String(call[0]).includes("/check-runs"))).toHaveLength(100);
+  });
 });

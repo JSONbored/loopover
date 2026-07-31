@@ -98,6 +98,7 @@ import {
   getLatestAdvisoryForPullRequest,
 } from "../db/repositories";
 import { withLinkedIssueMaintainerExemption, type LinkedIssueExemptionAuthor } from "../settings/linked-issue-exemption";
+import { resolveConfiguredRepoCandidates } from "../review/configured-repo-set";
 import { renameRepositoryIdentity } from "../db/repo-identity-rename";
 import {
   effectiveIssueCapForAccountAge,
@@ -632,7 +633,6 @@ import {
 } from "../review/reputation-wire";
 import {
   isConvergenceRepoAllowed,
-  listConvergenceRepos,
 } from "../review/cutover-gate";
 import {
   convergedFeatureActive,
@@ -940,24 +940,15 @@ export async function fanOutAgentRegateSweepJobs(
   // that can merge/close. The action layer (maybeRunAgentMaintenance) stays autonomy-gated, so an observe repo is
   // re-reviewed but never auto-actioned. This is what makes advisory reviews fire on existing open PRs without
   // depending on a fresh webhook per PR.
-  const repositoriesByKey = new Map((await listRepositories(env)).map((repo) => [repo.fullName.toLowerCase(), repo]));
-  const byKey = new Map<string, { fullName: string; installationId?: number }>();
-  for (const repo of repositoriesByKey.values())
-    byKey.set(repo.fullName.toLowerCase(), { fullName: repo.fullName, ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}) });
-  for (const fullName of listConvergenceRepos(env)) {
-    const repo = repositoriesByKey.get(fullName.toLowerCase());
-    byKey.set(fullName.toLowerCase(), {
-      fullName,
-      ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
-    });
-  }
+  // #10170: the repo-set assembly was duplicated five times; callers keep their own eligibility rules.
+  const repoCandidates = await resolveConfiguredRepoCandidates(env);
   // #3899: resolve every repo's settings + drain-state CONCURRENTLY (bounded), not one at a time. Each repo
   // costs resolveRepositorySettings's own 3 parallel round-trips plus a 4th getLatestRegatedAt read; awaiting
   // that serially per repo made this whole prefix scale linearly with repo count, before the per-repo dispatch
   // below (already parallel) even started. Reuses the same bounded worker-pool helper loadRepoFocusManifests
   // already relies on for the same "many small per-repo D1/KV reads" shape.
   const outcomes = await mapWithConcurrencyLimit(
-    [...byKey.values()],
+    repoCandidates,
     SWEEP_FANOUT_RESOLUTION_CONCURRENCY,
     async (repo): Promise<SweepFanoutResolutionOutcome> => {
       const repoFullName = repo.fullName;
@@ -1312,18 +1303,9 @@ async function fanOutRagIndexJobs(
   // case-insensitively (a repo can be both known AND configured). Each candidate is then filtered by whether RAG is
   // active for it (`features.rag` override → LOOPOVER_REVIEW_REPOS allowlist default) just below, so this widens
   // ELIGIBILITY only — the convergedFeatureActive gate below is what actually controls indexing spend.
-  const repositoriesByKey = new Map((await listRepositories(env)).map((repo) => [repo.fullName.toLowerCase(), repo]));
-  const byKey = new Map<string, { fullName: string; installationId?: number }>();
-  for (const repo of repositoriesByKey.values())
-    byKey.set(repo.fullName.toLowerCase(), { fullName: repo.fullName, ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}) });
-  for (const fullName of listConvergenceRepos(env)) {
-    const repo = repositoriesByKey.get(fullName.toLowerCase());
-    byKey.set(fullName.toLowerCase(), {
-      fullName,
-      ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
-    });
-  }
-  const candidates = [...byKey.values()];
+  // #10170: the repo-set assembly was duplicated five times; callers keep their own eligibility rules.
+  const repoCandidates = await resolveConfiguredRepoCandidates(env);
+  const candidates = repoCandidates;
   const ragActiveByRepo = await Promise.all(
     candidates.map((repo) => convergedFeatureActive(env, repo.fullName, "rag")),
   );
@@ -1733,21 +1715,12 @@ export async function fanOutBacklogConvergenceSweepJobs(
     });
     return;
   }
-  const repositoriesByKey = new Map((await listRepositories(env)).map((repo) => [repo.fullName.toLowerCase(), repo]));
-  const byKey = new Map<string, { fullName: string; installationId?: number }>();
-  for (const repo of repositoriesByKey.values())
-    byKey.set(repo.fullName.toLowerCase(), { fullName: repo.fullName, ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}) });
-  for (const fullName of listConvergenceRepos(env)) {
-    const repo = repositoriesByKey.get(fullName.toLowerCase());
-    byKey.set(fullName.toLowerCase(), {
-      fullName,
-      ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
-    });
-  }
+  // #10170: the repo-set assembly was duplicated five times; callers keep their own eligibility rules.
+  const repoCandidates = await resolveConfiguredRepoCandidates(env);
   // #4502 (ports #3899): resolve every repo's settings + drain-state CONCURRENTLY (bounded), not one at a time —
   // mirrors fanOutAgentRegateSweepJobs's own port of this fix, the same "many small per-repo D1/KV reads" shape.
   const outcomes = await mapWithConcurrencyLimit(
-    [...byKey.values()],
+    repoCandidates,
     SWEEP_FANOUT_RESOLUTION_CONCURRENCY,
     async (repo): Promise<SweepFanoutResolutionOutcome> => {
       const repoFullName = repo.fullName;

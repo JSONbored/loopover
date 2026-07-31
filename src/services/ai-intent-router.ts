@@ -1,4 +1,5 @@
 import { recordAiUsageEvent, recordAuditEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
+import { estimateNeurons, extractAiText } from "./ai-usage-estimate";
 import { INTENT_ROUTABLE_COMMANDS, isIntentRoutableCommand, type IntentRoutableCommandName } from "../github/commands";
 import type { AdvisoryAiRoutingConfig } from "../types";
 
@@ -61,7 +62,7 @@ export async function classifyLoopOverIntent(env: Env, req: IntentRoutingRequest
   const model = env.WORKERS_AI_SUMMARY_MODEL || "";
   const maxOutputTokens = 32; // the entire valid output is a ~20-char JSON object; no legitimate reason to allow more
   const prompt = `Contributor message: ${text}`;
-  const estimatedNeurons = estimateNeurons(prompt, maxOutputTokens);
+  const estimatedNeurons = estimateNeurons(prompt.length, maxOutputTokens);
   // Shared daily neuron budget: the SAME counter every AI feature sums into (ai-review / ai-slop / ai-summaries /
   // ai-chat-qa, #1369). Default HIGH (10M) and clamp to 10M so intent routing never starves -- or is starved by --
   // the shared pool.
@@ -121,20 +122,7 @@ function extractCommandCandidate(rawText: string): unknown {
   }
 }
 
-function estimateNeurons(prompt: string, maxOutputTokens: number): number {
-  const inputTokens = Math.ceil(prompt.length / 4);
-  return Math.max(1, Math.ceil((inputTokens + maxOutputTokens) * 0.035));
-}
 
-function extractAiText(response: unknown): string {
-  if (typeof response === "string") return response;
-  if (!response || typeof response !== "object") return "";
-  const record = response as Record<string, unknown>;
-  if (typeof record.response === "string") return record.response;
-  if (typeof record.text === "string") return record.text;
-  if (typeof record.result === "string") return record.result;
-  return "";
-}
 
 function clampNumber(value: number, min: number, max: number): number {
   if (!Number.isFinite(value)) return min;

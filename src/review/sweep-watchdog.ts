@@ -11,14 +11,15 @@
 // Default OFF (like every other *-wire-adjacent convergence capability) — flag-OFF this module is never invoked
 // and the cron enqueues no watchdog job, byte-identical to today.
 
-import { countOpenPullRequests, getLatestRegatedAt, listRepositories } from "../db/repositories";
+import { countOpenPullRequests, getLatestRegatedAt } from "../db/repositories";
+import { resolveConfiguredRepoCandidates } from "./configured-repo-set";
 import { isAgentConfigured } from "../settings/autonomy";
 import { resolveRepositorySettings } from "../settings/repository-settings";
 import { loadRepoFocusManifest } from "../signals/focus-manifest-loader";
 import { resolveLoopOverSelfRepoFullName } from "../config/loopover-repo-focus-manifest";
 import type { JobMessage } from "../types";
 import { errorMessage, nowIso } from "../utils/json";
-import { isConvergenceRepoAllowed, listConvergenceRepos } from "./cutover-gate";
+import { isConvergenceRepoAllowed } from "./cutover-gate";
 
 /** A manifest-sourced enable/threshold override (#6558 / #6275 / #6594) -- the top-level `sweepWatchdog`
  *  block of the loopover self-repo's `.loopover.yml` (see FocusManifestSweepWatchdogConfig). Distinct from the
@@ -128,19 +129,10 @@ export function isSweepStale(input: {
  *  (the repo stays watched), matching the surrounding settings-blip fail-safe below -- a config-read failure
  *  must never silently exclude a repo from monitoring. */
 async function watchedRepos(env: Env): Promise<Array<{ fullName: string; installationId?: number }>> {
-  const repositoriesByKey = new Map((await listRepositories(env)).map((repo) => [repo.fullName.toLowerCase(), repo]));
-  const byKey = new Map<string, { fullName: string; installationId?: number }>();
-  for (const repo of repositoriesByKey.values())
-    byKey.set(repo.fullName.toLowerCase(), { fullName: repo.fullName, ...(typeof repo.installationId === "number" ? { installationId: repo.installationId } : {}) });
-  for (const fullName of listConvergenceRepos(env)) {
-    const repo = repositoriesByKey.get(fullName.toLowerCase());
-    byKey.set(fullName.toLowerCase(), {
-      fullName,
-      ...(typeof repo?.installationId === "number" ? { installationId: repo.installationId } : {}),
-    });
-  }
+  // #10170: the repo-set assembly was duplicated five times; callers keep their own eligibility rules.
+  const repoCandidates = await resolveConfiguredRepoCandidates(env);
   const configured: Array<{ fullName: string; installationId?: number }> = [];
-  for (const repo of byKey.values()) {
+  for (const repo of repoCandidates) {
     try {
       const settings = await resolveRepositorySettings(env, repo.fullName);
       // #sweep-requires-installation: mirrors fanOutAgentRegateSweepJobs's own guard -- a repo with no real

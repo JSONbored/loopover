@@ -276,7 +276,7 @@ describe("Workers AI summaries", () => {
     expect(__aiSummaryInternals.extractAiText({ result: "result" })).toBe("result");
     expect(__aiSummaryInternals.extractAiText({ nope: 1 })).toBe("");
     expect(__aiSummaryInternals.extractAiText(null)).toBe("");
-    expect(__aiSummaryInternals.estimateNeurons("abcd".repeat(100), 128)).toBeGreaterThan(0);
+    expect(__aiSummaryInternals.estimateNeurons("abcd".repeat(100).length, 128)).toBeGreaterThan(0);
     expect(__aiSummaryInternals.sanitizeAiText("wallet hotkey payout", "public")).not.toMatch(/wallet|hotkey|payout/i);
     expect(__aiSummaryInternals.containsPublicForbiddenText("raw trust score")).toBe(true);
     expect(__aiSummaryInternals.compactAgentSignalBundle(bundleFixture(), "public").actions).toHaveLength(1);

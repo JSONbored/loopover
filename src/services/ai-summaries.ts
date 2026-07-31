@@ -1,4 +1,5 @@
 import { recordAiUsageEvent, recordAuditEvent, sumAiEstimatedNeuronsSince } from "../db/repositories";
+import { estimateNeurons, extractAiText } from "./ai-usage-estimate";
 import { sanitizePublicComment } from "../queue-intelligence";
 import type { JsonValue } from "../types";
 import type { AgentRunBundle } from "./agent-orchestrator";
@@ -35,7 +36,7 @@ export async function summarizeAgentBundleWithAi(env: Env, bundle: AgentRunBundl
   const maxOutputTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 64, 512);
   const signalBundle = compactAgentSignalBundle(bundle, visibility);
   const prompt = buildPrompt(signalBundle, visibility);
-  const estimatedNeurons = estimateNeurons(prompt, maxOutputTokens);
+  const estimatedNeurons = estimateNeurons(prompt.length, maxOutputTokens);
   // Resolve the SHARED daily neuron budget exactly like ai-review.ts / ai-slop.ts (#1369): all three
   // AI features sum into one `sumAiEstimatedNeuronsSince` counter, so the old `|| 10000` default +
   // 1M ceiling here starved summaries into quota_exceeded once shared usage crossed 10k — well under the
@@ -162,20 +163,7 @@ function buildPrompt(signalBundle: Record<string, JsonValue>, visibility: AiSumm
   ].join("\n");
 }
 
-function estimateNeurons(prompt: string, maxOutputTokens: number): number {
-  const inputTokens = Math.ceil(prompt.length / 4);
-  return Math.max(1, Math.ceil((inputTokens + maxOutputTokens) * 0.035));
-}
 
-function extractAiText(response: unknown): string {
-  if (typeof response === "string") return response;
-  if (!response || typeof response !== "object") return "";
-  const record = response as Record<string, unknown>;
-  if (typeof record.response === "string") return record.response;
-  if (typeof record.text === "string") return record.text;
-  if (typeof record.result === "string") return record.result;
-  return "";
-}
 
 function sanitizeAiText(value: string, visibility: AiSummaryVisibility): string {
   const sanitized = value
@@ -302,7 +290,7 @@ export async function rewriteSignalBundleWithAi(env: Env, req: AiRewriteRequest)
   const model = env.WORKERS_AI_SUMMARY_MODEL || "";
   const maxOutputTokens = clampNumber(Number(env.AI_MAX_OUTPUT_TOKENS || 256), 64, 512);
   const prompt = buildBundlePrompt(req.bundle, req.visibility);
-  const estimatedNeurons = estimateNeurons(prompt, maxOutputTokens);
+  const estimatedNeurons = estimateNeurons(prompt.length, maxOutputTokens);
   // Resolve the SHARED daily neuron budget exactly like ai-review.ts / ai-slop.ts (#1369): all three
   // AI features sum into one `sumAiEstimatedNeuronsSince` counter, so the old `|| 10000` default +
   // 1M ceiling here starved summaries into quota_exceeded once shared usage crossed 10k — well under the

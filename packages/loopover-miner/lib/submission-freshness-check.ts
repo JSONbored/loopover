@@ -26,6 +26,7 @@
 // no noisy failure" here just means: return a quiet not-fresh result, same shape as any other blocked gate
 // decision in this package -- never throw, never surface anything to the target repo.
 
+import { DEFAULT_FORGE_CONFIG } from "./forge-config.js";
 import { defaultRetryBackoffMs } from "./http-retry.js";
 
 export const SUBMISSION_FRESHNESS_ABORT_EVENT = "submission_freshness_abort" as const;
@@ -36,6 +37,10 @@ export type SubmissionFreshnessCandidate = {
   repoFullName: string;
   issueNumber: number;
   minerLogin: string;
+  /** The forge host this attempt's claim was recorded under (#5563 composite key). Omitted/blank -> the
+   *  github.com default, matching claim-ledger.js's own normalizeApiBaseUrl, so every existing single-forge
+   *  caller resolves to the same host it always did. */
+  apiBaseUrl?: string;
 };
 
 export type LiveIssueSnapshot = {
@@ -44,7 +49,9 @@ export type LiveIssueSnapshot = {
 };
 
 export type SubmissionFreshnessClaimLedger = {
-  listClaims(filter: { repoFullName?: string; status?: string }): Array<{ repoFullName: string; issueNumber: number; status: string }>;
+  listClaims(
+    filter: { repoFullName?: string; status?: string },
+  ): Array<{ repoFullName: string; issueNumber: number; status: string; apiBaseUrl?: string }>;
 };
 
 export type SubmissionFreshnessEventLedger = {
@@ -70,6 +77,14 @@ export type SubmissionFreshnessRetryOptions = {
 // 5xx, or GraphQL-index propagation lag) resolve itself before we fail closed, without an unbounded loop.
 const DEFAULT_SNAPSHOT_MAX_ATTEMPTS = 3;
 const defaultSnapshotSleep = (delayMs: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, delayMs));
+
+/** The forge host a claim row or candidate belongs to. Mirrors manage-poll.js's resolveManagedRowApiBaseUrl (and
+ *  every store's normalizeApiBaseUrl): omitted/blank -> the github.com default, so a single-forge caller/row is
+ *  unaffected. Used only to COMPARE hosts here -- claim-ledger.js's own writer path still does the real
+ *  normalization/validation before a row is ever persisted. */
+function resolveFreshnessApiBaseUrl(apiBaseUrl: unknown): string {
+  return typeof apiBaseUrl === "string" && apiBaseUrl.trim() ? apiBaseUrl.trim() : DEFAULT_FORGE_CONFIG.apiBaseUrl;
+}
 
 /**
  * Evaluate whether a submission candidate's live repo state is still fresh enough to proceed toward open_pr.
@@ -107,7 +122,13 @@ export async function checkSubmissionFreshness(
   const sleepFn = typeof options.sleepFn === "function" ? options.sleepFn : defaultSnapshotSleep;
   const backoffMs = typeof options.backoffMs === "function" ? options.backoffMs : defaultRetryBackoffMs;
 
-  const claim = claimLedger.listClaims({ repoFullName }).find((c) => c.issueNumber === candidate.issueNumber);
+  // Host-scoped match (#5563 composite key): a row belonging to a DIFFERENT forge host is ignored entirely --
+  // neither a pass nor a claim_superseded abort -- rather than winning on `.find`'s first-match-wins order
+  // regardless of which host recorded it.
+  const candidateApiBaseUrl = resolveFreshnessApiBaseUrl(candidate.apiBaseUrl);
+  const claim = claimLedger
+    .listClaims({ repoFullName })
+    .find((c) => c.issueNumber === candidate.issueNumber && resolveFreshnessApiBaseUrl(c.apiBaseUrl) === candidateApiBaseUrl);
   if (!claim || claim.status !== "active") {
     return abort(eventLedger, repoFullName, candidate.issueNumber, "claim_superseded");
   }

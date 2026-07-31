@@ -57,6 +57,10 @@ export type AttemptInput = {
   maxConsecutiveGateBlocks?: number;
   draft?: boolean;
   governor: AttemptGovernorContext;
+  /** The forge host this attempt's own claim was recorded under (#5563 composite key). Omitted matches every
+   *  pre-existing single-forge caller: checkSubmissionFreshness resolves that the same way claim-ledger.js's
+   *  own normalizeApiBaseUrl does, to the github.com default. */
+  apiBaseUrl?: string;
 };
 
 export type AttemptDeps = {
@@ -233,7 +237,14 @@ export async function runMinerAttempt(input: AttemptInput, deps: AttemptDeps): P
   }
 
   const freshness = await checkSubmissionFreshness(
-    { repoFullName: input.loopInput.repoFullName, issueNumber: input.issueNumber, minerLogin: input.minerLogin },
+    {
+      repoFullName: input.loopInput.repoFullName,
+      issueNumber: input.issueNumber,
+      minerLogin: input.minerLogin,
+      // Spread-omit rather than pass `undefined` explicitly -- SubmissionFreshnessCandidate's `apiBaseUrl` is
+      // optional but not `| undefined` under exactOptionalPropertyTypes, same reasoning as maxConsecutiveGateBlocks below.
+      ...(input.apiBaseUrl !== undefined ? { apiBaseUrl: input.apiBaseUrl } : {}),
+    },
     { claimLedger: deps.claimLedger, fetchLiveIssueSnapshot: deps.fetchLiveIssueSnapshot, eventLedger: deps.eventLedger },
   );
   if (!freshness.fresh) {

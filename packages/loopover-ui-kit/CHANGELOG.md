@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.5.1](https://github.com/JSONbored/loopover/compare/ui-kit-v1.5.0...ui-kit-v1.5.1) (2026-07-31)
+
+
+### Fixes
+
+* **observability:** group AI generations by their real trace, and attribute spend per repo ([#10187](https://github.com/JSONbored/loopover/issues/10187)) ([693aed8](https://github.com/JSONbored/loopover/commit/693aed823b9fb51518ce6649cc610a17ded86e9c)), closes [#10185](https://github.com/JSONbored/loopover/issues/10185)
+
 ## [1.5.0](https://github.com/JSONbored/loopover/compare/ui-kit-v1.4.0...ui-kit-v1.5.0) (2026-07-31)
 
 

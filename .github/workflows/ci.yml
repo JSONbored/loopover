@@ -49,6 +49,7 @@ jobs:
       rees: ${{ steps.filter.outputs.rees }}
       controlPlane: ${{ steps.filter.outputs.controlPlane }}
       observability: ${{ steps.filter.outputs.observability }}
+      cocoDev: ${{ steps.filter.outputs.cocoDev }}
     steps:
       # Debounce rapid re-pushes to an open PR: every job below (validate-code, validate-tests)
       # has `needs: changes` in its dependency chain, so none of
@@ -256,6 +257,13 @@ jobs:
               - 'packages/loopover-miner/**'
               - 'test/unit/check-miner-package.test.ts'
               - 'test/unit/miner-calibration-types.test.ts'
+            # coco-dev-versions:check (#9649) reconciles k8s/coco-dev/versions.json with the KBS
+            # kustomization's recorded version; both files live entirely outside every filter above (no
+            # src/** or packages/** import edge), so without this dedicated trigger a version bump to only
+            # those files would skip the check with zero CI signal.
+            cocoDev:
+              - 'k8s/coco-dev/**'
+              - 'scripts/check-coco-dev-versions*.ts'
 
       # Diff-scoped security gate, folded in from the old standalone `security` job (2026-07-24, one fewer
       # runner slot on every PR at zero added wall-clock -- the API-based lockfile diff takes seconds and
@@ -282,7 +290,7 @@ jobs:
     needs: changes
     # draft != true also gates push runs correctly: github.event.pull_request is unset there, so the
     # property access evaluates to null, and null != true is true.
-    if: ${{ github.event_name == 'push' || (github.event.pull_request.draft != true && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.discoveryIndex == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.controlPlane == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.observability == 'true')) }}
+    if: ${{ github.event_name == 'push' || (github.event.pull_request.draft != true && (needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.discoveryIndex == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.rees == 'true' || needs.changes.outputs.controlPlane == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.observability == 'true' || needs.changes.outputs.cocoDev == 'true')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -927,6 +935,19 @@ jobs:
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
         run: npm run bundle-analysis --workspace @loopover/ui
+      # #9649: coco-dev-versions:check reconciles k8s/coco-dev/versions.json with the KBS kustomization's
+      # recorded version; nothing in this workflow previously ran it, so a version bump made in only one of
+      # the two files could silently ship a KBS deploy that doesn't match its own recorded manifest with
+      # zero CI signal. Same local-only-until-now gap as the drift checks above.
+      - name: Coco-dev versions check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.cocoDev == 'true' }}
+        run: npm run coco-dev-versions:check
+      # #9649: import-specifiers:check (#9221) enforces the per-zone relative-import specifier convention
+      # over src, scripts, test and every packages/* workspace; #9240 and #9249 are two separate drifts
+      # that landed after the guard shipped, while it stayed local-only. Same gap as the drift checks above.
+      - name: Import specifiers check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.miner == 'true' || needs.changes.outputs.discoveryIndex == 'true' }}
+        run: npm run import-specifiers:check
 
   # The full-suite coverage run (#ci-shard-coverage kept it OUT of validate-code so the ~25-minute suite
   # never serializes with the fast drift/typecheck/build checks -- that split remains). It ran 2023-style

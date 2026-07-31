@@ -105,6 +105,7 @@ export const docsNav: DocsGroup[] = [
       { to: "/docs/branch-analysis", label: "Branch analysis" },
       { to: "/docs/scoreability", label: "Scoreability" },
       { to: "/docs/label-policy", label: "Label policy" },
+      { to: "/docs/contributor-relationships", label: "Relationships & recourse" },
       { to: "/docs/upstream-drift", label: "Upstream drift" },
       { to: "/docs/backtest-calibration", label: "Backtest & calibration" },
       { to: "/docs/verify-this-review", label: "Verify this review" },

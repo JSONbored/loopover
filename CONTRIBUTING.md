@@ -44,6 +44,12 @@ closes the PR. Recover by opening a **fresh, corrected PR**. PRs touching guarde
 review engine, migrations, and similar — the set varies) are held for manual review rather than
 auto-acted.
 
+**If you think a verdict was wrong.** Every verdict is independently verifiable offline, wrong closes
+are detected automatically by outcome confirmation rather than by anyone filing a report, and the
+remedy for a contested close is resubmission — a new head SHA earns a fresh verdict through the same
+gate. There is deliberately no human appeals queue; the reasons are written down rather than left
+implicit. See [relationships and recourse](https://loopover.ai/docs/contributor-relationships).
+
 **If we close your PR by mistake, that's on us.** We may reopen or re-review at our discretion as time
 permits — there is no fixed window, and opening a fresh PR is usually fastest.
 

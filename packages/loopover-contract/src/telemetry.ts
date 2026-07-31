@@ -15,6 +15,24 @@ import type { ToolCategory, ToolContract } from "./tool-definition.js";
 /** PostHog's own MCP-Analytics event family (#7737 upstream). */
 export const MCP_TOOL_CALL_EVENT = "$mcp_tool_call";
 
+/**
+ * PostHog's own MCP-Analytics handshake event, the sibling of MCP_TOOL_CALL_EVENT.
+ *
+ * Emitted once per `initialize` -- the first message of every MCP session -- and it is what lets
+ * PostHog's built-in MCP dashboards break usage down by CLIENT (Claude Code vs Cursor vs a raw SDK
+ * script) and by client version. `$mcp_tool_call` cannot answer that: it carries what was called,
+ * never who connected.
+ */
+export const MCP_INITIALIZE_EVENT = "$mcp_initialize";
+
+/**
+ * PostHog's own tools/list event.
+ *
+ * Measures DISCOVERY, which no other event can: joined against `$mcp_tool_call` on `$session_id`, it
+ * separates a tool nobody wants from a tool nobody could find.
+ */
+export const MCP_TOOLS_LIST_EVENT = "$mcp_tools_list";
+
 /** LoopOver's own minimal usage event -- no arguments, no results, ever. */
 export const MCP_USAGE_EVENT = "usage_event";
 
@@ -79,6 +97,150 @@ export const MCP_TELEMETRY_PROPERTY_KEYS = [
   "payloads_excluded",
 ] as const;
 export type McpTelemetryPropertyKey = (typeof MCP_TELEMETRY_PROPERTY_KEYS)[number];
+
+/**
+ * The allowlist for the canonical `$mcp_*` events, kept SEPARATE from the list above.
+ *
+ * These are `$`-prefixed because they are PostHog's OWN reserved MCP-Analytics property names, not
+ * LoopOver's. Their built-in MCP dashboards read `$mcp_tool_name` / `$mcp_duration_ms` /
+ * `$mcp_is_error` literally, so renaming them into this file's snake_case house style produces an
+ * event that ingests cleanly and populates nothing -- which is exactly what `$mcp_tool_call` did
+ * before #10175. Two lists rather than one union, so a native key can never quietly satisfy the
+ * canonical check (or the reverse).
+ */
+export const MCP_CANONICAL_PROPERTY_KEYS = [
+  "$mcp_source",
+  "$session_id",
+  "$mcp_server_name",
+  "$mcp_server_version",
+  "$mcp_client_name",
+  "$mcp_client_version",
+  "$mcp_tool_name",
+  "$mcp_duration_ms",
+  "$mcp_is_error",
+  "$mcp_error_type",
+  "$mcp_parameters",
+  "$mcp_response",
+  "$mcp_listed_tool_names",
+] as const;
+export type McpCanonicalPropertyKey = (typeof MCP_CANONICAL_PROPERTY_KEYS)[number];
+
+/**
+ * The literal `$mcp_source` value PostHog's own MCP-Analytics SDK stamps on every event it emits.
+ *
+ * Hardcoded to PostHog's constant rather than something LoopOver-specific: it is what their own
+ * dashboards filter on to separate MCP traffic from everything else in a mixed project, so a "more
+ * accurate" custom value here would simply make this server invisible to them.
+ */
+export const MCP_ANALYTICS_SOURCE = "posthog_mcp_analytics";
+
+/**
+ * Session/server/client identity stamped onto every canonical `$mcp_*` event.
+ *
+ * `$session_id` is what ties a handshake, a tools/list, and the tool calls that followed into one
+ * analyzable session -- without it each event is an isolated row and no funnel across them works.
+ *
+ * `| undefined` is explicit on every field rather than just `?`: this package compiles under
+ * `exactOptionalPropertyTypes`, where an optional property may be ABSENT but not present-and-
+ * undefined. Callers build this by reading headers and request params that are routinely missing,
+ * so `{ sessionId: maybeUndefined }` is the normal shape and must typecheck without every call site
+ * spreading conditionally.
+ */
+export type McpAnalyticsContext = {
+  sessionId?: string | undefined;
+  serverName?: string | undefined;
+  serverVersion?: string | undefined;
+  clientName?: string | undefined;
+  clientVersion?: string | undefined;
+};
+
+/** Cap on the free-form, client-supplied strings that become dashboard dimensions, so a hostile or
+ *  buggy client cannot push an unbounded (or unbounded-cardinality) value into a breakdown. */
+const MCP_LABEL_MAX_CHARS = 256;
+
+function mcpLabel(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) return undefined;
+  return trimmed.length > MCP_LABEL_MAX_CHARS ? trimmed.slice(0, MCP_LABEL_MAX_CHARS) : trimmed;
+}
+
+/** Absent fields are OMITTED rather than sent as null, matching buildUsageEventProperties' own
+ *  reasoning: a breakdown should not grow a phantom bucket for what was never reported. */
+export function buildMcpContextProperties(context: McpAnalyticsContext): Record<string, unknown> {
+  const sessionId = mcpLabel(context.sessionId);
+  const serverName = mcpLabel(context.serverName);
+  const serverVersion = mcpLabel(context.serverVersion);
+  const clientName = mcpLabel(context.clientName);
+  const clientVersion = mcpLabel(context.clientVersion);
+  return {
+    $mcp_source: MCP_ANALYTICS_SOURCE,
+    ...(sessionId === undefined ? {} : { $session_id: sessionId }),
+    ...(serverName === undefined ? {} : { $mcp_server_name: serverName }),
+    ...(serverVersion === undefined ? {} : { $mcp_server_version: serverVersion }),
+    ...(clientName === undefined ? {} : { $mcp_client_name: clientName }),
+    ...(clientVersion === undefined ? {} : { $mcp_client_version: clientVersion }),
+  };
+}
+
+/**
+ * LoopOver's closed error-code set, projected onto PostHog's own `$mcp_error_type` categories.
+ *
+ * Two vocabularies exist because both are fixed by someone else: MCP_TELEMETRY_ERROR_CODES is what
+ * this repo's tool envelopes actually return, and `$mcp_error_type` is the closed set PostHog's MCP
+ * dashboards group by. A projection is the only way to serve both without one going empty --
+ * `usage_event` keeps the precise LoopOver code, this keeps the coarse PostHog category.
+ */
+const MCP_ERROR_TYPE_BY_CODE: Record<McpTelemetryErrorCode, string> = {
+  invalid_input: "validation",
+  unauthorized: "permission",
+  forbidden: "permission",
+  // A 404 here is a client asking for something absent -- PostHog's own bucket for an upstream 4xx,
+  // not an internal fault of ours.
+  not_found: "api_4xx",
+  // The OPERATOR has not supplied something the tool needs, which is what PostHog means by
+  // missing_context -- as opposed to a caller sending bad input, which is `validation`.
+  not_configured: "missing_context",
+  rate_limited: "rate_limited",
+  upstream_error: "api_5xx",
+  timeout: "timeout",
+  // The human declined an elicitation, so the call is missing something it needed to proceed.
+  elicitation_declined: "missing_context",
+  store_unavailable: "internal",
+  unknown_error: "internal",
+};
+
+/** `internal` for an absent code: `$mcp_is_error` is true by construction wherever this is called,
+ *  and PostHog's set has no "unclassified" member, so the fault bucket is the safe default. */
+export function mcpErrorType(errorCode: McpTelemetryErrorCode | undefined): string {
+  return errorCode === undefined ? "internal" : MCP_ERROR_TYPE_BY_CODE[errorCode];
+}
+
+/**
+ * What a server observes about one `initialize` handshake.
+ *
+ * Both fields are optional because they are: `clientInfo` is optional in the MCP spec's own
+ * initialize params, and a client that omits it still completes a valid handshake. The event is
+ * still worth emitting then -- a session that connected is a session that connected, and an
+ * explicit "unknown client" bucket is a real signal about who is calling.
+ */
+export const McpInitializeTelemetry = z.object({
+  clientName: z.string().min(1).optional(),
+  clientVersion: z.string().min(1).optional(),
+});
+export type McpInitializeTelemetry = z.infer<typeof McpInitializeTelemetry>;
+
+/** The handshake event's properties. The handshake's own `clientInfo` wins over anything the caller
+ *  inferred from headers: it is the MCP spec's own field, sent by the client about itself. */
+export function buildMcpInitializeProperties(
+  handshake: McpInitializeTelemetry,
+  context: McpAnalyticsContext = {},
+): Record<string, unknown> {
+  return buildMcpContextProperties({
+    ...context,
+    clientName: handshake.clientName ?? context.clientName,
+    clientVersion: handshake.clientVersion ?? context.clientVersion,
+  });
+}
 
 /** What a dispatch chokepoint observes about one call. */
 export const McpToolCallTelemetry = z.object({
@@ -225,17 +387,44 @@ export function capturePayload(value: unknown, byteCap = MCP_TELEMETRY_PAYLOAD_B
 export function buildMcpToolCallProperties(
   call: McpToolCallTelemetry,
   payloads: { arguments?: unknown; result?: unknown; excluded: boolean },
+  context: McpAnalyticsContext = {},
 ): Record<string, unknown> {
-  const base = buildUsageEventProperties(call);
-  if (payloads.excluded) return { ...base, payloads_excluded: true };
-  const args = capturePayload(payloads.arguments);
-  const result = capturePayload(payloads.result);
+  const args = payloads.excluded ? undefined : capturePayload(payloads.arguments);
+  const result = payloads.excluded ? undefined : capturePayload(payloads.result);
   return {
-    ...base,
-    payloads_excluded: false,
-    ...(args === undefined ? {} : { arguments: args }),
-    ...(result === undefined ? {} : { result }),
+    ...buildMcpContextProperties(context),
+    $mcp_tool_name: call.tool,
+    $mcp_duration_ms: call.durationMs,
+    $mcp_is_error: !call.ok,
+    ...(call.ok ? {} : { $mcp_error_type: mcpErrorType(call.errorCode) }),
+    ...(args === undefined ? {} : { $mcp_parameters: args }),
+    ...(result === undefined ? {} : { $mcp_response: result }),
+    // LoopOver's own dimensions, carried ALONGSIDE the canonical keys rather than instead of them.
+    // PostHog's custom-server docs sanction this explicitly ("any extra props, spread verbatim,
+    // sitting alongside the $mcp_* keys"), and these three have no canonical equivalent: `surface`
+    // says which of the three servers answered, `transport` whether the stdio gateway proxied it,
+    // and `category` groups the ~125 tools. Without them on THIS event a breakdown of canonical
+    // tool calls by those dimensions is impossible -- `usage_event` carries them, but it is a
+    // different event, so the two cannot be combined in one breakdown.
+    surface: call.surface,
+    transport: call.transport ?? "local",
+    category: call.category,
+    payloads_excluded: payloads.excluded,
   };
+}
+
+/**
+ * `$mcp_tools_list` -- what the server advertised in a `tools/list` response.
+ *
+ * Names only, never descriptions or schemas. The array is COPIED because callers hand in their live
+ * registration array; a captured alias would let a later registration mutate an event already
+ * queued for flush.
+ */
+export function buildMcpToolsListProperties(
+  toolNames: readonly string[],
+  context: McpAnalyticsContext = {},
+): Record<string, unknown> {
+  return { ...buildMcpContextProperties(context), $mcp_listed_tool_names: [...toolNames] };
 }
 
 /**

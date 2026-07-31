@@ -1,0 +1,65 @@
+# Root prettier ignore -- DEFAULT DENY.
+#
+# Prettier governs only three workspaces in this repo (apps/loopover-ui,
+# apps/loopover-miner-ui, packages/loopover-ui-kit). Each has its own .prettierrc
+# and its own `format:check`, and `npm run ui:lint` -- which `test:ci` runs -- is
+# what enforces them. Everything else (src/**, test/**, scripts/**, the non-UI
+# packages, control-plane/**, review-enrichment/**) is hand-formatted at a much
+# wider effective line length and is NOT prettier input.
+#
+# Why this file exists: prettier resolves config by walking UP from each file, so
+# before this, a `prettier --write .` or a `prettier --write <backend file>` run
+# from the repo root found NO config, silently fell back to prettier's own
+# defaults (printWidth 80), and rewrapped thousands of lines of backend source
+# that nothing in CI had ever asked to be formatted. That produced enormous,
+# unreviewable diffs in otherwise small PRs -- repeatedly. Editors with
+# "format on save" hit the same trap.
+#
+# Default-deny rather than an explicit list of the excluded trees: a list goes
+# stale the moment a new top-level directory or package is added, and it fails
+# OPEN (the new tree gets mangled). This fails CLOSED -- a new directory is
+# ignored until someone deliberately un-ignores it below.
+/*
+
+# The three prettier-governed workspaces, re-admitted explicitly. Un-ignoring a
+# path requires un-ignoring each parent directory first, hence the paired lines.
+!/apps/
+/apps/*
+!/apps/loopover-ui/
+!/apps/loopover-miner-ui/
+
+!/packages/
+/packages/*
+!/packages/loopover-ui-kit/
+
+# Never formatter input, even inside a governed workspace.
+#
+# These MUST be repeated here rather than inherited: prettier reads only ONE
+# ignore file per run -- the one for the directory it was invoked from -- so the
+# workspaces' own .prettierignore files do not apply to a root-level run. Without
+# these, `prettier --write .` from the root reformats exactly the files each
+# workspace deliberately exempts. Keep in sync with:
+#   apps/loopover-ui/.prettierignore
+#   apps/loopover-miner-ui/.prettierignore
+#   packages/loopover-ui-kit/.prettierignore
+**/node_modules/
+**/dist/
+**/coverage/
+**/CHANGELOG.md
+**/.output/
+**/.vinxi/
+**/package-lock.json
+**/bun.lock
+**/pnpm-lock.yaml
+
+# Generated -- reformatting these makes their own drift checks fail against a
+# file nobody edited (`ui:openapi:check`, `mcp:tool-reference:check`).
+**/routeTree.gen.ts
+apps/loopover-ui/.source/
+apps/loopover-ui/public/openapi.json
+apps/loopover-ui/src/lib/mcp-tool-reference.ts
+
+# Deliberately formatter-free: prettier's mdx pass rewrites the template-literal
+# code inside <CodeBlock code={`...`}> attributes and destroys the embedded
+# YAML/compose indentation (#8182 fallout, repaired once already).
+apps/loopover-ui/content/docs/

@@ -2,7 +2,7 @@ import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";
 import { renderErrorPage } from "./lib/error-page";
-import { handleAnalyticsProxy } from "./lib/analytics-proxy";
+import { handleAnalyticsProxy, type PostHogAssetContext } from "./lib/analytics-proxy";
 
 type ServerEntry = {
   fetch: (request: Request, env: unknown, ctx: unknown) => Promise<Response> | Response;
@@ -40,10 +40,22 @@ async function normalizeCatastrophicSsrResponse(response: Response): Promise<Res
 
 export default {
   async fetch(request: Request, env: unknown, ctx: unknown) {
-    // First-party proxy for cookieless analytics event collection (/stats/api/send).
-    // Runs ahead of SSR and returns undefined for every other path. The remote
-    // Umami tracker script is intentionally not proxied as same-origin JavaScript.
-    const analytics = await handleAnalyticsProxy(request);
+    // First-party proxy for cookieless analytics collection (/stats/*, PostHog).
+    // Runs ahead of SSR and returns undefined for every other path.
+    //
+    // The try/catch is a top-level safety net, not belt-and-braces: this is a
+    // public unauthenticated route, and the sibling implementation had a real
+    // production incident (JSONbored/metagraphed#7794) where an unguarded
+    // background cache failure escaped as an unhandled rejection and corrupted
+    // the response for every asset request. Analytics must never be able to
+    // take down request handling -- catch anything it throws and treat it as
+    // "not handled" so the request falls through to the real SSR app below.
+    let analytics: Response | undefined;
+    try {
+      analytics = await handleAnalyticsProxy(request, ctx as PostHogAssetContext);
+    } catch (error) {
+      console.error("[analytics-proxy] request handling failed:", error);
+    }
     if (analytics) return analytics;
 
     try {

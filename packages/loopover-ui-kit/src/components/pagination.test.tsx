@@ -52,7 +52,7 @@ describe("PaginationLink aria-disabled styling (#8307)", () => {
 // #10052: aria-hidden on the outer wrapper removed the sr-only "More pages" label from the a11y tree.
 // Scope aria-hidden to the decorative icon only — same pattern as TypingIndicator.
 describe("PaginationEllipsis sr-only label not inside aria-hidden (#10052)", () => {
-  it("exposes \"More pages\" with no aria-hidden ancestor; icon is aria-hidden", () => {
+  it('exposes "More pages" with no aria-hidden ancestor; icon is aria-hidden', () => {
     const { container } = render(<PaginationEllipsis />);
     const label = screen.getByText("More pages");
     expect(label.closest("[aria-hidden='true'], [aria-hidden='']")).toBeNull();

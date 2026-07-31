@@ -13,6 +13,11 @@ import {
   MCP_TELEMETRY_ERROR_CODES,
   MCP_TELEMETRY_PAYLOAD_BYTE_CAP,
   MCP_TELEMETRY_PROPERTY_KEYS,
+  MCP_CANONICAL_PROPERTY_KEYS,
+  MCP_ANALYTICS_SOURCE,
+  buildMcpInitializeProperties,
+  buildMcpToolsListProperties,
+  mcpErrorType,
   mcpToolSpanName,
   REDACTED,
   redactForTelemetry,
@@ -47,24 +52,24 @@ describe("MCP telemetry event shapes (#9525)", () => {
   it("marks a payload-excluded tool explicitly rather than silently omitting", () => {
     const excluded = buildMcpToolCallProperties(call, { arguments: { a: 1 }, result: { b: 2 }, excluded: true });
     expect(excluded.payloads_excluded).toBe(true);
-    expect(excluded.arguments).toBeUndefined();
-    expect(excluded.result).toBeUndefined();
+    expect(excluded.$mcp_parameters).toBeUndefined();
+    expect(excluded.$mcp_response).toBeUndefined();
   });
 
   it("includes redacted payloads for a tool that permits them", () => {
     const included = buildMcpToolCallProperties(call, { arguments: { owner: "acme" }, result: undefined, excluded: false });
     expect(included.payloads_excluded).toBe(false);
-    expect(included.arguments).toBe('{"owner":"acme"}');
-    expect(included.result).toBeUndefined();
+    expect(included.$mcp_parameters).toBe('{"owner":"acme"}');
+    expect(included.$mcp_response).toBeUndefined();
   });
 
   it("includes a result with no arguments, and omits each independently", () => {
     const resultOnly = buildMcpToolCallProperties(call, { arguments: undefined, result: { n: 1 }, excluded: false });
-    expect(resultOnly.arguments).toBeUndefined();
-    expect(resultOnly.result).toBe('{"n":1}');
+    expect(resultOnly.$mcp_parameters).toBeUndefined();
+    expect(resultOnly.$mcp_response).toBe('{"n":1}');
     const neither = buildMcpToolCallProperties(call, { excluded: false });
-    expect("arguments" in neither).toBe(false);
-    expect("result" in neither).toBe(false);
+    expect("$mcp_parameters" in neither).toBe(false);
+    expect("$mcp_response" in neither).toBe(false);
   });
 
   it("omits error_code from span attributes on a successful call", () => {
@@ -157,17 +162,32 @@ describe("MCP telemetry error codes (#9525)", () => {
 
 describe("MCP telemetry allowlist (#9525)", () => {
   it("emits no property key outside the single-sourced allowlist", () => {
-    const allowed = new Set<string>(MCP_TELEMETRY_PROPERTY_KEYS);
+    // TWO vocabularies, deliberately (#10175): LoopOver's snake_case keys on `usage_event` and the
+    // OTel span, PostHog's reserved `$mcp_*` keys on the canonical events. `$mcp_tool_call` draws
+    // from BOTH -- the canonical keys their dashboards read, plus the three LoopOver dimensions with
+    // no canonical equivalent -- so it is checked against the union. Nothing may emit a key outside.
+    const native = new Set<string>(MCP_TELEMETRY_PROPERTY_KEYS);
+    const canonical = new Set<string>(MCP_CANONICAL_PROPERTY_KEYS);
+    const union = new Set<string>([...native, ...canonical]);
     const failing: McpToolCallTelemetry = { ...call, ok: false, errorCode: "timeout" };
-    const payloads = [
-      buildUsageEventProperties(call),
-      buildUsageEventProperties(failing),
-      buildMcpToolCallProperties(call, { arguments: { a: 1 }, result: { b: 2 }, excluded: false }),
+    const ctx = { sessionId: "ses_abc", serverName: "loopover", serverVersion: "3.18.4", clientName: "claude-code", clientVersion: "1.2.3" };
+
+    for (const payload of [buildUsageEventProperties(call), buildUsageEventProperties(failing), buildMcpToolSpanAttributes(failing)]) {
+      for (const key of Object.keys(payload)) expect(native, `${key} is not allowlisted`).toContain(key);
+    }
+    for (const payload of [
+      buildMcpToolCallProperties(call, { arguments: { a: 1 }, result: { b: 2 }, excluded: false }, ctx),
       buildMcpToolCallProperties(failing, { arguments: { a: 1 }, excluded: true }),
-      buildMcpToolSpanAttributes(failing),
-    ];
-    for (const payload of payloads) {
-      for (const key of Object.keys(payload)) expect(allowed, `${key} is not allowlisted`).toContain(key);
+    ]) {
+      for (const key of Object.keys(payload)) expect(union, `${key} is not allowlisted`).toContain(key);
+    }
+    for (const payload of [
+      buildMcpInitializeProperties({ clientName: "claude-code", clientVersion: "1.2.3" }, ctx),
+      buildMcpInitializeProperties({}),
+      buildMcpToolsListProperties(["loopover_get_repo_context"], ctx),
+      buildMcpToolsListProperties([]),
+    ]) {
+      for (const key of Object.keys(payload)) expect(canonical, `${key} is not allowlisted`).toContain(key);
     }
   });
 
@@ -326,5 +346,110 @@ describe("MCP dispatch chokepoint (#9525)", () => {
     const wrapped = instrumentToolDispatch("loopover_not_in_the_registry", spy, async (_args: unknown) => ({ structuredContent: {} }));
     await wrapped({});
     expect(calls[0]).toMatchObject({ category: "unknown" });
+  });
+});
+
+describe("PostHog canonical MCP analytics contract (#10175)", () => {
+  const ctx = { sessionId: "ses_abc123", serverName: "loopover", serverVersion: "3.18.4", clientName: "claude-code", clientVersion: "1.2.3" };
+
+  it("emits $mcp_tool_call under PostHog's own property names, not LoopOver's", () => {
+    // The whole point of this event: PostHog's built-in MCP dashboards read these exact `$mcp_*`
+    // keys literally. Emitting the event NAME with LoopOver-native keys ingests fine and leaves
+    // every breakdown empty -- which is precisely the bug #10175 fixes.
+    const properties = buildMcpToolCallProperties(call, { excluded: true }, ctx);
+    expect(properties.$mcp_source).toBe(MCP_ANALYTICS_SOURCE);
+    expect(properties.$mcp_tool_name).toBe("loopover_get_repo_context");
+    expect(properties.$mcp_duration_ms).toBe(12);
+    expect(properties.$mcp_is_error).toBe(false);
+    expect(properties.$session_id).toBe("ses_abc123");
+    expect(properties.$mcp_server_name).toBe("loopover");
+    expect(properties.$mcp_server_version).toBe("3.18.4");
+    expect(properties.$mcp_client_name).toBe("claude-code");
+    expect(properties.$mcp_client_version).toBe("1.2.3");
+    // LoopOver's own dimensions ride alongside rather than replacing the canonical ones.
+    expect(properties.surface).toBe("remote");
+    expect(properties.transport).toBe("local");
+    expect(properties.category).toBe("maintainer");
+  });
+
+  it("omits $mcp_error_type on success and sets it on failure", () => {
+    expect("$mcp_error_type" in buildMcpToolCallProperties(call, { excluded: true })).toBe(false);
+    const failed = buildMcpToolCallProperties({ ...call, ok: false, errorCode: "rate_limited" }, { excluded: true });
+    expect(failed.$mcp_is_error).toBe(true);
+    expect(failed.$mcp_error_type).toBe("rate_limited");
+  });
+
+  it("projects every LoopOver error code onto a member of PostHog's closed $mcp_error_type set", () => {
+    // PostHog groups failures by this fixed set; a code mapping outside it would silently fall out
+    // of their error breakdown entirely.
+    const posthogTypes = new Set(["missing_context", "validation", "permission", "timeout", "rate_limited", "api_4xx", "api_5xx", "internal"]);
+    for (const code of MCP_TELEMETRY_ERROR_CODES) {
+      expect(posthogTypes, `${code} maps outside PostHog's set`).toContain(mcpErrorType(code));
+    }
+    // No code at all is still a failure by construction at every call site, and PostHog's set has no
+    // "unclassified" member, so it buckets as the fault type.
+    expect(mcpErrorType(undefined)).toBe("internal");
+  });
+
+  it("defaults the context to an empty one, still stamping $mcp_source", () => {
+    const properties = buildMcpToolCallProperties(call, { excluded: true });
+    expect(properties.$mcp_source).toBe(MCP_ANALYTICS_SOURCE);
+    for (const key of ["$session_id", "$mcp_server_name", "$mcp_server_version", "$mcp_client_name", "$mcp_client_version"]) {
+      expect(key in properties, `${key} should be omitted, not null`).toBe(false);
+    }
+  });
+
+  it("omits blank and whitespace-only context values rather than emitting empty dimensions", () => {
+    const properties = buildMcpToolCallProperties(call, { excluded: true }, { sessionId: "   ", serverName: "", clientName: "cursor" });
+    expect("$session_id" in properties).toBe(false);
+    expect("$mcp_server_name" in properties).toBe(false);
+    expect(properties.$mcp_client_name).toBe("cursor");
+  });
+
+  it("truncates an over-long client-supplied label so it cannot blow up a dashboard dimension", () => {
+    const properties = buildMcpToolCallProperties(call, { excluded: true }, { clientName: "x".repeat(500) });
+    expect(properties.$mcp_client_name).toBe("x".repeat(256));
+  });
+
+  it("prefers the handshake's own clientInfo over anything inferred from headers", () => {
+    // clientInfo is the MCP spec's own field, sent by the client about itself; the header-derived
+    // value is a LoopOver convention only our own published client sets.
+    const properties = buildMcpInitializeProperties({ clientName: "cursor", clientVersion: "9.9.9" }, { ...ctx });
+    expect(properties.$mcp_client_name).toBe("cursor");
+    expect(properties.$mcp_client_version).toBe("9.9.9");
+    expect(properties.$mcp_server_name).toBe("loopover");
+  });
+
+  it("falls back to the inferred client when the handshake omits clientInfo", () => {
+    const properties = buildMcpInitializeProperties({}, ctx);
+    expect(properties.$mcp_client_name).toBe("claude-code");
+    expect(properties.$mcp_client_version).toBe("1.2.3");
+  });
+
+  it("still emits a handshake with no client identity at all", () => {
+    // A client that omits clientInfo completes a valid handshake -- a session that connected is
+    // still worth counting, in an explicit "unknown client" bucket.
+    expect(buildMcpInitializeProperties({})).toEqual({ $mcp_source: MCP_ANALYTICS_SOURCE });
+  });
+
+  it("lists advertised tool names for the discovery join", () => {
+    const properties = buildMcpToolsListProperties(["a_tool", "b_tool"], ctx);
+    expect(properties.$mcp_listed_tool_names).toEqual(["a_tool", "b_tool"]);
+    expect(properties.$session_id).toBe("ses_abc123");
+  });
+
+  it("copies the tool-name array rather than aliasing the caller's own", () => {
+    // The server hands in its live registration array; a captured alias would let a later
+    // registration mutate an event already queued for flush.
+    const names = ["a_tool"];
+    const properties = buildMcpToolsListProperties(names);
+    names.push("b_tool");
+    expect(properties.$mcp_listed_tool_names).toEqual(["a_tool"]);
+  });
+
+  it("emits an empty advertised list rather than omitting the property", () => {
+    // A server advertising nothing is a real, diagnosable state; an absent key reads as "not
+    // measured" instead.
+    expect(buildMcpToolsListProperties([]).$mcp_listed_tool_names).toEqual([]);
   });
 });

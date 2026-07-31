@@ -37,4 +37,14 @@ jobs:
       - name: Validate frontend
         env:
           VITE_LOOPOVER_API_ORIGIN: https://api.loopover.ai
+          # PostHog web analytics (#8293). Inline rather than a repo secret, for the same reason
+          # VITE_LOOPOVER_API_ORIGIN above is: this is a write-only ingest token that is embedded in
+          # the client bundle and therefore public by design -- a secret would add ceremony while
+          # protecting nothing.
+          #
+          # It MUST be set here, at build time: Vite substitutes `import.meta.env.VITE_*` when the
+          # bundle is compiled, so setting this as a runtime Worker var/secret instead would leave
+          # the shipped bundle with no token and turn every capture into a silent no-op with zero
+          # errors anywhere.
+          VITE_POSTHOG_PROJECT_TOKEN: phc_DmhFq8vjWoXGzd27EFp3sCFL4ugqXftaXhdy4E9noUZU
         run: npm run ui:openapi:check && npm run ui:lint && npm run ui:typecheck && npm --workspace @loopover/ui run build

@@ -102,6 +102,7 @@ export const AWESOME_CLAUDE_CONTENT_SPEC: ContentRepoSpec = {
     "sourceUrl",
     "websiteUrl",
     "docs_url",
+    "documentation_url",
     "download_url",
     "github_url",
     "package_url",
@@ -141,6 +142,7 @@ export const AWESOME_CLAUDE_CONTENT_SPEC: ContentRepoSpec = {
     "repository_url",
     "source_url",
     "website_url",
+    "documentation_url",
   ],
   sourceUrlListFields: new Set(["sourceUrls", "retrievalSources"]),
   // snake_case aliases match urlFields / sourceUrlFields (#7446): without them, a site-relative

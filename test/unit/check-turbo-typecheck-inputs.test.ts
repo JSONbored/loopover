@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { collectCrossBoundaryReach, coveredWorkspacesFromDependsOn, findUnhashedReach, parseJsonc } from "../../scripts/check-turbo-typecheck-inputs";
 
 // turbo.json's //#typecheck inputs are a hand-maintained approximation of tsc's real transitive surface. Its
@@ -50,6 +53,43 @@ describe("collectCrossBoundaryReach", () => {
     expect(paths).not.toContain("packages/engine/src");
     // And it still finds the real ones.
     expect(paths).toContain("packages/loopover-mcp/lib");
+  });
+
+  it("REGRESSION (#10046): dynamic import() reaches package.json the same as static from", () => {
+    // The old regex required whitespace after `import` before `"`, so `import("...")` never matched.
+    // miner-cli.test.ts uses a multi-line dynamic JSON import — pin both forms against a synthetic tree.
+    const root = mkdtempSync(join(tmpdir(), "turbo-inputs-10046-"));
+    try {
+      mkdirSync(join(root, "test", "unit"), { recursive: true });
+      mkdirSync(join(root, "packages", "loopover-miner", "lib"), { recursive: true });
+      writeFileSync(join(root, "packages", "loopover-miner", "package.json"), '{"name":"@loopover/miner"}\n');
+      writeFileSync(join(root, "packages", "loopover-miner", "lib", "version.ts"), "export const v = 1;\n");
+      writeFileSync(
+        join(root, "test", "unit", "dyn-import.test.ts"),
+        [
+          'it("dyn", async () => {',
+          "  const packageJson = await import(",
+          '  "../../packages/loopover-miner/package.json",',
+          '  { with: { type: "json" } }',
+          ");",
+          "});",
+          "",
+        ].join("\n"),
+      );
+      writeFileSync(
+        join(root, "test", "unit", "static-from.test.ts"),
+        'import { v } from "../../packages/loopover-miner/lib/version";\nvoid v;\n',
+      );
+
+      const reached = collectCrossBoundaryReach(root);
+      const paths = reached.map((entry) => entry.path);
+      expect(paths).toContain("packages/loopover-miner/package.json");
+      expect(paths).toContain("packages/loopover-miner/lib");
+      const dyn = reached.find((entry) => entry.path === "packages/loopover-miner/package.json");
+      expect(dyn?.importedBy.replace(/\\/g, "/")).toMatch(/test\/unit\/dyn-import\.test\.ts$/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("INVARIANT: this repo's own turbo.json covers its real reach", async () => {

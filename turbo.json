@@ -49,6 +49,7 @@
         "package-lock.json",
         "packages/loopover-miner/lib/**",
         "packages/loopover-miner/bin/**",
+        "packages/loopover-miner/package.json",
         "packages/loopover-mcp/package.json",
         "packages/discovery-index/src/**",
         "packages/discovery-index/scripts/**",

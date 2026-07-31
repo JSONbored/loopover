@@ -29,6 +29,7 @@ import {
   type AgentSdkHooks,
   type AgentSdkQueryFn,
 } from "./agent-sdk-driver.js";
+import { withCodingAgentGenerationCapture } from "./ai-generation-sink.js";
 
 /** Provider names the factory resolves: the two concrete drivers from #4266/#4267 (`claude-cli`/`codex-cli`
  *  spawn the respective CLI; `agent-sdk` runs in-process via the Agent SDK) plus the `noop` stub. All are
@@ -200,17 +201,27 @@ function createCliProvider(
   });
 }
 
-/** Resolve a concrete driver for `providerName`. Throws on unknown/unconfigured providers (fail-closed). */
-export function createCodingAgentDriver(options: CreateCodingAgentDriverOptions): CodingAgentDriver {
-  if (options.driver) return options.driver;
-  const name = options.providerName.trim().toLowerCase();
-  const env = options.env ?? {};
-  if (!isConfiguredCodingAgentDriver(name, env)) {
-    throw new Error(`unconfigured_coding_agent_driver:${name}`);
-  }
+/** The model id telemetry should report for `name`: the provider's configured model env var when it declares
+ *  one, else the provider name itself — `agent-sdk` declares none (its session uses the account/CLI default),
+ *  mirroring ai.ts's own "unconfigured → a sensible default" convention.
+ *
+ *  Moved here from the miner's construction site (#10200) so every construction path names the model
+ *  identically instead of each one re-deriving it. Uses `firstConfiguredEnvValue`, the same reader
+ *  `createCliProvider` already applies to the same env var, so a whitespace-only value resolves to the provider
+ *  name rather than being passed through as a blank model id. */
+export function resolveCodingAgentTelemetryModel(name: string, env: Record<string, string | undefined>): string {
+  const modelEnvKey = CODING_AGENT_DRIVER_CONFIG_ENV[name as CodingAgentDriverName]?.model;
+  return (modelEnvKey ? firstConfiguredEnvValue(env[modelEnvKey]) : undefined) ?? name;
+}
+
+/** The provider switch itself. Split out of {@link createCodingAgentDriver} so the capture wrapper below has
+ *  exactly one expression to wrap — a provider arm cannot return around it. */
+function createProviderDriver(
+  name: string,
+  options: CreateCodingAgentDriverOptions,
+  env: Record<string, string | undefined>,
+): CodingAgentDriver {
   switch (name) {
-    case "noop":
-      return createNoopCodingAgentDriver();
     case "claude-cli":
       return createCliProvider("claude", "MINER_CODING_AGENT_CLAUDE_MODEL", options, env);
     case "codex-cli":
@@ -226,6 +237,34 @@ export function createCodingAgentDriver(options: CreateCodingAgentDriverOptions)
     default:
       throw new Error(`unconfigured_coding_agent_driver:${name}`);
   }
+}
+
+/** Resolve a concrete driver for `providerName`. Throws on unknown/unconfigured providers (fail-closed).
+ *
+ *  #10200: this is the ONE place a real coding-agent driver is constructed, so it is where `$ai_generation`
+ *  capture is attached — both `constructProductionCodingAgentDriver` (the miner CLI) and
+ *  `resolveDriverForAttempt` (`runCodingAgentAttempt`, below) reach a provider through here, and the second one
+ *  previously produced uncaptured attempts because the wrapper lived at only the first. The capture itself is
+ *  host-supplied (see ai-generation-sink.ts); with no host sink registered it is a no-op. */
+export function createCodingAgentDriver(options: CreateCodingAgentDriverOptions): CodingAgentDriver {
+  // Test seam: an injected driver is returned verbatim and uncaptured. It never reaches a model, so wrapping it
+  // would report generations that did not happen — the same reasoning the `noop` arm below rests on.
+  if (options.driver) return options.driver;
+  const name = options.providerName.trim().toLowerCase();
+  const env = options.env ?? {};
+  if (!isConfiguredCodingAgentDriver(name, env)) {
+    throw new Error(`unconfigured_coding_agent_driver:${name}`);
+  }
+  // `noop` is a stub that makes no model call, so it has no generation to report. Capturing it would fabricate
+  // an $ai_generation for an attempt that never reached a provider — #10207's never-fabricate rule applied to
+  // the event itself rather than to its token fields. (`resolveDriverForAttempt` reaches the same conclusion
+  // independently for dry-run/paused attempts, which bypass this factory entirely.)
+  if (name === "noop") return createNoopCodingAgentDriver();
+  return withCodingAgentGenerationCapture(
+    name,
+    resolveCodingAgentTelemetryModel(name, env),
+    createProviderDriver(name, options, env),
+  );
 }
 
 export type RunCodingAgentAttemptOptions = {

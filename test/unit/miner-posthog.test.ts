@@ -177,19 +177,31 @@ describe("loopover-miner opt-in PostHog (#8292, epic #8286)", () => {
       expect("$ai_output_choices" in call.properties).toBe(false);
     });
 
-    it("falls back to 0 for a side the driver could not report, without losing the blended total (#10198)", async () => {
-      // A provider that reports only a blended total genuinely has no split; 0 here means "no split known",
-      // and tokens_used still carries the figure that IS known.
+    it("REGRESSION (#10207): omits a side the driver could not report, without losing the blended total", async () => {
+      // A provider that reports only a blended total genuinely has no split. #10198 sent 0 for it, meaning "no
+      // split known" -- but PostHog cannot tell that apart from a measured 0, so those zeros were averaged into
+      // every tokens-per-call and input:output figure as if they were data. Absent now; tokens_used still
+      // carries the figure that IS known.
       await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
       captureMinerPostHogAiGeneration({ ...BASE, totalTokens: 999 });
       captureMinerPostHogAiGeneration({ ...BASE, totalTokens: 999, inputTokens: 800, outputTokens: Number.NaN });
       const blended = posthogMock.capture.mock.calls[0]?.[0].properties;
-      expect(blended.$ai_input_tokens).toBe(0);
-      expect(blended.$ai_output_tokens).toBe(0);
+      expect("$ai_input_tokens" in blended).toBe(false);
+      expect("$ai_output_tokens" in blended).toBe(false);
       expect(blended.tokens_used).toBe(999);
+      // A partially-reported split keeps the side that IS real and drops only the unreported one.
       const partial = posthogMock.capture.mock.calls[1]?.[0].properties;
       expect(partial.$ai_input_tokens).toBe(800);
-      expect(partial.$ai_output_tokens).toBe(0);
+      expect("$ai_output_tokens" in partial).toBe(false);
+    });
+
+    it("still reports a GENUINELY measured 0 -- the omission tests absence, not falsiness (#10207)", async () => {
+      await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+      captureMinerPostHogAiGeneration({ ...BASE, totalTokens: 0, inputTokens: 0, outputTokens: 0 });
+      const { properties } = posthogMock.capture.mock.calls[0]?.[0];
+      expect(properties.$ai_input_tokens).toBe(0);
+      expect(properties.$ai_output_tokens).toBe(0);
+      expect(properties.tokens_used).toBe(0);
     });
 
     it("omits tokens_used/$ai_total_cost_usd when neither is supplied or finite", async () => {

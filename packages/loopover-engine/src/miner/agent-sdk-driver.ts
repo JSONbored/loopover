@@ -111,6 +111,25 @@ function tokensFromResultMessage(resultMessage: Record<string, unknown> | null):
   };
 }
 
+/** The billing facts an SDK `result` frame carries: the token split above plus the session's real dollar cost.
+ *  `SDKResultSuccess`/`SDKResultError` both declare `total_cost_usd: number` unconditionally — present whenever
+ *  a result message arrived at all, success or not (the session was billed either way), absent only when the
+ *  stream produced no result frame. `finiteNonNegativeNumber` (not a bare `typeof`) because a malformed value
+ *  from an untyped source must degrade to undefined rather than propagate (#5827).
+ *
+ *  Exported (#10200) so `chat-grounding.ts` reads the SAME frame the same way. It drives its own `query()`
+ *  session and needs the identical usage/cost facts; a private copy there would be a third instance of these
+ *  defensive reads, which is the duplicated-block class #10170 catalogues. */
+export function readAgentSdkResultUsage(resultMessage: Record<string, unknown> | null): {
+  tokens: CodingAgentTokenUsage;
+  costUsd: number | undefined;
+} {
+  return {
+    tokens: tokensFromResultMessage(resultMessage),
+    costUsd: finiteNonNegativeNumber(resultMessage?.total_cost_usd),
+  };
+}
+
 async function listWorktreeChangedFiles(cwd: string): Promise<string[]> {
   const [tracked, untracked] = await Promise.all([
     execFileAsync("git", ["-C", cwd, "diff", "--name-only", "HEAD", "--"]),
@@ -204,11 +223,7 @@ export function createAgentSdkCodingAgentDriver(
       // negative) must degrade to undefined here, or it reaches accumulateAttemptUsage unguarded and throws a
       // RangeError that rejects runIterateLoopCore before any decision is logged (#5827).
       const turnsUsed = finiteNonNegativeNumber(resultMessage?.num_turns);
-      // Real dollar cost: the SDK's own SDKResultSuccess/SDKResultError message types both declare
-      // `total_cost_usd: number` unconditionally -- present whenever a result message arrived at all, success
-      // or not (the session was billed either way), absent only when the stream produced no result message.
-      const costUsd = finiteNonNegativeNumber(resultMessage?.total_cost_usd);
-      const tokenUsage = tokensFromResultMessage(resultMessage);
+      const { tokens: tokenUsage, costUsd } = readAgentSdkResultUsage(resultMessage);
       const resultText =
         typeof resultMessage?.result === "string" ? redactSecrets(resultMessage.result) : "";
       const transcript = redactSecrets(

@@ -720,7 +720,10 @@ describe("$ai_generation PostHog capture at the chain chokepoint (#8296)", () =>
     await createChainAi([provider]).run("m", { prompt: "x" });
     const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
     expect(properties.$ai_provider).toBe("posthog-no-usage-provider");
-    expect(properties.$ai_input_tokens).toBe(0);
+    // #10207: a provider that reported no usage contributes NO token properties, rather than a fabricated 0
+    // that PostHog cannot tell apart from a measured one. The provider name still resolves, which is what this
+    // case is actually about.
+    expect("$ai_input_tokens" in properties).toBe(false);
   });
 
   it("captures a failed generation with $ai_is_error/$ai_error on a real chain failure", async () => {

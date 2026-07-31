@@ -522,11 +522,18 @@ export function capturePostHogAiGeneration(event: PostHogAiGenerationEvent): voi
     // PostHog's own $ai_generation schema reports latency in SECONDS, not ms.
     $ai_latency: event.latencyMs / 1000,
     $ai_http_status: event.isError ? 500 : 200,
-    $ai_input_tokens: Number.isFinite(event.inputTokens) ? event.inputTokens : 0,
-    $ai_output_tokens: Number.isFinite(event.outputTokens) ? event.outputTokens : 0,
     $ai_is_error: event.isError,
     environment: posthogEnvironment,
   };
+  // #10207: OMITTED, not zeroed, when the provider reported no usage. A fabricated 0 is indistinguishable from a
+  // real 0 once it is in an aggregate -- it drags every tokens-per-call and input:output ratio toward zero and
+  // silently understates them. The providers that DO report usage are the majority here (ai_usage_events records
+  // a real split for ollama, claude-code and codex), so the zeros were coming from the handful that genuinely
+  // report none -- Workers AI among them -- and were being averaged in as if they were measurements.
+  // `$ai_total_cost_usd` directly below has always been conditional for exactly this reason; these two were the
+  // outliers. A genuinely reported 0 still lands, because absence is tested, not falsiness.
+  if (Number.isFinite(event.inputTokens)) properties.$ai_input_tokens = event.inputTokens;
+  if (Number.isFinite(event.outputTokens)) properties.$ai_output_tokens = event.outputTokens;
   if (Number.isFinite(event.totalCostUsd)) properties.$ai_total_cost_usd = event.totalCostUsd;
   if (event.effort) properties.$ai_model_parameters = { effort: event.effort };
   if (event.isError) {

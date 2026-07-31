@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
-import { handleOrbIngest, MAX_ORB_INGEST_BODY_BYTES, readOrbIngestBody } from "../../src/orb/ingest";
+import { handleOrbIngest, MAX_ORB_INGEST_BODY_BYTES, normalizeIngestTimestamp, readOrbIngestBody } from "../../src/orb/ingest";
 import { createTestEnv, TestD1Database } from "../helpers/d1";
 
 describe("handleOrbIngest()", () => {
@@ -221,6 +221,46 @@ describe("handleOrbIngest()", () => {
     } as unknown as D1Database;
     expect(await ingest(db, [ev()])).toBeTruthy();
     expect(call).toBeGreaterThan(0);
+  });
+
+  it("#10028: normalizeIngestTimestamp keeps a parseable capped instant and rejects everything else", () => {
+    expect(normalizeIngestTimestamp("2026-07-30T12:00:00.000Z")).toBe("2026-07-30T12:00:00.000Z");
+    expect(normalizeIngestTimestamp("unknown")).toBeNull();
+    expect(normalizeIngestTimestamp("x".repeat(65))).toBeNull();
+    expect(normalizeIngestTimestamp(12345)).toBeNull();
+    expect(normalizeIngestTimestamp(undefined)).toBeNull();
+  });
+
+  it("#10028: a malformed decision_timestamp is stored NULL, the event still accepted", async () => {
+    const db = makeDb();
+    expect(await ingest(db, [ev({ pr_hash: "ts1", decision_timestamp: "unknown" })])).toEqual({ accepted: 1 });
+    expect(await col(db, "ts1", "decision_timestamp")).toBeNull();
+  });
+
+  it("#10028: a well-formed decision_timestamp/outcome_timestamp is stored verbatim in all three columns", async () => {
+    const db = makeDb();
+    const iso = "2026-07-30T12:00:00.000Z";
+    await ingest(db, [ev({ pr_hash: "ts2", decision_timestamp: iso, outcome_timestamp: iso })]);
+    expect(await col(db, "ts2", "decision_timestamp")).toBe(iso);
+    expect(await col(db, "ts2", "outcome_timestamp")).toBe(iso);
+    expect(await col(db, "ts2", "sent_at")).toBe(iso);
+  });
+
+  it("#10028: an over-length (65+ char) timestamp is stored NULL while the event is still accepted", async () => {
+    const db = makeDb();
+    // A parseable ISO prefix but past MAX_TIMESTAMP_CHARS (64): the length cap rejects it before Date.parse.
+    expect(await ingest(db, [ev({ pr_hash: "ts3", decision_timestamp: `2026-07-30T12:00:00.000Z${"0".repeat(50)}` })])).toEqual({ accepted: 1 });
+    expect(await col(db, "ts3", "decision_timestamp")).toBeNull();
+  });
+
+  it("#10028 REGRESSION: a malformed decision_timestamp must not silently drop the signal from the public trend", async () => {
+    const db = makeDb();
+    await ingest(db, [ev({ pr_hash: "ts4", decision_timestamp: "unknown" })]);
+    // COALESCE(decision_timestamp, received_at) must fall back to the server clock and parse to a finite
+    // instant, so substr(...,1,10) is a real day bucket and the signal still counts toward the trend.
+    const coalesced = await col(db, "ts4", "COALESCE(decision_timestamp, received_at)");
+    expect(typeof coalesced).toBe("string");
+    expect(Number.isFinite(Date.parse(String(coalesced)))).toBe(true);
   });
 });
 

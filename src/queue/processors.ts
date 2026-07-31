@@ -4397,23 +4397,13 @@ export async function reReviewStoredPullRequest(
     scopedLinkedIssueClaimedAt,
   });
   await persistAdvisory(env, advisory);
-  // #2537 follow-up (gate-flagged): the durable review cache's only invalidation path is markPullRequestReviewsInvalidated
-  // on a webhook (processors.ts). A "quiet" PR (no new pushes, slop evidence + manifest gate both off, no
-  // pre-merge check paths) never hits any of the three reasons below, so a DROPPED invalidation write could sit
-  // stale indefinitely even though this per-PR sweep unit visits every open PR on a bounded cadence.
-  // Short-circuit the extra read when another reason already forces the refresh.
-  const otherRefreshReasons =
-    shouldCollectSlopEvidence(settings) ||
-    settings.manifestPolicyGateMode !== "off" ||
-    (await shouldRefreshFilesForPreMergeChecks(env, repoFullName));
-  const reviewsCacheStale =
-    !otherRefreshReasons &&
-    !isReviewsCacheUpToDate(await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null));
-  if (otherRefreshReasons || reviewsCacheStale) {
-    await refreshPullRequestDetails(env, repoFullName, prNumber).catch(
-      () => undefined,
-    );
-  }
+  // #10174: the lock is claimed BEFORE the refresh below, not after. It answers "does another pass
+  // already own this PR" -- asking that only after paying for the refresh meant every contended pass did
+  // the work and threw it away. That was the single most frequent audit event on the Orb (1,180
+  // github_app.pr_public_surface_lock_contended in under two hours, ~2x the next event), and the refresh
+  // it wasted is a GitHub read whenever the detail-sync cache misses -- which is exactly what a busy PR
+  // does, and a busy PR is also what contends. Holding the lock across the refresh is already safe: #9467
+  // renews it while work runs, because this unit can span an AI review far longer than a refresh.
   // #9013: ONE per-PR actuation-lock claim spans the publish pass AND the maintenance pass right after it.
   // maybePublishPrPublicSurface used to run with no lock at all -- only the LATER maybeRunAgentMaintenance
   // claimed one -- so two concurrent passes for the SAME PR (this sweep re-review racing a webhook delivery,
@@ -4437,6 +4427,23 @@ export async function reReviewStoredPullRequest(
       metadata: { deliveryId, repoFullName },
     }).catch(() => undefined);
     throw new PrActuationLockContendedError(repoFullName, pr.number, "public-surface-publish");
+  }
+  // #2537 follow-up (gate-flagged): the durable review cache's only invalidation path is markPullRequestReviewsInvalidated
+  // on a webhook (processors.ts). A "quiet" PR (no new pushes, slop evidence + manifest gate both off, no
+  // pre-merge check paths) never hits any of the three reasons below, so a DROPPED invalidation write could sit
+  // stale indefinitely even though this per-PR sweep unit visits every open PR on a bounded cadence.
+  // Short-circuit the extra read when another reason already forces the refresh.
+  const otherRefreshReasons =
+    shouldCollectSlopEvidence(settings) ||
+    settings.manifestPolicyGateMode !== "off" ||
+    (await shouldRefreshFilesForPreMergeChecks(env, repoFullName));
+  const reviewsCacheStale =
+    !otherRefreshReasons &&
+    !isReviewsCacheUpToDate(await getPullRequestDetailSyncState(env, repoFullName, prNumber).catch(() => null));
+  if (otherRefreshReasons || reviewsCacheStale) {
+    await refreshPullRequestDetails(env, repoFullName, prNumber).catch(
+      () => undefined,
+    );
   }
   // #9467: this lock now spans the WHOLE publish -> AI review -> maintain unit (#9013 moved the claim here),
   // and the AI review alone can outlive the 600s TTL. Renew it while the work runs so a slow-but-healthy pass

@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   buildChatPrompt,
   CHAT_GROUNDING_MCP_SERVER_NAME,
+  CHAT_GROUNDING_PROVIDER,
   CHAT_GROUNDING_TOOL_NAMES,
   CHAT_REDACTED_TEXT,
   CHAT_SYSTEM_PROMPT,
@@ -12,9 +13,11 @@ import {
   resolveChatProviderError,
   resolveChatQuery,
   runChatGrounding,
+  setMinerAiGenerationSink,
   type ChatGroundingEvent,
   type ChatMessage,
   type ChatQueryFn,
+  type MinerAiGenerationRecord,
 } from "../../packages/loopover-engine/src/index";
 
 // Vitest mirror of packages/loopover-engine/test/chat-grounding.test.ts (#6517). codecov/patch is computed from
@@ -357,5 +360,99 @@ describe("chat grounding seam resolution (#6517)", () => {
       { type: "error", code: "no_coding_agent_configured", message: expect.any(String) },
       { type: "done" },
     ]);
+  });
+});
+
+describe("chat grounding $ai_generation telemetry (#10200)", () => {
+  function resultFrame(extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return { type: "result", subtype: "success", total_cost_usd: 0.031, usage: { input_tokens: 1800, output_tokens: 240 }, ...extra };
+  }
+
+  function recordingSink(): MinerAiGenerationRecord[] {
+    const records: MinerAiGenerationRecord[] = [];
+    setMinerAiGenerationSink((record) => records.push(record));
+    return records;
+  }
+
+  afterEach(() => {
+    setMinerAiGenerationSink(undefined);
+  });
+
+  it("REGRESSION: reports the session's real usage and cost from the result frame it used to discard", async () => {
+    // The driver read only `assistant`/`user` messages, so the SDK's own usage and cost were on the wire and
+    // thrown away — the session was real spend and produced no telemetry at all.
+    const records = recordingSink();
+    const events = await collect(
+      runChatGrounding(USER_ONLY, { env: AGENT_SDK_ENV, query: queryYielding([assistantText("your run state is idle"), resultFrame()]) }),
+    );
+    expect(records).toHaveLength(1);
+    expect(records[0]?.provider).toBe(CHAT_GROUNDING_PROVIDER);
+    expect(records[0]?.model).toBe("agent-sdk");
+    expect(records[0]?.isError).toBe(false);
+    expect(records[0]?.inputTokens).toBe(1800);
+    expect(records[0]?.outputTokens).toBe(240);
+    expect(records[0]?.totalTokens).toBe(2040);
+    expect(records[0]?.totalCostUsd).toBe(0.031);
+    expect(records[0]?.error).toBeUndefined();
+    expect(records[0]?.latencyMs).toBeGreaterThanOrEqual(0);
+    // The result frame carries usage, never conversational content, so it must not become a wire event.
+    expect(events.filter((event) => event.type === "text")).toHaveLength(1);
+    expect(events[events.length - 1]).toEqual({ type: "done" });
+  });
+
+  it("omits usage the frame did not carry rather than fabricating zeros (#10207)", async () => {
+    const records = recordingSink();
+    await collect(
+      runChatGrounding(USER_ONLY, {
+        env: AGENT_SDK_ENV,
+        query: queryYielding([resultFrame({ usage: undefined, total_cost_usd: undefined })]),
+      }),
+    );
+    expect(records[0]?.inputTokens).toBeUndefined();
+    expect(records[0]?.outputTokens).toBeUndefined();
+    expect(records[0]?.totalTokens).toBeUndefined();
+    expect(records[0]?.totalCostUsd).toBeUndefined();
+    expect(records[0]?.isError).toBe(false);
+  });
+
+  it.each([
+    ["a stream that ends with no result frame", [assistantText("partial")], "chat_grounding_no_result"],
+    ["a result frame flagged is_error", [resultFrame({ is_error: true })], "chat_grounding_errored"],
+    ["a non-success subtype", [resultFrame({ subtype: "error_max_turns" })], "chat_grounding_error_max_turns"],
+    ["a non-string subtype", [resultFrame({ subtype: 7 })], "chat_grounding_unknown"],
+  ])("reports %s as a failed generation", async (_label, messages, expectedError) => {
+    const records = recordingSink();
+    await collect(runChatGrounding(USER_ONLY, { env: AGENT_SDK_ENV, query: queryYielding(messages) }));
+    expect(records).toHaveLength(1);
+    expect(records[0]?.isError).toBe(true);
+    expect((records[0]?.error as Error).message).toBe(expectedError);
+  });
+
+  it("captures the thrown-SDK path as a failure, alongside the error wire event", async () => {
+    const records = recordingSink();
+    const boom: ChatQueryFn = () =>
+      (async function* () {
+        throw new Error("sdk session refused");
+      })();
+    const events = await collect(runChatGrounding(USER_ONLY, { env: AGENT_SDK_ENV, query: boom }));
+    expect(records).toHaveLength(1);
+    expect(records[0]?.isError).toBe(true);
+    expect((records[0]?.error as Error).message).toBe("sdk session refused");
+    expect(events).toContainEqual({ type: "error", code: "chat_grounding_failed", message: "sdk session refused" });
+  });
+
+  it("emits NOTHING on the fail-closed provider path — no model was reached", async () => {
+    // A provider-config refusal is a request that produced no generation; reporting one would fabricate spend
+    // that never happened. (The ORB gives that case its own separate `selfhost_ai_degraded` event, #10186.)
+    const records = recordingSink();
+    await collect(runChatGrounding(USER_ONLY, { env: {} }));
+    await collect(runChatGrounding(USER_ONLY, { env: { MINER_CODING_AGENT_PROVIDER: "claude-cli" } }));
+    expect(records).toHaveLength(0);
+  });
+
+  it("stays a silent no-op when no host sink is registered", async () => {
+    await expect(
+      collect(runChatGrounding(USER_ONLY, { env: AGENT_SDK_ENV, query: queryYielding([resultFrame()]) })),
+    ).resolves.toContainEqual({ type: "done" });
   });
 });

@@ -18,7 +18,9 @@
 // The endpoint is stateless: the caller supplies the full message history per request (no conversation store).
 
 import { PUBLIC_FIELD_BLOCKLIST } from "../track-record-summary.js";
-import { resolveFirstConfiguredCodingAgentDriverName } from "./driver-factory.js";
+import { readAgentSdkResultUsage } from "./agent-sdk-driver.js";
+import { emitMinerAiGeneration } from "./ai-generation-sink.js";
+import { resolveCodingAgentTelemetryModel, resolveFirstConfiguredCodingAgentDriverName } from "./driver-factory.js";
 
 /**
  * The exact read-only tools this endpoint may call — one `server.registerTool(...)` call each in
@@ -41,6 +43,11 @@ export const CHAT_GROUNDING_TOOL_NAMES = Object.freeze([
 
 /** The MCP server name the session registers the miner tools under. */
 export const CHAT_GROUNDING_MCP_SERVER_NAME = "loopover-miner";
+
+/** The only provider this endpoint can run on (boundary 1 above) — and therefore the provider id its
+ *  `$ai_generation` telemetry reports (#10200). One definition, consumed by both the fail-closed check and the
+ *  capture, so the two can never disagree about what is actually running. */
+export const CHAT_GROUNDING_PROVIDER = "agent-sdk";
 
 /** Ceiling on a single conversational session's tool-calling turns. */
 const CHAT_MAX_TURNS = 12;
@@ -201,7 +208,7 @@ export function resolveChatProviderError(
         "No coding-agent provider is configured. Chat requires the agent-sdk provider — set MINER_CODING_AGENT_PROVIDER=agent-sdk.",
     };
   }
-  if (provider !== "agent-sdk") {
+  if (provider !== CHAT_GROUNDING_PROVIDER) {
     return {
       code: "chat_requires_agent_sdk_provider",
       message: `Chat requires the agent-sdk provider; the configured provider is ${provider}, which is a single-turn, buffered coding driver.`,
@@ -255,8 +262,34 @@ function* foldToolResultMessage(message: Record<string, unknown>): Generator<Cha
 }
 
 /**
+ * Why a completed session was not a successful generation, or `undefined` when it was. A stream that ends
+ * without a `result` frame never reported completion, and one whose result frame is itself an error reported
+ * failure — agent-sdk-driver.ts classifies exactly these two the same way (`agent_sdk_no_result` /
+ * `agent_sdk_<subtype>`), and the telemetry must not call either of them a success.
+ */
+function chatResultFailureReason(resultMessage: Record<string, unknown> | null): string | undefined {
+  if (!resultMessage) return "chat_grounding_no_result";
+  if (resultMessage.is_error === true) return "chat_grounding_errored";
+  if (resultMessage.subtype !== "success") {
+    return `chat_grounding_${typeof resultMessage.subtype === "string" ? resultMessage.subtype : "unknown"}`;
+  }
+  return undefined;
+}
+
+/**
  * Drives one grounded conversational turn, yielding wire events. Never throws: an SDK failure becomes an `error`
  * event, and `done` always terminates the stream — including on the fail-closed provider paths.
+ *
+ * #10200: this drives a real `query()` session with a real turn budget, so it is real spend and reports an
+ * `$ai_generation` through the host sink (ai-generation-sink.ts) on both the completed and the thrown path.
+ * That also means folding the SDK's `result` frame, which this module previously discarded — it read only the
+ * `assistant`/`user` messages it turns into wire events, so the session's own usage and cost were on the wire
+ * and thrown away.
+ *
+ * The fail-closed provider path above deliberately emits NOTHING: no model was ever reached, so an
+ * `$ai_generation` there would fabricate a generation that did not happen. That case is a request which produced
+ * no generation — the shape the ORB side gives its own separate `selfhost_ai_degraded` event (#10186), which the
+ * miner has no counterpart for yet.
  */
 export async function* runChatGrounding(
   messages: ChatMessage[],
@@ -272,6 +305,9 @@ export async function* runChatGrounding(
 
   const query = resolveChatQuery(options);
   const mcpServer = options.mcpServer ?? DEFAULT_MCP_SERVER;
+  const model = resolveCodingAgentTelemetryModel(CHAT_GROUNDING_PROVIDER, env);
+  const startedAtMs = Date.now();
+  let resultMessage: Record<string, unknown> | null = null;
   try {
     const stream = query({
       prompt: buildChatPrompt(messages),
@@ -289,9 +325,33 @@ export async function* runChatGrounding(
       }
       if (message.type === "user") {
         yield* foldToolResultMessage(message);
+        continue;
       }
+      // Kept, not re-emitted: the result frame carries usage/cost, never conversational content, so it feeds
+      // the capture below and never becomes a wire event.
+      if (message.type === "result") resultMessage = message;
     }
+    const { tokens, costUsd } = readAgentSdkResultUsage(resultMessage);
+    const failure = chatResultFailureReason(resultMessage);
+    emitMinerAiGeneration({
+      provider: CHAT_GROUNDING_PROVIDER,
+      model,
+      latencyMs: Date.now() - startedAtMs,
+      isError: failure !== undefined,
+      totalTokens: tokens.tokensUsed,
+      inputTokens: tokens.inputTokens,
+      outputTokens: tokens.outputTokens,
+      totalCostUsd: costUsd,
+      ...(failure === undefined ? {} : { error: new Error(failure) }),
+    });
   } catch (error) {
+    emitMinerAiGeneration({
+      provider: CHAT_GROUNDING_PROVIDER,
+      model,
+      latencyMs: Date.now() - startedAtMs,
+      isError: true,
+      error,
+    });
     yield {
       type: "error",
       code: "chat_grounding_failed",

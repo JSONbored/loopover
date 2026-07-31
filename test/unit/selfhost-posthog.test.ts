@@ -680,12 +680,28 @@ describe("capturePostHogAiGeneration (#8296)", () => {
     expect(mocks.capture.mock.calls[0]?.[0].event).toBe("$ai_embedding");
   });
 
-  it("defaults input/output tokens to 0 when omitted or non-finite", async () => {
+  it("REGRESSION (#10207): omits input/output tokens when omitted or non-finite -- never a fabricated 0", async () => {
+    // A provider that reports no usage (Workers AI among them) used to contribute a 0 to both properties, which
+    // PostHog cannot tell apart from a measured 0 -- so every tokens-per-call and input:output ratio was pulled
+    // toward zero by calls that had never measured anything. Absence must stay absent.
     await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
     capturePostHogAiGeneration({ ...BASE, inputTokens: undefined, outputTokens: Number.NaN });
     const { properties } = mocks.capture.mock.calls[0]?.[0];
-    expect(properties.$ai_input_tokens).toBe(0);
-    expect(properties.$ai_output_tokens).toBe(0);
+    expect("$ai_input_tokens" in properties).toBe(false);
+    expect("$ai_output_tokens" in properties).toBe(false);
+  });
+
+  it("keeps a partially-reported split's real side, and a genuinely measured 0 (#10207)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, inputTokens: 512, outputTokens: undefined });
+    capturePostHogAiGeneration({ ...BASE, inputTokens: 0, outputTokens: 0 });
+    const partial = mocks.capture.mock.calls[0]?.[0].properties;
+    expect(partial.$ai_input_tokens).toBe(512);
+    expect("$ai_output_tokens" in partial).toBe(false);
+    // The omission tests absence, not falsiness: a provider that really measured 0 still reports 0.
+    const measuredZero = mocks.capture.mock.calls[1]?.[0].properties;
+    expect(measuredZero.$ai_input_tokens).toBe(0);
+    expect(measuredZero.$ai_output_tokens).toBe(0);
   });
 
   it("omits $ai_total_cost_usd when cost is not supplied or non-finite", async () => {

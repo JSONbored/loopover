@@ -14,6 +14,7 @@
  * proves for opt-in CLI telemetry.
  */
 import { randomUUID } from "node:crypto";
+import { setMinerAiGenerationSink } from "@loopover/engine";
 
 type PostHogNs = typeof import("posthog-node");
 type PostHogClient = InstanceType<PostHogNs["PostHog"]>;
@@ -60,6 +61,11 @@ export async function initMinerPostHog(env: Record<string, string | undefined> =
   const host = env.LOOPOVER_MINER_POSTHOG_HOST ?? DEFAULT_POSTHOG_HOST;
   client = new PostHog(apiKey, { host, flushAt: 1, flushInterval: 0 });
   active = true;
+  // #10200: the host half of @loopover/engine's generation seam. Registered HERE, on the opt-in path only, so
+  // the no-phone-home default (#6011) holds by construction -- an operator who never set the API key leaves the
+  // engine with no sink at all, and `emitMinerAiGeneration` no-ops. Registering it once here is also what makes
+  // the capture unbypassable: no driver construction site can opt out of a sink it never had to attach.
+  setMinerAiGenerationSink(captureMinerPostHogAiGeneration);
   return true;
 }
 
@@ -147,13 +153,15 @@ export function captureMinerPostHogAiGeneration(event: MinerAiGenerationEvent): 
     // PostHog's own $ai_generation schema reports latency in SECONDS, not ms.
     $ai_latency: event.latencyMs / 1000,
     $ai_http_status: event.isError ? 500 : 200,
-    // #10198: the provider's real split when it reported one. 0 remains the honest fallback for a provider
-    // that only ever reports a blended total -- it means "no split known", and `tokens_used` below still
-    // carries the figure that IS known.
-    $ai_input_tokens: Number.isFinite(event.inputTokens) ? event.inputTokens : 0,
-    $ai_output_tokens: Number.isFinite(event.outputTokens) ? event.outputTokens : 0,
     $ai_is_error: event.isError,
   };
+  // #10207: OMITTED, not zeroed, when the provider reported no split. A fabricated 0 is indistinguishable from
+  // a real 0 once it is in an aggregate -- it drags every tokens-per-call and input:output ratio toward zero and
+  // silently understates them, which is the same reasoning #10198 applied to the split itself and this file's
+  // own `tokens_used`/`$ai_total_cost_usd` already followed. A provider that only ever reports a blended total
+  // now contributes nothing to the token properties rather than a run of false zeros.
+  if (Number.isFinite(event.inputTokens)) properties.$ai_input_tokens = event.inputTokens;
+  if (Number.isFinite(event.outputTokens)) properties.$ai_output_tokens = event.outputTokens;
   if (Number.isFinite(event.totalTokens)) properties.tokens_used = event.totalTokens;
   if (Number.isFinite(event.totalCostUsd)) properties.$ai_total_cost_usd = event.totalCostUsd;
   if (event.isError) {
@@ -167,8 +175,11 @@ export function captureMinerPostHogAiGeneration(event: MinerAiGenerationEvent): 
   }
 }
 
-/** Test-only: reset module state so one test's activation can't leak into the next. */
+/** Test-only: reset module state so one test's activation can't leak into the next. Clears the engine-side sink
+ *  too (#10200) -- it is process-wide module state exactly like `client`/`active`, so leaving it registered
+ *  would let one test's activation keep capturing into the next test's client. */
 export function resetMinerPostHogForTesting(): void {
   client = undefined;
   active = false;
+  setMinerAiGenerationSink(undefined);
 }

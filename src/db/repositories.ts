@@ -7506,6 +7506,9 @@ function toPullRequestRecordFromRow(row: typeof pullRequests.$inferSelect): Pull
     linkedIssueHardRuleViolationIssues: parseJson<number[]>(row.linkedIssueHardRuleViolationIssuesJson, []),
     linkedIssueHardRuleViolationReason: row.linkedIssueHardRuleViolationReason,
     visualCaptureSatisfiedSha: row.visualCaptureSatisfiedSha,
+    // #10270: this one was missing while its two neighbours were mapped, so markPullRequestVisualCaptureUnobtainable
+    // wrote a column no reader could ever see and #9881's degrade never fired once in production.
+    visualCaptureUnobtainableSha: row.visualCaptureUnobtainableSha,
     visualCaptureRetryPendingSha: row.visualCaptureRetryPendingSha,
     visualCaptureRetryPendingAt: row.visualCaptureRetryPendingAt,
     manualReviewLabelAppliedSha: row.manualReviewLabelAppliedSha,

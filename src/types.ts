@@ -774,7 +774,15 @@ export type PullRequestRecord = {
   visualCaptureSatisfiedSha?: string | null | undefined;
   /** #9881: the head SHA at which the bot PROVED visual capture is structurally unobtainable here -- the
    *  deployments read succeeded, found none at all, and the poll budget is spent. The screenshotTableGate
-   *  degrades its CLOSE to advisory while this equals the current head. */
+   *  degrades its CLOSE to advisory while this equals the current head. Publish-written; read straight from
+   *  the row.
+   *
+   *  #10270: this field was WRITTEN and READ for months while the row->record mapper omitted it, so every
+   *  reader saw `undefined` and the degrade never fired once. Making it required would turn an unmapped field
+   *  into a build error, but `?:` is load-bearing here -- the engine's structurally-parallel
+   *  `PullRequestRecord` (packages/loopover-engine/src/types/reward-risk-types.ts) would have to gain the
+   *  field too, coupling two types kept independent on purpose. `scripts/check-record-mapper-fields.ts`
+   *  closes the same hole without that coupling, and closes it for every field rather than this one. */
   visualCaptureUnobtainableSha?: string | null | undefined;
   /** False-positive close guard (#9030): the head SHA a bounded visual-capture recapture retry is currently
    *  scheduled/in-flight for -- set only when the capture pipeline errored, or the preview is still building,

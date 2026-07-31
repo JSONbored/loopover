@@ -1,11 +1,13 @@
 export type DuplicateWinnerMode = "inherit" | "off" | "enabled";
 
-/** Truthy convention matches the rest of this codebase's `LOOPOVER_*` flags (exact `"true"` string, e.g. the
- *  raw checks this replaces) -- unlike `isSkipAutomationBotPullRequestsEnabledGlobally` (default ON, inverted
- *  truthy match), this flag is opt-in and default OFF: sparing a duplicate cluster's earliest claimant is a
- *  real behavior change to the close disposition, not a low-risk waste-elimination default. */
+/** Truthy convention matches the rest of this codebase's `LOOPOVER_*` flags (`/^(1|true|yes|on)$/i`,
+ *  trimmed + case-insensitive, e.g. `selfTuneFlagOn`/`isReputationEnabled`) -- so `1`, `on`, `TRUE`, and a
+ *  `.env` value carrying trailing whitespace all read as truthy, not silently as OFF. Unlike
+ *  `isSkipAutomationBotPullRequestsEnabledGlobally` (default ON, inverted truthy match), this flag is opt-in
+ *  and default OFF: sparing a duplicate cluster's earliest claimant is a real behavior change to the close
+ *  disposition, not a low-risk waste-elimination default. */
 export function isDuplicateWinnerEnabledGlobally(env: { LOOPOVER_DUPLICATE_WINNER?: string | undefined }): boolean {
-  return env.LOOPOVER_DUPLICATE_WINNER === "true";
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_DUPLICATE_WINNER ?? "").trim());
 }
 
 /** Per-repo override resolved against the global default. Mirrors `resolveSkipAutomationBotPullRequests`'s

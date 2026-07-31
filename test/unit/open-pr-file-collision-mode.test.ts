@@ -8,13 +8,17 @@ describe("isOpenPrFileCollisionEnabledGlobally", () => {
     expect(isOpenPrFileCollisionEnabledGlobally({ LOOPOVER_OPEN_PR_FILE_COLLISION: "" })).toBe(false);
   });
 
-  it("is ON only for the exact string \"true\"", () => {
-    expect(isOpenPrFileCollisionEnabledGlobally({ LOOPOVER_OPEN_PR_FILE_COLLISION: "true" })).toBe(true);
+  it("is ON for every value the codebase truthy convention accepts (#10054)", () => {
+    // Was `=== "true"` only, which silently read `1` / `on` / `TRUE` / a whitespace-padded `.env` value as
+    // OFF. It now mirrors selfTuneFlagOn's `/^(1|true|yes|on)$/i.test((X ?? "").trim())`, trimmed + i-flag.
+    for (const value of ["1", "true", "TRUE", "yes", "on", " true "]) {
+      expect(isOpenPrFileCollisionEnabledGlobally({ LOOPOVER_OPEN_PR_FILE_COLLISION: value }), value).toBe(true);
+    }
   });
 
-  it("stays OFF for any other value, including truthy-looking ones", () => {
-    for (const value of ["1", "yes", "on", "True", "TRUE", " true "]) {
-      expect(isOpenPrFileCollisionEnabledGlobally({ LOOPOVER_OPEN_PR_FILE_COLLISION: value })).toBe(false);
+  it("stays OFF for a falsy or unrecognised value", () => {
+    for (const value of ["0", "false", "off", "no", "maybe"]) {
+      expect(isOpenPrFileCollisionEnabledGlobally({ LOOPOVER_OPEN_PR_FILE_COLLISION: value }), value).toBe(false);
     }
   });
 });

@@ -62,6 +62,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # `persist-credentials: false` is load-bearing here, not hygiene. actions/checkout defaults to TRUE,
+          # which writes an authenticated `http.extraheader` into `.git/config` -- so the verify step would run
+          # with a usable GitHub token sitting on disk, and this job's whole claim is that it reproduces what a
+          # stranger sees. Withholding the token from the step's `env:` while leaving it in `.git/config` is
+          # theatre: the credential is still there for anything the step runs to pick up.
+          #
+          # Nothing here needs it. The only step that talks to GitHub is the tracking-issue step, which uses
+          # `gh` with an explicit `GITHUB_TOKEN` in its own environment -- `gh` reads that variable directly and
+          # never consults git's credential config.
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7

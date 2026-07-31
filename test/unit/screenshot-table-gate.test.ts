@@ -17,7 +17,11 @@ import {
   CAPTURE_UNOBTAINABLE_REASON,
   type ScreenshotMatrixPair,
 } from "../../src/review/screenshot-table-gate";
-import type { ScreenshotTableGateConfig } from "../../src/types";
+import type { Advisory, PullRequestFileRecord, ScreenshotTableGateConfig } from "../../src/types";
+import { maybeAddScreenshotTableAdvisoryFinding } from "../../src/queue/processors";
+import { planAgentMaintenanceActions, type AgentActionPlanInput } from "../../src/settings/agent-actions";
+import type { GateCheckConclusion } from "../../src/rules/advisory";
+import { createTestEnv } from "../helpers/d1";
 
 function config(overrides: Partial<ScreenshotTableGateConfig> = {}): ScreenshotTableGateConfig {
   return { ...DEFAULT_SCREENSHOT_TABLE_GATE, whenLabels: [], whenPaths: [], ...overrides };
@@ -997,5 +1001,222 @@ describe("enforcement degrade when capture is unobtainable (#9881)", () => {
     const before = evaluateScreenshotTableGate(violatingInput);
     expect(before.enforcementDegradedReason).toBeUndefined();
     expect(before).toEqual(evaluateScreenshotTableGate({ ...violatingInput, captureUnobtainable: undefined }));
+  });
+});
+
+// #10060: maybeAddScreenshotTableAdvisoryFinding previously early-returned before evaluating anything unless
+// `action === "advisory"`, so a `close`/`block` repo whose gate was degraded (#9881) never surfaced a finding
+// anywhere — the close/hold comment that would have said so never fires on the degraded path either, so the
+// maintainer learned nothing. These tests pin the fixed wiring.
+describe("maybeAddScreenshotTableAdvisoryFinding degrade wiring (#10060)", () => {
+  function advisory(): Advisory {
+    return {
+      id: "adv-1",
+      targetType: "pull_request",
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      targetKey: "acme/widgets#7",
+      headSha: "sha7",
+      conclusion: "neutral",
+      severity: "info",
+      title: "LoopOver advisory available",
+      summary: "ok",
+      findings: [],
+      generatedAt: "2026-07-31T00:00:00.000Z",
+    };
+  }
+
+  const NO_TABLE_FILES: PullRequestFileRecord[] = [
+    { repoFullName: "acme/widgets", pullNumber: 7, path: "src/app.tsx", status: "modified", additions: 1, deletions: 0, changes: 1, payload: {} },
+  ];
+
+  function gateConfig(action: "close" | "block" | "advisory"): ScreenshotTableGateConfig {
+    return { ...DEFAULT_SCREENSHOT_TABLE_GATE, enabled: true, whenLabels: [], whenPaths: [], action };
+  }
+
+  it("action: close, violated, captureUnobtainable: true — appends exactly one finding naming the remedy, and the same inputs plan no close/hold", async () => {
+    const env = createTestEnv();
+    const adv = advisory();
+    await maybeAddScreenshotTableAdvisoryFinding(env, {
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      screenshotTableGateConfig: gateConfig("close"),
+      prBody: "no table here",
+      prLabels: [],
+      botCaptureSatisfied: false,
+      captureUnobtainable: true,
+      files: NO_TABLE_FILES,
+    });
+    expect(adv.findings).toHaveLength(1);
+    expect(adv.findings[0]?.code).toBe("screenshot_table_missing");
+    expect(adv.findings[0]?.detail).toContain(CAPTURE_UNOBTAINABLE_REASON);
+    expect(adv.findings[0]?.publicText).toContain(CAPTURE_UNOBTAINABLE_REASON);
+
+    // The same degraded facts the real caller threads through (processors.ts): screenshotTableMatch and
+    // screenshotEvidenceHold both stay absent, and screenshotTableEvidenceUnresolved stays false, so the
+    // planner falls through to ordinary disposition instead of closing or holding.
+    const plan = planAgentMaintenanceActions({
+      blockerTitles: [],
+      autonomy: { merge: "auto", close: "auto", review_state_label: "auto" },
+      autoMaintain: { requireApprovals: 1, mergeMethod: "squash" },
+      slopGateMinScore: 60,
+      changedPaths: [],
+      hardGuardrailGlobs: [],
+      authorIsOwner: false,
+      authorIsAdmin: false,
+      authorIsAutomationBot: false,
+      ciState: "passed",
+      conclusion: "success" as GateCheckConclusion,
+      manualReviewLabel: "human-review",
+      screenshotTableMatch: undefined,
+      screenshotEvidenceHold: undefined,
+      screenshotTableEvidenceUnresolved: false,
+      pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" },
+    } satisfies AgentActionPlanInput);
+    expect(plan.some((a) => a.actionClass === "close")).toBe(false);
+    expect(plan.some((a) => a.actionClass === "label" && a.label === "human-review" && a.labelOp !== "remove")).toBe(false);
+  });
+
+  it("action: block, violated, captureUnobtainable: true — appends the same degraded finding, and no hold is planned", async () => {
+    const env = createTestEnv();
+    const adv = advisory();
+    await maybeAddScreenshotTableAdvisoryFinding(env, {
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      screenshotTableGateConfig: gateConfig("block"),
+      prBody: "no table here",
+      prLabels: [],
+      botCaptureSatisfied: false,
+      captureUnobtainable: true,
+      files: NO_TABLE_FILES,
+    });
+    expect(adv.findings).toHaveLength(1);
+    expect(adv.findings[0]?.detail).toContain(CAPTURE_UNOBTAINABLE_REASON);
+
+    const plan = planAgentMaintenanceActions({
+      blockerTitles: [],
+      autonomy: { merge: "auto", review_state_label: "auto" },
+      autoMaintain: { requireApprovals: 1, mergeMethod: "squash" },
+      slopGateMinScore: 60,
+      changedPaths: [],
+      hardGuardrailGlobs: [],
+      authorIsOwner: false,
+      authorIsAdmin: false,
+      authorIsAutomationBot: false,
+      ciState: "passed",
+      conclusion: "success" as GateCheckConclusion,
+      manualReviewLabel: "human-review",
+      screenshotTableMatch: undefined,
+      screenshotEvidenceHold: undefined,
+      screenshotTableEvidenceUnresolved: false,
+      pr: { labels: [], mergeableState: "clean", reviewDecision: "APPROVED" },
+    } satisfies AgentActionPlanInput);
+    expect(plan.some((a) => a.actionClass === "label" && a.label === "human-review" && a.labelOp !== "remove")).toBe(false);
+    expect(plan.some((a) => a.actionClass === "close")).toBe(false);
+  });
+
+  it("action: close, violated, captureUnobtainable: false — pins today's behavior: NO advisory finding", async () => {
+    const env = createTestEnv();
+    const adv = advisory();
+    await maybeAddScreenshotTableAdvisoryFinding(env, {
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      screenshotTableGateConfig: gateConfig("close"),
+      prBody: "no table here",
+      prLabels: [],
+      botCaptureSatisfied: false,
+      captureUnobtainable: false,
+      files: NO_TABLE_FILES,
+    });
+    expect(adv.findings).toEqual([]);
+  });
+
+  it("action: advisory, violated, captureUnobtainable: false — byte-identical finding to today", async () => {
+    const env = createTestEnv();
+    const adv = advisory();
+    await maybeAddScreenshotTableAdvisoryFinding(env, {
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      screenshotTableGateConfig: gateConfig("advisory"),
+      prBody: "no table here",
+      prLabels: [],
+      botCaptureSatisfied: false,
+      captureUnobtainable: false,
+      files: NO_TABLE_FILES,
+    });
+    expect(adv.findings).toHaveLength(1);
+    expect(adv.findings[0]).toMatchObject({
+      code: "screenshot_table_missing",
+      severity: "warning",
+      title: "Missing before/after screenshot table",
+      action: "Add a before/after screenshot table to the pull request description (advisory only — this does not block merge).",
+    });
+    expect(adv.findings[0]?.detail).not.toContain(CAPTURE_UNOBTAINABLE_REASON);
+  });
+
+  it("REGRESSION (#10060): a degraded action: close evaluation never produces a completely silent pass", async () => {
+    const env = createTestEnv();
+    const adv = advisory();
+    await maybeAddScreenshotTableAdvisoryFinding(env, {
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      screenshotTableGateConfig: gateConfig("close"),
+      prBody: "no table here",
+      prLabels: [],
+      botCaptureSatisfied: false,
+      captureUnobtainable: true,
+      files: NO_TABLE_FILES,
+    });
+    expect(adv.findings.length).toBeGreaterThan(0);
+  });
+
+  it("not enabled: does not scan, no finding appended even when captureUnobtainable is true", async () => {
+    const env = createTestEnv();
+    const adv = advisory();
+    await maybeAddScreenshotTableAdvisoryFinding(env, {
+      advisory: adv,
+      repoFullName: "acme/widgets",
+      pullNumber: 7,
+      screenshotTableGateConfig: { ...gateConfig("close"), enabled: false },
+      prBody: "no table here",
+      prLabels: [],
+      botCaptureSatisfied: false,
+      captureUnobtainable: true,
+      files: NO_TABLE_FILES,
+    });
+    expect(adv.findings).toEqual([]);
+  });
+
+  it("fail-safe: a thrown error while loading files never propagates and appends no finding", async () => {
+    const env = createTestEnv();
+    const adv = advisory();
+    const throwingEnv = {
+      ...env,
+      DB: {
+        ...env.DB,
+        prepare: () => {
+          throw new Error("boom");
+        },
+      },
+    } as unknown as typeof env;
+    await expect(
+      maybeAddScreenshotTableAdvisoryFinding(throwingEnv, {
+        advisory: adv,
+        repoFullName: "acme/widgets",
+        pullNumber: 7,
+        screenshotTableGateConfig: gateConfig("close"),
+        prBody: "no table here",
+        prLabels: [],
+        botCaptureSatisfied: false,
+        captureUnobtainable: true,
+        files: null,
+      }),
+    ).resolves.toBeUndefined();
+    expect(adv.findings).toEqual([]);
   });
 });

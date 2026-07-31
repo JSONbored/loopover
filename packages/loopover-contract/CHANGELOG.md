@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.18.4](https://github.com/JSONbored/loopover/compare/contract-v3.18.3...contract-v3.18.4) (2026-07-31)
+
+
+### Fixes
+
+* **mcp:** compare property schemas in checkInputNarrowing ([#10124](https://github.com/JSONbored/loopover/issues/10124)) ([f8fe08d](https://github.com/JSONbored/loopover/commit/f8fe08daea112e499cdcf521202089fb65c5c60c))
+
 ## [3.18.3](https://github.com/JSONbored/loopover/compare/contract-v3.18.2...contract-v3.18.3) (2026-07-31)
 
 

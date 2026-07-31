@@ -575,6 +575,44 @@ describe("createCliSubprocessCodingAgentDriver (#4266)", () => {
       expect(result.outputTokens).toBeUndefined();
     });
 
+    // #10246: the miner half of the same three-counter split #10251 fixed on the ORB. With caching active --
+    // every attempt the CLI runs -- reading input_tokens alone degenerates to a near-constant handful.
+    it("counts the prompt-cache tiers as input tokens (#10246)", async () => {
+      const { spawn } = fakeSpawn({
+        stdout: JSON.stringify({
+          type: "result",
+          usage: { input_tokens: 2, output_tokens: 787, cache_read_input_tokens: 48210, cache_creation_input_tokens: 1536 },
+        }),
+        code: 0,
+      });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      const result = await driver.run(TASK);
+      // 2 + 48210 + 1536 -- the three tiers are additive components of ONE prompt, not aliases.
+      expect(result.inputTokens).toBe(49748);
+      expect(result.outputTokens).toBe(787);
+      expect(result.tokensUsed).toBe(50535);
+    });
+
+    it("leaves input absent when NO input counter is reported, but keeps a genuinely-zero tier (#10246)", async () => {
+      const { none } = { none: fakeSpawn({ stdout: JSON.stringify({ output_tokens: 50 }), code: 0 }) };
+      const noInput = createCliSubprocessCodingAgentDriver({ command: "claude", spawn: none.spawn });
+      expect((await noInput.run(TASK)).inputTokens).toBeUndefined();
+
+      const { spawn } = fakeSpawn({ stdout: JSON.stringify({ usage: { input_tokens: 0, cache_read_input_tokens: 900 } }), code: 0 });
+      const zeroTier = createCliSubprocessCodingAgentDriver({ command: "claude", spawn });
+      expect((await zeroTier.run(TASK)).inputTokens).toBe(900);
+    });
+
+    it("is byte-identical for a provider that emits no cache keys at all (#10246)", async () => {
+      // codex and the OpenAI-compatible bindings never populate them -- this is what makes the shared
+      // extraction point safe to change.
+      const { spawn } = fakeSpawn({ stdout: JSON.stringify({ prompt_tokens: 2706, completion_tokens: 544 }), code: 0 });
+      const driver = createCliSubprocessCodingAgentDriver({ command: "codex", spawn });
+      const result = await driver.run(TASK);
+      expect(result.inputTokens).toBe(2706);
+      expect(result.outputTokens).toBe(544);
+    });
+
     it("sums claude's top-level input_tokens + output_tokens from its single JSON result on success", async () => {
       const { spawn } = fakeSpawn({
         stdout: JSON.stringify({ type: "result", subtype: "success", result: "done", input_tokens: 1000, output_tokens: 234 }),

@@ -192,6 +192,45 @@ describe("createAgentSdkCodingAgentDriver", () => {
     expect(result.tokensUsed).toBe(1234);
   });
 
+  it("counts the prompt-cache tiers as input tokens (#10246)", async () => {
+    // Matches the ORB side's totalInputTokens (#10251) so both parsers report the same thing for the same
+    // envelope -- the two are deliberately parallel copies and must not diverge on arithmetic.
+    const driver = driverWith({
+      query: queryYielding([
+        {
+          type: "result",
+          subtype: "success",
+          is_error: false,
+          num_turns: 2,
+          result: "done",
+          usage: { input_tokens: 2, output_tokens: 787, cache_read_input_tokens: 48210, cache_creation_input_tokens: 1536 },
+        },
+      ]),
+    });
+
+    const result = await driver.run(task);
+
+    expect(result.inputTokens).toBe(49748);
+    expect(result.outputTokens).toBe(787);
+    expect(result.tokensUsed).toBe(50535);
+  });
+
+  it("keeps a genuinely-zero tier, and reports no input at all as undefined (#10246)", async () => {
+    const cacheOnly = driverWith({
+      query: queryYielding([
+        { type: "result", subtype: "success", is_error: false, num_turns: 1, result: "done", usage: { input_tokens: 0, cache_read_input_tokens: 900 } },
+      ]),
+    });
+    expect((await cacheOnly.run(task)).inputTokens).toBe(900);
+
+    const outputOnly = driverWith({
+      query: queryYielding([
+        { type: "result", subtype: "success", is_error: false, num_turns: 1, result: "done", usage: { output_tokens: 50 } },
+      ]),
+    });
+    expect((await outputOnly.run(task)).inputTokens).toBeUndefined();
+  });
+
   it("still reports real tokens on a non-success subtype -- the session was billed either way, same as costUsd", async () => {
     const driver = driverWith({
       query: queryYielding([

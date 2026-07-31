@@ -473,3 +473,41 @@ test("a side the provider did not report stays ABSENT rather than being zeroed (
   assert.equal(noUsageResult.inputTokens, undefined);
   assert.equal(noUsageResult.outputTokens, undefined);
 });
+
+// #10246: the miner half of the three-counter prompt split #10251 fixed on the ORB side.
+test("counts the prompt-cache tiers as input tokens (#10246)", async () => {
+  const driver = driverWith({
+    query: queryYielding([
+      {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        num_turns: 2,
+        result: "done",
+        usage: { input_tokens: 2, output_tokens: 787, cache_read_input_tokens: 48210, cache_creation_input_tokens: 1536 },
+      },
+    ]),
+  });
+
+  const result = await driver.run(task);
+
+  assert.equal(result.inputTokens, 49748);
+  assert.equal(result.outputTokens, 787);
+  assert.equal(result.tokensUsed, 50535);
+});
+
+test("keeps a genuinely-zero input tier, and reports no input counter at all as undefined (#10246)", async () => {
+  const cacheOnly = driverWith({
+    query: queryYielding([
+      { type: "result", subtype: "success", is_error: false, num_turns: 1, result: "done", usage: { input_tokens: 0, cache_read_input_tokens: 900 } },
+    ]),
+  });
+  assert.equal((await cacheOnly.run(task)).inputTokens, 900);
+
+  const outputOnly = driverWith({
+    query: queryYielding([
+      { type: "result", subtype: "success", is_error: false, num_turns: 1, result: "done", usage: { output_tokens: 50 } },
+    ]),
+  });
+  assert.equal((await outputOnly.run(task)).inputTokens, undefined);
+});

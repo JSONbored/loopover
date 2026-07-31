@@ -140,7 +140,19 @@ function resolveDefaultBuildArgs(command: string): (task: CodingAgentDriverTask)
  *  key spellings are tolerated, and usage/token_usage/tokenUsage/usage_metadata sub-objects are all checked, same
  *  as src/selfhost/ai.ts). A missing/malformed field means "no signal", never an error -- never fabricated. */
 const COST_KEYS = ["total_cost_usd", "totalCostUsd", "cost_usd", "costUsd"] as const;
+// ALIASES of one value -- different providers' names for the same number. The uncached portion of the prompt
+// only; see the two cache tiers directly below.
 const INPUT_TOKEN_KEYS = ["input_tokens", "inputTokens", "prompt_tokens", "promptTokens"] as const;
+/** #10246: the same three-counter split #10251 fixed on the ORB side, which left this deliberately-parallel
+ *  copy behind. Anthropic (and therefore the claude CLI) puts only the neither-read-nor-written portion of a
+ *  prompt in `input_tokens`; with caching active -- which it is for every attempt the CLI runs -- essentially
+ *  the whole prompt lands in these two instead, and reading the first alone degenerates to a near-constant.
+ *
+ *  Each tier is its OWN alias group because the three are ADDITIVE COMPONENTS of one prompt, not names for one
+ *  value: they are summed with each other and max'd only within a group. Folding them into INPUT_TOKEN_KEYS
+ *  would take the maximum of the three and under-report again, just less severely. */
+const CACHE_READ_INPUT_TOKEN_KEYS = ["cache_read_input_tokens", "cacheReadInputTokens"] as const;
+const CACHE_CREATION_INPUT_TOKEN_KEYS = ["cache_creation_input_tokens", "cacheCreationInputTokens"] as const;
 const OUTPUT_TOKEN_KEYS = ["output_tokens", "outputTokens", "completion_tokens", "completionTokens"] as const;
 const TOTAL_TOKEN_KEYS = ["total_tokens", "totalTokens"] as const;
 
@@ -164,6 +176,18 @@ function asPlainRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
+/** Sum the three input tiers (#10246). Absence stays absence: an envelope reporting no input counter at all
+ *  yields undefined rather than a fabricated 0, while a tier that is present but zero contributes a real zero. */
+function totalInputTokens(entry: Record<string, unknown>): number | undefined {
+  const tiers = [
+    maxNumber(entry, INPUT_TOKEN_KEYS),
+    maxNumber(entry, CACHE_READ_INPUT_TOKEN_KEYS),
+    maxNumber(entry, CACHE_CREATION_INPUT_TOKEN_KEYS),
+  ];
+  if (tiers.every((tier) => tier === undefined)) return undefined;
+  return tiers.reduce<number>((sum, tier) => sum + (tier ?? 0), 0);
+}
+
 function mergeCliUsage(out: CliUsage, record: Record<string, unknown>): void {
   const nested = [
     record,
@@ -176,7 +200,7 @@ function mergeCliUsage(out: CliUsage, record: Record<string, unknown>): void {
   for (const entry of nested) {
     const costUsd = maxNumber(entry, COST_KEYS);
     if (costUsd !== undefined) out.costUsd = Math.max(out.costUsd ?? 0, costUsd);
-    const inputTokens = maxNumber(entry, INPUT_TOKEN_KEYS);
+    const inputTokens = totalInputTokens(entry);
     if (inputTokens !== undefined) out.inputTokens = Math.max(out.inputTokens ?? 0, inputTokens);
     const outputTokens = maxNumber(entry, OUTPUT_TOKEN_KEYS);
     if (outputTokens !== undefined) out.outputTokens = Math.max(out.outputTokens ?? 0, outputTokens);

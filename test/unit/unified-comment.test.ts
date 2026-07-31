@@ -1161,3 +1161,79 @@ describe("a GitHub merge refusal must never render as safe to merge (#9862)", ()
     expect(body).not.toContain("safe to merge");
   });
 });
+
+// #10117: `held` is reached from two genuinely different situations, and both used to render as
+// "Manual Review".
+//
+//   WAITING   -- GitHub has not settled the merge state (dirty/behind/unstable). Since #10116 an unstable
+//                state summons NOBODY: no manual-review label, not evicted from the merge train. The comment
+//                saying "manual review recommended" on that same PR is the #5288 contradiction in reverse.
+//   ACTIONABLE -- a guardrail hold, a durable GitHub merge refusal (#9862), an incomplete review, unverified
+//                CI, or a close verdict on a never-closed author. Each needs a person and must keep saying so.
+//
+// The narrowness is the point, and it was arrived at by being wrong first: an earlier version also treated
+// `ciState !== "passed"` as waiting. But that vocabulary is passed|failed|unverified -- `failed` already
+// returns "blocked", so the only reachable value was `unverified`, which agent-actions.ts lists as a real
+// manualHoldReason ("CI could not be verified"). That version would have told a maintainer to stand down from
+// a hold that was waiting on them.
+describe("held wording: waiting on checks vs manual review (#10117)", () => {
+  const unsettledMergeState = { ...base, readiness: { ciState: "passed" as const, mergeStateHeld: true } };
+
+  it("says WAITING, not manual review, when GitHub's merge state is unsettled — the #10116 case", () => {
+    expect(deriveUnifiedStatus(unsettledMergeState)).toBe("held");
+    const md = renderUnifiedReviewComment(unsettledMergeState);
+    expect(md).toContain("waiting on checks");
+    expect(md).toContain("Waiting on Checks");
+    expect(md).not.toContain("manual review recommended");
+    expect(md).not.toContain("Suggested Action - Manual Review");
+  });
+
+  it("REGRESSION: UNVERIFIED CI is actionable, never a wait", () => {
+    // The bug the first draft of this change would have shipped. agent-actions.ts holds the PR for a human on
+    // ciUnverified; the comment must agree rather than say "no action needed yet".
+    const md = renderUnifiedReviewComment({ ...base, readiness: { ciState: "unverified" } });
+    expect(md).not.toContain("Waiting on Checks");
+    expect(md).not.toContain("no action needed yet");
+  });
+
+  it("INVARIANT: every ACTIONABLE hold still says Manual Review", () => {
+    const actionable: Array<[string, Parameters<typeof renderUnifiedReviewComment>[1]]> = [
+      ["guardrail hold", { heldForReview: true }],
+      ["GitHub refused the merge (#9862)", { mergeBlockedReason: "required status check is expected" }],
+      ["incomplete review (preflight hold)", { preflightHeld: true }],
+    ];
+    for (const [name, ctx] of actionable) {
+      const md = renderUnifiedReviewComment(unsettledMergeState, ctx);
+      expect(md, name).toContain("Manual Review");
+      expect(md, name).not.toContain("Waiting on Checks");
+    }
+  });
+
+  it("INVARIANT: an explicit manual verdict is never softened to waiting", () => {
+    const md = renderUnifiedReviewComment({ ...unsettledMergeState, decision: "manual" });
+    expect(md).toContain("manual review recommended");
+    expect(md).not.toContain("waiting on checks");
+  });
+
+  it("INVARIANT: a real finding set is not a wait, even with an unsettled merge state", () => {
+    // A blocker or a split review is a result, not a pending state -- softening it would hide findings behind
+    // "no action needed yet".
+    const findingSets: Partial<UnifiedReviewInput>[] = [{ blockers: ["something broke"] }, { recommendations: ["request_changes"] }, { failedCount: 1 }];
+    for (const over of findingSets) {
+      const md = renderUnifiedReviewComment({ ...unsettledMergeState, ...over });
+      expect(md, JSON.stringify(over)).not.toContain("Waiting on Checks");
+    }
+  });
+
+  it("INVARIANT: a close verdict on a never-closed author stays Manual Review", () => {
+    const md = renderUnifiedReviewComment({ ...base, decision: "close" }, { neverClosed: true });
+    expect(md).toContain("Manual Review");
+    expect(md).not.toContain("Waiting on Checks");
+  });
+
+  it("does not change a ready, green, settled PR", () => {
+    const md = renderUnifiedReviewComment({ ...base, decision: "merge", readiness: { ciState: "passed" } });
+    expect(md).not.toContain("Waiting on Checks");
+    expect(md).not.toContain("Manual Review");
+  });
+});

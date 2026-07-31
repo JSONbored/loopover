@@ -426,6 +426,49 @@ export function deriveUnifiedStatus(input: UnifiedReviewInput, ctx: UnifiedComme
   return status;
 }
 
+/**
+ * PURE. Is a `held` status merely WAITING, rather than asking a person to act? (#10117)
+ *
+ * `held` is reached from two genuinely different situations, and until now both rendered as "Manual Review":
+ *
+ *   WAITING   -- CI has not finished or gone green, or GitHub reports the branch dirty/behind/unstable. Since
+ *                #10116 an unstable state deliberately summons nobody: it resolves itself on the next push,
+ *                and the disposition applies no `manual-review` label. Telling the reader a human is
+ *                recommended contradicts what the gate actually decided, and on an in-flight PR it is simply
+ *                wrong -- the answer is "wait", not "escalate".
+ *   ACTIONABLE -- a guardrail hold, a durable GitHub merge refusal (#9862), an incomplete review, or a close
+ *                verdict on an author who is never auto-closed. Each of these DOES need a person, and each
+ *                must keep saying so.
+ *
+ * Defined here, immediately beside the conditions in deriveUnifiedStatus that produce those two cases, and
+ * consumed by BOTH wording sites -- the headline and the verdict box. Re-deriving "is this actionable?"
+ * separately in each would be the same drift that let the comment and the disposition disagree in the first
+ * place.
+ *
+ * Deliberately conservative: every actionable reason short-circuits it to false, so a state this does not
+ * recognise keeps today's "Manual Review" wording. Being wrongly told to look is a smaller failure than being
+ * wrongly told not to.
+ */
+function isWaitingRatherThanActionable(input: UnifiedReviewInput, ctx: UnifiedCommentContext): boolean {
+  if (input.decision === "manual" || input.decision === "close") return false;
+  if (ctx.heldForReview || ctx.mergeBlockedReason || ctx.preflightHeld || ctx.neverClosed) return false;
+  // A partial/split/blocking review is a real finding set, not a wait.
+  const recs = input.recommendations ?? [];
+  if ((input.consensusBlocker ?? (input.blockers ?? []).length > 0) || (input.failedCount ?? 0) > 0) return false;
+  if (recs.some((rec) => rec !== "merge")) return false;
+  // An unsettled MERGE STATE, and only that.
+  //
+  // Deliberately NOT `ciState !== "passed"`. The vocabulary is passed|failed|unverified with no "pending"
+  // member, and `failed` already returned "blocked" further up -- so the only value that could reach here via
+  // CI is `unverified`, which is emphatically not a wait: agent-actions.ts lists it as a manualHoldReason
+  // ("CI could not be verified") and the disposition genuinely holds the PR for a person. Softening that to
+  // "no action needed yet" would tell a maintainer to stand down from a hold that is waiting on them. Caught
+  // by tsc rejecting a "pending" literal that does not exist.
+  //
+  // A merge state GitHub has not settled is the real waiting case, and the one #10116 stopped escalating.
+  return input.readiness?.mergeStateHeld === true;
+}
+
 function headlineLabel(status: UnifiedCommentStatus, input: UnifiedReviewInput, ctx: UnifiedCommentContext): string {
   switch (status) {
     case "ready":
@@ -433,7 +476,8 @@ function headlineLabel(status: UnifiedCommentStatus, input: UnifiedReviewInput, 
     case "advisory":
       return "advisory review";
     case "held":
-      return "manual review recommended";
+      // #10117: only say a human is recommended when one actually is. See isWaitingRatherThanActionable.
+      return isWaitingRatherThanActionable(input, ctx) ? "waiting on checks" : "manual review recommended";
     case "blocked":
       return input.decision === "close" && !ctx.neverClosed ? "reject/close recommended" : "fixes required";
   }
@@ -505,6 +549,12 @@ function verdictLine(status: UnifiedCommentStatus, input: UnifiedReviewInput, ct
             actionReasonBullets(`GitHub refused an automated merge for this commit: ${ctx.mergeBlockedReason}`) +
             `\n${actionReasonBullets("The review passed — merge this pull request yourself to complete it.")}`,
         );
+      }
+      // #10117: a hold that is only waiting on checks asks for patience, not a person. Since #10116 an
+      // unstable merge state summons nobody and gets no manual-review label, so "Manual Review" here
+      // contradicted the disposition on the same PR -- the #5288 contradiction in the other direction.
+      if (isWaitingRatherThanActionable(input, ctx)) {
+        return nestedBox(`**${icon} Suggested Action - Waiting on Checks**${reasons("no action needed yet")}`);
       }
       return nestedBox(`**${icon} Suggested Action - Manual Review**${reasons()}`);
     case "blocked":

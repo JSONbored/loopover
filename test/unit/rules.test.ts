@@ -17,7 +17,7 @@ import {
   resolveAiReviewLowConfidenceHold,
 } from "../../src/rules/advisory";
 import type { CollisionReport } from "../../src/signals/engine";
-import type { IssueRecord, PullRequestRecord, PullRequestFileRecord, RepositoryRecord } from "../../src/types";
+import type { Advisory, IssueRecord, PullRequestRecord, PullRequestFileRecord, RepositoryRecord } from "../../src/types";
 
 const repo: RepositoryRecord = {
   fullName: "JSONbored/loopover",
@@ -736,6 +736,67 @@ describe("advisory rules", () => {
     expect(evaluateGateCheck(splitAdvisory, { aiReviewGateMode: "block" }).conclusion).toBe("failure");
     expect(evaluateGateCheck(splitAdvisory, { aiReviewGateMode: "advisory" }).conclusion).toBe("success");
     expect(evaluateGateCheck(splitAdvisory).conclusion).toBe("success");
+  });
+
+  describe("ai_review_inconclusive hold is gated by aiReviewGateMode (#10016)", () => {
+    const inconclusiveAdvisory = (extraFindings: Advisory["findings"] = []) => ({
+      ...buildPullRequestAdvisory(repo, null),
+      findings: [
+        {
+          code: "ai_review_inconclusive" as const,
+          title: "AI review could not complete for this PR head",
+          severity: "warning" as const,
+          detail: "The AI review attempt did not produce a result.",
+          action: "The review is retried automatically after a short cooldown.",
+        },
+        ...extraFindings,
+      ],
+    });
+
+    it("REGRESSION: an inconclusive review does not hold an advisory-mode repo's otherwise-clean gate", () => {
+      const result = evaluateGateCheck(inconclusiveAdvisory());
+      expect(result.conclusion).toBe("success");
+      expect(result.warnings.map((finding) => finding.code)).toContain("ai_review_inconclusive");
+    });
+
+    it("stays non-blocking under an explicit advisory or off mode", () => {
+      const advisory = inconclusiveAdvisory();
+      const advisoryMode = evaluateGateCheck(advisory, { aiReviewGateMode: "advisory" });
+      expect(advisoryMode.conclusion).toBe("success");
+      expect(advisoryMode.warnings.map((finding) => finding.code)).toContain("ai_review_inconclusive");
+
+      const offMode = evaluateGateCheck(advisory, { aiReviewGateMode: "off" });
+      expect(offMode.conclusion).toBe("success");
+      expect(offMode.warnings.map((finding) => finding.code)).toContain("ai_review_inconclusive");
+    });
+
+    it("still HOLDS the gate (neutral) under aiReviewGateMode: block, with the unchanged title", () => {
+      const result = evaluateGateCheck(inconclusiveAdvisory(), { aiReviewGateMode: "block" });
+      expect(result.conclusion).toBe("neutral");
+      expect(result.title).toBe("LoopOver Orb Review Agent — held for human review");
+      expect(result.blockers).toEqual([]);
+    });
+
+    it("the unconditional secret_scan_incomplete hold still fires once the AI hold no longer does", () => {
+      const advisory = inconclusiveAdvisory([
+        {
+          code: "secret_scan_incomplete",
+          title: "Patch-less file(s) could not be fully scanned for secrets (1)",
+          severity: "critical",
+          detail: "GitHub omitted inline diff for: secrets.env.",
+          action: "Ensure patch-less files are within scan limits or split the change so secrets can be verified.",
+        },
+      ]);
+      const result = evaluateGateCheck(advisory);
+      expect(result.conclusion).toBe("neutral");
+      expect(result.blockers).toEqual([]);
+    });
+
+    it("dry-run: displayConclusion previews the block-mode hold while the posted conclusion stays success", () => {
+      const result = evaluateGateCheck(inconclusiveAdvisory(), { aiReviewGateMode: "advisory", dryRun: true });
+      expect(result.conclusion).toBe("success");
+      expect(result.displayConclusion).toBe("neutral");
+    });
   });
 
   describe("aiReviewLowConfidenceDisposition (#4603)", () => {

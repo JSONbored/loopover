@@ -582,7 +582,13 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
     // automatically — NEVER a failure, so a contributor PR is never auto-CLOSED because a model hiccupped. This
     // is evaluated AFTER the deterministic blockers above, so a real violation (secret_leak, duplicate,
     // missing-issue, slop, quality) still blocks: an inconclusive AI can no longer bury a blocked PR in a hold.
-    if (advisoryResult.findings.some((finding) => finding.code === "ai_review_inconclusive")) {
+    // #10016: mirrors isEvaluationBlocker's CLA case -- the finding is produced in every aiReviewGateMode (the
+    // two producers in ai-review-orchestration.ts don't consult the mode), so only "block" should ever HOLD the
+    // gate on it. "advisory"/"off" mode's whole contract is "surface findings, never affect the verdict";
+    // unconditionally holding here diverted a clean, green advisory-mode PR to manual review over a race or a
+    // transient model failure the repo never opted into blocking on. The finding still reaches the panel via
+    // `gateWarnings` below either way -- only the HOLD is mode-gated, never the visibility.
+    if (gatePolicyBlocks(effective.aiReviewGateMode, "advisory") && advisoryResult.findings.some((finding) => finding.code === "ai_review_inconclusive")) {
       return {
         enabled: true,
         conclusion: "neutral",

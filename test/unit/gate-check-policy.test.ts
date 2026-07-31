@@ -157,12 +157,14 @@ describe(".loopover.yml settings override (resolveEffectiveSettings)", () => {
 });
 
 describe("AI fail-closed hold (#ai-fail-closed)", () => {
-  it("holds the gate NEUTRAL (held for human, never a failure-close) when an AI review is inconclusive", () => {
+  it("holds the gate NEUTRAL (held for human, never a failure-close) when an AI review is inconclusive under aiReviewGateMode: block", () => {
     const adv: Advisory = {
       ...missingIssueAdvisory(),
       findings: [{ code: "ai_review_inconclusive", title: "AI review could not be completed", severity: "warning", detail: "no usable verdict", action: "held for human" }],
     };
-    const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
+    // #10016: the hold is gated on aiReviewGateMode -- this suite's own repo default is unset (resolves
+    // "advisory"), so the block-mode hold this describe block exercises must opt in explicitly.
+    const result = evaluateGateCheck(adv, gateCheckPolicy(settings({ aiReviewMode: "block" }), null, true));
     expect(result.conclusion).toBe("neutral");
     expect(result.blockers).toEqual([]);
   });
@@ -175,13 +177,13 @@ describe("AI fail-closed hold (#ai-fail-closed)", () => {
         { code: "ai_review_inconclusive", title: "AI review could not be completed", severity: "warning", detail: "no usable verdict", action: "held for human" },
       ],
     };
-    const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
+    const result = evaluateGateCheck(adv, gateCheckPolicy(settings({ aiReviewMode: "block" }), null, true));
     // An inconclusive AI can no longer bury a real violation in a "held" state — the secret_leak still hard-blocks.
     expect(result.conclusion).toBe("failure");
     expect(result.blockers.map((blocker) => blocker.code)).toContain("secret_leak");
   });
 
-  it("holds the gate NEUTRAL (never a failure-close) when the AI review lock is held by another in-flight pass (#confirmed-bug)", () => {
+  it("holds the gate NEUTRAL (never a failure-close) when the AI review lock is held by another in-flight pass under aiReviewGateMode: block (#confirmed-bug)", () => {
     // Same code, different finding text — the lock-contention finding constructed by runAiReviewForAdvisory's
     // new claim-failure branch. advisory.ts only keys on `code`, so this proves the mechanism end-to-end for
     // the new finding shape without needing to touch advisory.ts.
@@ -197,7 +199,7 @@ describe("AI fail-closed hold (#ai-fail-closed)", () => {
         },
       ],
     };
-    const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
+    const result = evaluateGateCheck(adv, gateCheckPolicy(settings({ aiReviewMode: "block" }), null, true));
     expect(result.conclusion).toBe("neutral");
     expect(result.blockers).toEqual([]);
   });
@@ -216,9 +218,19 @@ describe("AI fail-closed hold (#ai-fail-closed)", () => {
         },
       ],
     };
-    const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
+    const result = evaluateGateCheck(adv, gateCheckPolicy(settings({ aiReviewMode: "block" }), null, true));
     expect(result.conclusion).toBe("failure");
     expect(result.blockers.map((blocker) => blocker.code)).toContain("secret_leak");
+  });
+
+  it("REGRESSION (#10016): an inconclusive AI review no longer holds the gate when aiReviewGateMode resolves to advisory (the repo default)", () => {
+    const adv: Advisory = {
+      ...missingIssueAdvisory(),
+      findings: [{ code: "ai_review_inconclusive", title: "AI review could not be completed", severity: "warning", detail: "no usable verdict", action: "held for human" }],
+    };
+    const result = evaluateGateCheck(adv, gateCheckPolicy(settings(), null, true));
+    expect(result.conclusion).toBe("success");
+    expect(result.warnings.map((finding) => finding.code)).toContain("ai_review_inconclusive");
   });
 
   it("an enforced pre-merge check (pre_merge_check_required) hard-blocks; the advisory variant never does (#review-pre-merge-checks)", () => {

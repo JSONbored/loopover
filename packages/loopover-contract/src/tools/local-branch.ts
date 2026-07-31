@@ -68,7 +68,10 @@ const localValidationEntry = z.object({
  * `cwd` is what makes this family `local-git`: it names a checkout only the caller's machine has.
  */
 export const CurrentBranchInput = z.object({
-  login: z.string().min(1).optional(),
+  // Bounds match LocalBranchAnalysisInput on shared fields so a stdio override that serves this
+  // shape (e.g. StdioCompareLocalVariantsInput) is a true narrowing under checkInputNarrowing (#10041),
+  // not a silent loosening of maxLength / maxItems the wider contract already publishes.
+  login: z.string().min(1).max(SCENARIO_LIMITS.branchRefChars).optional(),
   cwd: z.string().optional(),
   repoFullName: z.string().min(3).max(SCENARIO_LIMITS.repoFullNameChars).optional(),
   baseRef: z.string().max(SCENARIO_LIMITS.branchRefChars).optional(),
@@ -77,15 +80,15 @@ export const CurrentBranchInput = z.object({
   title: z.string().optional(),
   body: z.string().optional(),
   labels: z.array(z.string()).optional(),
-  linkedIssues: z.array(z.number().int().positive()).optional(),
+  linkedIssues: z.array(z.number().int().positive()).max(SCENARIO_MAX_LINKED_ISSUE_NUMBERS).optional(),
   pendingMergedPrCount: z.number().int().min(0).optional(),
   pendingClosedPrCount: z.number().int().min(0).optional(),
   approvedPrCount: z.number().int().min(0).optional(),
   expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
   projectedCredibility: z.number().min(0).max(1).optional(),
-  scenarioNotes: z.array(z.string()).optional(),
+  scenarioNotes: z.array(z.string()).max(20).optional(),
   branchEligibility: callerBranchEligibilitySchema.optional(),
-  validation: z.array(localValidationEntry).optional(),
+  validation: z.array(localValidationEntry).max(50).optional(),
   scorePreviewCommand: z.string().optional(),
 });
 
@@ -307,7 +310,9 @@ export const LocalScoreInput = z.object({
   approvedPrCount: z.number().int().min(0).optional(),
   expectedOpenPrCountAfterMerge: z.number().int().min(0).optional(),
   projectedCredibility: z.number().min(0).max(1).optional(),
-  scenarioNotes: z.array(z.string()).optional(),
+  // Cap matches ExplainScoreBreakdownInput / api-requests so RemoteLocalScorePreviewInput is a
+  // true narrowing of that contract field under checkInputNarrowing (#10041).
+  scenarioNotes: z.array(z.string()).max(20).optional(),
   branchEligibility: callerBranchEligibilitySchema.optional(),
   scorePreviewCommand: z.string().optional(),
 });

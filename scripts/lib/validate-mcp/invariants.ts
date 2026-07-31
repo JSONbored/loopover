@@ -78,8 +78,115 @@ export function checkAdvertisedMetadata(expected: readonly McpToolDefinition[], 
   return failures;
 }
 
+const BOUND_KEYS = ["minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"] as const;
+const LOWER_BOUNDS = new Set<string>(["minimum", "minLength", "minItems"]);
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function jsonDeepEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) && Array.isArray(right)) {
+    return left.length === right.length && left.every((entry, index) => jsonDeepEqual(entry, right[index]));
+  }
+  if (!isPlainObject(left) || !isPlainObject(right)) return false;
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  if (leftKeys.length !== rightKeys.length) return false;
+  return leftKeys.every((key) => Object.prototype.hasOwnProperty.call(right, key) && jsonDeepEqual(left[key], right[key]));
+}
+
 /**
- * An advertised input may only NARROW the contract's, never widen it (#9662).
+ * The MCP SDK's zod→JSON-Schema path omits `additionalProperties: false` that `z.toJSONSchema`
+ * (draft-2020-12) emits for the same object. Both sides of this check are already JSON Schema, but
+ * they are not produced by the same converter, so a closed object on the contract and an omitted
+ * keyword on the wire are the same schema, not a widening. A present `true` (or a non-false schema)
+ * is still a real difference and must not be stripped.
+ */
+function withoutClosedAdditionalProperties(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutClosedAdditionalProperties);
+  if (!isPlainObject(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (key === "additionalProperties" && entry === false) continue;
+    out[key] = withoutClosedAdditionalProperties(entry);
+  }
+  return out;
+}
+
+/**
+ * Whether an advertised JSON Schema subtree is identical to the contract's, or a recognised
+ * narrowing of it (#10041).
+ *
+ * Recognised differences only: (a) a removed key under `properties`, (b) an added or tightened
+ * minimum/maximum/minLength/maxLength/minItems/maxItems, (c) an `enum` that is a subset of the
+ * contract's, (d) the same rules applied recursively through `items` / `properties`. Nested
+ * `required` follows the top-level rule: every advertised requirement must already be required by
+ * the contract (dropping a requirement is allowed; inventing one is not).
+ */
+function isJsonSchemaNarrowing(advertised: unknown, contract: unknown): boolean {
+  advertised = withoutClosedAdditionalProperties(advertised);
+  contract = withoutClosedAdditionalProperties(contract);
+  if (jsonDeepEqual(advertised, contract)) return true;
+  if (!isPlainObject(advertised) || !isPlainObject(contract)) return false;
+
+  if (advertised.type !== undefined && advertised.type !== contract.type) return false;
+  if (contract.type !== undefined && advertised.type === undefined) return false;
+
+  if (advertised.enum !== undefined || contract.enum !== undefined) {
+    if (!Array.isArray(contract.enum) || !Array.isArray(advertised.enum)) return false;
+    if (!advertised.enum.every((value) => (contract.enum as unknown[]).some((entry) => jsonDeepEqual(entry, value)))) {
+      return false;
+    }
+  }
+
+  if (advertised.properties !== undefined || contract.properties !== undefined) {
+    if (advertised.properties !== undefined && !isPlainObject(advertised.properties)) return false;
+    if (contract.properties !== undefined && !isPlainObject(contract.properties)) return false;
+    const advertisedProperties = isPlainObject(advertised.properties) ? advertised.properties : {};
+    const contractProperties = isPlainObject(contract.properties) ? contract.properties : {};
+    for (const key of Object.keys(advertisedProperties)) {
+      if (!Object.prototype.hasOwnProperty.call(contractProperties, key)) return false;
+      if (!isJsonSchemaNarrowing(advertisedProperties[key], contractProperties[key])) return false;
+    }
+  }
+
+  if (advertised.items !== undefined || contract.items !== undefined) {
+    if (advertised.items === undefined || contract.items === undefined) return false;
+    if (!isJsonSchemaNarrowing(advertised.items, contract.items)) return false;
+  }
+
+  if (Array.isArray(advertised.required)) {
+    const contractRequired = new Set(Array.isArray(contract.required) ? contract.required : []);
+    for (const property of advertised.required) {
+      if (typeof property !== "string" || !contractRequired.has(property)) return false;
+    }
+  } else if (advertised.required !== undefined) {
+    return false;
+  }
+
+  for (const key of BOUND_KEYS) {
+    const advertisedBound = advertised[key];
+    const contractBound = contract[key];
+    if (advertisedBound === undefined && contractBound === undefined) continue;
+    if (typeof advertisedBound !== "number" && advertisedBound !== undefined) return false;
+    if (typeof contractBound !== "number" && contractBound !== undefined) return false;
+    if (advertisedBound === undefined) return false; // contract had a bound the advertisement dropped
+    if (contractBound === undefined) continue; // added bound = tightening
+    if (LOWER_BOUNDS.has(key) ? advertisedBound < contractBound : advertisedBound > contractBound) return false;
+  }
+
+  const handled = new Set<string>(["type", "enum", "properties", "items", "required", ...BOUND_KEYS]);
+  for (const key of new Set([...Object.keys(advertised), ...Object.keys(contract)])) {
+    if (handled.has(key)) continue;
+    if (!jsonDeepEqual(advertised[key], contract[key])) return false;
+  }
+  return true;
+}
+
+/**
+ * An advertised input may only NARROW the contract's, never widen it (#9662, #10041).
  *
  * `registerStdioTool`'s override is documented as one-way -- "a server may serve LESS than the contract
  * when its own route cannot honour a field... never used to widen" -- and nothing enforced it. The
@@ -88,10 +195,10 @@ export function checkAdvertisedMetadata(expected: readonly McpToolDefinition[], 
  * and the smoke arguments are synthesized FROM the advertised schema, so a widened schema simply gets
  * widened arguments and passes.
  *
- * Narrowing is defined mechanically, which is all a schema comparison can honestly do here: every
- * advertised property exists in the contract's, and every advertised requirement is one the contract
- * also requires. Making an optional contract field required is therefore a widening of the caller's
- * obligations and fails -- which is the case a hand-written override is most likely to get wrong.
+ * Narrowing is the property-name / required checks below, plus a recursive comparison of every shared
+ * property's JSON Schema subtree (see `isJsonSchemaNarrowing`). Making an optional contract field
+ * required is therefore a widening of the caller's obligations and fails -- which is the case a
+ * hand-written override is most likely to get wrong.
  */
 export function checkInputNarrowing(expected: readonly McpToolDefinition[], listed: readonly ListedTool[]): string[] {
   const listedByName = new Map(listed.map((tool) => [tool.name, tool]));
@@ -100,10 +207,18 @@ export function checkInputNarrowing(expected: readonly McpToolDefinition[], list
     const advertised = listedByName.get(tool.name);
     // Absent is diffToolSets' finding; a schema-less advertisement is checkAdvertisedShape's.
     if (!advertised?.inputSchema) continue;
-    const contractProperties = new Set(Object.keys((tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {}));
+    const contractProperties = (tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {};
+    const contractPropertyNames = new Set(Object.keys(contractProperties));
     const contractRequired = new Set((tool.inputSchema as { required?: string[] }).required ?? []);
-    for (const property of Object.keys(advertised.inputSchema.properties ?? {})) {
-      if (!contractProperties.has(property)) failures.push(`${tool.name} advertises input property ${property}, which its contract does not declare`);
+    const advertisedProperties = advertised.inputSchema.properties ?? {};
+    for (const property of Object.keys(advertisedProperties)) {
+      if (!contractPropertyNames.has(property)) {
+        failures.push(`${tool.name} advertises input property ${property}, which its contract does not declare`);
+        continue;
+      }
+      if (!isJsonSchemaNarrowing(advertisedProperties[property], contractProperties[property])) {
+        failures.push(`${tool.name} advertises input property ${property}, which is not a narrowing of its contract`);
+      }
     }
     for (const property of advertised.inputSchema.required ?? []) {
       if (!contractRequired.has(property)) failures.push(`${tool.name} requires input property ${property}, which its contract does not require`);

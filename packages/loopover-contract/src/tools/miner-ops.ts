@@ -56,15 +56,20 @@ export const minerDoctorTool = defineTool({
 export const MinerMetricsSnapshotInput = z.object({});
 
 export const MinerMetricsSnapshotOutput = z.looseObject({
-  generatedAt: z.string(),
-  families: z.array(
-    z.looseObject({
-      name: z.string(),
-      type: z.string(),
-      help: z.string().optional(),
-      samples: z.array(z.looseObject({ value: z.number(), labels: z.record(z.string(), z.string()).optional() })),
-    }),
-  ),
+  // Optional: a store-failure envelope from `withMinerToolErrorHandling` carries only `error`, and
+  // the MCP SDK validates structuredContent against this schema even when `isError` is set — required
+  // success fields made that path a -32602 instead of a clean tool error.
+  generatedAt: z.string().optional(),
+  families: z
+    .array(
+      z.looseObject({
+        name: z.string(),
+        type: z.string(),
+        help: z.string().optional(),
+        samples: z.array(z.looseObject({ value: z.number(), labels: z.record(z.string(), z.string()).optional() })),
+      }),
+    )
+    .optional(),
   // #9659: every miner tool answers a store failure with the shared error envelope
   // (`withMinerToolErrorHandling`), so the advertised schema declares it rather than describing only
   // the success shape. `error.code` is the closed telemetry set, which is what lets the code the caller

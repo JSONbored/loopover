@@ -319,6 +319,37 @@ describe("normalizeScreenshotTableGateConfig", () => {
     expect(normalizeScreenshotTableGateConfig({ skillFileUrl: "x".repeat(301) }, []).skillFileUrl).toBeUndefined();
     expect(warnings.some((w) => w.includes("skillFileUrl"))).toBe(true);
   });
+
+  it("#9993: drops an over-complex whenPaths glob with a warning, so it can no longer scope every PR", () => {
+    // whenPaths back matchesAnyWithExclusions, whose include half FAILS TOWARD MATCHING for an over-complex
+    // glob — so an unvalidated `apps/**/src/**/*.tsx` (3 groups) silently put every PR in scope. It is now
+    // validated with the same hasUnsafeWildcardCount predicate the other manifest glob surfaces use.
+    const warnings: string[] = [];
+    const config = normalizeScreenshotTableGateConfig({ enabled: true, whenPaths: ["apps/**/src/**/*.tsx", "apps/ui/src/**"] }, warnings);
+    expect(config.whenPaths).toEqual(["apps/ui/src/**"]);
+    expect(warnings.some((w) => w.includes("whenPaths[0]"))).toBe(true);
+    // The behaviour change the drop produces: an unrelated file is no longer in scope (it was, today).
+    expect(isScreenshotTableGateInScope(config, [], ["README.md"])).toBe(false);
+    expect(isScreenshotTableGateInScope(config, [], ["apps/ui/src/App.tsx"])).toBe(true);
+  });
+
+  it("#9993: measures an exclusion by its glob BODY and drops a bare `!`, keeping valid entries", () => {
+    const warnings: string[] = [];
+    // `!**/*.generated.*` has a 3-group body → dropped; the valid include survives.
+    expect(normalizeScreenshotTableGateConfig({ enabled: true, whenPaths: ["!**/*.generated.*", "apps/ui/src/**"] }, warnings).whenPaths).toEqual(["apps/ui/src/**"]);
+    expect(warnings.some((w) => w.includes("whenPaths[0]"))).toBe(true);
+    // A bare `!` has no body to compile and would mis-route into the include list — dropped.
+    const bare: string[] = [];
+    expect(normalizeScreenshotTableGateConfig({ enabled: true, whenPaths: ["!"] }, bare).whenPaths).toEqual([]);
+    expect(bare.some((w) => w.includes("whenPaths"))).toBe(true);
+  });
+
+  it("#9993: preserves a 2-group whenPaths glob and a valid exclusion unchanged", () => {
+    const warnings: string[] = [];
+    const config = normalizeScreenshotTableGateConfig({ enabled: true, whenPaths: ["apps/ui/public/**/*.json", "!node_modules/**"] }, warnings);
+    expect(config.whenPaths).toEqual(["apps/ui/public/**/*.json", "!node_modules/**"]);
+    expect(warnings.filter((w) => w.includes("whenPaths"))).toHaveLength(0);
+  });
 });
 
 describe("requiredScreenshotMatrixPairs (#4535)", () => {

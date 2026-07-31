@@ -120,6 +120,37 @@ describe("buildServiceStatus", () => {
     expect(payload.components.map((c) => c.component)).toEqual([...SERVICE_STATUS_COMPONENTS]);
   });
 
+  it("ignores an alert whose service label is not a string at all", () => {
+    // Alertmanager labels are `Record<string, string>` by contract, but this reads a parsed JSON body from a
+    // source that could ship anything. A non-string label must take the same ignore path an unmapped one
+    // takes, not throw on `.toLowerCase()`.
+    const payload = buildServiceStatus([{ labels: { service: 42 }, startsAt: "x", status: { state: "active" } }, { labels: {} }], NOW.toISOString());
+    expect(payload.overall).toBe("operational");
+  });
+
+  it("records no `since` when the firing alert carries no usable start time", () => {
+    // `startsAt` absent or non-string: the component is still degraded — an alert with no timestamp is still
+    // an alert — but inventing a start would imply a transition that was never reported.
+    const payload = buildServiceStatus([alert({ startsAt: undefined })], NOW.toISOString());
+    const review = payload.components.find((c) => c.component === "review");
+    expect(review?.status).toBe("degraded");
+    expect(review?.since).toBeNull();
+  });
+
+  it("keeps an established `since` when a later alert for the same component has no start time", () => {
+    // The timestamped alert established the incident start; a subsequent untimestamped one must not erase it.
+    const payload = buildServiceStatus([alert({ startsAt: "2026-07-31T09:00:00.000Z" }), alert({ startsAt: null })], NOW.toISOString());
+    expect(payload.components.find((c) => c.component === "review")?.since).toBe("2026-07-31T09:00:00.000Z");
+  });
+
+  it("keeps the earlier `since` when the alerts arrive in chronological order too", () => {
+    // The mirror of the earliest-wins test above. That one has the earlier alert SECOND, so it only exercises
+    // the replace arm; this one has it first and exercises the keep arm. Without both, half the comparison is
+    // free to invert unnoticed.
+    const payload = buildServiceStatus([alert({ startsAt: "2026-07-31T09:00:00.000Z" }), alert({ startsAt: "2026-07-31T11:30:00.000Z" })], NOW.toISOString());
+    expect(payload.components.find((c) => c.component === "review")?.since).toBe("2026-07-31T09:00:00.000Z");
+  });
+
   it("clears `since` for a component that is operational", () => {
     expect(buildServiceStatus([], NOW.toISOString()).components.every((c) => c.since === null)).toBe(true);
   });

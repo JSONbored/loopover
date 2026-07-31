@@ -9,6 +9,7 @@
 import { isStructuralProviderConfigError } from "../services/ai-review";
 import type { AiContentBlock, CombineStrategy, OnMerge } from "../services/ai-review";
 import { isConfiguredSelfHostProvider, resolveConfiguredProviderNames } from "./ai-config";
+import { parsePositiveIntEnv } from "./queue-common";
 export { assertNoLegacySharedAiEnv } from "./ai-config";
 import { wasLoadedFromFile } from "./file-sourced-secrets";
 import { getProviderCredentialResolver } from "./provider-credential-registry";
@@ -740,8 +741,9 @@ export function ollamaContextOptions(
 /** Context window requested from Ollama for review-sized prompts. Overridable because it trades GPU memory
  *  against how much of a large diff the model can actually see. */
 export function ollamaNumCtx(): number {
-  const raw = Number(process.env["OLLAMA_NUM_CTX"] ?? "");
-  return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 32_768;
+  // parsePositiveIntEnv (not a bare Number()): a supplied non-integer/out-of-range OLLAMA_NUM_CTX warns and
+  // falls back to the default instead of silently disabling the override via NaN, matching #9157's contract.
+  return parsePositiveIntEnv("OLLAMA_NUM_CTX", { min: 1, fallback: 32_768 });
 }
 
 export function providerNameFromBaseUrl(baseUrl: string | undefined): "ollama" | "openai" | "openai-compatible" {

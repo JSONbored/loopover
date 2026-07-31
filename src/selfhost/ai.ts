@@ -14,7 +14,7 @@ export { assertNoLegacySharedAiEnv } from "./ai-config";
 import { wasLoadedFromFile } from "./file-sourced-secrets";
 import { getProviderCredentialResolver } from "./provider-credential-registry";
 import { incr, observe } from "./metrics";
-import { capturePostHogAiGeneration, type PostHogAiGenerationRequestKind } from "./posthog";
+import { capturePostHogAiDegradation, capturePostHogAiGeneration, type PostHogAiGenerationRequestKind } from "./posthog";
 import { withReviewSpan } from "./tracing";
 import { delimiter } from "node:path";
 
@@ -90,6 +90,12 @@ interface AiRunOptions {
 export type AiResult = { response?: string; data?: number[][]; usage?: AiUsage };
 export interface SelfHostAi {
   run(model: string, options: AiRunOptions): Promise<AiResult>;
+  /** The model id this adapter's own `run()` WOULD resolve for the same arguments (#10186). Telemetry needs
+   *  this on the FAILURE path, where there is no `usage.model` to read and the raw `model` argument is a
+   *  request-layer placeholder `resolveModel` throws away — see {@link resolveTelemetryModel}. Optional so a
+   *  test double or a future adapter stays a valid `SelfHostAi`; implementers must derive it from the same
+   *  expression `run()` uses, never a parallel copy that can drift. */
+  telemetryModel?(model: string, options: AiRunOptions): string;
 }
 
 function toMessages(options: AiRunOptions): Array<{ role: string; content: string | AiContentBlock[] }> {
@@ -142,6 +148,24 @@ export function resolveModel(configured: string | undefined, passed: string, pro
   if (configured && configured.trim()) return configured.trim();
   if (passed && !passed.startsWith("@cf/")) return passed;
   return providerDefault;
+}
+
+/** The model label telemetry must report for one provider attempt, on the SUCCESS and the FAILURE path alike
+ *  (#10186). The `model` argument is a REQUEST-layer id: the core passes a Workers-AI model that
+ *  {@link resolveModel} discards for every self-host provider, so reporting it verbatim labels a failure with a
+ *  model that never ran — which is exactly what made a breakdown by model show `@cf/*` ids at a 100% error rate
+ *  on a deployment that has never called Workers AI, while the real failing providers read 0%.
+ *
+ *  The adapter's own {@link SelfHostAi.telemetryModel} is authoritative because it mirrors that adapter's own
+ *  resolution. Without one (a test double), fall back to the passed id — but never to a `@cf/` placeholder,
+ *  which has no live binding anywhere (`src/services/ai-summaries.ts`) and is wrong by construction. The last
+ *  resort is `<provider>-default` rather than a bare "default": codex resolves to `""` on purpose (the CLI picks
+ *  the account default), and `codex-default` still says WHICH provider's default it was. */
+export function resolveTelemetryModel(providerName: string, ai: SelfHostAi, model: string, options: AiRunOptions): string {
+  const resolved = ai.telemetryModel?.(model, options)?.trim();
+  if (resolved) return resolved;
+  const passed = model.trim();
+  return passed && !passed.startsWith("@cf/") ? passed : `${providerName}-default`;
 }
 
 function firstConfigured(...values: Array<string | undefined>): string | undefined {
@@ -337,11 +361,22 @@ export function createOpenAiCompatibleAi(opts: {
 }): SelfHostAi {
   const base = opts.baseUrl.replace(/\/+$/, "");
   const headers = (): Record<string, string> => ({ "content-type": "application/json", ...(opts.apiKey ? { authorization: `Bearer ${opts.apiKey}` } : {}) });
+  // #10186: the two model resolutions this adapter performs, hoisted so `run` and `telemetryModel` below share
+  // ONE expression each — a telemetry label that re-derived the model separately could drift from the model the
+  // request actually carried, which is the very failure this issue is about.
+  const resolvedEmbedModel = (): string => opts.embedModel ?? "bge-m3";
+  const resolvedChatModel = (model: string, options: AiRunOptions): string => {
+    const repoOverride = opts.providerName ? resolveOpenAiCompatibleRepoOverride(opts.providerName, options) : undefined;
+    return resolveModel(firstConfigured(repoOverride, opts.model), model, opts.defaultModel ?? DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL);
+  };
   return {
+    // Branches on the SAME `options.text` discriminator `run` does, so an embed request is labelled with the
+    // embed model (`bge-m3:latest`) rather than the chat model it never touches.
+    telemetryModel: (model, options) => (Array.isArray(options.text) ? resolvedEmbedModel() : resolvedChatModel(model, options)),
     async run(model, options) {
       // Embedding request — the core's embedTexts passes { text: string[] }; route to /embeddings (for RAG).
       if (Array.isArray(options.text)) {
-        const embedModel = opts.embedModel ?? "bge-m3";
+        const embedModel = resolvedEmbedModel();
         if (options.text.length === 0) return { data: [], usage: buildAiUsage({ provider: opts.providerName, model: embedModel, inputTokens: 0, totalTokens: 0 }) };
         const res = await fetch(`${base}/embeddings`, {
           method: "POST",
@@ -373,8 +408,7 @@ export function createOpenAiCompatibleAi(opts: {
           }),
         };
       }
-      const repoOverride = opts.providerName ? resolveOpenAiCompatibleRepoOverride(opts.providerName, options) : undefined;
-      const resolvedModel = resolveModel(firstConfigured(repoOverride, opts.model), model, opts.defaultModel ?? DEFAULT_OPENAI_COMPATIBLE_CHAT_MODEL);
+      const resolvedModel = resolvedChatModel(model, options);
       const chatBody = (withResponseFormat: boolean): string =>
         JSON.stringify({
           model: resolvedModel,
@@ -438,7 +472,11 @@ function toAnthropicMessageContent(content: string | AiContentBlock[]): string |
  *  subscription path). The system message becomes the top-level `system` param; the rest map to user/assistant. */
 export function createAnthropicAi(opts: { apiKey: string; model?: string | undefined; baseUrl?: string | undefined }): SelfHostAi {
   const base = (opts.baseUrl ?? "https://api.anthropic.com").replace(/\/+$/, "");
+  // #10186: one expression, shared with `run`'s own `resolvedModel` below.
+  const resolvedAnthropicModel = (model: string, options: AiRunOptions): string =>
+    resolveModel(firstConfigured(options.anthropicModel, opts.model), model, "claude-sonnet-5");
   return {
+    telemetryModel: resolvedAnthropicModel,
     async run(model, options) {
       const msgs = toMessages(options);
       const system =
@@ -451,7 +489,7 @@ export function createAnthropicAi(opts: { apiKey: string; model?: string | undef
         .map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: toAnthropicMessageContent(m.content) }));
       // Repo override > construction-time env-resolved opts.model (#3902), same priority as the OpenAI-compatible
       // providers above and the CLI providers' claudeModel/codexModel.
-      const resolvedModel = resolveModel(firstConfigured(options.anthropicModel, opts.model), model, "claude-sonnet-5");
+      const resolvedModel = resolvedAnthropicModel(model, options);
       const res = await fetch(`${base}/v1/messages`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": opts.apiKey, "anthropic-version": "2023-06-01" },
@@ -1113,14 +1151,19 @@ async function resolveClaudeOauthToken(parentEnv: Record<string, string | undefi
 
 /** Claude Code subscription (CLAUDE_CODE_OAUTH_TOKEN via `claude setup-token`). Headless, read-only, JSON. */
 export function createClaudeCodeAi(parentEnv: Record<string, string | undefined>, spawnImpl?: SpawnFn): SelfHostAi {
+  // #10186: shared with `run`'s own `claudeModel` below so the telemetry label and the `--model` argument are
+  // the same value by construction.
+  const resolvedClaudeModel = (model: string, options: AiRunOptions): string =>
+    resolveModel(configuredClaudeModel(parentEnv, options.claudeModel), model, "claude-sonnet-5");
   return {
+    telemetryModel: resolvedClaudeModel,
     async run(model, options) {
       // Claude has no embeddings model (CLI or API), so REJECT an embed request and let the provider chain fall
       // through to an embed-capable provider (ollama/openai-compatible). Without this throw the chain would treat
       // claude's empty-prompt text answer as "success" and never reach the embed provider → RAG silently breaks.
       if (options.text) throw new Error("claude_code_no_embed");
       const token = await resolveClaudeOauthToken(parentEnv);
-      const claudeModel = resolveModel(configuredClaudeModel(parentEnv, options.claudeModel), model, "claude-sonnet-5");
+      const claudeModel = resolvedClaudeModel(model, options);
       const effort = resolveEffort(firstConfigured(options.claudeEffort, parentEnv.CLAUDE_AI_EFFORT));
       const timeoutMs = resolveClaudeCliTimeoutMs(parentEnv, options.claudeTimeoutMs);
       // #4994: same clamp reasoning as createCodexAi's identical line — keeps the fast-fail deadline strictly
@@ -1238,14 +1281,20 @@ export function createCodexAi(
   spawnImpl?: SpawnFn,
   authCheckImpl: (env: Record<string, string | undefined>) => Promise<void> = assertCodexAuthConfigured,
 ): SelfHostAi {
+  // #10186: shared with `run`'s own `codexModel` below. Resolves to "" when nothing is configured — which is
+  // meaningful here (no `--model` is passed and Codex picks the account default), and which
+  // `resolveTelemetryModel` renders as "codex-default" rather than losing the attribution to a bare "default".
+  const resolvedCodexModel = (model: string, options: AiRunOptions): string =>
+    resolveModel(configuredCodexModel(parentEnv, options.codexModel), model, "");
   return {
+    telemetryModel: resolvedCodexModel,
     async run(model, options) {
       // Codex is chat-only here — reject embed requests so the chain routes them to an embed-capable provider.
       if (options.text) throw new Error("codex_no_embed");
       // codex 0.142+: `exec` is non-interactive — the old `--ask-for-approval` flag was REMOVED (passing it errors).
       // `--skip-git-repo-check` lets it run outside a git repo. Pass `--model` ONLY when one is explicitly
       // configured: otherwise Codex selects the account default.
-      const codexModel = resolveModel(configuredCodexModel(parentEnv, options.codexModel), model, "");
+      const codexModel = resolvedCodexModel(model, options);
       const effort = resolveCodexEffort(firstConfigured(options.codexEffort, parentEnv.CODEX_AI_EFFORT));
       const timeoutMs = resolveCodexCliTimeoutMs(parentEnv, options.codexTimeoutMs);
       // Clamp below timeoutMs so a misconfigured/low CODEX_AI_TIMEOUT_MS (its own floor is 30_000ms, the same as
@@ -1425,6 +1474,10 @@ export function createChainAi(providers: Array<{ name: string; ai: SelfHostAi }>
     async run(model, options) {
       let lastError: unknown = new Error("no_ai_providers");
       const failures: Array<{ provider: string; error: string }> = [];
+      // #10186: whether EVERY provider declined for an expected embedding-routing reason (claude_code_no_embed /
+      // codex_no_embed) rather than actually failing -- see the degradation capture below for why that case is
+      // exempt. Vacuously true for an empty chain, which is then excluded by the `failures.length` guard.
+      let everyFailureExpectedRouting = true;
       for (const p of providers) {
         try {
           const result = await runProviderWithOtel(p, model, options);
@@ -1433,6 +1486,7 @@ export function createChainAi(providers: Array<{ name: string; ai: SelfHostAi }>
         } catch (error) {
           lastError = error;
           failures.push({ provider: p.name, error: errorMessage(error) });
+          if (!isExpectedEmbeddingRoutingError(options, error)) everyFailureExpectedRouting = false;
           console.error(
             JSON.stringify({
               level: "warn",
@@ -1448,17 +1502,50 @@ export function createChainAi(providers: Array<{ name: string; ai: SelfHostAi }>
         }
       }
       recordAiProvidersExhausted();
+      // The provider that ran LAST is the one `lastError` belongs to; with an empty chain there is none.
+      const lastProvider = providers[providers.length - 1];
+      const exhaustedModel = lastProvider
+        ? resolveTelemetryModel(lastProvider.name, lastProvider.ai, model, options)
+        : model || "unknown";
       console.error(
         JSON.stringify({
           level: "error",
           event: "selfhost_ai_providers_exhausted",
           provider: failures.length === 1 ? failures[0]?.provider : undefined,
-          model: model || "default",
+          // #10186: was `model || "default"` -- the same discarded `@cf/` placeholder the $ai_generation sink
+          // reported, in the one log line that says the whole chain is down.
+          model: exhaustedModel,
           providers: failures.map((failure) => failure.provider),
           failures,
           error: errorMessage(lastError),
         }),
       );
+      // #10186: that console line reaches PostHog only as an `$exception` (via forwardStructuredLogToPostHog),
+      // which the AI observability views do not read at all -- so a chain that is failing EVERY request was
+      // indistinguishable there from a chain nobody is calling. Emitted per exhausted request, alongside the
+      // per-provider $ai_generation failures, so "the chain gave up" is countable in its own right.
+      //
+      // Exempt for the same reason runProviderWithOtel's own capture is: a chain of CLI-subscription providers
+      // DECLINING an embed request (claude_code_no_embed) is routing working as designed, not a degradation --
+      // it is how an embed request reaches an embed-capable provider. When such a chain has no embed-capable
+      // member at all the config really is broken, but that is a persistent, per-BATCH-of-chunks condition
+      // whose own fail-loud signal is shouldWarnRagEmbedUnavailable's boot warning, not one event per chunk.
+      // One exemption rule, applied at both sinks, rather than two that can disagree.
+      //
+      // `lastProvider` is the guard rather than `failures.length`: reaching here with a provider present means
+      // every one of them threw, so the two conditions are the same condition -- and narrowing on the provider
+      // keeps the capture from needing an unreachable "no provider" placeholder for its own label.
+      if (lastProvider && !everyFailureExpectedRouting) {
+        capturePostHogAiDegradation({
+          reason: "chain_exhausted",
+          provider: lastProvider.name,
+          model: exhaustedModel,
+          requestKind: requestKind(options),
+          providers: failures.map((failure) => failure.provider),
+          error: lastError,
+          context: { repo: options.repoFullName, pullNumber: options.pullNumber },
+        });
+      }
       throw lastError instanceof Error ? lastError : new Error("all_ai_providers_failed");
     },
   };
@@ -1480,18 +1567,35 @@ async function runProviderWithOtel(
   const circuit = aiProviderCircuits.get(provider.name);
   if (circuit && circuit.cooldownUntil > Date.now()) {
     incr("loopover_ai_provider_circuit_open_total", { provider: provider.name });
-    throw new Error(
+    const skipped = new Error(
       circuit.structural
         ? `circuit_open: provider "${provider.name}" has a structural config error (bad/missing credentials) — skipping until the cooldown expires; fix the underlying config, then restart`
         : `circuit_open: provider "${provider.name}" is in cooldown after ${AI_PROVIDER_FAILURE_THRESHOLD} consecutive failures — skipping this attempt`,
     );
+    // #10186: a provider in cooldown previously left NOTHING in PostHog -- only a Prometheus counter and this
+    // throw. Once the breaker latches, that provider's $ai_generation stream simply stops, which reads exactly
+    // like "nobody called it" rather than "it is broken and being skipped". The Prometheus counter lives on the
+    // ORB's own stack; PostHog is where the AI observability views are, so it needs its own signal.
+    capturePostHogAiDegradation({
+      reason: "circuit_open",
+      provider: provider.name,
+      model: resolveTelemetryModel(provider.name, provider.ai, model, options),
+      requestKind: requestKind(options),
+      error: skipped,
+      context: { repo: options.repoFullName, pullNumber: options.pullNumber },
+    });
+    throw skipped;
   }
   const requestKindLabel = requestKind(options);
+  // #10186: resolved ONCE, before the call, so the failure path below labels the attempt with the model that was
+  // actually about to run instead of the `@cf/` request-layer placeholder it used to report. The OTel span
+  // attribute reads from the same value — it carried the identical lie.
+  const telemetryModel = resolveTelemetryModel(provider.name, provider.ai, model, options);
   const startedAtMs = Date.now();
   try {
     const result = await withReviewSpan(
       "selfhost.ai.provider",
-      { "ai.provider": provider.name, "ai.model": model || "default", "ai.request_kind": requestKindLabel },
+      { "ai.provider": provider.name, "ai.model": telemetryModel, "ai.request_kind": requestKindLabel },
       () => provider.ai.run(model, options),
     );
     observe("loopover_ai_provider_request_duration_seconds", (Date.now() - startedAtMs) / 1000, {
@@ -1500,11 +1604,13 @@ async function runProviderWithOtel(
     });
     aiProviderCircuits.delete(provider.name);
     const usage = result.usage
-      ? { ...result.usage, provider: result.usage.provider ?? provider.name, model: result.usage.model ?? (model || "default") }
+      ? { ...result.usage, provider: result.usage.provider ?? provider.name, model: result.usage.model ?? telemetryModel }
       : undefined;
     capturePostHogAiGeneration({
       provider: usage?.provider ?? provider.name,
-      model: usage?.model ?? (model || "default"),
+      // `usage.model` is what the provider REPORTED running and stays authoritative; `telemetryModel` is the
+      // same resolution computed up-front, so the two paths now agree for a given configured provider.
+      model: usage?.model ?? telemetryModel,
       requestKind: requestKindLabel,
       latencyMs: Date.now() - startedAtMs,
       isError: false,
@@ -1523,7 +1629,7 @@ async function runProviderWithOtel(
     if (isExpectedEmbeddingRoutingError(options, error)) throw error;
     capturePostHogAiGeneration({
       provider: provider.name,
-      model: model || "default",
+      model: telemetryModel,
       requestKind: requestKindLabel,
       latencyMs: Date.now() - startedAtMs,
       isError: true,
@@ -1684,15 +1790,18 @@ export function withAiGenerationCapture(providerName: string, ai: SelfHostAi): S
   return {
     async run(model, options) {
       const requestKindLabel: PostHogAiGenerationRequestKind = requestKind(options);
+      // #10186: same up-front resolution runProviderWithOtel does — these bindings hit the identical failure-path
+      // mislabelling (AI_VISION's 2 failures reported the passed "visual-vision" id, not the model it resolves).
+      const telemetryModel = resolveTelemetryModel(providerName, ai, model, options);
       const startedAtMs = Date.now();
       try {
         const result = await ai.run(model, options);
         const usage = result.usage
-          ? { ...result.usage, provider: result.usage.provider ?? providerName, model: result.usage.model ?? (model || "default") }
+          ? { ...result.usage, provider: result.usage.provider ?? providerName, model: result.usage.model ?? telemetryModel }
           : undefined;
         capturePostHogAiGeneration({
           provider: usage?.provider ?? providerName,
-          model: usage?.model ?? (model || "default"),
+          model: usage?.model ?? telemetryModel,
           requestKind: requestKindLabel,
           latencyMs: Date.now() - startedAtMs,
           isError: false,
@@ -1705,7 +1814,7 @@ export function withAiGenerationCapture(providerName: string, ai: SelfHostAi): S
       } catch (error) {
         capturePostHogAiGeneration({
           provider: providerName,
-          model: model || "default",
+          model: telemetryModel,
           requestKind: requestKindLabel,
           latencyMs: Date.now() - startedAtMs,
           isError: true,

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { validateIdeaSubmission } from "../dist/index.js";
+import { buildClaimPlan, buildTaskGraph, validateIdeaSubmission } from "../dist/index.js";
 
 // Engine-suite (node:test) coverage for validateIdeaSubmission's targetRepo resolution (#9609) so the
 // `engine` Codecov flag credits the changed lines, mirroring test/unit/idea-intake-bridge.test.ts.
@@ -21,10 +21,13 @@ test("accepts the canonical { kind: 'existing', repo } object it returns (round-
   if (r.ok) assert.deepEqual(r.idea.targetRepo, { kind: "existing", repo: "acme/widgets" });
 });
 
-test("accepts a provision object", () => {
+test("accepts a provision object and buildClaimPlan carries an empty targetRepo", () => {
   const r = validateIdeaSubmission(rawIdea({ kind: "provision" }));
   assert.equal(r.ok, true);
-  if (r.ok) assert.deepEqual(r.idea.targetRepo, { kind: "provision" });
+  if (!r.ok) return;
+  assert.deepEqual(r.idea.targetRepo, { kind: "provision" });
+  const plan = buildClaimPlan(buildTaskGraph(r.idea), r.idea.targetRepo);
+  assert.equal(plan.targetRepo, "");
 });
 
 test("rejects a malformed slug in both the string and the existing-object form", () => {

@@ -118,6 +118,17 @@ export const RETENTION_POLICY: readonly RetentionRule[] = [
   // plus contributor content (the largest, most sensitive artifact in the replay family), the re-query mode
   // is a debugging tool for RECENT decisions, and the public promptDigest commitment outlives the text.
   { table: "decision_replay_prompts", column: "created_at", days: 30 },
+  // #10058: two more members of the same re-derivable/per-event class #9473 bounded, found by the same audit
+  // sweep for tables written per event with NO delete path anywhere in src/:
+  //   - submitter_outcome_log is per (project, submitter, pull_number, outcome), appended on every PR
+  //     terminal (src/review/submitter-reputation.ts), and its only reader is already windowed
+  //     (`recorded_at >= datetime('now', ?)`) -- same "windowed reader, aged rows are pure dead weight" shape
+  //     as contributor_gate_history above, so it gets the same 90-day window.
+  //   - alert_dedup_claims is a pure hourly-expiring idempotency claim (src/review/alerts.ts hashes an hour
+  //     bucket into its dedup key), never read again once its hour passes -- same short-lived-idempotency-log
+  //     shape as webhook_events / orb_webhook_events above, so it gets the same 14-day window.
+  { table: "submitter_outcome_log", column: "recorded_at", days: 90 },
+  { table: "alert_dedup_claims", column: "created_at", days: 14 },
 ];
 
 // #9083: a real, single-column, indexable primary key for the ordered-range delete below, keyed by table
@@ -168,6 +179,8 @@ export const RETENTION_PK_COLUMN: Readonly<Record<string, string>> = {
   decision_replay_inputs: "record_id",
   // Same key shape as decision_replay_inputs above, for the same reason.
   decision_replay_prompts: "record_id",
+  // #10058: alert_dedup_claims has a genuine single-column `id TEXT PRIMARY KEY` (migrations/0181).
+  alert_dedup_claims: "id",
 };
 
 /**
@@ -191,6 +204,9 @@ export const RETENTION_COMPOSITE_PK_TABLES: ReadonlySet<string> = new Set([
   "ai_review_cache",
   "ai_slop_cache",
   "linked_issue_satisfaction_cache",
+  // #10058: PRIMARY KEY (project, submitter, pull_number, outcome) -- no genuine single-column id, so this
+  // table pays the rowid/ctid cost noted above rather than getting a surrogate key added just for pruning.
+  "submitter_outcome_log",
 ]);
 
 /**

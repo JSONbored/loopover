@@ -1,5 +1,14 @@
 # Changelog
 
+## [3.18.4](https://github.com/JSONbored/loopover/compare/engine-v3.18.3...engine-v3.18.4) (2026-07-31)
+
+
+### Fixes
+
+* **engine:** correct the iterate-policy ceiling field docs to match the real precedence ([#10131](https://github.com/JSONbored/loopover/issues/10131)) ([98a2564](https://github.com/JSONbored/loopover/commit/98a2564d6fda2450676b9de15ca3c114ff3e094e)), closes [#9997](https://github.com/JSONbored/loopover/issues/9997)
+* **engine:** count fnmatch label-pattern wildcard groups per raw star, not by path-glob rules ([#10128](https://github.com/JSONbored/loopover/issues/10128)) ([1d2b142](https://github.com/JSONbored/loopover/commit/1d2b1421b702f40c1c69da251312412d86bb9735)), closes [#9994](https://github.com/JSONbored/loopover/issues/9994)
+* **engine:** reject over-complex screenshotTableGate whenPaths globs at normalization ([#10115](https://github.com/JSONbored/loopover/issues/10115)) ([afe6969](https://github.com/JSONbored/loopover/commit/afe6969abf65ddc6161dd591bc80003fcacc27d4)), closes [#9993](https://github.com/JSONbored/loopover/issues/9993)
+
 ## [3.18.3](https://github.com/JSONbored/loopover/compare/engine-v3.18.2...engine-v3.18.3) (2026-07-31)
 
 

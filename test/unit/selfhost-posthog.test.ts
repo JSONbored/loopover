@@ -723,12 +723,77 @@ describe("capturePostHogAiGeneration (#8296)", () => {
     expect(mocks.capture.mock.calls[0]?.[0].properties.$ai_error).toBe("just a string");
   });
 
-  it("never carries prompt/response content -- no field beyond model/provider ids", async () => {
+  it("carries NO prompt/response content by default, even when the caller supplies it (#10218)", async () => {
+    // The gate lives in posthog.ts, not at the call sites: ai.ts always passes the content, so this is the
+    // single place that decides. An operator who has not opted in is byte-identical to before #10218.
     await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
-    capturePostHogAiGeneration(BASE);
+    capturePostHogAiGeneration({ ...BASE, input: [{ role: "user", content: "review this diff" }], outputText: "looks good" });
     const keys = Object.keys(mocks.capture.mock.calls[0]?.[0].properties);
     expect(keys).not.toContain("$ai_input");
     expect(keys).not.toContain("$ai_output_choices");
+  });
+
+  it("populates $ai_input/$ai_output_choices once LOOPOVER_POSTHOG_AI_CONTENT is set (#10218)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "1" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({
+      ...BASE,
+      input: [{ role: "system", content: "you are a reviewer" }, { role: "user", content: "review this diff" }],
+      outputText: "looks good",
+    });
+    const { properties } = mocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_input).toEqual([
+      { role: "system", content: "you are a reviewer" },
+      { role: "user", content: "review this diff" },
+    ]);
+    // PostHog's shape is a list of choices; the self-host providers are single-completion, so exactly one.
+    expect(properties.$ai_output_choices).toEqual([{ role: "assistant", content: "looks good" }]);
+  });
+
+  it("omits each content field independently when it has nothing to say", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "true" } as unknown as NodeJS.ProcessEnv);
+    // A failure has a prompt but no completion; an empty prompt list must not become an empty array.
+    capturePostHogAiGeneration({ ...BASE, input: [{ role: "user", content: "x" }] });
+    capturePostHogAiGeneration({ ...BASE, input: [], outputText: "" });
+    const withPrompt = mocks.capture.mock.calls[0]?.[0].properties;
+    expect(withPrompt.$ai_input).toHaveLength(1);
+    expect("$ai_output_choices" in withPrompt).toBe(false);
+    const withNeither = mocks.capture.mock.calls[1]?.[0].properties;
+    expect("$ai_input" in withNeither).toBe(false);
+    expect("$ai_output_choices" in withNeither).toBe(false);
+  });
+
+  it("truncates content at the cap and marks that it happened (#10218)", async () => {
+    await initPostHog({
+      POSTHOG_API_KEY: "phc_test_key",
+      LOOPOVER_POSTHOG_AI_CONTENT: "on",
+      LOOPOVER_POSTHOG_AI_CONTENT_MAX_CHARS: "10",
+    } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, input: [{ role: "user", content: "a".repeat(50) }], outputText: "b".repeat(50) });
+    const { properties } = mocks.capture.mock.calls[0]?.[0];
+    // A reader must never mistake a clipped prompt for the whole one.
+    expect((properties.$ai_input as Array<{ content: string }>)[0]?.content).toBe(`${"a".repeat(10)}…[truncated]`);
+    expect((properties.$ai_output_choices as Array<{ content: string }>)[0]?.content).toBe(`${"b".repeat(10)}…[truncated]`);
+  });
+
+  it("leaves content at or under the cap untouched", async () => {
+    await initPostHog({
+      POSTHOG_API_KEY: "phc_test_key",
+      LOOPOVER_POSTHOG_AI_CONTENT: "yes",
+      LOOPOVER_POSTHOG_AI_CONTENT_MAX_CHARS: "10",
+    } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, input: [{ role: "user", content: "a".repeat(10) }] });
+    expect((mocks.capture.mock.calls[0]?.[0].properties.$ai_input as Array<{ content: string }>)[0]?.content).toBe("a".repeat(10));
+  });
+
+  it("captured content still goes through the same before_send redaction as every other field", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "1" } as unknown as NodeJS.ProcessEnv);
+    const leaked = ["ghp", "abcdefghijklmnopqrst123456"].join("_");
+    capturePostHogAiGeneration({ ...BASE, input: [{ role: "user", content: `token is ${leaked}` }] });
+    // scrubPostHogEvent is posthog-node's before_send, so assert on it directly the way the client would.
+    const event = scrubPostHogEvent(mocks.capture.mock.calls[0]?.[0] as never) as unknown as { properties: Record<string, unknown> };
+    const captured = JSON.stringify(event.properties.$ai_input);
+    expect(captured).not.toContain(leaked);
+    expect(captured).toContain("[redacted]");
   });
 
   it("mints a fresh, real UUID trace id on every call", async () => {

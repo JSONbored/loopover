@@ -740,6 +740,75 @@ describe("$ai_generation PostHog capture at the chain chokepoint (#8296)", () =>
     expect(posthogMocks.capture).not.toHaveBeenCalled();
   });
 
+  // #10218: content capture. ai.ts always passes the prompt/completion; posthog.ts decides whether it is
+  // emitted, so these drive the real chain with the flag on.
+  it("captures the flattened prompt and the completion when content capture is enabled (#10218)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "1" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "ollama", ai: { run: async () => ({ response: "no blockers found" }) } };
+    await createChainAi([provider]).run("m", {
+      messages: [
+        { role: "system", content: "you are a reviewer" },
+        { role: "user", content: "review this diff" },
+      ],
+    });
+    const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_input).toEqual([
+      { role: "system", content: "you are a reviewer" },
+      { role: "user", content: "review this diff" },
+    ]);
+    expect(properties.$ai_output_choices).toEqual([{ role: "assistant", content: "no blockers found" }]);
+  });
+
+  it("drops an image block rather than base64-encoding it into the event (#10218)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "1" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "ollama", ai: { run: async () => ({ response: "ok" }) } };
+    await createChainAi([provider]).run("m", {
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "describe this" },
+            { type: "image", mimeType: "image/png", data: "AAAABBBBCCCC" },
+          ],
+        },
+      ],
+    });
+    const captured = JSON.stringify(posthogMocks.capture.mock.calls[0]?.[0].properties.$ai_input);
+    expect(captured).toContain("describe this");
+    expect(captured).not.toContain("AAAABBBBCCCC");
+  });
+
+  it("reports an embedding request's raw texts as the input, under a synthetic user role (#10218)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "1" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "ollama", ai: { run: async () => ({ data: [[0.1]] }) } };
+    await createChainAi([provider]).run("m", { text: ["chunk one", "chunk two"] });
+    const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_input).toEqual([
+      { role: "user", content: "chunk one" },
+      { role: "user", content: "chunk two" },
+    ]);
+    // An embedding has no completion to report.
+    expect("$ai_output_choices" in properties).toBe(false);
+  });
+
+  it("captures the prompt on the FAILURE path, where it is what makes the failure diagnosable (#10218)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "1" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "claude-code", ai: { run: async () => { throw new Error("claude_stalled_no_output"); } } };
+    await expect(createChainAi([provider]).run("m", { prompt: "review this" })).rejects.toThrow(/stalled/);
+    const generation = posthogMocks.capture.mock.calls.find((call) => call[0].event === "$ai_generation")?.[0];
+    expect(generation.properties.$ai_input).toEqual([{ role: "user", content: "review this" }]);
+    expect("$ai_output_choices" in generation.properties).toBe(false);
+  });
+
+  it("emits NO content when the operator has not opted in, even though ai.ts always passes it (#10218)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "ollama", ai: { run: async () => ({ response: "secret completion" }) } };
+    await createChainAi([provider]).run("m", { prompt: "private diff" });
+    const keys = Object.keys(posthogMocks.capture.mock.calls[0]?.[0].properties);
+    expect(keys).not.toContain("$ai_input");
+    expect(keys).not.toContain("$ai_output_choices");
+  });
+
   it("stays a no-op end-to-end when PostHog is unconfigured (no posthog-node client constructed)", async () => {
     const provider = { name: "posthog-unconfigured-provider", ai: { run: async () => ({ response: "ok" }) } };
     await createChainAi([provider]).run("m", { prompt: "x" });

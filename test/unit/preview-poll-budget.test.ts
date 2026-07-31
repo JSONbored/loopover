@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { MAX_PREVIEW_POLL_ATTEMPTS, previewPollAttemptCount, recordPreviewPollAttempt } from "../../src/review/visual/preview-poll-budget";
+import {
+  captureRetryAttemptCount,
+  MAX_PREVIEW_POLL_ATTEMPTS,
+  previewPollAttemptCount,
+  recordCaptureRetryAttempt,
+  recordPreviewPollAttempt,
+} from "../../src/review/visual/preview-poll-budget";
 import { createTestEnv } from "../helpers/d1";
 
 const HEAD_SHA = "budget-head-sha-1234567890";
@@ -182,5 +188,42 @@ describe("previewPollAttemptCount / recordPreviewPollAttempt (#6323 -- durable p
     const env = createTestEnv({ REVIEW_AUDIT: store });
     await expect(recordPreviewPollAttempt(env, HEAD_SHA)).resolves.toBeUndefined();
     expect(putAttempts).toBe(3); // BUDGET_CAS_MAX_ATTEMPTS
+  });
+});
+
+describe("captureRetryAttemptCount / recordCaptureRetryAttempt (#10061 -- durable per-headSha capture-retry budget)", () => {
+  it("0 when REVIEW_AUDIT isn't configured", async () => {
+    const env = createTestEnv();
+    await expect(captureRetryAttemptCount(env, HEAD_SHA)).resolves.toBe(0);
+  });
+
+  it("0 when the stored object is malformed", async () => {
+    const env = createTestEnv({ REVIEW_AUDIT: memoryBudgetStore({ forcedValue: "{not valid json" }) });
+    await expect(captureRetryAttemptCount(env, HEAD_SHA)).resolves.toBe(0);
+  });
+
+  it("1 immediately after a single recordCaptureRetryAttempt, and accumulates across repeats", async () => {
+    const env = createTestEnv({ REVIEW_AUDIT: memoryBudgetStore() });
+    await recordCaptureRetryAttempt(env, HEAD_SHA);
+    await expect(captureRetryAttemptCount(env, HEAD_SHA)).resolves.toBe(1);
+    await recordCaptureRetryAttempt(env, HEAD_SHA);
+    await expect(captureRetryAttemptCount(env, HEAD_SHA)).resolves.toBe(2);
+  });
+
+  // #10061: the whole point of the new namespace is that a previewPending retry (already counted inside
+  // buildCapture, via recordPreviewPollAttempt) must never double-charge the capture-retry budget, and vice
+  // versa -- otherwise the two chains would silently steal attempts from each other instead of staying
+  // independently reasonable.
+  it("is independent of previewPollAttemptCount for the SAME head SHA -- recording one never advances the other", async () => {
+    const env = createTestEnv({ REVIEW_AUDIT: memoryBudgetStore() });
+    await recordPreviewPollAttempt(env, HEAD_SHA);
+    await recordPreviewPollAttempt(env, HEAD_SHA);
+    await expect(previewPollAttemptCount(env, HEAD_SHA)).resolves.toBe(2);
+    await expect(captureRetryAttemptCount(env, HEAD_SHA)).resolves.toBe(0);
+
+    await recordCaptureRetryAttempt(env, HEAD_SHA);
+    await expect(captureRetryAttemptCount(env, HEAD_SHA)).resolves.toBe(1);
+    // The preview-poll count must be untouched by the capture-retry write above.
+    await expect(previewPollAttemptCount(env, HEAD_SHA)).resolves.toBe(2);
   });
 });

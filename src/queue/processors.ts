@@ -489,7 +489,7 @@ export {
 export { processJob } from "./job-dispatch";
 import { isVisualPath } from "../review/visual/paths";
 import { buildCapture, fetchExternalScreenshotContentBlock, fetchShotContentBlock, hasSuccessfulBotCapture, resolveVisualRoutes, type CaptureInteractionRoute, type CaptureRoute } from "../review/visual/capture";
-import { MAX_PREVIEW_POLL_ATTEMPTS, PREVIEW_POLL_SECONDS } from "../review/visual/preview-poll-budget";
+import { captureRetryAttemptCount, MAX_CAPTURE_RETRY_ATTEMPTS, PREVIEW_POLL_SECONDS, recordCaptureRetryAttempt } from "../review/visual/preview-poll-budget";
 import { visualCaptureRetryLatchState, VISUAL_CAPTURE_RETRY_LATCH_MAX_AGE_MS } from "../review/visual/visual-capture-retry-latch";
 import {
   clearFallbackDispatchMarker,
@@ -9945,7 +9945,7 @@ async function logTypeLabelSkip(env: Env, repoFullName: string, pullNumber: numb
  *  (browserless down, timeout, a GitHub hiccup) -- neither means "this PR genuinely has no visual evidence",
  *  so neither should let the screenshotTableGate treat it that way. Persists visualCaptureRetryPendingSha for
  *  the current head ONLY when a retry was actually SENT (budget remaining, and the enqueue itself succeeded --
- *  #9876) -- once MAX_PREVIEW_POLL_ATTEMPTS is reached, the marker is cleared so the gate falls through to its
+ *  #9876) -- once MAX_CAPTURE_RETRY_ATTEMPTS is reached, the marker is cleared so the gate falls through to its
  *  normal (accurate) evaluation on this final attempt rather than holding the PR open forever. Best-effort:
  *  either write failing only means this ONE recovery chance is silently missed, never a crash.
  *
@@ -9963,7 +9963,17 @@ async function scheduleVisualCaptureRetry(
     previewPollAttempt: number;
   },
 ): Promise<void> {
-  if (args.previewPollAttempt >= MAX_PREVIEW_POLL_ATTEMPTS) {
+  // #10061: the exhaustion decision reads a durable, headSha-keyed counter (captureRetryAttemptCount) that
+  // THIS function itself increments below on every retry it actually enqueues -- not args.previewPollAttempt,
+  // the recapture-preview job chain's own payload field. Every OTHER trigger that reaches this function
+  // (CI-completion, deployment_status, the maintenance sweep) calls it without threading that field, so it
+  // always read back 0 and never bounded anything for them (the bug this fixes). The counter lives under its
+  // OWN R2 namespace in preview-poll-budget.ts, separate from buildCapture's own previewPending budget, so
+  // neither double-charges the other.
+  /* v8 ignore next -- a recapture-preview job is only ever minted for a PR that had a head SHA, so the falsy
+     arm is defensive; the clear/mark guards below carry the identical guard for the same reason. */
+  const captureRetryAttempts = args.pr.headSha ? await captureRetryAttemptCount(env, args.pr.headSha) : 0;
+  if (captureRetryAttempts >= MAX_CAPTURE_RETRY_ATTEMPTS) {
     // #9462: the budget is spent, so the marker the PREVIOUS attempt wrote must be cleared here. Returning
     // without clearing only skips re-writing it -- it left `visualCaptureRetryPendingSha === headSha` standing
     // forever (the sole other clear needs a successful capture, which by definition never came), which silently
@@ -10015,6 +10025,10 @@ async function scheduleVisualCaptureRetry(
     },
   );
   if (enqueued && args.pr.headSha) {
+    // #10061: increment the durable capture-retry budget for exactly the retries we actually sent, mirroring
+    // the mark write below -- best-effort in the same direction (a failed increment just means this attempt
+    // doesn't count toward the cap, degrading toward "keep trying" rather than "stuck").
+    await recordCaptureRetryAttempt(env, args.pr.headSha);
     await markPullRequestVisualCaptureRetryPending(env, args.repoFullName, args.pr.number, args.pr.headSha).catch((error) => {
       console.log(
         JSON.stringify({

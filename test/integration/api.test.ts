@@ -5844,6 +5844,45 @@ describe("api routes", () => {
     expect(JSON.stringify(mcpUsageEvents)).not.toMatch(/oktofeesh1|\/Users|github_pat|ghp_|source code|wallet|hotkey|raw trust/i);
   }, 15_000);
 
+  it("records a refused MCP tool call as a telemetry failure, not a success (#10035)", async () => {
+    const app = createApp();
+    const env = createTestEnv();
+    const { token: mcpSessionToken } = await createSessionForGitHubUser(env, { login: "jsonbored", id: 12345 });
+
+    const refusedToolCall = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: { ...mcpHeaders(env), authorization: `Bearer ${mcpSessionToken}` },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "wrong-login-10035",
+          method: "tools/call",
+          params: { name: "loopover_get_decision_pack", arguments: { login: "someone-else" } },
+        }),
+      },
+      env,
+    );
+    // enableJsonResponse means a refused tool call is still HTTP 200 -- the failure lives in the
+    // JSON-RPC body, not the status line.
+    expect(refusedToolCall.status).toBe(200);
+    await expect(mcpJson(refusedToolCall)).resolves.toMatchObject({
+      result: { isError: true, content: [expect.objectContaining({ text: expect.stringContaining("authenticated GitHub login") })] },
+    });
+
+    const usageEvents = await listProductUsageEvents(env, { limit: 20 });
+    expect(usageEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          surface: "mcp",
+          eventName: "mcp_tool_called",
+          outcome: "error",
+          metadata: expect.objectContaining({ toolName: "loopover_get_decision_pack", rpcMethod: "tools/call" }),
+        }),
+      ]),
+    );
+  });
+
   it("gates the MCP contributor profile and redacts miner financial fields", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "oktofeesh1,other" });

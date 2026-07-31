@@ -691,12 +691,17 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
   const server = mcp.createServer();
   try {
     const response = await createMcpHandler(server, { route: "/mcp", enableJsonResponse: true })(c.req.raw, c.env, executionCtx);
+    const statusOk = response.status < 400;
+    // #10035: `enableJsonResponse: true` above means a refused `tools/call` is still HTTP 200 -- the
+    // failure lives in the JSON-RPC body (`result.isError`), not the status line. Only a `tools/call`
+    // carries that body shape, so every other request keeps the status-derived outcome unchanged.
+    const ok = usageMetadata.rpcMethod === "tools/call" ? await resolveMcpToolCallOk(response, statusOk) : statusOk;
     if (typeof usageMetadata.toolName === "string") {
-      executionCtx.waitUntil(recordMcpToolTelemetry(c.env, usageMetadata.toolName, response.status < 400, Date.now() - startedAt));
+      executionCtx.waitUntil(recordMcpToolTelemetry(c.env, usageMetadata.toolName, ok, Date.now() - startedAt));
     }
     // #10175: PostHog's canonical protocol-level events. Only on a request that actually succeeded, so
     // a rejected handshake never inflates the session/client counts.
-    if (response.status < 400) {
+    if (statusOk) {
       if (usageMetadata.rpcMethod === "initialize") {
         recordMcpInitialize(c.env, defer, readInitializeHandshake(envelope), analyticsContext);
       } else if (usageMetadata.rpcMethod === "tools/list") {
@@ -712,7 +717,7 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
       route: "/mcp",
       actor: identity.actor,
       sessionId: identity.kind === "session" ? identity.session.id : undefined,
-      outcome: response.status >= 400 ? "error" : "success",
+      outcome: ok ? "success" : "error",
       latencyMs: Date.now() - startedAt,
       clientName: telemetry.clientName,
       clientVersion: telemetry.clientVersion,
@@ -791,6 +796,29 @@ type McpRequestEnvelope = {
 async function readMcpRequestEnvelope(request: Request): Promise<McpRequestEnvelope | null> {
   const body = await request.clone().json().catch(() => null);
   return body && typeof body === "object" ? (body as McpRequestEnvelope) : null;
+}
+
+/** The JSON-RPC response fields that reveal a `tools/call`'s CALLER-VISIBLE outcome: a top-level `error`
+ *  (the request itself was rejected) or a `result.isError` envelope (the tool answered no). Structural and
+ *  permissive like {@link McpRequestEnvelope}, for the same reason -- this is the MCP SDK's own response,
+ *  not a contract this module owns. */
+type McpToolCallResponseEnvelope = { error?: unknown; result?: { isError?: unknown } };
+
+/**
+ * Derive a `tools/call` response's `ok` from its JSON-RPC body rather than the HTTP status (#10035):
+ * `enableJsonResponse: true` above means a refused tool call is still a 200, so `statusOk` alone reports a
+ * clean sheet for every refusal. Reads the response the same way {@link readMcpRequestEnvelope} reads the
+ * request -- clone before consuming, so the caller's own response body is untouched -- and falls back to
+ * `statusOk` on any parse failure rather than throwing: telemetry must never turn a working call into a
+ * failed one (src/mcp/dispatch-telemetry.ts's own guarantee).
+ */
+export async function resolveMcpToolCallOk(response: Response, statusOk: boolean): Promise<boolean> {
+  const body = await response.clone().json().catch(() => null);
+  if (!body || typeof body !== "object") return statusOk;
+  const envelope = body as McpToolCallResponseEnvelope;
+  if (envelope.error) return false;
+  if (envelope.result?.isError === true) return false;
+  return statusOk;
 }
 
 function describeMcpUsageRequest(

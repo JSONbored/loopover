@@ -87,8 +87,11 @@ function describe(toolName: string): { category: string; excluded: boolean } {
  * Wrap one tool handler with dispatch telemetry.
  *
  * `ok` follows the CALLER-VISIBLE outcome: a handler that reports failure by returning an error
- * envelope did not succeed, even though it never threw. That matches what the HTTP-level telemetry
- * has always recorded (`response.status < 400`) so the two views of the same call agree.
+ * envelope did not succeed, even though it never threw. The HTTP-level telemetry in src/mcp/server.ts
+ * used to derive its own view from `response.status < 400` alone, which never agreed with this
+ * `ok` for a refused `tools/call` -- `enableJsonResponse: true` means a refusal is still HTTP 200.
+ * `handleMcpRequest` now reads the same JSON-RPC body this wrapper's caller produced (`result.isError`
+ * / a top-level `error`) before falling back to the status, so the two views agree there too.
  */
 export function instrumentToolDispatch<TArgs extends unknown[], TResult extends ToolResultLike>(
   toolName: string,

@@ -99,13 +99,14 @@ describe("detectRepoStack — Node (#4785)", () => {
   it("matches script name variants and ignores non-string script values", () => {
     const result = detect({
       "package.json": pkg({
-        scripts: { build: 123, "compile:prod": "tsc -p .", "test:ci": "vitest run", "lint:fix": "eslint --fix", fmt: "biome format" },
+        // #10006: use lint:ci (not lint:fix) — write-mode :fix segments are excluded from pattern fallback.
+        scripts: { build: 123, "compile:prod": "tsc -p .", "test:ci": "vitest run", "lint:ci": "eslint .", fmt: "biome format" },
       }),
     });
     expect(result).toMatchObject({
       buildCommand: "npm run compile:prod",
       testCommand: "npm run test:ci",
-      lintCommand: "npm run lint:fix",
+      lintCommand: "npm run lint:ci",
       formatCommand: "npm run fmt",
     });
   });
@@ -145,6 +146,54 @@ describe("detectRepoStack — Node (#4785)", () => {
 
   it("ignores a non-object scripts field", () => {
     expect(detect({ "package.json": pkg({ scripts: ["build"] }) })).toMatchObject({ buildCommand: null, testCommand: null });
+  });
+
+  it("REGRESSION: a watch-only or fix-only script is never selected as a validation command (#10006)", () => {
+    expect(detect({ "package.json": pkg({ scripts: { "test:watch": "vitest" } }) })).toMatchObject({
+      testCommand: null,
+    });
+    expect(detect({ "package.json": pkg({ scripts: { "build:watch": "tsc -w" } }) })).toMatchObject({
+      buildCommand: null,
+    });
+    expect(detect({ "package.json": pkg({ scripts: { "lint:fix": "eslint --fix ." } }) })).toMatchObject({
+      lintCommand: null,
+    });
+    expect(detect({ "package.json": pkg({ scripts: { "format:write": "prettier -w ." } }) })).toMatchObject({
+      formatCommand: null,
+    });
+    // Other excluded segments (dev/serve/update/u) — whole-segment match only.
+    expect(detect({ "package.json": pkg({ scripts: { "test:dev": "vitest" } }) })).toMatchObject({ testCommand: null });
+    expect(detect({ "package.json": pkg({ scripts: { "test:serve": "vitest" } }) })).toMatchObject({ testCommand: null });
+    expect(detect({ "package.json": pkg({ scripts: { "test:update": "vitest -u" } }) })).toMatchObject({ testCommand: null });
+    expect(detect({ "package.json": pkg({ scripts: { "test:u": "vitest -u" } }) })).toMatchObject({ testCommand: null });
+    // Near-miss: fixtures is not an excluded segment.
+    expect(detect({ "package.json": pkg({ scripts: { "test:fixtures": "node gen.js" } }) })).toMatchObject({
+      testCommand: "npm run test:fixtures",
+    });
+  });
+
+  it("exact-name scripts still win over watch/fix siblings (#10006)", () => {
+    expect(
+      detect({
+        "package.json": pkg({ scripts: { test: "vitest run", "test:watch": "vitest" } }),
+      }),
+    ).toMatchObject({ testCommand: "npm test" });
+    expect(
+      detect({
+        "package.json": pkg({ scripts: { lint: "eslint .", "lint:fix": "eslint --fix ." } }),
+      }),
+    ).toMatchObject({ lintCommand: "npm run lint" });
+  });
+
+  it("picks the lexicographically smallest non-excluded pattern candidate regardless of key order (#10006)", () => {
+    const unitFirst = detect({
+      "package.json": pkg({ scripts: { "test:unit": "a", "test:e2e": "b" } }),
+    });
+    const e2eFirst = detect({
+      "package.json": pkg({ scripts: { "test:e2e": "b", "test:unit": "a" } }),
+    });
+    expect(unitFirst).toMatchObject({ testCommand: "npm run test:e2e" });
+    expect(e2eFirst).toMatchObject({ testCommand: "npm run test:e2e" });
   });
 });
 

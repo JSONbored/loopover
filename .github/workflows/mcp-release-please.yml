@@ -178,31 +178,31 @@ jobs:
         if: ${{ steps.release.outputs['packages/loopover-mcp--release_created'] == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run publish-mcp.yml --ref "${{ steps.release.outputs['packages/loopover-mcp--tag_name'] }}" -f released_by_release_please=true
+        run: gh workflow run publish-mcp.yml --ref "${{ steps.release.outputs['packages/loopover-mcp--tag_name'] }}" -f released_by_release_please=true -f dispatched_by_automation=true
 
       - name: Dispatch Engine publish
         if: ${{ steps.release.outputs['packages/loopover-engine--release_created'] == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run publish-engine.yml --ref "${{ steps.release.outputs['packages/loopover-engine--tag_name'] }}" -f released_by_release_please=true
+        run: gh workflow run publish-engine.yml --ref "${{ steps.release.outputs['packages/loopover-engine--tag_name'] }}" -f released_by_release_please=true -f dispatched_by_automation=true
 
       - name: Dispatch Contract publish
         if: ${{ steps.release.outputs['packages/loopover-contract--release_created'] == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run publish-contract.yml --ref "${{ steps.release.outputs['packages/loopover-contract--tag_name'] }}" -f released_by_release_please=true
+        run: gh workflow run publish-contract.yml --ref "${{ steps.release.outputs['packages/loopover-contract--tag_name'] }}" -f released_by_release_please=true -f dispatched_by_automation=true
 
       - name: Dispatch Miner publish
         if: ${{ steps.release.outputs['packages/loopover-miner--release_created'] == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run publish-miner.yml --ref "${{ steps.release.outputs['packages/loopover-miner--tag_name'] }}" -f released_by_release_please=true
+        run: gh workflow run publish-miner.yml --ref "${{ steps.release.outputs['packages/loopover-miner--tag_name'] }}" -f released_by_release_please=true -f dispatched_by_automation=true
 
       - name: Dispatch UI Kit publish
         if: ${{ steps.release.outputs['packages/loopover-ui-kit--release_created'] == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run publish-ui-kit.yml --ref "${{ steps.release.outputs['packages/loopover-ui-kit--tag_name'] }}" -f released_by_release_please=true
+        run: gh workflow run publish-ui-kit.yml --ref "${{ steps.release.outputs['packages/loopover-ui-kit--tag_name'] }}" -f released_by_release_please=true -f dispatched_by_automation=true
 
   # Self-heal for a known, reproducible, upstream googleapis/release-please limitation
   # (googleapis/release-please#1946, #1444, #1406 -- all the same "There are untagged, merged release
@@ -282,7 +282,7 @@ jobs:
             # `before_ts` only on the rare case the URL wasn't returned.
             local before_ts run_id dispatch_output
             before_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            dispatch_output="$(gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" 2>&1)"
+            dispatch_output="$(gh workflow run "$workflow" --repo "$GITHUB_REPOSITORY" -f dispatched_by_automation=true 2>&1)"
             echo "$dispatch_output"
             run_id="$(printf '%s' "$dispatch_output" | grep -oE '/runs/[0-9]+' | grep -oE '[0-9]+' | tail -1 || true)"
             if [ -z "$run_id" ]; then

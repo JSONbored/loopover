@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { getDb } from "../../src/db/client";
-import { dedupeSignalSnapshots, pruneExpiredRecords, RETENTION_COMPOSITE_PK_TABLES, RETENTION_PK_COLUMN, RETENTION_POLICY, retentionCutoffIsoForTable } from "../../src/db/retention";
+import { dedupeSignalSnapshots, pruneExpiredRecords, RETENTION_COMPOSITE_PK_TABLES, RETENTION_PK_COLUMN, RETENTION_POLICY, retentionCutoffIsoForTable, retentionDaysForTable } from "../../src/db/retention";
 import { computeFleetAnalytics } from "../../src/orb/analytics";
 import { listFleetInstances } from "../../src/orb/fleet-admin";
 import { getOrbGlobalStats } from "../../src/orb/outcomes";
@@ -416,6 +416,69 @@ describe("pruneExpiredRecords", () => {
     expect(results[0]?.deleted).toBe(2);
     const remaining = await env.DB.prepare("SELECT count(*) AS n FROM ai_review_cache").first<{ n: number }>();
     expect(remaining?.n).toBe(0);
+  });
+
+  // #10058: submitter_outcome_log and alert_dedup_claims both store CURRENT_TIMESTAMP-format timestamps
+  // (`'YYYY-MM-DD HH:MM:SS'`, no `T`, no zone) because both writers omit the column and let the DB default
+  // supply it -- unlike every other policy table's ISO-8601 `column`. pruneExpiredRecords binds an ISO cutoff
+  // and compares as text; seeding in the exact writer-produced format (not `daysAgo`'s ISO string) is what
+  // proves the comparison still resolves the right rows on both sides of the cutoff.
+  it("prunes submitter_outcome_log older than its 90-day window and keeps recent rows (#10058)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO submitter_outcome_log (project, submitter, pull_number, outcome, recorded_at)
+       VALUES
+         ('acme/widgets', 'alice', 1, 'merged', '2026-01-01 00:00:00'),
+         ('acme/widgets', 'alice', 2, 'merged', '2026-06-12 00:00:00')`,
+    ).run();
+
+    const rule = RETENTION_POLICY.find((r) => r.table === "submitter_outcome_log");
+    expect(rule).toEqual({ table: "submitter_outcome_log", column: "recorded_at", days: 90 });
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [rule!] });
+    expect(results[0]?.deleted).toBe(1);
+    const rows = await env.DB.prepare("SELECT pull_number FROM submitter_outcome_log").all<{ pull_number: number }>();
+    expect(rows.results.map((row) => row.pull_number)).toEqual([2]);
+  });
+
+  it("prunes alert_dedup_claims older than its 14-day window and keeps recent rows (#10058)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO alert_dedup_claims (id, project, target_id, notification_key, status, created_at)
+       VALUES
+         ('adc-old', 'acme/widgets', '__healthcheck__', 'hash-old', 'sent', '2026-01-01 00:00:00'),
+         ('adc-recent', 'acme/widgets', '__healthcheck__', 'hash-recent', 'sent', '2026-06-12 00:00:00')`,
+    ).run();
+
+    const rule = RETENTION_POLICY.find((r) => r.table === "alert_dedup_claims");
+    expect(rule).toEqual({ table: "alert_dedup_claims", column: "created_at", days: 14 });
+
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [rule!] });
+    expect(results[0]?.deleted).toBe(1);
+    const rows = await env.DB.prepare("SELECT id FROM alert_dedup_claims").all<{ id: string }>();
+    expect(rows.results.map((row) => row.id)).toEqual(["adc-recent"]);
+  });
+
+  // pkColumnFor's two arms (src/db/retention.ts:211): alert_dedup_claims has a genuine `id` mapping in
+  // RETENTION_PK_COLUMN, while submitter_outcome_log's composite PK means it falls back to the `?? "rowid"`
+  // arm. A small batchSize also proves the batched-delete loop's `changes < batchSize` exit (line 420) fires
+  // on a real partial-then-final pair of iterations, not only on an empty first pass.
+  it("submitter_outcome_log's composite PK falls back to rowid ordering across multiple batches (#10058)", async () => {
+    const env = createTestEnv();
+    await env.DB.prepare(
+      `INSERT INTO submitter_outcome_log (project, submitter, pull_number, outcome, recorded_at)
+       VALUES
+         ('acme/widgets', 'alice', 1, 'merged', '2026-01-01 00:00:00'),
+         ('acme/widgets', 'alice', 2, 'closed', '2026-01-02 00:00:00'),
+         ('acme/widgets', 'alice', 3, 'merged', '2026-01-03 00:00:00'),
+         ('acme/widgets', 'bob', 1, 'merged', '2026-06-12 00:00:00')`,
+    ).run();
+
+    const rule = RETENTION_POLICY.find((r) => r.table === "submitter_outcome_log");
+    const results = await pruneExpiredRecords(env, { nowMs: NOW, policy: [rule!], batchSize: 2 });
+    expect(results[0]?.deleted).toBe(3);
+    const remaining = await env.DB.prepare("SELECT count(*) AS n FROM submitter_outcome_log").first<{ n: number }>();
+    expect(remaining?.n).toBe(1);
   });
 });
 
@@ -975,6 +1038,13 @@ describe("retentionCutoffIsoForTable (#9474)", () => {
     expect(cutoff).not.toBeNull();
     // Within a second of a locally computed 180-day cutoff -- pins the default-arg arm without clock flake.
     expect(Math.abs(Date.parse(cutoff!) - (Date.now() - 180 * 86_400_000))).toBeLessThan(1000);
+  });
+
+  // #10058 regression: pins the two windows so a future edit that drops or shrinks either entry fails loudly
+  // rather than silently restoring unbounded growth on submitter_outcome_log or alert_dedup_claims.
+  it("submitter_outcome_log is 90 days and alert_dedup_claims is 14 days (#10058)", () => {
+    expect(retentionDaysForTable("submitter_outcome_log")).toBe(90);
+    expect(retentionDaysForTable("alert_dedup_claims")).toBe(14);
   });
 });
 

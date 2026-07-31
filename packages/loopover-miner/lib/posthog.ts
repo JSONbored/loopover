@@ -114,20 +114,24 @@ export function captureMinerPostHogEvent(event: string, properties: Record<strin
   }
 }
 
-/** One AMS coding-agent driver attempt (#8296 AMS follow-up, epic #8286 track 3). All three driver types
- *  (claude-cli/codex-cli/agent-sdk, packages/loopover-engine's CodingAgentDriver) report a single blended
- *  `costUsd`/`tokensUsed` -- unlike ORB's self-host `AiUsage`, there is no input/output split available at
- *  this layer, so this deliberately does NOT populate `$ai_input_tokens`/`$ai_output_tokens` with a
- *  fabricated split (they stay 0, honestly representing "no split known"); the real total rides in the
- *  plain `tokens_used` property instead. `$ai_total_cost_usd` IS one of PostHog's own recognized
- *  `$ai_generation` properties and needs no split, so it's populated directly when known. No field here
- *  ever carries prompt/diff/transcript content -- metadata only, same policy as the ORB side. */
+/** One AMS coding-agent driver attempt (#8296 AMS follow-up, epic #8286 track 3).
+ *
+ *  #10198: `inputTokens`/`outputTokens` are the REAL split, now that `CodingAgentDriverResult` carries it.
+ *  Both engine drivers already read the two sides from their provider and then summed them away, so this
+ *  event could only report a blended `tokens_used` -- a property PostHog's own cost views do not read, which
+ *  made every miner generation register as 0 input and 0 output tokens there. The split is still never
+ *  FABRICATED: a provider that reports only a blended total leaves both absent, and the blended figure keeps
+ *  riding in `tokens_used` on its own. `$ai_total_cost_usd` is one of PostHog's recognized properties and
+ *  needs no split, so it is populated directly when known. No field here ever carries prompt/diff/transcript
+ *  content -- metadata only, same policy as the ORB side. */
 export type MinerAiGenerationEvent = {
   provider: string;
   model: string;
   latencyMs: number;
   isError: boolean;
   totalTokens?: number | undefined;
+  inputTokens?: number | undefined;
+  outputTokens?: number | undefined;
   totalCostUsd?: number | undefined;
   error?: unknown;
 };
@@ -143,8 +147,11 @@ export function captureMinerPostHogAiGeneration(event: MinerAiGenerationEvent): 
     // PostHog's own $ai_generation schema reports latency in SECONDS, not ms.
     $ai_latency: event.latencyMs / 1000,
     $ai_http_status: event.isError ? 500 : 200,
-    $ai_input_tokens: 0,
-    $ai_output_tokens: 0,
+    // #10198: the provider's real split when it reported one. 0 remains the honest fallback for a provider
+    // that only ever reports a blended total -- it means "no split known", and `tokens_used` below still
+    // carries the figure that IS known.
+    $ai_input_tokens: Number.isFinite(event.inputTokens) ? event.inputTokens : 0,
+    $ai_output_tokens: Number.isFinite(event.outputTokens) ? event.outputTokens : 0,
     $ai_is_error: event.isError,
   };
   if (Number.isFinite(event.totalTokens)) properties.tokens_used = event.totalTokens;

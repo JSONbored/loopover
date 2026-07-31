@@ -155,9 +155,9 @@ describe("loopover-miner opt-in PostHog (#8292, epic #8286)", () => {
       expect(posthogMock.capture).not.toHaveBeenCalled();
     });
 
-    it("captures a well-formed $ai_generation event with a combined tokens_used property (no fabricated input/output split)", async () => {
+    it("captures a well-formed $ai_generation event, keeping the blended tokens_used alongside the real split", async () => {
       await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
-      captureMinerPostHogAiGeneration({ ...BASE, totalTokens: 1500, totalCostUsd: 0.05 });
+      captureMinerPostHogAiGeneration({ ...BASE, totalTokens: 1500, inputTokens: 1200, outputTokens: 300, totalCostUsd: 0.05 });
       expect(posthogMock.capture).toHaveBeenCalledTimes(1);
       const call = posthogMock.capture.mock.calls[0]?.[0];
       expect(call.event).toBe("$ai_generation");
@@ -166,13 +166,30 @@ describe("loopover-miner opt-in PostHog (#8292, epic #8286)", () => {
       expect(call.properties.$ai_provider).toBe("claude-cli");
       expect(call.properties.$ai_latency).toBe(2.5);
       expect(call.properties.$ai_http_status).toBe(200);
-      expect(call.properties.$ai_input_tokens).toBe(0);
-      expect(call.properties.$ai_output_tokens).toBe(0);
+      // #10198: these are the properties PostHog's own cost views read. They were hardcoded to 0, so the
+      // miner's whole spend was invisible there while the real figure sat in the non-standard tokens_used.
+      expect(call.properties.$ai_input_tokens).toBe(1200);
+      expect(call.properties.$ai_output_tokens).toBe(300);
       expect(call.properties.tokens_used).toBe(1500);
       expect(call.properties.$ai_total_cost_usd).toBe(0.05);
       expect(call.properties.$ai_is_error).toBe(false);
       expect("$ai_input" in call.properties).toBe(false);
       expect("$ai_output_choices" in call.properties).toBe(false);
+    });
+
+    it("falls back to 0 for a side the driver could not report, without losing the blended total (#10198)", async () => {
+      // A provider that reports only a blended total genuinely has no split; 0 here means "no split known",
+      // and tokens_used still carries the figure that IS known.
+      await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+      captureMinerPostHogAiGeneration({ ...BASE, totalTokens: 999 });
+      captureMinerPostHogAiGeneration({ ...BASE, totalTokens: 999, inputTokens: 800, outputTokens: Number.NaN });
+      const blended = posthogMock.capture.mock.calls[0]?.[0].properties;
+      expect(blended.$ai_input_tokens).toBe(0);
+      expect(blended.$ai_output_tokens).toBe(0);
+      expect(blended.tokens_used).toBe(999);
+      const partial = posthogMock.capture.mock.calls[1]?.[0].properties;
+      expect(partial.$ai_input_tokens).toBe(800);
+      expect(partial.$ai_output_tokens).toBe(0);
     });
 
     it("omits tokens_used/$ai_total_cost_usd when neither is supplied or finite", async () => {

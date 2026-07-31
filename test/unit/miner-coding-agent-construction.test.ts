@@ -211,12 +211,12 @@ describe("withCodingAgentAiGenerationCapture (#8296 AMS follow-up)", () => {
     expect(posthogMock.capture).not.toHaveBeenCalled();
   });
 
-  it("captures a successful attempt's cost/tokens as a combined figure (no fabricated input/output split)", async () => {
+  it("forwards the driver's cost, blended tokens AND input/output split to the capture (#10198)", async () => {
     await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
     const driver = withCodingAgentAiGenerationCapture(
       "claude-cli",
       "claude-sonnet-5",
-      driverReturning({ ok: true, changedFiles: ["a.ts"], summary: "done", transcript: "", costUsd: 0.12, tokensUsed: 4000 }),
+      driverReturning({ ok: true, changedFiles: ["a.ts"], summary: "done", transcript: "", costUsd: 0.12, tokensUsed: 4000, inputTokens: 3200, outputTokens: 800 }),
     );
     await driver.run(task);
     expect(posthogMock.capture).toHaveBeenCalledTimes(1);
@@ -225,7 +225,23 @@ describe("withCodingAgentAiGenerationCapture (#8296 AMS follow-up)", () => {
     expect(properties.$ai_model).toBe("claude-sonnet-5");
     expect(properties.$ai_is_error).toBe(false);
     expect(properties.tokens_used).toBe(4000);
+    expect(properties.$ai_input_tokens).toBe(3200);
+    expect(properties.$ai_output_tokens).toBe(800);
     expect(properties.$ai_total_cost_usd).toBe(0.12);
+  });
+
+  it("leaves the split at 0 for a driver that reports only a blended total (#10198)", async () => {
+    await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+    const driver = withCodingAgentAiGenerationCapture(
+      "codex-cli",
+      "gpt-5-codex",
+      driverReturning({ ok: true, changedFiles: [], summary: "done", transcript: "", tokensUsed: 4000 }),
+    );
+    await driver.run(task);
+    const { properties } = posthogMock.capture.mock.calls[0]?.[0];
+    expect(properties.tokens_used).toBe(4000);
+    expect(properties.$ai_input_tokens).toBe(0);
+    expect(properties.$ai_output_tokens).toBe(0);
   });
 
   it("captures result.ok:false as a failure, using the driver's own error string -- no exception thrown", async () => {

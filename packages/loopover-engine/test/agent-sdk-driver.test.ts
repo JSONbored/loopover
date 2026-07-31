@@ -397,3 +397,79 @@ test("constructs with no options, defaulting to the real SDK query loop without 
   const driver = createAgentSdkCodingAgentDriver();
   assert.equal(typeof driver.run, "function");
 });
+
+// #10198: the driver used to sum input/output tokens and DISCARD the two sides. The miner's PostHog capture
+// therefore had nothing to put in `$ai_input_tokens`/`$ai_output_tokens` -- the properties PostHog's own cost
+// views read -- so every miner generation registered there as 0 input and 0 output tokens.
+test("reports the input/output split alongside the blended total (#10198)", async () => {
+  const driver = driverWith({
+    query: queryYielding([
+      {
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        num_turns: 2,
+        result: "done",
+        usage: { input_tokens: 1000, output_tokens: 234 },
+      },
+    ]),
+  });
+
+  const result = await driver.run(task);
+
+  assert.equal(result.tokensUsed, 1234);
+  assert.equal(result.inputTokens, 1000);
+  assert.equal(result.outputTokens, 234);
+});
+
+test("the split rides the failure results too, exactly like tokensUsed and costUsd (#10198)", async () => {
+  const driver = driverWith({
+    query: queryYielding([
+      {
+        type: "result",
+        subtype: "error_max_turns",
+        is_error: true,
+        num_turns: 6,
+        total_cost_usd: 0.05,
+        usage: { input_tokens: 500, output_tokens: 100 },
+      },
+    ]),
+  });
+
+  const result = await driver.run(task);
+
+  assert.equal(result.ok, false);
+  assert.equal(result.inputTokens, 500);
+  assert.equal(result.outputTokens, 100);
+});
+
+test("a side the provider did not report stays ABSENT rather than being zeroed (#10198)", async () => {
+  // A fabricated 0 is indistinguishable from a real 0 once aggregated, so an out-of-contract or missing side
+  // must not become one -- the blended total still counts only what was real.
+  const onlyInput = driverWith({
+    query: queryYielding([
+      { type: "result", subtype: "success", is_error: false, num_turns: 2, result: "done", usage: { input_tokens: 100 } },
+    ]),
+  });
+  const onlyInputResult = await onlyInput.run(task);
+  assert.equal(onlyInputResult.tokensUsed, 100);
+  assert.equal(onlyInputResult.inputTokens, 100);
+  assert.equal(onlyInputResult.outputTokens, undefined);
+
+  const badOutput = driverWith({
+    query: queryYielding([
+      { type: "result", subtype: "success", is_error: false, num_turns: 2, result: "done", usage: { input_tokens: 100, output_tokens: -5 } },
+    ]),
+  });
+  const badOutputResult = await badOutput.run(task);
+  assert.equal(badOutputResult.tokensUsed, 100);
+  assert.equal(badOutputResult.outputTokens, undefined);
+
+  const noUsage = driverWith({
+    query: queryYielding([{ type: "result", subtype: "success", is_error: false, num_turns: 2, result: "done" }]),
+  });
+  const noUsageResult = await noUsage.run(task);
+  assert.equal(noUsageResult.tokensUsed, undefined);
+  assert.equal(noUsageResult.inputTokens, undefined);
+  assert.equal(noUsageResult.outputTokens, undefined);
+});

@@ -78,9 +78,9 @@ export function createRealCliSubprocessSpawn(): CliSubprocessSpawnFn {
  *  vendor client -- the same "no cross-package import" boundary this file's own header already documents
  *  for its spawn implementation): this is the miner CLI's own host-bound construction site, exactly where
  *  `src/selfhost/`'s equivalent ORB-side wrapper (`withAiGenerationCapture`, ai.ts) lives relative to its
- *  own chain. `CodingAgentDriverResult` carries a single blended `costUsd`/`tokensUsed` (no input/output
- *  split, unlike ORB's `AiUsage`) -- captureMinerPostHogAiGeneration is deliberately built for that exact
- *  shape, never fabricating a split its source data doesn't have. A driver failure is reported via
+ *  own chain. `CodingAgentDriverResult` carries the blended `costUsd`/`tokensUsed` plus the input/output
+ *  split when the provider reported one (#10198); all of it is forwarded verbatim, and a driver that knows
+ *  no split simply leaves those fields absent rather than having one fabricated. A driver failure is reported via
  *  `result.ok === false` (the real, observed contract every shipped driver follows -- none of them throw
  *  for an ordinary task failure), with a genuine thrown exception handled defensively on top. */
 export function withCodingAgentAiGenerationCapture(providerName: string, model: string, driver: CodingAgentDriver): CodingAgentDriver {
@@ -95,6 +95,8 @@ export function withCodingAgentAiGenerationCapture(providerName: string, model: 
           latencyMs: Date.now() - startedAtMs,
           isError: !result.ok,
           totalTokens: result.tokensUsed,
+          inputTokens: result.inputTokens,
+          outputTokens: result.outputTokens,
           totalCostUsd: result.costUsd,
           error: result.ok ? undefined : result.error,
         });

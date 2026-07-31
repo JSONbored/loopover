@@ -585,29 +585,64 @@ function guardrailHoldReason(changedPaths: string[], hardGuardrailGlobs: string[
  * PURE + idempotent: with `holdOnly` false this returns the plan UNCHANGED (byte-identical, the common path);
  * with it true and no merge planned it is also a no-op. Only ever makes the system MORE cautious.
  */
+/**
+ * Add the manual-review hold label to a plan, dropping any planned REMOVE of that same label (#10164).
+ *
+ * Three post-plan transforms surface this hold -- the merge circuit-breaker, the close circuit-breaker, and
+ * the close-audit holdout (#8831, in review/close-audit-holdout.ts). All three had the same idempotency
+ * check, and all three had the same hole in it: it looks for an existing ADD (`labelOp !== "remove"`) and
+ * therefore does not notice a planned REMOVE. When the planner has already decided to release the label --
+ * which section 1b does whenever nothing it knows about still wants a hold -- the transform appended an add
+ * NEXT TO that remove. One plan, both operations, same label.
+ *
+ * The executor performs both, so the label is removed and re-added every pass, forever. Observed on
+ * JSONbored/loopover#10155 flapping roughly every 90 seconds: four add/remove cycles in eight minutes,
+ * burning GitHub write quota and notifying subscribers each time.
+ *
+ * Section 1b cannot fix this from its side. Its doc calls `noManualReviewHoldWanted` "every reason that would
+ * ADD this label, in one place", but these three run AFTER the planner, so their reasons are not knowable
+ * there -- #8831 in particular was added long after that condition was written. Resolving the contradiction
+ * where the add happens is what makes it structural instead of a list someone must remember to extend.
+ *
+ * The remove is dropped rather than the add skipped: a transform only reaches here because it has just
+ * diverted a merge or a close, so the hold it is surfacing is strictly newer information than the release the
+ * planner decided before that diversion.
+ */
+export function withManualReviewHoldLabel(
+  planned: PlannedAgentAction[],
+  labelSettings: AgentDispositionLabelSettings,
+  action: Omit<PlannedAgentAction, "actionClass" | "label" | "labelOp">,
+): PlannedAgentAction[] {
+  const labels = resolveAgentDispositionLabels(labelSettings);
+  if (labels.manualReview === null) return planned;
+  const isThisLabel = (candidate: PlannedAgentAction): boolean =>
+    candidate.actionClass === "label" && candidate.label === labels.manualReview;
+  // Drop a planned release of the very label we are about to add -- the contradiction this exists to prevent.
+  const next = planned.filter((candidate) => !(isThisLabel(candidate) && candidate.labelOp === "remove"));
+  if (next.some((candidate) => isThisLabel(candidate) && candidate.labelOp !== "remove")) return next; // already adding it
+  next.push({ ...action, actionClass: "label", label: labels.manualReview, labelOp: "add" });
+  return next;
+}
+
 export function downgradeMergeToHold(planned: PlannedAgentAction[], holdOnly: boolean, labelSettings: AgentDispositionLabelSettings = {}): PlannedAgentAction[] {
   if (!holdOnly || !planned.some((action) => action.actionClass === "merge")) return planned;
   const labels = resolveAgentDispositionLabels(labelSettings);
   const next = planned.filter((action) => action.actionClass !== "merge");
   // The dropped merge implies the PR is review-good — re-label it for manual review (replacing a stale
   // ready-to-merge promise) so the held PR is clearly flagged for a person. Idempotent: only add when absent.
-  const alreadyNeedsReview = labels.manualReview !== null && next.some((action) => action.actionClass === "label" && action.label === labels.manualReview && action.labelOp !== "remove");
   const stagedMerge = planned.find((action) => action.actionClass === "merge");
-  if (labels.manualReview !== null && !alreadyNeedsReview) {
-    next.push({
-      actionClass: "label",
-      // Authorized by `merge` (the class actually being downgraded here), NOT `review_state_label` — mirrors
-      // the guardrail-hold label above (#label-scoping) so this hold label posts whenever merge autonomy is
-      // acting, independent of whether the repo has separately opted into the advisory review_state_label class.
-      autonomyClass: "merge",
-      requiresApproval: stagedMerge?.requiresApproval ?? false,
-      reason: "accuracy circuit-breaker engaged (merge precision dropped) — would-merge held for human review",
-      label: labels.manualReview,
-      labelOp: "add",
-    });
-  }
+  // #10164: via withManualReviewHoldLabel so a planned RELEASE of this same label is dropped rather than
+  // fought with, which is what made the label flap every pass.
+  const withHold = withManualReviewHoldLabel(next, labelSettings, {
+    // Authorized by `merge` (the class actually being downgraded here), NOT `review_state_label` — mirrors
+    // the guardrail-hold label above (#label-scoping) so this hold label posts whenever merge autonomy is
+    // acting, independent of whether the repo has separately opted into the advisory review_state_label class.
+    autonomyClass: "merge",
+    requiresApproval: stagedMerge?.requiresApproval ?? false,
+    reason: "accuracy circuit-breaker engaged (merge precision dropped) — would-merge held for human review",
+  });
   // Drop any ready-to-merge label add (the auto-merge it promised is now suppressed).
-  return next.filter((action) => !(labels.readyToMerge !== null && action.actionClass === "label" && action.label === labels.readyToMerge && action.labelOp !== "remove"));
+  return withHold.filter((action) => !(labels.readyToMerge !== null && action.actionClass === "label" && action.label === labels.readyToMerge && action.labelOp !== "remove"));
 }
 
 /**
@@ -684,7 +719,6 @@ export function downgradeCloseToHold(
     isBreakerEligibleClose(action) &&
     (noConcreteEvidenceUnderProjectBreaker(action) || (action.closeConcreteEvidence === true && everyJustifyingCodeUntrustworthy(action)));
   if (!planned.some(isDowngradableClose)) return planned;
-  const labels = resolveAgentDispositionLabels(labelSettings);
   // #9158 (label-close-split-brain, breaker-downgrade half): dropping a close here must ALSO drop any label
   // COUPLED to it -- the anti-abuse label pushed alongside a blacklist/contributor_cap/review_nag/copycat
   // close carries the SAME closeKind and is inseparable metadata on that close (see planContributorCapClose's/
@@ -704,22 +738,16 @@ export function downgradeCloseToHold(
   const next = planned.filter((action) => !isDowngradableClose(action) && !isOrphanedCoupledLabel(action));
   // The dropped close means the PR is held for a person — surface the manual-review label. Idempotent: only add when
   // absent (e.g. a guarded-but-passing plan may already carry it). NEVER adds a merge/approve.
-  const alreadyNeedsReview = labels.manualReview !== null && next.some((action) => action.actionClass === "label" && action.label === labels.manualReview && action.labelOp !== "remove");
   const droppedClose = planned.find(isDowngradableClose);
-  if (labels.manualReview !== null && !alreadyNeedsReview) {
-    next.push({
-      actionClass: "label",
-      // Authorized by `close` (the class actually being downgraded here), NOT `review_state_label` — same
-      // reasoning as downgradeMergeToHold's own manual-review label above (#label-scoping).
-      autonomyClass: "close",
-      requiresApproval: droppedClose?.requiresApproval ?? false,
-      reason: "close-precision circuit-breaker engaged — would-close held for human review",
-      label: labels.manualReview,
-      labelOp: "add",
-    });
-  }
+  // #10164: see withManualReviewHoldLabel — drops a planned release of this label instead of racing it.
   // KEEP the changes-requested label (it correctly states the PR is not mergeable) and every other action.
-  return next;
+  return withManualReviewHoldLabel(next, labelSettings, {
+    // Authorized by `close` (the class actually being downgraded here), NOT `review_state_label` — same
+    // reasoning as downgradeMergeToHold's own manual-review label above (#label-scoping).
+    autonomyClass: "close",
+    requiresApproval: droppedClose?.requiresApproval ?? false,
+    reason: "close-precision circuit-breaker engaged — would-close held for human review",
+  });
 }
 
 function closeMessage(reasons: string[]): string {

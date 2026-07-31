@@ -2338,6 +2338,41 @@ describe("#9679: --dry-run makes zero event-ledger writes", () => {
     }
   });
 
+  it("REGRESSION (#10009): the earned min-rank override is also applied when the flag lives in .github/loopover-ams.yml", async () => {
+    const { mkdirSync, mkdtempSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const { initEventLedger, resolveEventLedgerDbPath } = await import("../../packages/loopover-miner/lib/event-ledger");
+    const { MINER_AMS_MIN_RANK_APPLIED_EVENT } = await import("../../packages/loopover-miner/lib/ams-calibration");
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const dir = mkdtempSync(join(tmpdir(), "miner-discover-dryrun-override-github-"));
+    try {
+      const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+      const ledger = initEventLedger(resolveEventLedgerDbPath(env));
+      ledger.appendEvent({ type: MINER_AMS_MIN_RANK_APPLIED_EVENT, payload: { value: 0.2 } });
+      ledger.close();
+      // Non-canonical discovery candidate -- before #10009 readMinRankAutotuneEnabled only ever probed the
+      // canonical .loopover-ams.yml, so this flag was silently ignored here even though resolveAmsPolicy
+      // (attempt-time) already honoured it.
+      mkdirSync(join(dir, ".github"), { recursive: true });
+      writeFileSync(join(dir, ".github", "loopover-ams.yml"), "minRankAutotuneEnabled: true\n");
+
+      const enqueueSpy = enqueueOnce();
+      const exitCode = await runDiscover(["acme/widgets", "--dry-run", "--json"], {
+        nowMs: NOW,
+        env,
+        fetchCandidateIssuesWithSummary: fanOut,
+        enqueueRankedDiscovery: enqueueSpy as never,
+      });
+      expect(exitCode).toBe(0);
+      const minRankSeen = ((enqueueSpy.mock.calls[0] as unknown[] | undefined)?.[1] as { minRankScore?: number } | undefined)?.minRankScore;
+      expect(minRankSeen).toBe(0.2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("the non-dry-run path is unchanged: it still opens (and creates) the event ledger", async () => {
     const { mkdtempSync, rmSync, existsSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");

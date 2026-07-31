@@ -93,8 +93,12 @@ function readLocalAmsPolicyContent(resolved: NormalizedAmsPolicyOptions): string
 
 /** Path of the AMS policy file to read: an explicit `LOOPOVER_MINER_AMS_POLICY_PATH` override (when present) points
  *  at one exact file and bypasses discovery; otherwise the first {@link AMS_POLICY_SPEC_FILENAMES} candidate that
- *  exists in the operator config directory (first match wins), or null when none of them exist. */
-function resolveLocalAmsPolicyReadPath(
+ *  exists in the operator config directory (first match wins), or null when none of them exist.
+ *
+ *  Exported so every synchronous local reader (e.g. `readMinRankAutotuneEnabled` in ams-calibration.ts) shares
+ *  this exact resolution instead of recreating its own probe loop over `AMS_POLICY_SPEC_FILENAMES` (#8863's fix,
+ *  #10009's sibling gap). */
+export function resolveLocalAmsPolicyReadPath(
   env: Record<string, string | undefined>,
   existsSync: (path: string) => boolean,
 ): string | null {

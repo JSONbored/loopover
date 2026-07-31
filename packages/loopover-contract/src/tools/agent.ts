@@ -30,7 +30,7 @@ export const IntakeIdeaInput = z.object({
   id: z.string().optional(),
   title: z.string().optional(),
   body: z.string().optional(),
-  targetRepo: z.string().optional(),
+  targetRepo: z.union([z.string(), z.looseObject({})]).optional(),
   constraints: z.array(z.string()).max(50).optional(),
   acceptanceHints: z.array(z.string()).max(50).optional(),
   priority: z.string().optional(),

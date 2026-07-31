@@ -159,9 +159,10 @@ describe("runPurge --dry-run (#5564, #6599)", () => {
     cache.put(emptyContributionProfile("acme/other", "2026-07-17T00:00:00.000Z"));
     cache.close();
 
+    // Real repo_scope shape (#10001): `<apiBaseUrl>::owner/repo`, never a bare `owner/repo`.
     const policyVerdictCache = initPolicyVerdictCacheStore(policyVerdictCacheDbPath);
-    policyVerdictCache.put("acme/widgets", "AI-USAGE.md", '"v1"', POLICY_VERDICT);
-    policyVerdictCache.put("acme/other", "AI-USAGE.md", '"v2"', POLICY_VERDICT);
+    policyVerdictCache.put("https://api.github.com::acme/widgets", "AI-USAGE.md", '"v1"', POLICY_VERDICT);
+    policyVerdictCache.put("https://api.github.com::acme/other", "AI-USAGE.md", '"v2"', POLICY_VERDICT);
     policyVerdictCache.close();
 
     // governor-state's two repo-scoped tables. reputation history for acme/widgets is recorded under TWO
@@ -846,9 +847,10 @@ describe("runPurge (real, #5564, #6599)", () => {
     const root = tempDir();
     const policyDbPath = join(root, "policy-verdict-cache.sqlite3");
 
+    // Real repo_scope shape (#10001): `<apiBaseUrl>::owner/repo`, never a bare `owner/repo`.
     const seeded = initPolicyVerdictCacheStore(policyDbPath);
-    seeded.put("acme/widgets", "AI-USAGE.md", '"v1"', POLICY_VERDICT);
-    seeded.put("acme/other", "AI-USAGE.md", '"v2"', POLICY_VERDICT);
+    seeded.put("https://api.github.com::acme/widgets", "AI-USAGE.md", '"v1"', POLICY_VERDICT);
+    seeded.put("https://api.github.com::acme/other", "AI-USAGE.md", '"v2"', POLICY_VERDICT);
     seeded.close();
 
     const policyStore = initPolicyVerdictCacheStore(policyDbPath);
@@ -874,8 +876,93 @@ describe("runPurge (real, #5564, #6599)", () => {
     ).toBe(0);
     const summary = JSON.parse(String(log.mock.calls[0]?.[0]));
     expect(summary.stores).toContainEqual({ store: "policy-verdict-cache", purged: 1 });
-    expect(policyStore.get("acme/widgets")).toBeNull();
-    expect(policyStore.get("acme/other")).not.toBeNull();
+    expect(policyStore.get("https://api.github.com::acme/widgets")).toBeNull();
+    expect(policyStore.get("https://api.github.com::acme/other")).not.toBeNull();
+  });
+
+  it("REGRESSION (#10001): purge deletes policy-verdict-cache rows keyed by the real apiBaseUrl::owner/repo scope, across every host, and dry-run previews the identical count", () => {
+    const root = tempDir();
+    const policyDbPath = join(root, "policy-verdict-cache.sqlite3");
+
+    const seeded = initPolicyVerdictCacheStore(policyDbPath);
+    // Same repo cached under TWO forge hosts -- both must be swept.
+    seeded.put("https://api.github.com::acme/widgets", "AI-USAGE.md", '"v1"', POLICY_VERDICT);
+    seeded.put("https://forge.example.com::acme/widgets", "AI-USAGE.md", '"v2"', POLICY_VERDICT);
+    // A different repo on the same host must survive.
+    seeded.put("https://api.github.com::acme/other", "AI-USAGE.md", '"v3"', POLICY_VERDICT);
+    seeded.close();
+
+    const otherStoresResolveDbPaths = {
+      "claim-ledger": () => join(root, "claim-ledger.sqlite3"),
+      "event-ledger": () => join(root, "event-ledger.sqlite3"),
+      "governor-ledger": () => join(root, "governor-ledger.sqlite3"),
+      "prediction-ledger": () => join(root, "prediction-ledger.sqlite3"),
+      "portfolio-queue": () => join(root, "portfolio-queue.sqlite3"),
+      "run-state": () => join(root, "run-state.sqlite3"),
+      "contribution-profile-cache": () => join(root, "contribution-profile-cache.sqlite3"),
+      "policy-verdict-cache": () => policyDbPath,
+      "governor-state": () => join(root, "governor-state.sqlite3"),
+      "ranked-candidates": () => join(root, "ranked-candidates.sqlite3"),
+      "replay-snapshot": () => join(root, "replay-snapshot.sqlite3"),
+      "deny-hook-synthesis": () => join(root, "deny-hook-synthesis.sqlite3"),
+      "worktree-allocator": () => join(root, "worktree-allocator.sqlite3"),
+      "attempt-log": () => join(root, "attempt-log.sqlite3"),
+    };
+
+    const dryRunLog = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(runPurge(["--repo", "acme/widgets", "--dry-run", "--json"], { resolveDbPaths: otherStoresResolveDbPaths })).toBe(0);
+    const dryRunResult = JSON.parse(String(dryRunLog.mock.calls[0]?.[0]));
+    expect(dryRunResult.stores).toContainEqual({ store: "policy-verdict-cache", wouldPurge: 2 });
+    dryRunLog.mockRestore();
+
+    const policyStore = initPolicyVerdictCacheStore(policyDbPath);
+    closeables.push(policyStore);
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(
+      runPurge(["--repo", "acme/widgets", "--json"], {
+        openClaimLedger: () => fakeStore(0),
+        initEventLedger: () => fakeStore(0),
+        initGovernorLedger: () => fakeStore(0),
+        initPredictionLedger: () => fakeStore(0),
+        initPortfolioQueueStore: () => fakeStore(0),
+        initRunStateStore: () => fakeStore(0),
+        initContributionProfileCache: () => fakeStore(0),
+        openGovernorState: () => fakeStore(0),
+        initPolicyVerdictCacheStore: () => policyStore,
+        initRankedCandidatesStore: () => fakeStore(0),
+        openReplaySnapshotStore: () => fakeStore(0),
+        initDenyHookSynthesisStore: () => fakeStore(0),
+        openWorktreeAllocator: () => fakeStore(0),
+      } as never),
+    ).toBe(0);
+    const summary = JSON.parse(String(log.mock.calls[0]?.[0]));
+    // Both host-scoped rows counted (dry-run and real purge agree), the other repo is untouched.
+    expect(summary.stores).toContainEqual({ store: "policy-verdict-cache", purged: 2 });
+    expect(policyStore.get("https://api.github.com::acme/widgets")).toBeNull();
+    expect(policyStore.get("https://forge.example.com::acme/widgets")).toBeNull();
+    expect(policyStore.get("https://api.github.com::acme/other")).not.toBeNull();
+  });
+
+  it("REGRESSION (#10001): a `_` or `%` in the repo name is matched literally, never as a LIKE wildcard", () => {
+    const root = tempDir();
+    const policyDbPath = join(root, "policy-verdict-cache.sqlite3");
+
+    const seeded = initPolicyVerdictCacheStore(policyDbPath);
+    seeded.put("https://api.github.com::acme/my_repo", "AI-USAGE.md", '"v1"', POLICY_VERDICT);
+    // `_` is a LIKE single-character wildcard -- an unescaped match would also hit this row.
+    seeded.put("https://api.github.com::acme/myXrepo", "AI-USAGE.md", '"v2"', POLICY_VERDICT);
+    // A longer name sharing the same `owner/repo` prefix must survive too (suffix match, not prefix match).
+    seeded.put("https://api.github.com::acme/my_repo-extra", "AI-USAGE.md", '"v3"', POLICY_VERDICT);
+    seeded.close();
+
+    const policyStore = initPolicyVerdictCacheStore(policyDbPath);
+    closeables.push(policyStore);
+
+    expect(policyStore.purgeByRepo("acme/my_repo")).toBe(1);
+    expect(policyStore.get("https://api.github.com::acme/my_repo")).toBeNull();
+    expect(policyStore.get("https://api.github.com::acme/myXrepo")).not.toBeNull();
+    expect(policyStore.get("https://api.github.com::acme/my_repo-extra")).not.toBeNull();
   });
 
   it("REGRESSION (#8009): really deletes ranked-candidates, replay-snapshot, and deny-hook-synthesis rows across api_base_urls, leaving other repos intact", () => {

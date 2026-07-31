@@ -1,5 +1,17 @@
 # Changelog
 
+## [3.19.0](https://github.com/JSONbored/loopover/compare/engine-v3.18.4...engine-v3.19.0) (2026-07-31)
+
+
+### Features
+
+* **gate:** let maintainers be exempt from the missing-linked-issue penalty ([#10160](https://github.com/JSONbored/loopover/issues/10160)) ([8e4dccb](https://github.com/JSONbored/loopover/commit/8e4dccbf11c967550948b9894c373e708df6a0b0)), closes [#10158](https://github.com/JSONbored/loopover/issues/10158)
+
+
+### Fixes
+
+* **engine:** add the missing documentation_url snake_case alias, derive the urlFields pairing test ([#10149](https://github.com/JSONbored/loopover/issues/10149)) ([9383b83](https://github.com/JSONbored/loopover/commit/9383b8356603ee7f1299c30099a090009ab669f1))
+
 ## [3.18.4](https://github.com/JSONbored/loopover/compare/engine-v3.18.3...engine-v3.18.4) (2026-07-31)
 
 

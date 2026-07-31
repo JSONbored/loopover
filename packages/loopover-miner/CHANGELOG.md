@@ -1,5 +1,65 @@
 # Changelog
 
+## [3.19.0](https://github.com/JSONbored/loopover/compare/miner-v3.18.4...miner-v3.19.0) (2026-07-31)
+
+
+### Features
+
+* **ams:** migrate the AMS miner MCP server to @loopover/contract ([#9542](https://github.com/JSONbored/loopover/issues/9542)) ([9713f26](https://github.com/JSONbored/loopover/commit/9713f261c38b382b1d79039ae2b745a38565e40f)), closes [#9536](https://github.com/JSONbored/loopover/issues/9536)
+* **contract:** give the request schemas, the control plane, and the self-host endpoints one contract ([#9750](https://github.com/JSONbored/loopover/issues/9750)) ([#9757](https://github.com/JSONbored/loopover/issues/9757)) ([5220a35](https://github.com/JSONbored/loopover/commit/5220a359f7cfa82421267212581f161d0085d2cb))
+* **mcp:** discovery surfaces, registry publish, and the stdio gateway ([#9526](https://github.com/JSONbored/loopover/issues/9526)) ([#9735](https://github.com/JSONbored/loopover/issues/9735)) ([983ea31](https://github.com/JSONbored/loopover/commit/983ea31fee115e2f63e5bfbf23c858d50c539012))
+* **mcp:** generate every tool, CLI, client, and docs surface from the contract ([#9521](https://github.com/JSONbored/loopover/issues/9521)) ([#9590](https://github.com/JSONbored/loopover/issues/9590)) ([bd139a5](https://github.com/JSONbored/loopover/commit/bd139a5d5d6a95bfd4c38b46ab29ec73b43af8e3))
+* **mcp:** migrate the stdio MCP server's 102 tools to @loopover/contract ([#9537](https://github.com/JSONbored/loopover/issues/9537)) ([#9565](https://github.com/JSONbored/loopover/issues/9565)) ([d5a5a8f](https://github.com/JSONbored/loopover/commit/d5a5a8fe5c6cb3b2541689d85baf1c3d0a45c422))
+* **mcp:** one registry-driven telemetry contract at all three dispatch chokepoints ([#9525](https://github.com/JSONbored/loopover/issues/9525)) ([#9579](https://github.com/JSONbored/loopover/issues/9579)) ([06a090f](https://github.com/JSONbored/loopover/commit/06a090f9a6ab786165ab76fc741e2697c0ff1ae1))
+* **miner:** add a `claim reclaim` CLI to expire orphaned soft-claims ([#9717](https://github.com/JSONbored/loopover/issues/9717)) ([edf0883](https://github.com/JSONbored/loopover/commit/edf0883f15392c34ec590ace68cb104060e87b1c)), closes [#9686](https://github.com/JSONbored/loopover/issues/9686)
+* **orb:** salvageability axis — hold fixable, well-authored PRs instead of one-shot-closing ([#8986](https://github.com/JSONbored/loopover/issues/8986)) ([7fd84ff](https://github.com/JSONbored/loopover/commit/7fd84ffa37fc940d83c52eb265d5c4b8e6b8798a))
+
+
+### Fixes
+
+* **engine:** surface discovery-index contract-version skew and actually send the version on the query wire ([#9631](https://github.com/JSONbored/loopover/issues/9631)) ([80827df](https://github.com/JSONbored/loopover/commit/80827dfed397bc0e4a657dfb4e71414125975601)), closes [#9615](https://github.com/JSONbored/loopover/issues/9615)
+* **engine:** treat an Infinity WIP cap as uncapped, not collapsed to 0 ([#8945](https://github.com/JSONbored/loopover/issues/8945)) ([6aaea39](https://github.com/JSONbored/loopover/commit/6aaea393908631dbd0639d6d182c35c209ce6d40))
+* **eval:** commit each published score to the corpus a reader can download ([#9811](https://github.com/JSONbored/loopover/issues/9811)) ([bcdd2f8](https://github.com/JSONbored/loopover/commit/bcdd2f8285b21fa5ad4c52e20efa44f16e77947f)), closes [#9805](https://github.com/JSONbored/loopover/issues/9805)
+* **miner:** a rejecting captureError must not skip runCleanup()/exit in the crash handlers ([#9688](https://github.com/JSONbored/loopover/issues/9688)) ([#9902](https://github.com/JSONbored/loopover/issues/9902)) ([36dd1c8](https://github.com/JSONbored/loopover/commit/36dd1c8bd11b0af85402e7f9e7adcb66a26ef5e9))
+* **miner:** add blocked_own_open_pr to the AttemptCliResult union ([#9384](https://github.com/JSONbored/loopover/issues/9384)) ([42e1015](https://github.com/JSONbored/loopover/commit/42e101538c8146ad8b3378af67dbf2e3bf5ff06d))
+* **miner:** AmsPolicySpec parse warnings are computed but never surfaced to the operator ([#8978](https://github.com/JSONbored/loopover/issues/8978)) ([3369ebc](https://github.com/JSONbored/loopover/commit/3369ebc0d11ab28fd90e4668e5999b61ca8cc864)), closes [#8853](https://github.com/JSONbored/loopover/issues/8853)
+* **miner:** carry assignees through normalizeCandidate in opportunity-ranker ([#9343](https://github.com/JSONbored/loopover/issues/9343)) ([b554957](https://github.com/JSONbored/loopover/commit/b55495787b7a420072e219af4d6468b2d98fe149))
+* **miner:** check out baseBranch on the fresh-clone path so the first attempt succeeds ([#9682](https://github.com/JSONbored/loopover/issues/9682)) ([#9904](https://github.com/JSONbored/loopover/issues/9904)) ([25dcdd8](https://github.com/JSONbored/loopover/commit/25dcdd87b847882047d5c7d06decb8c5004a78c4))
+* **miner:** close the clone-lock TOCTOU on a still-empty lockfile ([#9681](https://github.com/JSONbored/loopover/issues/9681)) ([#9915](https://github.com/JSONbored/loopover/issues/9915)) ([1e1b004](https://github.com/JSONbored/loopover/commit/1e1b00417c5851e6f59dc2b09b3cf2988b0653a2))
+* **miner:** compare-and-set the orphan reclaim so a stale probe cannot free a live re-acquired slot ([#8992](https://github.com/JSONbored/loopover/issues/8992)) ([8444812](https://github.com/JSONbored/loopover/commit/8444812e52f909aca383ee8785d891bc3364aeab))
+* **miner:** drift-guard doctor store-integrity list against migrate STORES ([#9689](https://github.com/JSONbored/loopover/issues/9689)) ([#9899](https://github.com/JSONbored/loopover/issues/9899)) ([49a3b17](https://github.com/JSONbored/loopover/commit/49a3b172f3e052bd8b9f70b9a26dde99274b25ac))
+* **miner:** drop discovery-index candidates whose repo bans AI contributions ([#9680](https://github.com/JSONbored/loopover/issues/9680)) ([#9908](https://github.com/JSONbored/loopover/issues/9908)) ([93e80ac](https://github.com/JSONbored/loopover/commit/93e80ac13a83469ca00a70f6972b4789e8a78543))
+* **miner:** fail acquire() on an attempt_id/repo mismatch ([#8964](https://github.com/JSONbored/loopover/issues/8964)) ([266b07d](https://github.com/JSONbored/loopover/commit/266b07d1a408d4af656ae16fabce2c6e6aabfb69))
+* **miner:** fall back to global config.apiUrl in loopoverApiUrl ([#8937](https://github.com/JSONbored/loopover/issues/8937)) ([4dfe15d](https://github.com/JSONbored/loopover/commit/4dfe15d12e2b433e75cc75a909422bd21d708776))
+* **miner:** governor reputation-history read-modify-write is unguarded, unlike sibling scalar-state writes ([#8988](https://github.com/JSONbored/loopover/issues/8988)) ([62e6d25](https://github.com/JSONbored/loopover/commit/62e6d2541a9f6f38ed9ed952788db3b928b81e26)), closes [#8855](https://github.com/JSONbored/loopover/issues/8855)
+* **miner:** governor-chokepoint-persisted's load-evaluate-save cycle isn't atomic ([#8993](https://github.com/JSONbored/loopover/issues/8993)) ([49a27c2](https://github.com/JSONbored/loopover/commit/49a27c2fb217ef75de329cafe8ab13ef3a11740e)), closes [#8856](https://github.com/JSONbored/loopover/issues/8856)
+* **miner:** guard runAttempt's worktree cleanup and hosted claim release in the finally block ([#9677](https://github.com/JSONbored/loopover/issues/9677)) ([#9912](https://github.com/JSONbored/loopover/issues/9912)) ([84553fc](https://github.com/JSONbored/loopover/commit/84553fc5c998af6e7ced8539030857905ecf831f))
+* **miner:** index-parse deny-hooks --history and route failures through the shared CLI error contract ([#9886](https://github.com/JSONbored/loopover/issues/9886)) ([3bee8cc](https://github.com/JSONbored/loopover/commit/3bee8cc500c4bbfb2d4cc394b7ac1f175965dc10))
+* **miner:** log discovery-index query failures before failing open ([#9346](https://github.com/JSONbored/loopover/issues/9346)) ([ab6a44d](https://github.com/JSONbored/loopover/commit/ab6a44d31d0f3053bf99969428a1a5a56244ef54))
+* **miner:** make governor-run-halt's ledger recording a genuine transition detector ([#9367](https://github.com/JSONbored/loopover/issues/9367)) ([6c220b3](https://github.com/JSONbored/loopover/commit/6c220b3c86d0bc23f9f1ca93f2b4d9ab126d1ad9))
+* **miner:** printHelp() omits the working `deny-hooks` subcommand ([#8933](https://github.com/JSONbored/loopover/issues/8933)) ([1eeaae1](https://github.com/JSONbored/loopover/commit/1eeaae18c16d36e7e4805a887440006688f18377)), closes [#8851](https://github.com/JSONbored/loopover/issues/8851)
+* **miner:** re-entry must transition the dequeued repo's run-state, and no-op on an empty queue ([#9887](https://github.com/JSONbored/loopover/issues/9887)) ([027e797](https://github.com/JSONbored/loopover/commit/027e797cdbb12f3e81da811d85e584c65ac39f12))
+* **miner:** reject a portfolio-queue identifier containing the '::' composite-id separator ([#8925](https://github.com/JSONbored/loopover/issues/8925)) ([32ee72e](https://github.com/JSONbored/loopover/commit/32ee72e560117300a242993403a92af4219f2df3))
+* **miner:** replace never-registered `run` with `loop` in fleet-mode manifests ([#9524](https://github.com/JSONbored/loopover/issues/9524)) ([6bb8588](https://github.com/JSONbored/loopover/commit/6bb85884b555eeb7eadd5ee99e1dd56cd1c143b1))
+* **miner:** scope checkSubmissionFreshness's claim match to the candidate's own forge host ([#10104](https://github.com/JSONbored/loopover/issues/10104)) ([1a3a502](https://github.com/JSONbored/loopover/commit/1a3a502827250ae7934132301fae64ce494bff1c))
+* **miner:** self-review-context never supplies recent-merged-PR history, contradicting its own "same fidelity" claim ([#8969](https://github.com/JSONbored/loopover/issues/8969)) ([987f7ce](https://github.com/JSONbored/loopover/commit/987f7ce7f5c5c0810e4d56c2e0279783fe021c55)), closes [#8852](https://github.com/JSONbored/loopover/issues/8852)
+* **miner:** surface verification payload in attempt-cli JSON for verification_failed ([#9372](https://github.com/JSONbored/loopover/issues/9372)) ([a58ce3d](https://github.com/JSONbored/loopover/commit/a58ce3dc0525bff8b71b620dea044080dc74b25f))
+* **miner:** treat an absent x-ratelimit-remaining header as unknown, not a 0 budget ([#9678](https://github.com/JSONbored/loopover/issues/9678)) ([#9897](https://github.com/JSONbored/loopover/issues/9897)) ([dcd70b9](https://github.com/JSONbored/loopover/commit/dcd70b9a498553aac9df0733c85b16d853999214))
+* **miner:** wire AMS policy resolver to the documented discovery order ([#9106](https://github.com/JSONbored/loopover/issues/9106)) ([f2f32cc](https://github.com/JSONbored/loopover/commit/f2f32cc7634dfda63af5bb2e9a8baf792ff153a5)), closes [#8863](https://github.com/JSONbored/loopover/issues/8863)
+* **miner:** wire isValidRepoSegment into the seven remaining owner/repo parsers ([#9911](https://github.com/JSONbored/loopover/issues/9911)) ([e150198](https://github.com/JSONbored/loopover/commit/e150198542d131437bb5d423734705fada2133af))
+* **orb:** webhook redelivery, reputation cadence, DB retention, and gate severity fidelity ([#9237](https://github.com/JSONbored/loopover/issues/9237)) ([d2c8d27](https://github.com/JSONbored/loopover/commit/d2c8d2754b251736d69bb2a80460d65193545263))
+* **packaging:** ship the LICENSE @loopover/miner declares, and assert it everywhere ([#9787](https://github.com/JSONbored/loopover/issues/9787)) ([122a283](https://github.com/JSONbored/loopover/commit/122a283da3312190f0e361f7e8e345f4a1c296b9))
+* **review:** auto-clear stale manual-review lock-contention hold; sync engine gate-decision twin ([#9107](https://github.com/JSONbored/loopover/issues/9107)) ([6aacf08](https://github.com/JSONbored/loopover/commit/6aacf087b6fe487b9dd3131f7957d54041baa933))
+* **review:** default cross-issue copycat/reward-farming dedupe on for reward-eligible repos ([#9226](https://github.com/JSONbored/loopover/issues/9226)) ([b251912](https://github.com/JSONbored/loopover/commit/b2519125de34dd32d350c2dbeb26ef453d02a710))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.18.4 to ^3.19.0
+    * @loopover/engine bumped from ^3.18.4 to ^3.19.0
+
 ## [3.18.4](https://github.com/JSONbored/loopover/compare/miner-v3.18.3...miner-v3.18.4) (2026-07-31)
 
 

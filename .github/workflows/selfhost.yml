@@ -195,6 +195,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
+      # Needed only for `node --experimental-strip-types` below (the escalation is a .ts script), and pinned to
+      # the same SHA as the other 32 setup-node uses in this repo -- including build-boot above -- so this job
+      # adds no dependency that was not already here.
+      #
+      # A scanner flagged this as a filesystem-read risk, citing `__tests__/authutil.test.ts` in setup-node's
+      # own repository. That is a test fixture, not runtime behaviour, and the feature it covers -- writing an
+      # auth token into .npmrc -- only engages when `registry-url` is supplied. It is supplied in the five
+      # publish-*.yml workflows and deliberately not here, so that path is inert in this job. Reviewed and
+      # dismissed rather than silenced; re-check if this step ever gains `registry-url`.
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .nvmrc

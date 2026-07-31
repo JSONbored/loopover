@@ -79,12 +79,27 @@ describe("derivePrDisposition — module-level invariants over the full state ma
     expect(conflict.wouldMerge).toBe(false);
   });
 
-  it("isCommentMergeStateHeld equals derivePrDisposition(...).commentMergeStateHeld for every raw state (equal by construction, pinned)", () => {
+  it("isCommentMergeStateHeld equals derivePrDisposition(...).commentMergeStateHeld for every raw state x every unstableExplainedByIgnoredChecks value (equal by construction, pinned, #10055)", () => {
+    // #10055: the loop used to iterate only the raw state, so it only ever exercised the arm where
+    // unstableExplainedByIgnoredChecks is absent -- the one arm the two functions still agreed on. A
+    // helper that dropped the flag entirely could pass this test forever. Iterating all three flag values
+    // for every state is what makes "equal by construction" (the JSDoc's own claim) an actual proof.
     for (const raw of RAW_STATES) {
-      expect(isCommentMergeStateHeld(raw), `state=${String(raw)}`).toBe(
-        derivePrDisposition(dispositionInput({ mergeableState: raw })).commentMergeStateHeld,
-      );
+      for (const flag of [undefined, false, true] as const) {
+        expect(isCommentMergeStateHeld(raw, flag), `state=${String(raw)} flag=${String(flag)}`).toBe(
+          derivePrDisposition(dispositionInput({ mergeableState: raw, unstableExplainedByIgnoredChecks: flag })).commentMergeStateHeld,
+        );
+      }
     }
+  });
+
+  it("REGRESSION (#10055): an unstable state fully explained by the ignore list is not comment-held either", () => {
+    // The exact pair that disagreed before this fix: isCommentMergeStateHeld ignored the flag entirely and
+    // returned true, while the planner's derivePrDisposition had already stopped holding.
+    expect(isCommentMergeStateHeld("unstable", true)).toBe(false);
+    expect(
+      derivePrDisposition(dispositionInput({ mergeableState: "unstable", unstableExplainedByIgnoredChecks: true })).commentMergeStateHeld,
+    ).toBe(false);
   });
 });
 
@@ -216,6 +231,19 @@ describe("unstable explained only by an IGNORED check (#9810 follow-up)", () => 
     // unstable, so mergeableState stays the gate on wouldMerge — the PR approves rather than merging.
     const d = derivePrDisposition({ ...base, mergeableState: "unstable", unstableExplainedByIgnoredChecks: true });
     expect(d.wouldApprove).toBe(true);
+  });
+
+  it("deriveUnifiedStatus (unified-comment.ts's ready→held branch) agrees with the resolved boolean on both arms (#10055)", () => {
+    // An otherwise-"ready" status must stay ready once the ignore list explains the instability...
+    const stillReady = deriveUnifiedStatus(
+      readyInput({ mergeStateLabel: "unstable", mergeStateHeld: isCommentMergeStateHeld("unstable", true) } as never),
+    );
+    expect(stillReady).toBe("ready");
+    // ...and must still downgrade to held when the same raw label is NOT explained by an ignored check.
+    const stillHeld = deriveUnifiedStatus(
+      readyInput({ mergeStateLabel: "unstable", mergeStateHeld: isCommentMergeStateHeld("unstable", false) } as never),
+    );
+    expect(stillHeld).toBe("held");
   });
 });
 

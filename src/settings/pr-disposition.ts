@@ -165,8 +165,18 @@ export function derivePrDisposition(input: PrDispositionInput): PrDisposition {
 /** The comment surface's merge-state downgrade as a standalone predicate (#8759): the bridge
  *  (unified-comment-bridge.ts) resolves it and passes the BOOLEAN into the self-contained renderer, so
  *  unified-comment.ts keeps its zero-import contract while reading the same interpretation the planner
- *  uses. Equal by construction to derivePrDisposition(...).commentMergeStateHeld. */
-export function isCommentMergeStateHeld(state: string | null | undefined): boolean {
+ *  uses. Equal by construction to derivePrDisposition(...).commentMergeStateHeld -- including the
+ *  `unstableExplainedByIgnoredChecks` term (#10055): a state-only interpretation of "unstable" went stale
+ *  the moment that flag was added to PrDispositionInput, since a caller that never threads it through still
+ *  held a PR the planner had already stopped holding. `unstableExplainedByIgnoredChecks` defaults to
+ *  `undefined` so every existing caller that cannot resolve it keeps today's behaviour byte-identical. */
+export function isCommentMergeStateHeld(
+  state: string | null | undefined,
+  unstableExplainedByIgnoredChecks?: boolean | undefined,
+): boolean {
   const mergeable = assessMergeableState(state);
-  return mergeable === "conflict" || mergeable === "behind" || mergeable === "unstable";
+  // Identical to derivePrDisposition's own `unstableHolds` term (line 132) by design -- the two must never
+  // be able to drift back apart.
+  const unstableHolds = mergeable === "unstable" && unstableExplainedByIgnoredChecks !== true;
+  return mergeable === "conflict" || mergeable === "behind" || unstableHolds;
 }

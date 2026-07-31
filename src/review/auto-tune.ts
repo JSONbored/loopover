@@ -196,7 +196,9 @@ export interface CloseAutoTuneAction {
 export function planCloseAutoTune(report: GateEvalReport): CloseAutoTuneAction[] {
   const actions: CloseAutoTuneAction[] = [];
   for (const r of report.rows) {
-    if (r.wouldClose < AUTOTUNE_MIN_DECIDED || r.weightedClosePrecision == null) continue;
+    // #10014: null-check FIRST, mirroring planAutoTune -- weightedClosePrecision is non-null iff wouldClose > 0,
+    // so once wouldClose >= 10 the old trailing `== null` disjunct was unreachable (a dead branch arm).
+    if (r.weightedClosePrecision == null || r.wouldClose < AUTOTUNE_MIN_DECIDED) continue;
     if (r.weightedClosePrecision < AUTOTUNE_CLOSE_PRECISION_FLOOR) {
       actions.push({
         project: r.project,
@@ -298,37 +300,44 @@ const pct = (x: number | null): string => (x == null ? "—" : `${Math.round(x *
 export function computeTuningRecommendations(report: GateEvalReport): TuningRec[] {
   const recs: TuningRec[] = [];
   for (const r of report.rows) {
-    if (r.decided < MIN_DECIDED) {
-      recs.push({ project: r.project, severity: "info", message: `Only ${r.decided} decided PR(s) — collect more shadow data before judging accuracy or flipping live.` });
+    // #10014: gate on wouldMerge, not decided, matching planAutoTune's documented rule -- precision is measured
+    // over WOULD-MERGE predictions, so a project of many holds + one wrong would-merge (9 holds + 1) is a
+    // statistically meaningless sample the breaker already refuses; gating on `decided` let it clear the floor.
+    if (r.wouldMerge < MIN_DECIDED) {
+      recs.push({ project: r.project, severity: "info", message: `Only ${r.wouldMerge} would-merge PR(s) — collect more shadow data before judging accuracy or flipping live.` });
       continue;
     }
     let flagged = false;
-    // The dangerous error: would auto-merge something the human closed.
-    if (r.mergePrecision != null && r.mergePrecision < RISK_MERGE_PRECISION) {
+    // The dangerous error: would auto-merge something the human closed. #10014: read the reversal-WEIGHTED
+    // precision the breaker gates on (weightedMergePrecision is non-null iff wouldMerge > 0), so a project whose
+    // merges are systematically reverted -- weighted at ~0 while raw stays healthy -- is flagged, not silent.
+    if (r.weightedMergePrecision != null && r.weightedMergePrecision < RISK_MERGE_PRECISION) {
       recs.push({
         project: r.project,
         severity: "warn",
-        message: `Would have auto-merged ${r.mergeFalse} PR(s) the human CLOSED (merge precision ${pct(r.mergePrecision)} over ${r.wouldMerge}). Tighten guardrails / raise the confidence floor — do NOT flip live yet.`,
+        message: `Would have auto-merged ${r.mergeFalse} PR(s) the human CLOSED (weighted merge precision ${pct(r.weightedMergePrecision)} over ${r.wouldMerge}). Tighten guardrails / raise the confidence floor — do NOT flip live yet.`,
         // Auto-applicable TIGHTENING: raise the floor to the ready bar. Strictly safe-ward (a higher floor can
         // only HOLD more would-merges, never add a bad one), so the apply path can promote it. (#275)
         overridePayload: { confidenceFloor: TIGHTEN_FLOOR_TARGET },
       });
       flagged = true;
     }
-    // The other error: would auto-close something the human merged.
-    if (r.closeFalse > 0) {
+    // The other error: would auto-close something the human merged. #10014: gate on the weighted close precision
+    // against the same floor the close breaker uses, not the raw closeFalse count (which the weighted number
+    // discounts). closeFalse is still named in the message, but no longer the condition.
+    if (r.weightedClosePrecision != null && r.weightedClosePrecision < AUTOTUNE_CLOSE_PRECISION_FLOOR) {
       recs.push({
         project: r.project,
         severity: "warn",
-        message: `Would have auto-closed ${r.closeFalse} PR(s) the human MERGED (close precision ${pct(r.closePrecision)}). Loosen the area/scope rules before going live.`,
+        message: `Would have auto-closed ${r.closeFalse} PR(s) the human MERGED (weighted close precision ${pct(r.weightedClosePrecision)}). Loosen the area/scope rules before going live.`,
       });
       flagged = true;
     }
-    if (!flagged && r.mergePrecision != null && r.mergePrecision >= READY_MERGE_PRECISION && (r.closePrecision == null || r.closePrecision >= READY_CLOSE_PRECISION)) {
+    if (!flagged && r.weightedMergePrecision != null && r.weightedMergePrecision >= READY_MERGE_PRECISION && (r.weightedClosePrecision == null || r.weightedClosePrecision >= READY_CLOSE_PRECISION)) {
       recs.push({
         project: r.project,
         severity: "good",
-        message: `Merge precision ${pct(r.mergePrecision)} over ${r.decided} decided PR(s) with no false closes — looks ready to flip live (shadow:false).`,
+        message: `Merge precision ${pct(r.weightedMergePrecision)} over ${r.decided} decided PR(s) with no false closes — looks ready to flip live (shadow:false).`,
       });
     }
   }

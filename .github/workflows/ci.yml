@@ -43,6 +43,7 @@ jobs:
       mcp: ${{ steps.filter.outputs.mcp }}
       mcpCliHarness: ${{ steps.filter.outputs.mcpCliHarness }}
       engine: ${{ steps.filter.outputs.engine }}
+      contract: ${{ steps.filter.outputs.contract }}
       discoveryIndex: ${{ steps.filter.outputs.discoveryIndex }}
       miner: ${{ steps.filter.outputs.miner }}
       minerTestHarness: ${{ steps.filter.outputs.minerTestHarness }}
@@ -187,6 +188,10 @@ jobs:
               - 'package-lock.json'
             engine:
               - 'packages/loopover-engine/**'
+              - 'package-lock.json'
+            contract:
+              - 'packages/loopover-contract/**'
+              - 'scripts/gen-contract-api-schemas.ts'
               - 'package-lock.json'
             miner:
               - 'packages/loopover-miner/**'
@@ -822,6 +827,19 @@ jobs:
       - name: OpenAPI drift check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.uiContract == 'true' }}
         run: npm run ui:openapi:check
+      # Same generated-artifact-drift class as the OpenAPI check above, and it was enforced ONLY by the
+      # local `npm run test:ci` aggregate -- exactly the local-only gap called out on the selfhost/miner
+      # env-reference steps in validate-code, which each went stale with zero CI signal until someone
+      # happened to run the full local script. It has now bitten this file twice (#10237): once when the
+      # discovery-route schemas were added without teaching the generator, leaving `main` red for every PR
+      # that ran the local gate, and again when #10160 added `linkedIssueMaintainerExempt` without
+      # regenerating. Neither surfaced in CI.
+      # Its inputs are src/openapi/schemas.ts (`backend`), apps/loopover-ui/public/openapi.json (`ui`), and
+      # the contract package's own modules, which it scans to emit imports -- hence the third filter, added
+      # with this step because nothing here previously watched packages/loopover-contract/** at all.
+      - name: Contract api-schemas drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.contract == 'true' }}
+        run: npm run contract:api-schemas:check
       # Checks apps/loopover-ui/src' known-latest MCP version string against the published package, so
       # its dependency is `ui` (the file it scans) + `mcp` (the package it checks against) -- NOT the
       # OpenAPI contract, which this script never reads.

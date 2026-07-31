@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import * as repositories from "../../src/db/repositories";
 import { getRepository } from "../../src/db/repositories";
-import { syncBrokeredInstalledRepos } from "../../src/orb/installed-repos-sync";
+import { fetchAllInstallationRepos, syncBrokeredInstalledRepos } from "../../src/orb/installed-repos-sync";
 import { createTestEnv } from "../helpers/d1";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 type Call = { url: string; init?: RequestInit | undefined };
 
@@ -104,5 +109,58 @@ describe("syncBrokeredInstalledRepos", () => {
     const { fetchImpl } = routedFetch({ tokenResponse: tokenResponse(42), pages: [Response.json({})] });
     const result = await syncBrokeredInstalledRepos(env, fetchImpl);
     expect(result).toEqual({ status: "synced", installationId: 42, repoCount: 0, removedCount: 0 });
+  });
+
+  // #10033: fetchAllInstallationRepos must report truncation so the caller does not treat a page-capped list
+  // as negative evidence and un-install the untraversed tail.
+  const fullPage = (start: number) => Response.json({ repositories: Array.from({ length: 100 }, (_, i) => repoPayload(`owner/repo-${start + i}`)) });
+
+  it("#10033: fetchAllInstallationRepos reports truncated=true only when the page cap is hit with a full last page", async () => {
+    // 50 full pages → the cap is exhausted while a full page is still pending → truncated, 5000 repos.
+    const capped = routedFetch({ tokenResponse: tokenResponse(42), pages: Array.from({ length: 50 }, (_, p) => fullPage(p * 100)) });
+    await expect(fetchAllInstallationRepos("tok", capped.fetchImpl)).resolves.toMatchObject({ truncated: true, repos: expect.any(Array) });
+    expect((await fetchAllInstallationRepos("tok", routedFetch({ tokenResponse: tokenResponse(42), pages: Array.from({ length: 50 }, (_, p) => fullPage(p * 100)) }).fetchImpl)).repos).toHaveLength(5000);
+
+    // 100 then 40 (short page) → complete, 140 repos.
+    const short = routedFetch({ tokenResponse: tokenResponse(42), pages: [fullPage(0), Response.json({ repositories: Array.from({ length: 40 }, (_, i) => repoPayload(`owner/tail-${i}`)) })] });
+    await expect(fetchAllInstallationRepos("tok", short.fetchImpl)).resolves.toMatchObject({ truncated: false });
+
+    // Exactly 100 then 0 (empty page) → complete, 100 repos.
+    const emptyTail = routedFetch({ tokenResponse: tokenResponse(42), pages: [fullPage(0), Response.json({ repositories: [] })] });
+    const res = await fetchAllInstallationRepos("tok", emptyTail.fetchImpl);
+    expect(res).toMatchObject({ truncated: false });
+    expect(res.repos).toHaveLength(100);
+  });
+
+  it("#10033: a truncated crawl calls markRepositoriesRemovedFromInstallation ZERO times but still upserts every fetched repo", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_x" });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const removeSpy = vi.spyOn(repositories, "markRepositoriesRemovedFromInstallation");
+    const upsertSpy = vi.spyOn(repositories, "upsertRepositoryFromGitHub");
+    const capped = routedFetch({ tokenResponse: tokenResponse(42), pages: Array.from({ length: 50 }, (_, p) => fullPage(p * 100)) });
+    await syncBrokeredInstalledRepos(env, capped.fetchImpl);
+    expect(removeSpy).not.toHaveBeenCalled();
+    expect(upsertSpy).toHaveBeenCalledTimes(5000);
+  });
+
+  it("#10033 REGRESSION: a page-capped installation-repositories crawl must not un-install the untraversed tail", async () => {
+    const env = createTestEnv({ ORB_ENROLLMENT_SECRET: "orbsec_x" });
+    // First a COMPLETE sync installs a repo that a later truncated crawl will not surface.
+    const first = routedFetch({ tokenResponse: tokenResponse(42), pages: [Response.json({ repositories: [repoPayload("owner/in-the-tail")] })] });
+    await syncBrokeredInstalledRepos(env, first.fetchImpl);
+    await expect(getRepository(env, "owner/in-the-tail")).resolves.toMatchObject({ isInstalled: true });
+
+    // Now a TRUNCATED crawl (50 full pages, none of them the tail repo): the reconcile must be suppressed.
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const capped = routedFetch({ tokenResponse: tokenResponse(42), pages: Array.from({ length: 50 }, (_, p) => fullPage(p * 100)) });
+    const result = await syncBrokeredInstalledRepos(env, capped.fetchImpl);
+
+    expect(result).toEqual({ status: "synced", installationId: 42, repoCount: 5000, removedCount: 0 });
+    // The tail repo the truncated crawl never saw stays installed — NOT flipped to isInstalled: false.
+    await expect(getRepository(env, "owner/in-the-tail")).resolves.toMatchObject({ isInstalled: true, installationId: 42 });
+    // One structured error line records the suppressed reconcile.
+    const truncWarns = errorSpy.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("installed_repos_sync_truncated"));
+    expect(truncWarns).toHaveLength(1);
+    expect(truncWarns[0]).toContain("\"repoCount\":5000");
   });
 });

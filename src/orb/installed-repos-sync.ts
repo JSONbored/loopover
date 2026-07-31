@@ -27,8 +27,12 @@ export type InstalledReposSyncResult =
 /** Fetch every repo currently accessible to this brokered installation via GitHub's own
  *  `GET /installation/repositories`, paginated. Uses the broker token directly -- its response already carries
  *  the bound installationId, so no separate token mint is needed for this call. */
-async function fetchAllInstallationRepos(token: string, fetchImpl: typeof fetch): Promise<GitHubRepositoryPayload[]> {
+export async function fetchAllInstallationRepos(token: string, fetchImpl: typeof fetch): Promise<{ repos: GitHubRepositoryPayload[]; truncated: boolean }> {
   const repos: GitHubRepositoryPayload[] = [];
+  // #10033: TRUE only when the loop exhausts MAX_INSTALLATION_REPOS_PAGES with a still-full last page -- a
+  // short page means the list is complete, but a full final page means there is an untraversed tail. The caller
+  // must not treat a truncated list as negative evidence and un-install the repos it never saw.
+  let truncated = false;
   for (let page = 1; page <= MAX_INSTALLATION_REPOS_PAGES; page += 1) {
     const res = await fetchImpl(`https://api.github.com/installation/repositories?per_page=${GITHUB_INSTALLATION_REPOS_PAGE_SIZE}&page=${page}`, {
       headers: githubHeaders({ token }),
@@ -39,8 +43,9 @@ async function fetchAllInstallationRepos(token: string, fetchImpl: typeof fetch)
     const batch = body.repositories ?? [];
     repos.push(...batch);
     if (batch.length < GITHUB_INSTALLATION_REPOS_PAGE_SIZE) break;
+    if (page === MAX_INSTALLATION_REPOS_PAGES) truncated = true;
   }
-  return repos;
+  return { repos, truncated };
 }
 
 /**
@@ -65,9 +70,18 @@ export async function syncBrokeredInstalledRepos(
   if (!isOrbBrokerMode(env)) return { status: "skipped" };
   try {
     const { token, installationId } = await fetchBrokeredInstallationToken(env, fetchImpl);
-    const repos = await fetchAllInstallationRepos(token, fetchImpl);
+    const { repos, truncated } = await fetchAllInstallationRepos(token, fetchImpl);
+    // A partial list is valid POSITIVE evidence: still upsert every repo we DID fetch as installed.
     for (const repo of repos) {
       await upsertRepositoryFromGitHub(env, repo, installationId);
+    }
+    if (truncated) {
+      // #10033: a page-capped crawl is not valid NEGATIVE evidence -- reconciling against it would flip every
+      // installed repo in the untraversed tail to isInstalled: false and take them silently dark. Skip the
+      // destructive reconcile entirely, but still report `synced` (the sync did useful upsert work; the cron
+      // must not read this as an outage) with removedCount 0, and log so an operator sees the suppression.
+      console.error(JSON.stringify({ level: "error", event: "installed_repos_sync_truncated", installationId, repoCount: repos.length }));
+      return { status: "synced", installationId, repoCount: repos.length, removedCount: 0 };
     }
     const freshFullNames = new Set(repos.map((repo) => repo.full_name));
     const previouslyInstalled = await listInstalledRepoFullNamesForInstallation(env, installationId);

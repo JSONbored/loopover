@@ -16,6 +16,15 @@ figure stops supporting a conclusion — see the [fairness methodology](/docs/fa
 For a single command that recomputes the published commitments and exits non-zero if any fail,
 run `npx -p @loopover/mcp loopover-verify`.
 
+[![Nightly anonymous verification](https://github.com/JSONbored/loopover/actions/workflows/verify-public-claims.yml/badge.svg)](https://github.com/JSONbored/loopover/actions/workflows/verify-public-claims.yml)
+
+**We run this against ourselves every night** (#9724). That badge is a scheduled job that executes
+the verifier *published on npm* against production, from a runner holding no credentials of any
+kind — the same position you are in. If it is green, an outsider following this page succeeded
+within the last 24 hours. If it is red, something on this page does not currently work, we already
+know, and there is an open issue saying which claim broke. The badge links to every run, including
+the failures; you do not have to take our word for the history.
+
 **Two surfaces, because they hold different things** (#9940). The commands on this page use
 `api.loopover.ai`, which serves aggregate stats and eval-score records. The **anchored decision
 ledger** — the hash chain, its signed checkpoints, and the Rekor anchors — lives on the Orb that

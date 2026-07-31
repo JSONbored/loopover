@@ -889,6 +889,9 @@ jobs:
       # matches the pattern already used by "Save Turborepo cache"/"Save TypeScript incremental build
       # cache" elsewhere in this file: still run after an earlier step's failure, just not after the job
       # was cancelled outright. The job as a whole still fails if any of the three fails.
+      - name: UI tests (ui-kit)
+        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
+        run: npm --workspace @loopover/ui-kit run test
       - name: UI tests (ui)
         if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npm --workspace @loopover/ui run test

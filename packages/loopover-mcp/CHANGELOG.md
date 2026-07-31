@@ -5,6 +5,21 @@
 ### Fixes
 - Blunt slop-risk / issue-slop REST + CLI to match the MCP tools (#6990) (#7052)
 
+## [3.18.1](https://github.com/JSONbored/loopover/compare/mcp-v3.18.0...mcp-v3.18.1) (2026-07-31)
+
+
+### Fixes
+
+* **fairness:** commit only to a corpus a reader can actually download ([#9966](https://github.com/JSONbored/loopover/issues/9966)) ([40133d7](https://github.com/JSONbored/loopover/commit/40133d789632dbb152b3bea65045c8626686c06f)), closes [#9962](https://github.com/JSONbored/loopover/issues/9962)
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.18.0 to ^3.18.1
+    * @loopover/engine bumped from ^3.18.0 to ^3.18.1
+
 ## [3.18.0](https://github.com/JSONbored/loopover/compare/mcp-v3.17.0...mcp-v3.18.0) (2026-07-30)
 
 

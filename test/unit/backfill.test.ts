@@ -50,6 +50,7 @@ import {
   clearGitHubResponseCacheForTest,
   githubRateLimitAdmissionKeyForInstallation,
   githubRateLimitAdmissionKeyForPublicToken,
+  GITHUB_RESPONSE_CACHE_REPLAY_HEADER,
   setGitHubResponseCache,
   type CachedGitHubResponse,
 } from "../../src/github/client";
@@ -289,6 +290,57 @@ describe("GitHub backfill", () => {
     // The bypass contract is neither READ nor WRITE: a live-freshness read must not land in the
     // persistent rate-limit-observation state either (#2762 gate finding).
     expect(await listLatestGitHubRateLimitObservations(env)).toEqual([]);
+  });
+
+  it("#10032: the 404 unauthenticated retry still bypasses the response cache, not a cache replay", async () => {
+    // The bypass is a liveness guarantee that must survive the public-token 404 fallback. A response cache is
+    // installed and would replay a stale commit tip on a cacheable read -- the retry must NOT let it.
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    const cacheGet = vi.fn(async () => ({
+      status: 200,
+      body: JSON.stringify({ commit: { committer: { date: "2000-01-01T00:00:00Z" } } }),
+      contentType: "application/json",
+    }));
+    setGitHubResponseCache({ get: cacheGet, set: async () => undefined });
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      getFetches += 1;
+      if (getFetches === 1) return new Response("not found", { status: 404 });
+      return Response.json({ commit: { committer: { date: "2026-07-02T23:32:36.181Z" } } });
+    });
+
+    // token === GITHUB_PUBLIC_TOKEN, so the first request 404s and the unauthenticated retry fires.
+    await expect(
+      fetchLiveBaseBranchAdvancedAt(env, "JSONbored/gittensory", "main", "public-token", githubRateLimitAdmissionKeyForPublicToken()),
+    ).resolves.toBe("2026-07-02T23:32:36.181Z");
+
+    expect(getFetches).toBe(2);
+    // Neither leg was answered from (or wrote to) the persistent cache -- had the retry dropped the flag, this
+    // cacheable commit read would have replayed the stale 2000 date instead of issuing its own request.
+    expect(cacheGet).not.toHaveBeenCalled();
+  });
+
+  it("#10032: the 404 unauthenticated retry sends no rate-limit-admission headers (deliberate omission preserved)", async () => {
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    const admissionFlags: Array<boolean> = [];
+    const replayHeaders: Array<string | null> = [];
+    let getFetches = 0;
+    vi.stubGlobal("fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+      getFetches += 1;
+      // GitHubTimeoutFetchInit is not a plain RequestInit; read the admission flag off the passed init object.
+      admissionFlags.push(Boolean((init as { githubRateLimitAdmission?: boolean } | undefined)?.githubRateLimitAdmission));
+      replayHeaders.push(new Headers(init?.headers).get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER));
+      if (getFetches === 1) return new Response("not found", { status: 404 });
+      return Response.json({ commit: { committer: { date: "2026-07-02T23:32:36.181Z" } } });
+    });
+
+    await expect(
+      fetchLiveBaseBranchAdvancedAt(env, "JSONbored/gittensory", "main", "public-token", githubRateLimitAdmissionKeyForPublicToken()),
+    ).resolves.toBe("2026-07-02T23:32:36.181Z");
+
+    expect(getFetches).toBe(2);
+    // The retry (second call) carries no admission flag -- that omission is documented and must be preserved.
+    expect(admissionFlags[1]).toBe(false);
   });
 
   it("fetches how far the default branch has advanced beyond this PR's base commit via the compare API", async () => {

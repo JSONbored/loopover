@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.21.0](https://github.com/JSONbored/loopover/compare/miner-v3.20.0...miner-v3.21.0) (2026-07-31)
+
+
+### Features
+
+* **observability:** capture every miner AI generation, and stop fabricating zero token counts ([#10233](https://github.com/JSONbored/loopover/issues/10233)) ([ba35c8b](https://github.com/JSONbored/loopover/commit/ba35c8babc661b9ab97d00ee0a4080a5fed899fa))
+
+
+### Fixes
+
+* **miner:** give manage-status and manage-poll store openers their own try/catch ([#10206](https://github.com/JSONbored/loopover/issues/10206)) ([800045f](https://github.com/JSONbored/loopover/commit/800045fffe67a9018f195c7c7c94bccbe69e9314))
+* **miner:** make readMinRankAutotuneEnabled probe all four AMS policy filenames ([#10215](https://github.com/JSONbored/loopover/issues/10215)) ([447dff1](https://github.com/JSONbored/loopover/commit/447dff18dcfa867f0d64e6e2c1e30aa1fcec83da))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.20.0 to ^3.21.0
+    * @loopover/engine bumped from ^3.20.0 to ^3.21.0
+
 ## [3.20.0](https://github.com/JSONbored/loopover/compare/miner-v3.19.0...miner-v3.20.0) (2026-07-31)
 
 

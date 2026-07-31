@@ -1,6 +1,6 @@
 {
   "name": "@loopover/contract",
-  "version": "3.20.0",
+  "version": "3.21.0",
   "license": "AGPL-3.0-only",
   "type": "module",
   "description": "Single zod source of truth for LoopOver's MCP tool and API contracts — schemas, tool metadata, and the projections every server and client derives from.",

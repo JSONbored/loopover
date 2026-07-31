@@ -31,7 +31,7 @@
 import { DECISION_AUDIT_RUBRIC_VERSION } from "./decision-audit";
 import { recordAuditEvent } from "../db/repositories";
 import { incr } from "../selfhost/metrics";
-import { resolveAgentDispositionLabels, type AgentDispositionLabelSettings, type PlannedAgentAction } from "../settings/agent-actions";
+import { withManualReviewHoldLabel, type AgentDispositionLabelSettings, type PlannedAgentAction } from "../settings/agent-actions";
 import type { DecisionReplayHoldout } from "./decision-replay";
 import { hmacHex } from "../utils/crypto";
 import { errorMessage, nowIso } from "../utils/json";
@@ -106,21 +106,16 @@ export function holdoutEligibleClose(planned: PlannedAgentAction[]): PlannedAgen
  *  downgradeCloseToHold's conversion exactly (drop + idempotent label add, never a merge/approve). */
 export function applyCloseAuditHoldout(planned: PlannedAgentAction[], labelSettings: AgentDispositionLabelSettings = {}): PlannedAgentAction[] {
   const isEligible = (action: PlannedAgentAction): boolean => action.actionClass === "close" && action.closeKind === "heuristic" && action.requiresApproval !== true;
-  const labels = resolveAgentDispositionLabels(labelSettings);
   const next = planned.filter((action) => !isEligible(action));
-  const alreadyNeedsReview = labels.manualReview !== null && next.some((action) => action.actionClass === "label" && action.label === labels.manualReview && action.labelOp !== "remove");
-  if (labels.manualReview !== null && !alreadyNeedsReview) {
-    next.push({
-      actionClass: "label",
-      // Authorized by `close` — the class actually being diverted (#label-scoping, mirrors downgradeCloseToHold).
-      autonomyClass: "close",
-      requiresApproval: false,
-      reason: "close-audit holdout drew this PR — would-close held for human adjudication (#8831)",
-      label: labels.manualReview,
-      labelOp: "add",
-    });
-  }
-  return next;
+  // #10164: via withManualReviewHoldLabel, which also drops a planned RELEASE of this same label. This
+  // transform is where the flap was actually observed -- JSONbored/loopover#10155 cycled the label roughly
+  // every 90 seconds because the planner's release and this add both landed in one plan.
+  return withManualReviewHoldLabel(next, labelSettings, {
+    // Authorized by `close` — the class actually being diverted (#label-scoping, mirrors downgradeCloseToHold).
+    autonomyClass: "close",
+    requiresApproval: false,
+    reason: "close-audit holdout drew this PR — would-close held for human adjudication (#8831)",
+  });
 }
 
 /**

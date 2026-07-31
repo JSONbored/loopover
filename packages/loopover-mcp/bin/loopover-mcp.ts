@@ -170,7 +170,7 @@ import {
   projectToolDefinition,
   ListPendingActionsStdioInput,
 } from "@loopover/contract/tools";
-import { AUTONOMY_LEVELS as MAINTAIN_AUTONOMY_LEVELS, MAINTAIN_ACTION_CLASSES, PROPOSE_ACTION_CLASSES, type ToolContract } from "@loopover/contract";
+import { AUTONOMY_LEVELS as MAINTAIN_AUTONOMY_LEVELS, MAINTAIN_ACTION_CLASSES, PROPOSE_ACTION_CLASSES, resolveErrorCode, type ToolContract } from "@loopover/contract";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "../lib/cli-error.js";
@@ -2579,7 +2579,21 @@ function registerProxiedTool(tool: RemoteToolDescriptor): void {
         // Forwarded verbatim to the remote's own tools/call: this layer routes, it does not interpret.
         const payload = await apiPost("/mcp", { jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name: tool.name, arguments: input } });
         const result = (payload as { result?: unknown }).result;
-        return result ?? payload;
+        if (result !== undefined) return result;
+        // `enableJsonResponse` (src/mcp/server.ts) means a request-level failure still arrives as HTTP 200,
+        // with a JSON-RPC `{ error }` envelope in place of `result` -- apiPost only throws on a non-2xx, so
+        // that envelope (or, degenerately, neither key at all) would otherwise be handed back verbatim as
+        // if it were the tool's own answer. Shape it into a real CallToolResult instead: the numeric
+        // JSON-RPC `code` is not a member of the closed telemetry vocabulary, so it is never surfaced as
+        // one -- resolveErrorCode reclassifies from the message, the same as every other server here.
+        const rpcError = (payload as { error?: { message?: unknown } }).error;
+        const message =
+          typeof rpcError?.message === "string" ? rpcError.message : "The remote MCP server returned neither a result nor an error for this call.";
+        return {
+          content: [{ type: "text" as const, text: message }],
+          structuredContent: { error: { code: resolveErrorCode(message), message } },
+          isError: true as const,
+        };
       }) as (...args: unknown[]) => Promise<unknown>,
       "proxied",
     ) as never,

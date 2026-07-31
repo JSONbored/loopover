@@ -960,9 +960,12 @@ NOVELTY_BONUS_SCALAR = 3
     // Regex metacharacters in a literal key stay literal: `.` matches only a dot, not any char.
     expect(labelMultiplierFor({ "v1.0": 1.1 }, ["v1.0"])).toBe(1.1);
     expect(labelMultiplierFor({ "v1.0": 1.1 }, ["v1x0"])).toBe(1);
-    // `**/` counts as one wildcard group and matches across path-like label segments.
+    // #9994: this fnmatch compiler counts one wildcard group per raw `*` (it has no `**`-is-one-group rule —
+    // that is the PATH compiler's semantics), so `**/bug` and `**bug` are 2 groups (at the cap → still
+    // compile and match), but `public/**/*.json` is THREE (`**` + `*`) and is now rejected as over-complex,
+    // failing SAFE toward no multiplier — where the old path-glob count wrongly scored it as 2 and matched it.
     expect(labelMultiplierFor({ "**/bug": 1.45 }, ["feature/bug"])).toBe(1.45);
-    expect(labelMultiplierFor({ "public/**/*.json": 1.2 }, ["public/release/config.json"])).toBe(1.2);
+    expect(labelMultiplierFor({ "public/**/*.json": 1.2 }, ["public/release/config.json"])).toBe(1);
     expect(labelMultiplierFor({ "**bug": 1.35 }, ["feature-bug"])).toBe(1.35);
     // When several patterns match, the highest multiplier wins (mirrors upstream `max(...)`).
     expect(labelMultiplierFor({ "kind/*": 1.1, "*/bug": 1.6 }, ["kind/bug"])).toBe(1.6);
@@ -2149,5 +2152,31 @@ describe("label pattern matcher memoization (#2106)", () => {
   it("a label pattern AT the safe cap (2 wildcards) still compiles and matches NORMALLY, not the fail-safe path — proves the cap is inclusive, not exclusive", () => {
     expect(labelMatchesPattern("type-bug-fix", "type-*-*")).toBe(true);
     expect(labelMatchesPattern("type-bug", "type-*-*")).toBe(false);
+  });
+
+  it("#9994: a `**`-containing pattern is counted by its COMPILED groups (one per raw *), not the path-glob `**`-is-one rule, so it is rejected", () => {
+    // The fnmatch compiler emits one `.*` per `*` and has no `**` concept, so `*a**b` compiles to THREE `.*`
+    // groups. change-guardrail's path counter scored it as 2 (a `**` pair = one group) and wrongly ACCEPTED it,
+    // admitting a pattern this compiler builds into a catastrophic-backtracking RegExp. All three fail SAFE
+    // toward no-multiplier (never matches).
+    clearLabelPatternRegExpCacheForTest();
+    expect(labelMatchesPattern("anything", "*a**b")).toBe(false); // 3 stars → 3 compiled groups → rejected
+    expect(labelMatchesPattern("x/y", "**/**")).toBe(false); // 4 stars → 4 compiled groups → rejected
+    expect(labelMatchesPattern("abc", "a**b**c")).toBe(false); // 4 stars → rejected
+
+    // The preserved 2-group cases and non-`*` metacharacters still compile and match exactly as before.
+    expect(labelMatchesPattern("type:bug-fix", "type:*")).toBe(true);
+    expect(labelMatchesPattern("priority:1", "priority:?")).toBe(true); // `?` is not a counted group
+    expect(labelMatchesPattern("a-b-c", "a*b*c")).toBe(true);
+    expect(labelMatchesPattern("kind:bug", "kind:[bc]ug")).toBe(true); // classes are not counted groups
+  });
+
+  it("#9994: a rejected over-complex pattern is still cached, so a repeated read is served from the cache", () => {
+    clearLabelPatternRegExpCacheForTest();
+    expect(labelMatchesPattern("anything", "*a**b")).toBe(false);
+    expect(labelPatternRegExpCacheKeysForTest()).toContain("*a**b");
+    // Second read of the same over-complex pattern is served from the cache (cache-hit arm), still false.
+    expect(labelMatchesPattern("something-else", "*a**b")).toBe(false);
+    expect(labelPatternRegExpCacheKeysForTest().filter((k) => k === "*a**b")).toHaveLength(1);
   });
 });

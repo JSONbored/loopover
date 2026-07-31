@@ -34,7 +34,10 @@ export function canonicalize(value: string): string {
 // protected automatically rather than needing to separately remember the risk. The boundary is set at the
 // highest GROUP count proven safe by the benchmark above (2) — a boundary that itself sits inside the
 // empirically dangerous range would defeat the point of a cap.
-const MAX_GLOB_WILDCARD_GROUPS = 2;
+// Exported (#9994) so label-match.ts's fnmatch compiler applies the SAME empirically-safe threshold rather
+// than redeclaring its own literal — a second, independently-chosen cap is exactly the drift the
+// hasUnsafeWildcardCount export below warns about.
+export const MAX_GLOB_WILDCARD_GROUPS = 2;
 
 /** Count `*` GROUPS in `glob` — a `**` pair is ONE group (it compiles to a single `.*`, see globToRegExp), not
  *  two. Mirrors globToRegExp's own tokenization exactly (including consuming a `**`'s trailing `/`) so the count

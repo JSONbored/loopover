@@ -16,8 +16,10 @@ function now(): string {
   return new Date().toISOString();
 }
 
+const FIXTURE_NOW_MS = Date.now();
+
 function daysAgoIso(days: number): string {
-  return new Date(Date.now() - days * 86_400_000).toISOString();
+  return new Date(FIXTURE_NOW_MS - days * 86_400_000).toISOString();
 }
 
 function registryConfig(overrides: Json = {}): Json {

@@ -20,6 +20,7 @@ import {
   persistSignalSnapshot,
   startActiveReviewTracking,
   loadOrphanRequeueContext,
+  listMergedPullRequestsInWindow,
   upsertPullRequestFromGitHub,
   upsertRepositoryFromGitHub,
   terminalizeActiveReviewsFromBeforeBoot,
@@ -723,5 +724,64 @@ describe("terminalizeActiveReviewsFromBeforeBoot (#deploy-orphaned-reviews)", ()
     expect(await terminalizeActiveReviewsFromBeforeBoot(env, boot)).toHaveLength(1);
     // Second boot sweep: nothing left to heal, and nothing re-reported.
     expect(await terminalizeActiveReviewsFromBeforeBoot(env, boot)).toEqual([]);
+  });
+});
+
+// #10168: the candidate-rival read behind the supersession check. Deliberately reads `pull_requests` and not
+// `recent_merged_pull_requests` -- that table stopped being written, so a rival that merged minutes ago is
+// absent from it entirely and the check would silently never fire.
+describe("listMergedPullRequestsInWindow (#10168)", () => {
+  const seedPr = async (
+    env: ReturnType<typeof createTestEnv>,
+    pr: { number: number; mergedAt?: string | null; linkedIssues: number[]; state?: string },
+  ) => {
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: pr.number,
+      title: `#${pr.number}`,
+      state: pr.state ?? "closed",
+      user: { login: "c" },
+      head: { sha: `h${pr.number}` },
+      labels: [],
+      created_at: "2026-07-31T09:00:00Z",
+      merged_at: pr.mergedAt ?? null,
+      body: pr.linkedIssues.map((n) => `Closes #${n}`).join(" "),
+    } as never);
+  };
+
+  const seedAll = async (env: ReturnType<typeof createTestEnv>) => {
+    await upsertRepositoryFromGitHub(env, { full_name: "owner/repo", name: "repo", id: 1, private: false } as never, 4242);
+    await seedPr(env, { number: 8881, mergedAt: "2026-07-31T09:30:24Z", linkedIssues: [8829] });
+    await seedPr(env, { number: 8870, mergedAt: "2026-07-31T08:00:00Z", linkedIssues: [8829] }); // before the window
+    await seedPr(env, { number: 8899, mergedAt: "2026-07-31T11:00:00Z", linkedIssues: [8829] }); // after the window
+    await seedPr(env, { number: 8886, mergedAt: null, linkedIssues: [8829], state: "open" }); // never merged
+  };
+
+  it("returns only the merges inside the window, with their linked issues", async () => {
+    const env = createTestEnv();
+    await seedAll(env);
+    const rows = await listMergedPullRequestsInWindow(env, "owner/repo", "2026-07-31T09:22:36Z", "2026-07-31T09:35:25Z");
+    expect(rows).toEqual([{ number: 8881, mergedAt: "2026-07-31T09:30:24Z", linkedIssues: [8829] }]);
+  });
+
+  it("excludes an unmerged PR even when it cites the same issue", async () => {
+    const env = createTestEnv();
+    await seedAll(env);
+    const rows = await listMergedPullRequestsInWindow(env, "owner/repo", "2026-07-31T00:00:00Z", "2026-07-31T23:59:59Z");
+    expect(rows.map((row) => row.number)).not.toContain(8886);
+  });
+
+  it("orders by ascending merge time, so a capped result keeps the EARLIEST rivals", async () => {
+    const env = createTestEnv();
+    await seedAll(env);
+    const rows = await listMergedPullRequestsInWindow(env, "owner/repo", "2026-07-31T00:00:00Z", "2026-07-31T23:59:59Z");
+    expect(rows.map((row) => row.mergedAt)).toEqual([...rows.map((row) => row.mergedAt)].sort());
+    expect(rows.map((row) => row.number)).toEqual([8870, 8881, 8899]);
+  });
+
+  it("is scoped to the repo and yields nothing when no merge lands in the window", async () => {
+    const env = createTestEnv();
+    await seedAll(env);
+    expect(await listMergedPullRequestsInWindow(env, "other/repo", "2026-07-31T00:00:00Z", "2026-07-31T23:59:59Z")).toEqual([]);
+    expect(await listMergedPullRequestsInWindow(env, "owner/repo", "2026-07-30T00:00:00Z", "2026-07-30T23:59:59Z")).toEqual([]);
   });
 });

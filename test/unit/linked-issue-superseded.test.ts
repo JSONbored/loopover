@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   SUPERSEDED_CLOSE_WINDOW_MS,
   resolveSupersession,
+  supersededSearchWindow,
   type LinkedIssueClosure,
   type MergedRivalPullRequest,
 } from "../../src/review/linked-issue-superseded";
@@ -157,5 +158,32 @@ describe("resolveSupersession", () => {
         })?.issueNumber,
       ).toBe(900);
     });
+  });
+});
+
+describe("supersededSearchWindow", () => {
+  it("spans this PR's creation to the latest close plus the tolerance", () => {
+    expect(supersededSearchWindow(PR_CREATED, [closure()])).toEqual({
+      sinceIso: PR_CREATED,
+      untilIso: new Date(Date.parse(ISSUE_CLOSED) + SUPERSEDED_CLOSE_WINDOW_MS).toISOString(),
+    });
+  });
+
+  it("anchors the end on the LATEST close when several issues are linked", () => {
+    const later = "2026-07-31T10:00:00Z";
+    const window = supersededSearchWindow(PR_CREATED, [closure(), closure({ issueNumber: 9000, closedAt: later })]);
+    expect(window?.untilIso).toBe(new Date(Date.parse(later) + SUPERSEDED_CLOSE_WINDOW_MS).toISOString());
+  });
+
+  it("declines without a synced createdAt — the 'issue outlived this PR' half cannot be established", () => {
+    for (const value of [null, undefined, "", "whenever"]) {
+      expect(supersededSearchWindow(value, [closure()]), String(value)).toBeNull();
+    }
+  });
+
+  it("declines when no linked issue was conclusively read as closed", () => {
+    expect(supersededSearchWindow(PR_CREATED, [])).toBeNull();
+    expect(supersededSearchWindow(PR_CREATED, [closure({ closedAt: null })])).toBeNull();
+    expect(supersededSearchWindow(PR_CREATED, [closure({ closedAt: "not-a-date" })])).toBeNull();
   });
 });

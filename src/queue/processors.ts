@@ -351,7 +351,7 @@ import {
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
 import { isSupersededCloseEnabledGlobally } from "../settings/superseded-close-mode";
-import { SUPERSEDED_CLOSE_WINDOW_MS, resolveSupersession, type LinkedIssueClosure, type SupersededByRival } from "../review/linked-issue-superseded";
+import { resolveSupersession, supersededSearchWindow, type LinkedIssueClosure, type SupersededByRival } from "../review/linked-issue-superseded";
 import { isOpenPrFileCollisionEnabledGlobally, resolveOpenPrFileCollisionEnabled } from "../settings/open-pr-file-collision-mode";
 import { buildAiReviewDiff, buildSecretScanDiff, totalAddedLineCount } from "../review/review-diff";
 // #4013 step 4 (prep): buildAiReviewDiff/buildSecretScanDiff moved to review-diff.ts (a natural existing
@@ -8355,16 +8355,10 @@ async function resolveSupersededRival(
   pr: Pick<PullRequestRecord, "number" | "createdAt">,
   closures: LinkedIssueClosure[],
 ): Promise<SupersededByRival | null> {
-  const createdAt = pr.createdAt;
-  if (!createdAt) return null;
-  const closedInstants = closures.flatMap((closure) => {
-    const parsed = closure.closedAt === null ? Number.NaN : Date.parse(closure.closedAt);
-    return Number.isFinite(parsed) ? [parsed] : [];
-  });
-  if (closedInstants.length === 0) return null;
-  const until = new Date(Math.max(...closedInstants) + SUPERSEDED_CLOSE_WINDOW_MS).toISOString();
-  const mergedRivals = await listMergedPullRequestsInWindow(env, repoFullName, createdAt, until);
-  return resolveSupersession({ prNumber: pr.number, prCreatedAt: createdAt, closures, mergedRivals });
+  const window = supersededSearchWindow(pr.createdAt, closures);
+  if (window === null) return null;
+  const mergedRivals = await listMergedPullRequestsInWindow(env, repoFullName, window.sinceIso, window.untilIso);
+  return resolveSupersession({ prNumber: pr.number, prCreatedAt: pr.createdAt, closures, mergedRivals });
 }
 
 export async function shouldRefreshFilesForPreMergeChecks(

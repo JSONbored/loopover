@@ -68,6 +68,30 @@ export type SupersededByRival = {
  */
 export const SUPERSEDED_CLOSE_WINDOW_MS = 5 * 60_000;
 
+/**
+ * PURE. The narrowest range of merge times that can still contain a qualifying rival, or null when the
+ * evidence for a supersession cannot exist at all.
+ *
+ * Keeping this beside {@link resolveSupersession} rather than at the call site means the whole "can this even
+ * be superseded" judgement is one tested unit, and the caller reduces to a bounded read plus the resolver.
+ * The range runs from this PR's own creation (a merge that predates it cannot have taken work not yet
+ * proposed) to the latest observed close plus the tolerance, so the read stays small no matter how long the
+ * pull request has been sitting.
+ */
+export function supersededSearchWindow(
+  prCreatedAt: string | null | undefined,
+  closures: readonly LinkedIssueClosure[],
+): { sinceIso: string; untilIso: string } | null {
+  const created = parseInstant(prCreatedAt);
+  if (created === null) return null;
+  const closedInstants = closures.flatMap((closure) => {
+    const parsed = parseInstant(closure.closedAt);
+    return parsed === null ? [] : [parsed.ms];
+  });
+  if (closedInstants.length === 0) return null;
+  return { sinceIso: created.iso, untilIso: new Date(Math.max(...closedInstants) + SUPERSEDED_CLOSE_WINDOW_MS).toISOString() };
+}
+
 /** PURE. Parse a GitHub timestamp, keeping the original string beside the epoch ms so a caller that has
  *  already proved a timestamp parses never needs a second, unreachable null-check to use its text. Null when
  *  the value is absent or unparseable. */

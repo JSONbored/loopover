@@ -909,9 +909,11 @@ export type ContentLaneDeliverableCheck = { verdict: "not-applicable" } | { verd
 /**
  * Determine whether a PR's changed files deliver the content-lane file its linked issue implies. PURE — no I/O,
  * no registry-specific hardcoding; entirely driven by `spec` (the caller's already-resolved RegistryLaneSpec)
- * and the text inputs. `changedFiles` are matched the SAME way classifyRegistryPrScope matches them
- * (canonicalized: lowercased + `./`-stripped + `\`→`/`), so an uppercase / `./`-prefixed / `\`-separated
- * changed path is recognized identically to how the rest of the content lane already treats it.
+ * and the text inputs. `changedFiles` AND issue-body path tokens are matched the SAME way
+ * classifyRegistryPrScope matches them (canonicalized: lowercased + `./`-stripped + `\`→`/`), so an
+ * uppercase / `./`-prefixed / `\`-separated path is recognized identically to how the rest of the content
+ * lane already treats it. The ORIGINAL issue-body token is still returned as `mentionedPath` (it is quoted
+ * into the public PR comment and must match what the contributor/maintainer see in the issue).
  *
  * Two independent, deterministic signals decide whether the issue implies a delivery, checked in this order:
  *  1. A literal path in the issue BODY matching the spec (the general case — works for any hand-written issue
@@ -930,7 +932,9 @@ export function checkContentLaneDeliverable(
   issueTitle?: string,
 ): ContentLaneDeliverableCheck {
   const matchesSpec = (candidate: string): boolean => spec.entryFilePattern.test(candidate) || (spec.providerFilePattern?.test(candidate) ?? false);
-  const mentionedPath = extractPathTokens(issueText).find(matchesSpec);
+  // Mirror classifyRegistryPrScope's matchesPattern: canonicalize at the point of test, keep the original
+  // string for anything user-visible (`mentionedPath` in the public PR comment).
+  const mentionedPath = extractPathTokens(issueText).find((token) => matchesSpec(canonicalize(token)));
   const titleImplies = !mentionedPath && Boolean(issueTitle && spec.issueTitleImpliesEntryPattern?.test(issueTitle));
   if (!mentionedPath && !titleImplies) return { verdict: "not-applicable" };
   const delivered = changedFiles.some((file) => matchesSpec(canonicalize(file)));

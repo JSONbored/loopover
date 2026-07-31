@@ -757,6 +757,129 @@ describe("runLoop (#5135)", () => {
     expect(printed.cycles[0]).toMatchObject({ outcome: "attempted", prNumber: null, ciConclusion: null });
   });
 
+  it("REGRESSION (#10008): runLoop primes its ledger cursor from latestSeq() without reading every event", async () => {
+    const { governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    // A spy double standing in for the injected EventLedger seam (RunLoopOptions.initEventLedger) -- latestSeq is
+    // the only method the initial-halt priming path may call; readEvents materializing/parsing every row is
+    // exactly the regression this test pins.
+    const eventLedger = {
+      dbPath: "",
+      appendEvent: vi.fn(),
+      readEvents: vi.fn(() => []),
+      latestSeq: vi.fn(() => 42),
+      purgeByRepo: vi.fn(() => 0),
+      close: vi.fn(),
+    };
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const runDiscoverSpy = vi.fn();
+    const runAttemptSpy = vi.fn();
+
+    const exitCode = await runLoop(["acme/widgets", "--miner-login", "alice", "--json"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: runDiscoverSpy,
+      runAttempt: runAttemptSpy,
+      ...readyLoopOptions({ checkMinerKillSwitch: () => ({ scope: "global" as const, active: true }) }),
+    });
+
+    expect(exitCode).toBe(0);
+    const printed = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(printed.haltReason).toBe("kill_switch_global");
+    expect(eventLedger.latestSeq).toHaveBeenCalledTimes(1);
+    expect(eventLedger.readEvents).not.toHaveBeenCalled();
+  });
+
+  it("(#10008) primes sinceSeq from a non-empty ledger's latestSeq() before the first buildLoopClosureSummary call", async () => {
+    const { governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    const eventLedger = {
+      dbPath: "",
+      appendEvent: vi.fn(),
+      readEvents: vi.fn(() => []),
+      latestSeq: vi.fn(() => 7),
+      purgeByRepo: vi.fn(() => 0),
+      close: vi.fn(),
+    };
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const item = { repoFullName: "acme/widgets", identifier: "issue:7" };
+    const runDiscoverSpy = primeOnceDiscover(portfolioQueue, item);
+    const runAttemptSpy = vi.fn(async (_args: string[], options?: Record<string, unknown>) => {
+      (options?.onResult as ((result: unknown) => void) | undefined)?.({
+        outcome: "attempt_submitted",
+        repoFullName: "acme/widgets",
+        issueNumber: 7,
+        minerLogin: "alice",
+        base: "main",
+        mode: "dry_run",
+        attemptId: "loop-attempt-sinceseq-primed",
+        submissionMode: "observe",
+        totalTurnsUsed: 1,
+        totalCostUsd: 0,
+        iterationsUsed: 1,
+        execResult: { action: "open_pr", stdout: "no url printed here\n", stderr: "", code: 0, timedOut: false },
+      });
+      return 0;
+    });
+    const buildLoopClosureSummarySpy = vi.fn((_sources: unknown, _options?: unknown) => ({ sinceSeq: 7, lastSeq: 7 }));
+
+    await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "1", "--json"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: runDiscoverSpy,
+      runAttempt: runAttemptSpy,
+      buildLoopClosureSummary: buildLoopClosureSummarySpy,
+      ...readyLoopOptions(),
+    });
+
+    expect(buildLoopClosureSummarySpy).toHaveBeenCalledTimes(1);
+    expect(buildLoopClosureSummarySpy.mock.calls[0]?.[1]).toMatchObject({ sinceSeq: 7 });
+  });
+
+  it("(#10008) primes sinceSeq at 0 from an empty ledger's latestSeq() before the first buildLoopClosureSummary call", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const item = { repoFullName: "acme/widgets", identifier: "issue:9" };
+    const runDiscoverSpy = primeOnceDiscover(portfolioQueue, item);
+    const runAttemptSpy = vi.fn(async (_args: string[], options?: Record<string, unknown>) => {
+      (options?.onResult as ((result: unknown) => void) | undefined)?.({
+        outcome: "attempt_submitted",
+        repoFullName: "acme/widgets",
+        issueNumber: 9,
+        minerLogin: "alice",
+        base: "main",
+        mode: "dry_run",
+        attemptId: "loop-attempt-sinceseq-empty",
+        submissionMode: "observe",
+        totalTurnsUsed: 1,
+        totalCostUsd: 0,
+        iterationsUsed: 1,
+        execResult: { action: "open_pr", stdout: "no url printed here\n", stderr: "", code: 0, timedOut: false },
+      });
+      return 0;
+    });
+    const buildLoopClosureSummarySpy = vi.fn((_sources: unknown, _options?: unknown) => ({ sinceSeq: 0, lastSeq: 0 }));
+
+    await runLoop(["acme/widgets", "--miner-login", "alice", "--max-cycles", "1", "--json"], {
+      openGovernorState: () => governorState,
+      initEventLedger: () => eventLedger,
+      initGovernorLedger: () => governorLedger,
+      initPortfolioQueue: () => portfolioQueue,
+      initRunStateStore: () => runState,
+      runDiscover: runDiscoverSpy,
+      runAttempt: runAttemptSpy,
+      buildLoopClosureSummary: buildLoopClosureSummarySpy,
+      ...readyLoopOptions(),
+    });
+
+    expect(buildLoopClosureSummarySpy).toHaveBeenCalledTimes(1);
+    expect(buildLoopClosureSummarySpy.mock.calls[0]?.[1]).toMatchObject({ sinceSeq: 0 });
+  });
+
   it("REGRESSION: a repeatedly-blocked (non-permanent) outcome requeues the item and eventually halts on real non-convergence, not forever", async () => {
     const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
     vi.spyOn(console, "log").mockImplementation(() => undefined);

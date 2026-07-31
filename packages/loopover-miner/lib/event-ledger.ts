@@ -46,6 +46,7 @@ export type EventLedger = {
   dbPath: string;
   appendEvent(event: AppendEventInput): LedgerEntry;
   readEvents(filter?: ReadEventsFilter): LedgerEntry[];
+  latestSeq(): number;
   purgeByRepo(repoFullName: string): number;
   close(): void;
 };
@@ -178,6 +179,7 @@ export function initEventLedger(dbPath: string = resolveEventLedgerDbPath()): Ev
   pruneLedgerByRetention(db, EVENT_LEDGER_RETENTION_SPEC, resolveLedgerRetentionPolicy(), Date.now());
 
   const nextSeqStatement = db.prepare("SELECT COALESCE(MAX(seq), 0) + 1 AS nextSeq FROM miner_event_ledger");
+  const latestSeqStatement = db.prepare("SELECT COALESCE(MAX(seq), 0) AS latestSeq FROM miner_event_ledger");
   const appendStatement = db.prepare(`
     INSERT INTO miner_event_ledger (seq, event_type, repo_full_name, payload_json, created_at)
     VALUES (?, ?, ?, ?, ?)
@@ -233,6 +235,12 @@ export function initEventLedger(dbPath: string = resolveEventLedgerDbPath()): Ev
       }
       return rows.map((row) => rowToEntry(asEventDbRow(row)));
     },
+    // The cursor-priming read (#10008): a single indexed MAX(seq) lookup, so callers that only need "where did
+    // the ledger leave off" (runLoop's startup cursor) never materialize or JSON.parse a single row.
+    latestSeq() {
+      const { latestSeq } = latestSeqStatement.get() as unknown as { latestSeq: number };
+      return latestSeq;
+    },
     // Explicit, operator-invoked right-to-be-forgotten purge (#5564) — never runs automatically. See the
     // IMMUTABILITY INVARIANT note above: this is a deliberate, separate exception, not a normal ledger write.
     // Requires a real repoFullName (unlike the optional filter above): a purge must never silently no-op on a
@@ -259,6 +267,10 @@ export function appendEvent(event: AppendEventInput): LedgerEntry {
 
 export function readEvents(filter?: ReadEventsFilter): LedgerEntry[] {
   return getDefaultEventLedger().readEvents(filter);
+}
+
+export function latestSeq(): number {
+  return getDefaultEventLedger().latestSeq();
 }
 
 export function closeDefaultEventLedger(): void {

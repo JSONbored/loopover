@@ -166,6 +166,8 @@ import {
   StdioWatchIssuesInput,
   StdioCompareLocalVariantsInput,
   StdioComparePrVariantsInput,
+  StdioLocalBranchAnalysisInput,
+  StdioDraftPrBodyInput,
   getToolContract,
   projectToolDefinition,
   ListPendingActionsStdioInput,
@@ -1670,6 +1672,9 @@ registerStdioTool(
       workspaceIntelligence: publicSafeWorkspaceIntelligence(result.analysis.workspaceIntelligence),
     });
   },
+  // #10034: this server resolves login/repoFullName from the checkout and active session, so it
+  // accepts a call without either -- stated as a declared narrowing of the contract's wider shape.
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 registerStdioTool(
@@ -1689,6 +1694,7 @@ registerStdioTool(
       recommendedRerunCondition: result.analysis.recommendedRerunCondition,
     });
   },
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 registerStdioTool(
@@ -1697,6 +1703,7 @@ registerStdioTool(
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("LoopOver local next-action ranking.", { local: result.local, nextActions: result.analysis.nextActions, rewardRisk: result.analysis.rewardRisk, recommendedRerunCondition: result.analysis.recommendedRerunCondition });
   },
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 registerStdioTool(
@@ -1713,6 +1720,7 @@ registerStdioTool(
       recommendedRerunCondition: result.analysis.recommendedRerunCondition,
     });
   },
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 registerStdioTool(
@@ -1723,6 +1731,7 @@ registerStdioTool(
     const { localScorerStatus: _localScorerStatus, ...body } = payload;
     return toolResult("LoopOver remediation plan.", await apiPost("/v1/local/remediation-plan", body));
   },
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 registerStdioTool(
@@ -1731,6 +1740,7 @@ registerStdioTool(
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("LoopOver public-safe PR packet.", { local: result.local, prPacket: result.analysis.prPacket });
   },
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 // #6741: CLI stdio mirror of loopover_draft_pr_body — same analyzeCurrentBranch fetch as prepare_pr_packet,
@@ -1755,6 +1765,7 @@ registerStdioTool(
       draft,
     );
   },
+  { input: StdioDraftPrBodyInput },
 );
 
 registerStdioTool(
@@ -1823,6 +1834,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_agent_prepare_pr_packet",
   async (input: z.infer<typeof CurrentBranchInput>) => toolResult("LoopOver base-agent public-safe PR packet.", await agentPreparePrPacket(await withClientWorkspaceRoots(input))),
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 // Only this tool declares an outputSchema today; every other tool returns text + unschematized

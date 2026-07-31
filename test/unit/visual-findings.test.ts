@@ -200,6 +200,28 @@ describe("parseVisualVisionResponse", () => {
     expect(parseVisualVisionResponse(text)).toEqual([]);
   });
 
+  it("REGRESSION (#10062): filters public-unsafe markup out of a model-authored path", () => {
+    const text = JSON.stringify({ findings: [{ path: "/app [pwn](http://evil.example) @maintainer", body: "Broke." }] });
+    const [finding] = parseVisualVisionResponse(text);
+    expect(finding).toBeDefined();
+    // The live link-injection markup no longer survives into the public finding path.
+    expect(finding!.path).not.toContain("](http://evil.example)");
+    expect(finding!.path).not.toContain("[pwn]");
+  });
+
+  it("REGRESSION (#10062): bounds a path to the MAX_VISUAL_PATH_CHARS constant", () => {
+    const text = JSON.stringify({ findings: [{ path: `/${"a".repeat(500)}`, body: "Broke." }] });
+    const [finding] = parseVisualVisionResponse(text);
+    expect(finding!.path.length).toBe(256);
+  });
+
+  it("REGRESSION (#10062): an ordinary route path round-trips byte-identically and still attaches visualEvidence", () => {
+    const findings = parseVisualVisionResponse(JSON.stringify({ findings: [{ path: "/app", body: "Broke." }] }));
+    expect(findings).toEqual([{ path: "/app", body: "Broke." }]); // survives toPublicSafe unchanged
+    const built = buildVisualRegressionFindings(findings, [changedRoute("/app")]);
+    expect(built[0]?.visualEvidence?.path).toBe("/app"); // route lookup still matches on the scrubbed path
+  });
+
   it("drops an entry with a blank/empty body (fails toPublicSafe's emptiness guard)", () => {
     const text = JSON.stringify({ findings: [{ path: "/pricing", body: "" }] });
     expect(parseVisualVisionResponse(text)).toEqual([]);

@@ -188,6 +188,56 @@ because a methodology page that omitted them would be marketing.
   recorded gets its own row rather than being bucketed into maintainer or contributor — bucketing it
   would bias exactly the comparison the block exists to make.
 
+## Automation rate: what counts as automated
+
+The share of pull requests decided with no human in the path. It is the metric every claim about the
+gate ultimately rests on, so its definition is stated here rather than left to the label on the chart.
+
+Computed from `decision_records` — the anchored ledger — **and nothing else**, so anyone holding the
+export recomputes the same numbers. A pull request is counted once per week, by the week of its
+**first** verdict.
+
+| Bucket | Definition |
+| --- | --- |
+| **decided** | The PR reached a disposition at all: at least one verdict whose action *enacts* one (`merge` / `close`), or one that `hold`s. |
+| **manual** | A decided PR where **any** verdict shows a human in the decision path. |
+| **automated** | A decided PR that reached `merge` or `close` with none of those signals. |
+
+Three things about that definition are deliberate, and each one closes a way the number could be
+made to look better than it is.
+
+**Non-deciding verdicts are excluded from both halves, not counted as automated.** `action` also
+carries `label`, `update_branch`, `approve` and the error/no-op classes. A PR that only ever drew
+those was never *decided*, so counting it would let work the gate never ruled on read as an
+automated decision.
+
+**A PR that was held and later merged is manual.** The question is whether a human had to act, not
+what the end state was. Scoring the final disposition instead would let the rate be inflated by
+holding everything and then merging it by hand.
+
+**Three distinct human signals count, not just one.** A `hold` is the gate declining to decide and
+handing the PR to a person. A named `reevaluation_actor` is a person who caused a re-evaluation. A
+`reevaluation_reason` of `maintainer_request` is a human asking for the re-run. Counting only holds
+would miss the last two entirely.
+
+A bot action alongside a decision does **not** make it manual — a `label` or an `update_branch` is
+the bot acting, not a person.
+
+### The backfill horizon
+
+The two re-evaluation fields arrived with migration 0204, on **2026-07-29**. Weeks starting before
+that date can only observe `hold`, so they can only **under-count** manual work — which means they
+can only over-state automation.
+
+Those weeks are published with `basis: "holds_only"` rather than being quietly mixed in with
+complete ones. A series whose definition changes partway along, without saying where, is worse than
+one that is explicit about it: the earlier points are not wrong, they are measuring something
+narrower, and a reader comparing this quarter to last needs to know which.
+
+The horizon is a stated constant rather than something inferred from the rows, because it cannot be
+inferred: "the column did not exist yet" and "this was a first evaluation" both read as `NULL`.
+Guessing the date from the data would be a fabrication dressed as a derivation.
+
 ## Where this lives in the code
 
 Kept adjacent to the scoring code it describes, so a change to a definition and a change to this page
@@ -199,3 +249,4 @@ show up in the same review:
 - Wilson intervals and the fleet fold — `src/orb/analytics.ts`
 - Review-parity rollups — `src/review/review-parity-rollups.ts`
 - The published corpus and its checksum — `src/review/public-eval-corpus.ts`
+- The automation rate, its buckets and the provenance horizon — `src/review/automation-rate.ts`

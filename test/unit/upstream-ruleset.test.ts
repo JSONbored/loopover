@@ -902,6 +902,12 @@ describe("upstream ruleset drift tracking", () => {
     await upsertUpstreamDriftReport(invalidRepoEnv, driftReport("invalid-repo"));
     await expect(fileUpstreamDriftIssues(invalidRepoEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
 
+    // A leading-slash repo splits to an empty owner segment (as opposed to invalidRepoEnv's missing name
+    // segment above) -- exercises the other arm of findGitHubIssueForFingerprint's `!owner || !name` guard.
+    const emptyOwnerRepoEnv = driftEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token", LOOPOVER_DRIFT_ISSUE_REPO: "/bad-repo" });
+    await upsertUpstreamDriftReport(emptyOwnerRepoEnv, driftReport("empty-owner-repo"));
+    await expect(fileUpstreamDriftIssues(emptyOwnerRepoEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
+
     const createEnv = driftEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(createEnv, driftReport("create-fingerprint"));
     vi.stubGlobal("fetch", githubIssueFetch({ create: { number: 77, url: "https://github.com/JSONbored/gittensory/issues/77" } }));
@@ -1147,10 +1153,13 @@ describe("upstream ruleset drift tracking", () => {
     vi.stubGlobal("fetch", githubIssueFetch({ createPayload: {} }));
     await expect(fileUpstreamDriftIssues(missingPayloadEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
 
+    // #10027: a thrown fingerprint search is a read failure, not "no match" -- it must NOT fall through to create.
     const throwingListEnv = driftEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(throwingListEnv, driftReport("throwing-list"));
-    vi.stubGlobal("fetch", githubIssueFetch({ throwOnList: true, create: { number: 92, url: "https://github.com/JSONbored/gittensory/issues/92" } }));
-    await expect(fileUpstreamDriftIssues(throwingListEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+    const throwingListCalls: GitHubIssueFetchCall[] = [];
+    vi.stubGlobal("fetch", githubIssueFetch({ throwOnList: true, create: { number: 92, url: "https://github.com/JSONbored/gittensory/issues/92" }, calls: throwingListCalls }));
+    await expect(fileUpstreamDriftIssues(throwingListEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
+    expect(throwingListCalls.some((call) => call.method === "POST")).toBe(false);
 
     const linkedEnv = driftEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(linkedEnv, driftReport("linked-fingerprint", { issueNumber: 93, issueUrl: "https://github.com/JSONbored/gittensory/issues/93" }));
@@ -1211,25 +1220,36 @@ describe("upstream ruleset drift tracking", () => {
       expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/125" })]),
     );
 
+    // #10027: a thrown GET on the recorded-issue fast path is a read failure -- the search fallback still runs
+    // (mirroring the original `??` fallback) but finding nothing there must not create a duplicate either.
     const throwingLinkedEnv = driftEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
     await upsertUpstreamDriftReport(throwingLinkedEnv, driftReport("throwing-linked", { issueNumber: 127, issueUrl: "https://github.com/JSONbored/gittensory/issues/127" }));
     const throwingLinkedCalls: GitHubIssueFetchCall[] = [];
     vi.stubGlobal("fetch", githubIssueFetch({ throwOnIssueGet: true, create: { number: 128, url: "https://github.com/JSONbored/gittensory/issues/128" }, calls: throwingLinkedCalls }));
-    await expect(fileUpstreamDriftIssues(throwingLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+    await expect(fileUpstreamDriftIssues(throwingLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
     expect(throwingLinkedCalls).toEqual(
       expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: "https://api.github.com/repos/JSONbored/gittensory/issues/127" })]),
     );
+    expect(throwingLinkedCalls.some((call) => call.method === "POST")).toBe(false);
 
     for (const scenario of [
       { fingerprint: "wrong-host-linked", issueNumber: 130, issueUrl: "https://example.com/JSONbored/gittensory/issues/130" },
       { fingerprint: "wrong-path-linked", issueNumber: 131, issueUrl: "https://github.com/JSONbored/gittensory/pull/131" },
-      { fingerprint: "lookup-status-linked", issueNumber: 132, issueUrl: "https://github.com/JSONbored/gittensory/issues/132", issueStatus: 500 },
-      { fingerprint: "wrong-number-linked", issueNumber: 133, issueUrl: "https://github.com/JSONbored/gittensory/issues/133", issue: { number: 134, url: "https://github.com/JSONbored/gittensory/issues/133", fingerprint: "wrong-number-linked" } },
+      // #10027: a non-OK GET (rate-limit/5xx) on the recorded-issue fast path is a READ FAILURE, not "not
+      // found" -- it must skip rather than fall through to filing a duplicate.
+      { fingerprint: "lookup-status-linked", issueNumber: 132, issueUrl: "https://github.com/JSONbored/gittensory/issues/132", issueStatus: 500, readFailure: true },
+      // The mock 404s here because its own number-in-URL match fails (it never reaches ruleset.ts's in-body
+      // number check) -- same non-OK-response read-failure path as the case above.
+      { fingerprint: "wrong-number-linked", issueNumber: 133, issueUrl: "https://github.com/JSONbored/gittensory/issues/133", issue: { number: 134, url: "https://github.com/JSONbored/gittensory/issues/133", fingerprint: "wrong-number-linked" }, readFailure: true },
       { fingerprint: "closed-linked", issueNumber: 135, issueUrl: "https://github.com/JSONbored/gittensory/issues/135", issue: { number: 135, url: "https://github.com/JSONbored/gittensory/issues/135", fingerprint: "closed-linked", state: "closed" } },
       { fingerprint: "missing-body-linked", issueNumber: 136, issueUrl: "https://github.com/JSONbored/gittensory/issues/136", issue: { number: 136, url: "https://github.com/JSONbored/gittensory/issues/136", fingerprint: "missing-body-linked", body: null } },
       { fingerprint: "missing-label-linked", issueNumber: 137, issueUrl: "https://github.com/JSONbored/gittensory/issues/137", issue: { number: 137, url: "https://github.com/JSONbored/gittensory/issues/137", fingerprint: "missing-label-linked", labels: [{ name: "triage" }] } },
       { fingerprint: "nameless-label-linked", issueNumber: 141, issueUrl: "https://github.com/JSONbored/gittensory/issues/141", issue: { number: 141, url: "https://github.com/JSONbored/gittensory/issues/141", fingerprint: "nameless-label-linked", labels: [{}] } },
       { fingerprint: "returned-url-linked", issueNumber: 138, issueUrl: "https://github.com/JSONbored/gittensory/issues/138", issue: { number: 138, url: "https://github.com/other/repo/issues/138", fingerprint: "returned-url-linked" } },
+      // The returned html_url parses fine and matches the expected owner/repo, but its OWN embedded issue
+      // number disagrees with the recorded report.issueNumber (distinct from "wrong-number-linked" above, which
+      // never gets past the fetch itself) -- still a not-found, not a read failure.
+      { fingerprint: "mismatched-url-number-linked", issueNumber: 142, issueUrl: "https://github.com/JSONbored/gittensory/issues/142", issue: { number: 142, url: "https://github.com/JSONbored/gittensory/issues/999", fingerprint: "mismatched-url-number-linked" } },
     ]) {
       const rejectedLinkedEnv = driftEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
       await upsertUpstreamDriftReport(rejectedLinkedEnv, driftReport(scenario.fingerprint, { issueNumber: scenario.issueNumber, issueUrl: scenario.issueUrl }));
@@ -1243,10 +1263,13 @@ describe("upstream ruleset drift tracking", () => {
           calls: rejectedLinkedCalls,
         }),
       );
-      await expect(fileUpstreamDriftIssues(rejectedLinkedEnv)).resolves.toMatchObject({ status: "completed", created: 1, updated: 0, skipped: 0 });
+      await expect(fileUpstreamDriftIssues(rejectedLinkedEnv)).resolves.toMatchObject(
+        scenario.readFailure ? { status: "completed", created: 0, updated: 0, skipped: 1 } : { status: "completed", created: 1, updated: 0, skipped: 0 },
+      );
       expect(rejectedLinkedCalls).toEqual(
         expect.not.arrayContaining([expect.objectContaining({ method: "PATCH", url: `https://api.github.com/repos/JSONbored/gittensory/issues/${scenario.issueNumber}` })]),
       );
+      if (scenario.readFailure) expect(rejectedLinkedCalls.some((call) => call.method === "POST")).toBe(false);
     }
 
     const failingLinkedEnv = driftEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
@@ -1295,6 +1318,61 @@ describe("upstream ruleset drift tracking", () => {
     await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 1, skipped: 0 });
     expect(calls.some((call) => call.includes("page=2"))).toBe(true);
     expect(calls.some((call) => call.startsWith("PATCH ") && call.includes("/issues/201"))).toBe(true);
+    expect(calls.every((call) => !call.startsWith("POST "))).toBe(true);
+  });
+
+  it("REGRESSION (#10027): a failed fingerprint search must not file a duplicate drift issue", async () => {
+    const env = driftEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(env, driftReport("duplicate-guard-fingerprint"));
+    const calls: GitHubIssueFetchCall[] = [];
+    // A 403 on page 1 of the search (the shape a shared REST rate-limit produces) used to fall straight through
+    // to createGitHubDriftIssue -- assert zero POSTs and the report's stored issue reference stays untouched.
+    vi.stubGlobal("fetch", githubIssueFetch({ listStatus: 403, create: { number: 999, url: "https://github.com/JSONbored/gittensory/issues/999" }, calls }));
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
+    expect(calls.some((call) => call.method === "POST")).toBe(false);
+    await expect(listUpstreamDriftReports(env)).resolves.toEqual([expect.objectContaining({ issueNumber: null, issueUrl: null })]);
+  });
+
+  it("REGRESSION (#10027): a non-OK response on the fingerprint search's page 2 is a read failure, not a truncated match", async () => {
+    const env = driftEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(env, driftReport("page-2-failure-fingerprint"));
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method ?? "GET";
+      calls.push(`${method} ${url}`);
+      if (url.includes("/issues?state=open&labels=signals&per_page=100&page=1")) {
+        return Response.json(
+          [{ number: 1, html_url: "https://github.com/JSONbored/gittensory/issues/1", body: "<!-- gittensory-upstream-drift:other-fingerprint -->" }],
+          { headers: { link: '<https://api.github.com/repos/JSONbored/gittensory/issues?page=2>; rel="next"' } },
+        );
+      }
+      if (url.includes("/issues?state=open&labels=signals&per_page=100&page=2")) return new Response("rate limited", { status: 403 });
+      return new Response("not found", { status: 404 });
+    });
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
+    expect(calls.every((call) => !call.startsWith("POST "))).toBe(true);
+  });
+
+  it("REGRESSION (#10027): the fingerprint search is bounded to 10 pages, and exhausting the cap is a read failure", async () => {
+    const env = driftEnv({ LOOPOVER_AUTO_FILE_DRIFT_ISSUES: "true", LOOPOVER_DRIFT_ISSUE_TOKEN: "token" });
+    await upsertUpstreamDriftReport(env, driftReport("page-cap-fingerprint"));
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      calls.push(`${init?.method ?? "GET"} ${url}`);
+      if (url.includes("/issues?state=open&labels=signals&per_page=100&page=")) {
+        // Every page reports a next page AND never matches -- a pathological repo with more than 1000 open
+        // `signals`-labeled issues, or an endlessly-looping stub. The cap must stop the walk at page 10.
+        return Response.json([{ number: 1, html_url: "https://github.com/JSONbored/gittensory/issues/1", body: "<!-- gittensory-upstream-drift:other-fingerprint -->" }], {
+          headers: { link: '<https://api.github.com/repos/JSONbored/gittensory/issues?page=99>; rel="next"' },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+    await expect(fileUpstreamDriftIssues(env)).resolves.toMatchObject({ status: "completed", created: 0, updated: 0, skipped: 1 });
+    const listCalls = calls.filter((call) => call.includes("/issues?state=open&labels=signals"));
+    expect(listCalls).toHaveLength(10);
     expect(calls.every((call) => !call.startsWith("POST "))).toBe(true);
   });
 

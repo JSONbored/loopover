@@ -879,16 +879,21 @@ jobs:
       - name: UI typecheck
         if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npx turbo run typecheck --filter=@loopover/ui --filter=@loopover/ui-miner
-      # Split into 3 independent steps (was one `&&`-chained step) -- turbo.json deliberately has no `test`
+      # Split into 4 independent steps (was one `&&`-chained step) -- turbo.json deliberately has no `test`
       # task for any package (per the plan doc: test orchestration stays out of Turborepo entirely, so
       # Codecov's codecov/patch keeps one centralized source of truth), so this can't use the same
       # union-`--filter` fix already applied to "UI lint"/"UI typecheck" two steps above. Plain `&&` meant a
       # failing @loopover/ui test silently prevented @loopover/ui-miner's tests from ever running in that
       # invocation -- same class of failure-masking bug those two steps'
-      # own comment already describes, just still present here. `!cancelled()` on all 3 (not `always()`)
+      # own comment already describes, just still present here. `!cancelled()` on all 4 (not `always()`)
       # matches the pattern already used by "Save Turborepo cache"/"Save TypeScript incremental build
       # cache" elsewhere in this file: still run after an earlier step's failure, just not after the job
-      # was cancelled outright. The job as a whole still fails if any of the three fails.
+      # was cancelled outright. The job as a whole still fails if any of the four fails.
+      # #10049: ui-kit's package-local vitest suite was declared and documented as "this suite runs" but
+      # never invoked from CI or ui:test — same silently-partial shape as #9860's typecheck gap.
+      - name: UI tests (ui-kit)
+        if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
+        run: npm --workspace @loopover/ui-kit run test
       - name: UI tests (ui)
         if: ${{ !cancelled() && (github.event_name == 'push' || needs.changes.outputs.ui == 'true') }}
         run: npm --workspace @loopover/ui run test

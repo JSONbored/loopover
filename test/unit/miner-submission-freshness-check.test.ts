@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { DEFAULT_FORGE_CONFIG } from "../../packages/loopover-miner/lib/forge-config";
 import { checkSubmissionFreshness, SUBMISSION_FRESHNESS_ABORT_EVENT } from "../../packages/loopover-miner/lib/submission-freshness-check";
 
-function stubClaimLedger(claims: Array<{ repoFullName: string; issueNumber: number; status: string }> = []) {
+function stubClaimLedger(claims: Array<{ repoFullName: string; issueNumber: number; status: string; apiBaseUrl?: string }> = []) {
   const listClaims = vi.fn((filter: { repoFullName?: string; status?: string }) =>
     claims.filter((c) => (filter.repoFullName === undefined || c.repoFullName === filter.repoFullName) && (filter.status === undefined || c.status === filter.status)),
   );
@@ -62,6 +63,85 @@ describe("checkSubmissionFreshness (#3007)", () => {
 
     expect(result).toEqual({ fresh: false, reason: "claim_superseded" });
     expect(fetchLiveIssueSnapshot).not.toHaveBeenCalled();
+  });
+
+  describe("host-scoped claim match (#10004 -- the same owner/repo#issue can have one row per forge host)", () => {
+    const forgeInternal = "https://forge.internal";
+
+    it("REGRESSION: a released claim on another forge host does not abort this host's submission -- a released forge.internal row (lowest id) is ignored, and the active github.com row (no candidate apiBaseUrl) is matched instead", async () => {
+      const { claimLedger } = stubClaimLedger([
+        { repoFullName: "acme/widgets", issueNumber: 42, status: "released", apiBaseUrl: forgeInternal },
+        { repoFullName: "acme/widgets", issueNumber: 42, status: "active", apiBaseUrl: DEFAULT_FORGE_CONFIG.apiBaseUrl },
+      ]);
+      const { eventLedger, appendEvent } = stubEventLedger();
+      const fetchLiveIssueSnapshot = vi.fn(async () => ({ state: "open" as const, referencingPrs: [] }));
+
+      const result = await checkSubmissionFreshness(
+        { repoFullName: "acme/widgets", issueNumber: 42, minerLogin: "miner-bot" },
+        { claimLedger, fetchLiveIssueSnapshot, eventLedger },
+      );
+
+      expect(result).toEqual({ fresh: true });
+      expect(appendEvent).not.toHaveBeenCalled();
+    });
+
+    it("claim-superseded abort: only an active row on a DIFFERENT host exists -- the default-host candidate does not false-pass on it", async () => {
+      const { claimLedger } = stubClaimLedger([{ repoFullName: "acme/widgets", issueNumber: 42, status: "active", apiBaseUrl: forgeInternal }]);
+      const { eventLedger, appendEvent } = stubEventLedger();
+      const fetchLiveIssueSnapshot = vi.fn(async () => ({ state: "open" as const, referencingPrs: [] }));
+
+      const result = await checkSubmissionFreshness(
+        { repoFullName: "acme/widgets", issueNumber: 42, minerLogin: "miner-bot" },
+        { claimLedger, fetchLiveIssueSnapshot, eventLedger },
+      );
+
+      expect(result).toEqual({ fresh: false, reason: "claim_superseded" });
+      expect(fetchLiveIssueSnapshot).not.toHaveBeenCalled();
+      expect(appendEvent).toHaveBeenCalledWith({
+        type: SUBMISSION_FRESHNESS_ABORT_EVENT,
+        repoFullName: "acme/widgets",
+        payload: { issueNumber: 42, reason: "claim_superseded" },
+      });
+    });
+
+    it("a candidate with an explicit apiBaseUrl matches the row recorded under that same host", async () => {
+      const { claimLedger } = stubClaimLedger([{ repoFullName: "acme/widgets", issueNumber: 42, status: "active", apiBaseUrl: forgeInternal }]);
+      const { eventLedger } = stubEventLedger();
+      const fetchLiveIssueSnapshot = vi.fn(async () => ({ state: "open" as const, referencingPrs: [] }));
+
+      const result = await checkSubmissionFreshness(
+        { repoFullName: "acme/widgets", issueNumber: 42, minerLogin: "miner-bot", apiBaseUrl: forgeInternal },
+        { claimLedger, fetchLiveIssueSnapshot, eventLedger },
+      );
+
+      expect(result).toEqual({ fresh: true });
+    });
+
+    it("a candidate on the default host is unaffected by an unrelated row whose apiBaseUrl is blank (normalizes to the same default, not a distinct host)", async () => {
+      const { claimLedger } = stubClaimLedger([{ repoFullName: "acme/widgets", issueNumber: 42, status: "active", apiBaseUrl: "" }]);
+      const { eventLedger } = stubEventLedger();
+      const fetchLiveIssueSnapshot = vi.fn(async () => ({ state: "open" as const, referencingPrs: [] }));
+
+      const result = await checkSubmissionFreshness(
+        { repoFullName: "acme/widgets", issueNumber: 42, minerLogin: "miner-bot" },
+        { claimLedger, fetchLiveIssueSnapshot, eventLedger },
+      );
+
+      expect(result).toEqual({ fresh: true });
+    });
+
+    it("a candidate with a blank apiBaseUrl normalizes to the default host, matching a row with no apiBaseUrl at all", async () => {
+      const { claimLedger } = stubClaimLedger([{ repoFullName: "acme/widgets", issueNumber: 42, status: "active" }]);
+      const { eventLedger } = stubEventLedger();
+      const fetchLiveIssueSnapshot = vi.fn(async () => ({ state: "open" as const, referencingPrs: [] }));
+
+      const result = await checkSubmissionFreshness(
+        { repoFullName: "acme/widgets", issueNumber: 42, minerLogin: "miner-bot", apiBaseUrl: "   " },
+        { claimLedger, fetchLiveIssueSnapshot, eventLedger },
+      );
+
+      expect(result).toEqual({ fresh: true });
+    });
   });
 
   it("issue-closed abort", async () => {

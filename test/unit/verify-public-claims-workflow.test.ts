@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
 // reads the shipped workflow and fails if any of them comes back.
 const WORKFLOW_PATH = ".github/workflows/verify-public-claims.yml";
 
-type Step = { name?: string; uses?: string; with?: Record<string, unknown>; env?: Record<string, unknown>; run?: string };
+type Step = { name?: string; uses?: string; with?: Record<string, unknown>; env?: Record<string, unknown>; run?: string; if?: string };
 type Workflow = { permissions?: Record<string, string>; jobs?: Record<string, { permissions?: Record<string, string>; steps?: Step[] }> };
 
 const workflow = parse(readFileSync(WORKFLOW_PATH, "utf8")) as Workflow;
@@ -43,13 +43,28 @@ describe("verify-public-claims workflow — the anonymous-run guarantees (#9724)
     expect(checkout?.with?.["persist-credentials"]).toBe(false);
   });
 
-  it("REGRESSION: setup-node is not given a registry-url, which is what reaches its credential writer", () => {
-    // At the pinned SHA, `src/main.ts` calls `auth.configAuthentication(registryUrl)` only inside
-    // `if (registryUrl)`. Unset means the `.npmrc`-writing path is unreachable; setting it would make this
-    // job write a credential to disk while still claiming to hold none.
-    const setupNode = stepUsing("actions/setup-node");
-    expect(setupNode, "the job no longer sets up node — re-point this test").toBeDefined();
-    expect(setupNode?.with?.["registry-url"]).toBeUndefined();
+  it("REGRESSION: setup-node is not used at all — it is the last action that can write credentials", () => {
+    // `actions/setup-node` writes an authenticated .npmrc via `auth.configAuthentication(registryUrl)`,
+    // gated behind `if (registryUrl)` in its src/main.ts. Keeping it and leaving that input unset made the
+    // safety "unreachable because nobody has added one line yet"; not present is the stronger property, and
+    // the one a job claiming to hold no credentials should have. The runner's own node is used instead, with
+    // an explicit version precondition in the workflow.
+    expect(stepUsing("actions/setup-node")).toBeUndefined();
+  });
+
+  it("INVARIANT: checkout is the ONLY third-party action, so the credential surface stays one reviewed item", () => {
+    // Not a blocklist of known-risky actions — an allowlist of the one that is actually needed. A new action
+    // arriving in this job is a decision that should be made deliberately, not noticed later by a scanner.
+    const used = steps.flatMap((step) => (typeof step.uses === "string" ? [step.uses.split("@")[0]!] : []));
+    expect(used).toEqual(["actions/checkout"]);
+  });
+
+  it("asserts a Node version rather than assuming one, since the runner's node is now what runs", () => {
+    // The tradeoff of dropping setup-node: the version is the image's. `--experimental-strip-types` needs
+    // 22.6+, so the job fails loudly with the remedy rather than breaking quietly if an image regresses.
+    const guard = steps.find((step) => (step.name ?? "").toLowerCase().includes("node"));
+    expect(guard?.run ?? "").toMatch(/22/);
+    expect(guard?.run ?? "").toMatch(/experimental-strip-types/);
   });
 
   it("INVARIANT: the step that runs the verifier is given no environment secrets at all", () => {
@@ -67,6 +82,15 @@ describe("verify-public-claims workflow — the anonymous-run guarantees (#9724)
     // that needs it.
     expect(workflow.permissions).toEqual({ contents: "read" });
     expect(verifyJob?.permissions).toEqual({ contents: "read", issues: "write" });
+  });
+
+  it("REGRESSION: the token-holding step stays gated on dry-run, so --dry-run cannot file an issue", () => {
+    // Raised alongside the persist-credentials finding: with a token readable from .git/config, a compromised
+    // verifier could have created issues even on a dry run. `persist-credentials: false` closes the disk half;
+    // this pins the other half, so the gate cannot be dropped while the token stays.
+    const withToken = steps.filter((step) => JSON.stringify(step.env ?? {}).includes("github.token"));
+    expect(withToken).toHaveLength(1);
+    expect(withToken[0]?.if ?? "").toContain("dry-run");
   });
 
   it("INVARIANT: no step installs the repo's dependency tree, which a stranger does not have", () => {

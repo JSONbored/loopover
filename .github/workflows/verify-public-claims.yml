@@ -74,21 +74,29 @@ jobs:
           # never consults git's credential config.
           persist-credentials: false
 
-      # AUDITED (#9724). A supply-chain scan flags this action for credential-file access, citing
-      # `__tests__/authutil.test.ts`. Checked at this exact SHA (v7.0.0) rather than waved through:
+      # DELIBERATELY NO actions/setup-node. This job needs a Node RUNTIME, not this repository's toolchain:
+      # it runs a published CLI through npx and one checked-in script, and builds nothing. The runner image
+      # already provides both node and npm, and three workflows here (ci.yml, mcp-release-watch.yml,
+      # package-release-watch.yml) already rely on that.
       #
-      #   • the entrypoint is `dist/setup/index.js`; `__tests__/` is never executed by the action;
-      #   • the credential writer is `auth.configAuthentication(registryUrl)`, and `src/main.ts` calls it
-      #     ONLY inside `if (registryUrl)`.
+      # Dropping it removes the last action that can write credentials. `actions/setup-node` writes an
+      # authenticated .npmrc via `auth.configAuthentication(registryUrl)` -- gated behind `if (registryUrl)`
+      # in its `src/main.ts`, so it was unreachable while that input stayed unset, but "unreachable because
+      # nobody has added one line yet" is a weaker property than "not present". For a job whose entire claim
+      # is that it holds no credentials, not present is the one worth having.
       #
-      # So the capability is real and unreachable here, because `registry-url` is not set below. That is a
-      # property of this file, not of the action -- adding `registry-url:` would make this job write an
-      # authenticated .npmrc while still claiming to hold no credentials -- so it is asserted in
-      # test/unit/verify-public-claims-workflow.test.ts rather than left to this comment.
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version-file: .nvmrc
+      # The tradeoff is that the Node version is now the runner's rather than .nvmrc's, so it is ASSERTED
+      # rather than assumed. `--experimental-strip-types` needs 22.6+; if an image ever regresses below that,
+      # this fails immediately with the fix in the message instead of the nightly quietly breaking.
+      - name: Require a Node that can strip types
+        run: |
+          node -e '
+            const [major, minor] = process.versions.node.split(".").map(Number);
+            if (major > 22 || (major === 22 && minor >= 6)) process.exit(0);
+            console.error("::error::Node " + process.versions.node + " cannot run --experimental-strip-types (needs 22.6+). Re-add actions/setup-node with node-version-file: .nvmrc.");
+            process.exit(1);
+          '
+          echo "node $(node --version), npm $(npm --version)"
 
       # No `npm ci`: this step must not depend on the repository's own dependency tree, because a stranger has
       # none. `npx -p @loopover/mcp` fetches the published package exactly as the docs tell a reader to.

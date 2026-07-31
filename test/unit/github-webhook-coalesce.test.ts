@@ -309,20 +309,61 @@ describe("force-push debounce (#9479)", () => {
     }
   });
 
-  it("REGRESSION: only a push carries the trailing quiet window; every other delivery is enqueued immediately", () => {
+  it("a push carries its trailing quiet window", () => {
     expect(githubWebhookCoalesceDelaySeconds("pull_request", push(7, "a".repeat(40)))).toBe(PUSH_COALESCE_QUIET_WINDOW_SECONDS);
     expect(PUSH_COALESCE_QUIET_WINDOW_SECONDS).toBeGreaterThan(0);
+  });
 
-    for (const action of ["opened", "reopened", "edited", "ready_for_review", "closed", "labeled"] as const) {
-      expect(
-        githubWebhookCoalesceDelaySeconds("pull_request", {
-          action,
-          repository: { full_name: "JSONbored/Loopover" },
-          pull_request: { number: 7, head: { sha: "a".repeat(40) } },
-        } as GitHubWebhookPayload),
-      ).toBe(0);
+  it("INVARIANT (#10127): every key-bearing delivery carries a window, except the lifecycle actions that opt out", () => {
+    // The bug this replaces: the delay function returned non-zero for a push and ZERO for everything else, so
+    // four of the five families computed a coalesce key that could never merge into anything -- a job with no
+    // window is claimed before a sibling can arrive. On the Orb that was 1,727 `check_suite.completed`
+    // deliveries in a day and a half and 2.98 decision records per head SHA.
+    //
+    // Asserted as "key implies window" over the real families rather than as a list of expected numbers, so a
+    // family added later cannot quietly reintroduce a keyed-but-inert delivery.
+    const keyed: Array<[string, GitHubWebhookPayload]> = [
+      ["check_suite", { action: "completed", repository: { full_name: "JSONbored/Loopover" }, check_suite: { head_sha: "a".repeat(40), pull_requests: [{ number: 7 }] } } as unknown as GitHubWebhookPayload],
+      ["check_run", { action: "completed", repository: { full_name: "JSONbored/Loopover" }, check_run: { head_sha: "a".repeat(40), pull_requests: [{ number: 7 }] } } as unknown as GitHubWebhookPayload],
+      ["pull_request", push(7, "a".repeat(40))],
+      ["pull_request", { action: "labeled", repository: { full_name: "JSONbored/Loopover" }, pull_request: { number: 7 } } as GitHubWebhookPayload],
+      ["pull_request", { action: "unlabeled", repository: { full_name: "JSONbored/Loopover" }, pull_request: { number: 7 } } as GitHubWebhookPayload],
+      ["pull_request_review_comment", { action: "created", repository: { full_name: "JSONbored/Loopover" }, pull_request: { number: 7 } } as GitHubWebhookPayload],
+      ["pull_request_review_thread", { action: "resolved", repository: { full_name: "JSONbored/Loopover" }, pull_request: { number: 7 } } as GitHubWebhookPayload],
+    ];
+    for (const [eventName, payload] of keyed) {
+      const label = `${eventName}:${String(payload.action)}`;
+      expect(githubWebhookCoalesceKey(eventName, payload), label).not.toBeNull();
+      expect(githubWebhookCoalesceDelaySeconds(eventName, payload), label).toBeGreaterThan(0);
     }
+  });
+
+  it("INVARIANT (#10127): a LIFECYCLE action is keyed but never delayed — time-to-first-verdict is not tradeable", () => {
+    // Deliberately the one family that keeps a zero window. `opened` / `reopened` / `ready_for_review` each
+    // happen once and start the clock a contributor is waiting on; they are also not a burst source (203
+    // `opened` deliveries in the day and a half that produced 1,727 CI completions). The key stays so a genuine
+    // same-instant duplicate still collapses.
+    for (const action of ["opened", "reopened", "ready_for_review", "edited"] as const) {
+      const payload = {
+        action,
+        repository: { full_name: "JSONbored/Loopover" },
+        pull_request: { number: 7, head: { sha: "a".repeat(40) } },
+      } as GitHubWebhookPayload;
+      expect(githubWebhookCoalesceDelaySeconds("pull_request", payload), action).toBe(0);
+    }
+  });
+
+  it("an unkeyed delivery is never delayed — a delay with no key is pure latency", () => {
+    // `closed` has no coalesce key (merge/close has its own non-coalesced handling), so it must not pick one up.
+    expect(
+      githubWebhookCoalesceDelaySeconds("pull_request", {
+        action: "closed",
+        repository: { full_name: "JSONbored/Loopover" },
+        pull_request: { number: 7, head: { sha: "a".repeat(40) } },
+      } as GitHubWebhookPayload),
+    ).toBe(0);
     // A same-named action on an unrelated event family must not pick up the delay either.
     expect(githubWebhookCoalesceDelaySeconds("check_suite", { action: "synchronize", repository: { full_name: "JSONbored/Loopover" } } as unknown as GitHubWebhookPayload)).toBe(0);
+    expect(githubWebhookCoalesceDelaySeconds("issues", { action: "labeled", repository: { full_name: "JSONbored/Loopover" } } as unknown as GitHubWebhookPayload)).toBe(0);
   });
 });

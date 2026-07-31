@@ -40,15 +40,39 @@ const PUSH_COALESCE_ACTION = "synchronize";
 export const PUSH_COALESCE_QUIET_WINDOW_SECONDS = 45;
 
 /**
- * The delay to enqueue this delivery with. Non-zero ONLY for a push, whose key above is built to coalesce.
+ * A CI-completion burst's window (#10127). Same 45s as a push, and for the same structural reason: a key with no
+ * window coalesces nothing. Deliberately under CI_COALESCE_WINDOW_SECONDS (60s, processors.ts) so the downstream
+ * per-PR re-review throttle stays the outer bound rather than being pre-empted by this one.
+ */
+const CI_COMPLETION_QUIET_WINDOW_SECONDS = 45;
+
+/**
+ * Label and review-surface bursts (#10127). Shorter than the CI window because both carry a human in the loop --
+ * a maintainer removing a hold label expects the gate to notice promptly -- while still being long enough to
+ * collapse a same-batch burst, which is what these actually produce (the Orb's relay drains on a fixed interval,
+ * so a batch's events arrive within milliseconds of each other).
+ */
+const SURFACE_COALESCE_QUIET_WINDOW_SECONDS = 15;
+
+/**
+ * The delay to enqueue this delivery with.
  *
  * On a queue that coalesces (self-host pg/sqlite, which is where the ORB runs) this is what CREATES the window:
- * without a delay the first push is claimed immediately and later pushes find no pending row to merge into. On
- * Cloudflare Queues, which has no job_key coalescing, it is a plain 45s deferral of push-triggered reviews and
- * nothing more -- correct, just not a saving.
+ * without a delay the first delivery is claimed immediately and later siblings find no pending row to merge into.
+ * On Cloudflare Queues, which has no job_key coalescing, it is a plain deferral and nothing more -- correct, just
+ * not a saving.
+ *
+ * #10127: this used to return non-zero for a push and ZERO for everything else, which made every other key
+ * `githubWebhookCoalesceKey` computes inert -- they were derived, attached to the job, and could never merge into
+ * anything. The Orb showed the cost: 1,727 `check_suite.completed` deliveries in a day and a half, and 2.98
+ * decision records per distinct head SHA, each repeat buying a full prologue and a fresh gate pass over state
+ * that had not changed.
+ *
+ * Derived from the SAME plan as the key, so a family can no longer have one without the other. That coupling is
+ * the actual fix; the numbers are just tuning.
  */
 export function githubWebhookCoalesceDelaySeconds(eventName: string, payload: GitHubWebhookPayload): number {
-  return eventName === "pull_request" && payload.action === PUSH_COALESCE_ACTION ? PUSH_COALESCE_QUIET_WINDOW_SECONDS : 0;
+  return planGithubWebhookCoalesce(eventName, payload)?.quietWindowSeconds ?? 0;
 }
 
 // #selfhost-backlog-convergence: every "labeled"/"unlabeled" delivery re-syncs the PR row
@@ -72,10 +96,24 @@ const REVIEW_SURFACE_ACTIONS_BY_EVENT: Record<string, ReadonlySet<string>> = {
   pull_request_review_thread: new Set(["resolved", "unresolved"]),
 };
 
+/** One coalescable family: the job key siblings merge on, and the quiet window that lets them.
+ *
+ *  #10127: these two used to be computed by separate functions and drifted immediately -- four of the five
+ *  families had a key and no window, so they never coalesced. Returning both together makes that state
+ *  unrepresentable: adding a family means naming its window, because the type demands one. */
+type WebhookCoalescePlan = { key: string; quietWindowSeconds: number };
+
 export function githubWebhookCoalesceKey(
   eventName: string,
   payload: GitHubWebhookPayload,
 ): string | null {
+  return planGithubWebhookCoalesce(eventName, payload)?.key ?? null;
+}
+
+function planGithubWebhookCoalesce(
+  eventName: string,
+  payload: GitHubWebhookPayload,
+): WebhookCoalescePlan | null {
   const action =
     typeof payload.action === "string" ? payload.action : "";
   const repo = normalizedRepo(payload.repository?.full_name);
@@ -95,7 +133,13 @@ export function githubWebhookCoalesceKey(
       .filter((value): value is number => value !== null)
       .sort((a, b) => a - b)
       .join(",");
-    return `github-webhook:ci-completed:${repo}@${headSha}${pullNumbers ? `#${pullNumbers}` : ""}`;
+    // Interchangeable by construction: whichever delivery wins the race re-fetches the SAME already-settled CI
+    // state, so collapsing a suite-completion burst loses nothing. The highest-volume family on the Orb by an
+    // order of magnitude, and the reason #10127 exists.
+    return {
+      key: `github-webhook:ci-completed:${repo}@${headSha}${pullNumbers ? `#${pullNumbers}` : ""}`,
+      quietWindowSeconds: CI_COMPLETION_QUIET_WINDOW_SECONDS,
+    };
   }
   if (eventName === "pull_request" && isCoalescablePullRequestAction(action)) {
     const pr =
@@ -103,22 +147,42 @@ export function githubWebhookCoalesceKey(
       normalizedNumber((payload as { number?: unknown }).number);
     if (pr === null) return null;
     // #9479: a push is keyed on the PR alone, so the NEXT push collapses into it. See PUSH_COALESCE_ACTION.
-    if (action === PUSH_COALESCE_ACTION) return `github-webhook:pr-push:${repo}#${pr}`;
+    if (action === PUSH_COALESCE_ACTION) {
+      return { key: `github-webhook:pr-push:${repo}#${pr}`, quietWindowSeconds: PUSH_COALESCE_QUIET_WINDOW_SECONDS };
+    }
     const headSha = normalizedSha(payload.pull_request?.head?.sha);
-    return `github-webhook:pr-refresh:${repo}#${pr}${headSha ? `@${headSha}` : ""}`;
+    // Window deliberately ZERO, unlike every other family here (#10127). These are LIFECYCLE transitions --
+    // opened, reopened, ready_for_review -- each of which happens once and starts the clock a contributor is
+    // waiting on. They are keyed so a genuine same-instant duplicate still collapses, but delaying a PR's first
+    // review to save a redelivery would trade a real cost (time-to-first-verdict) for an imaginary one: at 203
+    // `opened` deliveries in a day and a half these are not a burst source in the first place.
+    return {
+      key: `github-webhook:pr-refresh:${repo}#${pr}${headSha ? `@${headSha}` : ""}`,
+      quietWindowSeconds: 0,
+    };
   }
   if (eventName === "pull_request" && COALESCABLE_PULL_REQUEST_LABEL_ACTIONS.has(action)) {
     const pr =
       normalizedNumber(payload.pull_request?.number) ??
       normalizedNumber((payload as { number?: unknown }).number);
-    return pr !== null ? `github-webhook:pr-label:${repo}#${pr}` : null;
+    // The bot's OWN disposition-label writes come straight back as deliveries here
+    // (shouldProcessPullRequestPublicSurface treats a disposition label as a re-sync trigger), so a pass that
+    // adds a label and clears a stale sibling bought two full re-evaluations of state it had just written.
+    return pr !== null
+      ? { key: `github-webhook:pr-label:${repo}#${pr}`, quietWindowSeconds: SURFACE_COALESCE_QUIET_WINDOW_SECONDS }
+      : null;
   }
   const reviewSurfaceActions = REVIEW_SURFACE_ACTIONS_BY_EVENT[eventName];
   if (reviewSurfaceActions?.has(action)) {
     const pr = normalizedNumber(payload.pull_request?.number);
     const headSha = normalizedSha(payload.pull_request?.head?.sha);
+    // Payload-interchangeable within a family (see REVIEW_SURFACE_ACTIONS_BY_EVENT), and a review submission
+    // routinely lands with several comment/thread deliveries in the same instant.
     return pr !== null
-      ? `github-webhook:${eventName}:${repo}#${pr}${headSha ? `@${headSha}` : ""}`
+      ? {
+          key: `github-webhook:${eventName}:${repo}#${pr}${headSha ? `@${headSha}` : ""}`,
+          quietWindowSeconds: SURFACE_COALESCE_QUIET_WINDOW_SECONDS,
+        }
       : null;
   }
   return null;

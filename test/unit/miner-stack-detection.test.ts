@@ -194,7 +194,6 @@ describe("detectRepoStack — Node (#4785)", () => {
     });
     expect(unitFirst).toMatchObject({ testCommand: "npm run test:e2e" });
     expect(e2eFirst).toMatchObject({ testCommand: "npm run test:e2e" });
-    expect(unitFirst.testCommand).toBe(e2eFirst.testCommand);
   });
 });
 

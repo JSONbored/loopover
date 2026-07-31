@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { TtlCache } from "../../../packages/discovery-index/src/cache";
+import { DEFAULT_CACHE_MAX_ENTRIES, TtlCache } from "../../../packages/discovery-index/src/cache";
+
+const SERVER_SOURCE = readFileSync("packages/discovery-index/src/server.ts", "utf8");
 
 function clock(startMs = 0) {
   let now = startMs;
@@ -64,5 +67,81 @@ describe("discovery-index TtlCache (#7164)", () => {
     c.advance(101);
     expect(await cache.getOrCompute("k", 100, compute)).toBe(2);
     expect(calls).toBe(2);
+  });
+
+  describe("max-entry cap", () => {
+    it("exports a positive default cap constant", () => {
+      expect(Number.isInteger(DEFAULT_CACHE_MAX_ENTRIES)).toBe(true);
+      expect(DEFAULT_CACHE_MAX_ENTRIES).toBeGreaterThan(0);
+    });
+
+    it("with a cap of 2, a third distinct key evicts the oldest and stays at size 2", () => {
+      const cache = new TtlCache<string>(Date.now, 2);
+      cache.set("a", "1", 60_000);
+      cache.set("b", "2", 60_000);
+      cache.set("c", "3", 60_000);
+      expect(cache.size).toBe(2);
+      expect(cache.get("a")).toBeUndefined();
+      expect(cache.get("c")).toBe("3");
+    });
+
+    it("under the cap, set does not evict anything", () => {
+      const cache = new TtlCache<string>(Date.now, 2);
+      cache.set("a", "1", 60_000);
+      expect(cache.size).toBe(1);
+      expect(cache.get("a")).toBe("1");
+    });
+
+    it("evicts already-expired entries before falling back to oldest-inserted eviction", () => {
+      const c = clock();
+      const cache = new TtlCache<string>(c.now, 2);
+      cache.set("a", "1", 100); // will be expired
+      c.advance(101);
+      cache.set("b", "2", 60_000); // live
+      cache.set("c", "3", 60_000); // expired-drop of "a" makes room, "b" survives
+      expect(cache.size).toBe(2);
+      expect(cache.get("a")).toBeUndefined();
+      expect(cache.get("b")).toBe("2");
+      expect(cache.get("c")).toBe("3");
+    });
+
+    it("REGRESSION: a key that is never re-read must not survive past the entry cap", () => {
+      const cap = 10;
+      const cache = new TtlCache<number>(Date.now, cap);
+      for (let i = 0; i < cap + 50; i++) {
+        cache.set(`key-${i}`, i, 60_000);
+        expect(cache.size).toBeLessThanOrEqual(cap);
+      }
+      expect(cache.size).toBe(cap);
+    });
+
+    it("overwriting an already-present key at the cap does not evict any other entry", () => {
+      const cache = new TtlCache<string>(Date.now, 2);
+      cache.set("a", "1", 60_000);
+      cache.set("b", "2", 60_000);
+      cache.set("b", "2-updated", 60_000);
+      expect(cache.size).toBe(2);
+      expect(cache.get("a")).toBe("1");
+      expect(cache.get("b")).toBe("2-updated");
+    });
+
+    it("falls back to the default cap when no cap is passed to the constructor", () => {
+      const cache = new TtlCache<number>();
+      for (let i = 0; i < DEFAULT_CACHE_MAX_ENTRIES + 5; i++) {
+        cache.set(`key-${i}`, i, 60_000);
+      }
+      expect(cache.size).toBe(DEFAULT_CACHE_MAX_ENTRIES);
+    });
+  });
+
+  describe("server.ts wiring (#7164)", () => {
+    it("passes an explicit cap to all three long-lived cache instances", () => {
+      const explicitCapSites = [...SERVER_SOURCE.matchAll(/new TtlCache(?:<[^>]*>)?\([^)]*DEFAULT_CACHE_MAX_ENTRIES[^)]*\)/g)];
+      expect(explicitCapSites).toHaveLength(3);
+    });
+
+    it("imports the cap constant from cache.ts", () => {
+      expect(SERVER_SOURCE).toMatch(/import\s*\{[^}]*DEFAULT_CACHE_MAX_ENTRIES[^}]*\}\s*from\s*"\.\/cache\.js"/);
+    });
   });
 });

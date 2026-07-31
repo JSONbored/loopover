@@ -601,6 +601,54 @@ describe("withPostHogMonitor", () => {
 describe("capturePostHogAiGeneration (#8296)", () => {
   const BASE = { provider: "ollama", model: "llama3.1", requestKind: "review" as const, latencyMs: 1500, isError: false };
 
+  // #10185: trace linking + repo grouping. These are what turn a pile of orphan generations into a
+  // reviewable pipeline and an answerable spend question, so both branches of each are pinned.
+  it("groups the generation under the AMBIENT OTel trace rather than minting a throwaway one", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "review-trace-1", span_id: "provider-span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration(BASE);
+    const call = mocks.capture.mock.calls[0]?.[0];
+    // The whole point: every provider attempt inside one withReviewPipelineSpan shares this id, so
+    // both dual-review legs, the retries, and the RAG embeddings nest under ONE PostHog trace.
+    expect(call.properties.$ai_trace_id).toBe("review-trace-1");
+    expect(call.properties.$ai_span_id).toBe("provider-span-1");
+    expect(call.properties.$ai_span_name).toBe("ai.review/ollama");
+  });
+
+  it("falls back to a minted trace id, and omits $ai_span_id, when there is no ambient span", async () => {
+    // AI_EMBED / AI_VISION / AI_ADVISORY run outside any review span. An orphan trace is a valid
+    // event, not an error -- but it must not claim a span id it does not have.
+    otelMocks.currentOtelTraceIds.mockReturnValue(undefined);
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration(BASE);
+    const call = mocks.capture.mock.calls[0]?.[0];
+    expect(call.properties.$ai_trace_id).toEqual(expect.any(String));
+    expect(call.properties.$ai_trace_id).not.toBe("");
+    expect("$ai_span_id" in call.properties).toBe(false);
+  });
+
+  it("names an embedding span by its own request kind", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "t", span_id: "s" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, requestKind: "embedding", provider: "" });
+    expect(mocks.capture.mock.calls[0]?.[0].properties.$ai_span_name).toBe("ai.embedding/unknown");
+  });
+
+  it("stamps a repo group so AI spend is attributable per repository", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, context: { repo: "owner/repo", pullNumber: 7 } });
+    const call = mocks.capture.mock.calls[0]?.[0];
+    expect(call.groups).toEqual({ repo: "owner/repo" });
+  });
+
+  it("sends no group at all when no repo survives the operational allowlist", async () => {
+    // Notably the fail-closed central-key path: when the repo is dropped rather than anonymized,
+    // the group must be dropped with it rather than defaulting to some placeholder bucket.
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration(BASE);
+    expect("groups" in mocks.capture.mock.calls[0]?.[0]).toBe(false);
+  });
+
   it("is a no-op when PostHog is unconfigured", () => {
     capturePostHogAiGeneration(BASE);
     expect(mocks.capture).not.toHaveBeenCalled();

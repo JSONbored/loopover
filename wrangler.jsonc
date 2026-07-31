@@ -251,6 +251,12 @@
     // #1695 both closed) — the opposite of "spare one good PR". With it ON, the earliest open PR in a cluster
     // is judged on its merits and only the true duplicates close.
     "LOOPOVER_DUPLICATE_WINNER": "true",
+    // Superseded-PR recognition (#10168): a contributor whose linked issue was closed by a rival that merged
+    // first is currently told "No linked issue detected — link it explicitly in the PR body", advice that
+    // cannot work. When ON, that case gets its own finding naming the rival, and closes as superseded.
+    // DISABLED: recognising supersession CLOSES the PR, so it ships dark until it has been shadow-checked
+    // against the held backlog on the Orb.
+    "LOOPOVER_SUPERSEDED_CLOSE": "false",
     // Open-PR file-path collision (#2653): enrich changedFiles on the reviewed PR and its open siblings from
     // the pull_request_files cache before building the collision report, so two independently-open PRs on the
     // same file get flagged the way two title-similar PRs already are. ENABLED: a repo-wide shadow test against

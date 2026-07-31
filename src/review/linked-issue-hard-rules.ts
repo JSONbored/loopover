@@ -1,4 +1,5 @@
 import { fetchLinkedIssueFacts, type LinkedIssueFactsFetch } from "../github/backfill";
+import type { LinkedIssueClosure } from "./linked-issue-superseded";
 import { githubRateLimitAdmissionKeyForToken } from "../github/client";
 import { createInstallationToken } from "../github/app";
 import { extractLinkedIssueNumbersWithOverflow, MAX_LINKED_ISSUE_NUMBERS } from "../db/repositories";
@@ -297,6 +298,31 @@ export function hasVerifiableOpenLinkedIssueReference(fetchResults: LinkedIssueF
 }
 
 /**
+ * What one linked-issue verification pass learned (#10168): the anti-gaming boolean it has always produced,
+ * plus the per-issue closure facts the SAME fetch already returned and used to discard.
+ *
+ * Carrying both is what lets the advisory distinguish a PR that cited a dead issue from one whose live issue
+ * a rival closed underneath it — without a second network call, since `closed_at` rides the issue payload
+ * `fetchLinkedIssueFacts` already reads (#4528).
+ */
+export type LinkedIssueReferenceCheck = {
+  hasOpenReference: boolean;
+  closures: LinkedIssueClosure[];
+};
+
+/** The fail-open answer for a pass that never fetched anything (no citations, or more than the fan-out cap):
+ *  no evidence gathered, so no supersession can be claimed either. */
+const NO_LINKED_ISSUE_REFERENCES: LinkedIssueReferenceCheck = { hasOpenReference: true, closures: [] };
+
+/** PURE. The closure facts for every issue we conclusively READ. `not_found`/`fetch_error` contribute
+ *  nothing — a supersession must rest on an issue we actually saw closed, never on one we failed to fetch. */
+function linkedIssueClosures(fetchResults: LinkedIssueFactsFetch[]): LinkedIssueClosure[] {
+  return fetchResults.flatMap((result) =>
+    result.status === "found" ? [{ issueNumber: result.facts.number, state: result.facts.state, closedAt: result.facts.closedAt }] : [],
+  );
+}
+
+/**
  * Orchestrate the live per-issue fetch for {@link hasVerifiableOpenLinkedIssueReference}. Mints its own
  * installation token (falling back to the public token, exactly like fetchLinkedIssueFacts's own
  * hasProvenAccess discipline degrades a public-token 404 to `fetch_error` rather than a confirmed miss) so
@@ -308,17 +334,17 @@ export async function resolveLinkedIssueHasOpenReference(args: {
   repoFullName: string;
   linkedIssues: number[];
   installationId?: number | null | undefined;
-}): Promise<boolean> {
-  if (args.linkedIssues.length === 0) return true;
+}): Promise<LinkedIssueReferenceCheck> {
+  if (args.linkedIssues.length === 0) return NO_LINKED_ISSUE_REFERENCES;
   // Fail open (mirrors hasVerifiableOpenLinkedIssueReference's own ambiguity philosophy above) rather than
   // firing an unbounded per-issue fan-out for a body citing more references than can be safely verified in
   // one pass -- the same cap resolveLinkedIssueHardRule's own extractLinkedIssueNumbersWithOverflow enforces
   // on the sibling gate, reused here instead of a second bound so a noisy body can't create surprise API
   // pressure on this path.
-  if (args.linkedIssues.length > MAX_LINKED_ISSUE_NUMBERS) return true;
+  if (args.linkedIssues.length > MAX_LINKED_ISSUE_NUMBERS) return NO_LINKED_ISSUE_REFERENCES;
   const ciToken = args.installationId ? await createInstallationToken(args.env, args.installationId).catch(() => undefined) : undefined;
   const token = ciToken ?? args.env.GITHUB_PUBLIC_TOKEN;
   const admissionKey = githubRateLimitAdmissionKeyForToken(args.env, token, args.installationId);
   const fetchResults = await Promise.all(args.linkedIssues.map((issueNumber) => fetchLinkedIssueFacts(args.env, args.repoFullName, issueNumber, token, admissionKey)));
-  return hasVerifiableOpenLinkedIssueReference(fetchResults);
+  return { hasOpenReference: hasVerifiableOpenLinkedIssueReference(fetchResults), closures: linkedIssueClosures(fetchResults) };
 }

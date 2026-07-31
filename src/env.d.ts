@@ -735,6 +735,12 @@ declare global {
      *  unchanged). Once a winner closes, the next-lowest OPEN sibling becomes the winner on re-eval. See
      *  src/signals/duplicate-winner.ts. */
     LOOPOVER_DUPLICATE_WINNER?: string;
+    /** Superseded-PR recognition (#10168): when truthy, a PR whose linked issue was closed by a rival that
+     *  merged AFTER this PR opened is reported as superseded — its own finding, its own message naming the
+     *  rival — instead of the unactionable "No linked issue detected", and closes as superseded rather than
+     *  holding forever. OFF by default: it changes the close disposition. See
+     *  src/review/linked-issue-superseded.ts. */
+    LOOPOVER_SUPERSEDED_CLOSE?: string;
     /** Open-PR file-path collision (#2653): when truthy, a live PR review enriches its own and its open
      *  siblings' `changedFiles` from the `pull_request_files` cache (a plain D1 read — no extra GitHub calls)
      *  before building the collision report, so two independently-open PRs touching the same file are flagged

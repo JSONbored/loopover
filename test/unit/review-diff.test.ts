@@ -148,12 +148,23 @@ describe("buildUnifiedReviewDiff — the #1528 fix: never silently drop the file
 
   it("keeps every hunk when they fit exactly (the join uses N-1 separators, not N)", () => {
     // Two 10-char hunks joined with one "\n" = 21 chars, exactly the budget. Charging a separator for
-    // BOTH hunks over-counts by one and wrongly drops the second even though it fits.
+    // BOTH hunks over-counts by one and wrongly drops the second even though it fits. No hunk is dropped, so
+    // no notice is emitted and the exact patch survives.
     const patch = "@@ a\n+x\n+y\n@@ b\n+p\n+q";
     expect(patch.length).toBe(21);
-    expect(keepHighSignalHunks(patch, 21)).toBe(patch); // no hunk dropped
-    // One char short → the second hunk genuinely does not fit and is announced as dropped.
-    expect(keepHighSignalHunks(patch, 20)).toContain("dropped");
+    expect(keepHighSignalHunks(patch, 21)).toBe(patch); // no hunk dropped, no notice
+  });
+
+  it("keeps kept-hunks + the dropped notice within budget when a hunk is dropped (#10017)", () => {
+    // A high-signal hunk and a bigger low-signal one. The budget fits the high-signal hunk AND the dropped
+    // notice, but not both hunks -- the returned string (kept + notice) must stay within budget.
+    const highSignal = "@@ hi\n+a\n+b\n+c";
+    const lowSignal = `@@ lo\n${" ctx".repeat(30)}`;
+    const budget = highSignal.length + 40; // room for the high-signal hunk + the ~35-char notice
+    const out = keepHighSignalHunks(`${lowSignal}\n${highSignal}`, budget);
+    expect(out.length).toBeLessThanOrEqual(budget);
+    expect(out).toContain("+a"); // the high-signal hunk survives
+    expect(out).toContain("dropped");
   });
 });
 
@@ -166,12 +177,53 @@ describe("keepHighSignalHunks — non-positive budget guard (#5849)", () => {
     expect(keepHighSignalHunks("@@ a\n+x\n+y", -25)).toBe("… (this file's diff truncated)");
   });
 
-  it("head-slices a single oversized hunk rather than dropping it whole", () => {
+  it("head-slices a single oversized hunk rather than dropping it whole, reserving the notice (#10017)", () => {
     // No second "@@" header → hunks.length <= 1, so the single-hunk branch head-slices to fit the budget.
+    // The slice reserves the truncation notice's length so slice + notice stays within budget.
     const single = `@@ only\n${"+padding line\n".repeat(20)}`;
-    const out = keepHighSignalHunks(single, 30);
-    expect(out.startsWith(single.slice(0, 30))).toBe(true);
+    const budget = 120;
+    const out = keepHighSignalHunks(single, budget);
+    expect(out.length).toBeLessThanOrEqual(budget);
+    expect(out.startsWith("@@ only")).toBe(true); // real content, head-sliced
     expect(out).toContain("… (this file's diff truncated)");
+  });
+});
+
+describe("keepHighSignalHunks never exceeds budget (#10017)", () => {
+  it("two hunks, smallest 500 chars, budget 100: returns <= 100 with a char of the higher-signal hunk", () => {
+    const highSignal = `@@ hi\n${"+critical\n".repeat(60)}`; // most added lines -> highest signal
+    const lowSignal = `@@ lo\n${" context line\n".repeat(40)}`; // >= 500 chars, no added lines
+    expect(lowSignal.length).toBeGreaterThanOrEqual(500);
+    const out = keepHighSignalHunks(`${lowSignal}\n${highSignal}`, 100);
+    expect(out.length).toBeLessThanOrEqual(100);
+    // At least one character of the high-signal hunk's added lines survives.
+    expect(out).toContain("+critical");
+  });
+
+  it("single-hunk path with budget 50 over a 5,000-char patch returns <= 50", () => {
+    const single = `@@ only\n${"+padding\n".repeat(600)}`; // > 5,000 chars, one hunk
+    expect(single.length).toBeGreaterThan(5000);
+    expect(keepHighSignalHunks(single, 50).length).toBeLessThanOrEqual(50);
+  });
+
+  it("returns a single hunk unchanged when it already fits the budget", () => {
+    const single = "@@ only\n+a\n+b"; // one hunk, well under budget
+    expect(keepHighSignalHunks(single, 1000)).toBe(single);
+  });
+
+  it("single-hunk path with a budget smaller than the notice returns just the (truncated) notice, still <= budget", () => {
+    const single = `@@ only\n${"+padding\n".repeat(50)}`;
+    const budget = 10; // < the ~30-char truncation notice, so there is no room for content
+    const out = keepHighSignalHunks(single, budget);
+    expect(out.length).toBeLessThanOrEqual(budget);
+    expect("… (this file's diff truncated)").toContain(out); // a prefix of the notice
+  });
+
+  it("holds the invariant across a spread of budgets and hunk counts", () => {
+    const hunks = Array.from({ length: 6 }, (_, i) => `@@ h${i}\n${`+line${i}\n`.repeat(i + 1)}`).join("\n");
+    for (const budget of [1, 10, 37, 50, 100, 500]) {
+      expect(keepHighSignalHunks(hunks, budget).length).toBeLessThanOrEqual(budget);
+    }
   });
 });
 
@@ -202,5 +254,13 @@ describe("buildUnifiedReviewDiff — header defaults + budget-floor truncation (
     const diff = buildUnifiedReviewDiff([{ path: "logo.bin", patch: undefined, status: "added" }]);
     expect(diff).toContain("### logo.bin (added) +0/-0");
     expect(diff).toContain("(no inline patch — binary or too large)");
+  });
+
+  it("never returns a string longer than budget, even with the truncation notice appended (#10017)", () => {
+    const big = `@@ big\n${"+line of added content\n".repeat(30)}`;
+    const files = Array.from({ length: 5 }, (_, i) => ({ path: `src/f${i}.ts`, patch: big, status: "modified", additions: 30, deletions: 0 }));
+    for (const budget of [50, 120, 300, 320, 700, 2000]) {
+      expect(buildUnifiedReviewDiff(files, budget).length).toBeLessThanOrEqual(budget);
+    }
   });
 });

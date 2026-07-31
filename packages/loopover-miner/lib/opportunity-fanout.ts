@@ -213,6 +213,16 @@ function recordRateLimit(summary: RateLimitSummary, response: Response): void {
   // whole fan-out to serial concurrency. Read the raw value and skip a null/blank header before converting,
   // matching http-retry.ts's `remaining != null` guard; a genuinely-present "0" (or any finite number) is
   // still recorded, and a present-but-non-numeric value is still skipped by Number.isFinite.
+  //
+  // #10005: GitHub bills the search endpoint and the per-repo contents/list endpoints against two
+  // independent primary rate-limit resources ("search" and "core"), each reporting its own resource in
+  // x-ratelimit-resource. Folding both into one Math.min'd number recorded the search bucket's tiny
+  // per-minute allowance as the run's whole budget, pinning the core-budget-gated fan-out to serial
+  // concurrency. Skip a response billed against a resource other than "core"; a response with no
+  // x-ratelimit-resource header at all (an older forge/proxy, or every existing test fixture) is still
+  // recorded exactly as before.
+  const resource = response.headers.get("x-ratelimit-resource");
+  if (resource !== null && resource !== "core") return;
   const rawRemaining = response.headers.get("x-ratelimit-remaining");
   if (rawRemaining !== null && rawRemaining.trim() !== "") {
     const remaining = Number(rawRemaining);

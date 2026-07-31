@@ -138,6 +138,60 @@ describe("MCP dispatch telemetry sink (#9525)", () => {
   });
 });
 
+// The exception properties tests below mock posthog-node so they can read the properties the sink
+// actually hands to captureException, instead of only observing whether the deferred promise resolves.
+describe("MCP dispatch telemetry sink exception properties (#10037)", () => {
+  afterEach(() => {
+    vi.doUnmock("posthog-node");
+    vi.resetModules();
+  });
+
+  it("attaches mcp_tool and error_code to the captured exception, matching the stdio/miner sinks", async () => {
+    vi.resetModules();
+    const captureException = vi.fn();
+    const flush = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("posthog-node", () => ({
+      PostHog: vi.fn(function (this: { captureException: typeof captureException; flush: typeof flush }) {
+        this.captureException = captureException;
+        this.flush = flush;
+      }),
+    }));
+    const { createDispatchTelemetrySink: freshCreateDispatchTelemetrySink } = await import("../../src/mcp/dispatch-telemetry-sink");
+    const deferred: Promise<unknown>[] = [];
+    const sink = freshCreateDispatchTelemetrySink(env({ WORKER_POSTHOG_API_KEY: "phc_worker" }), (work) => deferred.push(work));
+    const forbiddenCall: McpToolCallTelemetry = { ...call, ok: false, errorCode: "forbidden" };
+
+    sink.captureException(new Error("boom"), forbiddenCall);
+    expect(deferred).toHaveLength(1);
+    await deferred[0];
+
+    const properties = captureException.mock.calls.at(-1)?.[2] as Record<string, unknown>;
+    expect(properties).toMatchObject({ mcp_tool: forbiddenCall.tool, error_code: "forbidden" });
+  });
+
+  it("defaults error_code to unknown_error when the call carries none", async () => {
+    vi.resetModules();
+    const captureException = vi.fn();
+    const flush = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("posthog-node", () => ({
+      PostHog: vi.fn(function (this: { captureException: typeof captureException; flush: typeof flush }) {
+        this.captureException = captureException;
+        this.flush = flush;
+      }),
+    }));
+    const { createDispatchTelemetrySink: freshCreateDispatchTelemetrySink } = await import("../../src/mcp/dispatch-telemetry-sink");
+    const deferred: Promise<unknown>[] = [];
+    const sink = freshCreateDispatchTelemetrySink(env({ WORKER_POSTHOG_API_KEY: "phc_worker" }), (work) => deferred.push(work));
+    const noCodeCall: McpToolCallTelemetry = { ...call, ok: false };
+
+    sink.captureException(new Error("boom"), noCodeCall);
+    await deferred[0];
+
+    const properties = captureException.mock.calls.at(-1)?.[2] as Record<string, unknown>;
+    expect(properties).toMatchObject({ mcp_tool: noCodeCall.tool, error_code: "unknown_error" });
+  });
+});
+
 describe("LoopoverMcp telemetry-sink injection (#9525)", () => {
   it("routes a real tool call through the injected sink", async () => {
     const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");

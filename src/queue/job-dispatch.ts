@@ -94,6 +94,14 @@ import {
 // imported back) since processJob was its only caller.
 const NOTIFY_EVALUATE_EVENT_CONCURRENCY = 5;
 
+// #10022: the evaluate half above is bounded, but the enqueue half that follows it was not -- a batched job
+// resolving to many deliveries (one per event per subscribed channel, so deliveries.length can exceed
+// events.length) sent every notify-deliver job through an unbounded Promise.all, letting a single job issue as
+// many concurrent env.JOBS.send calls as it had deliveries. Same bounded worker-pool shape as
+// NOTIFY_EVALUATE_EVENT_CONCURRENCY above, sized independently since the two fan-outs cost different amounts of
+// work per item.
+export const NOTIFY_DELIVER_SEND_CONCURRENCY = 5;
+
 export async function processJob(env: Env, message: JobMessage): Promise<void> {
   switch (message.type) {
     case "refresh-registry":
@@ -400,15 +408,32 @@ export async function processJob(env: Env, message: JobMessage): Promise<void> {
       const deliveries = (
         await mapWithConcurrency(events, NOTIFY_EVALUATE_EVENT_CONCURRENCY, (event) => evaluateNotificationEvent(env, event))
       ).flat();
-      await Promise.all(
-        deliveries.map((delivery) =>
-          env.JOBS.send({
-            type: "notify-deliver",
-            requestedBy: "notify-evaluate",
-            deliveryId: delivery.id,
-          }),
-        ),
+      // #10022: bound the send fan-out (deliveries.length can exceed events.length -- one delivery per event
+      // per resolved channel) and attempt every send exactly once regardless of an earlier one's outcome, same
+      // posture as the #8355 backfill-registered-repos fan-out above. A retry of this job re-evaluates events
+      // whose deliveries already exist (evaluateNotificationEvent's created-only return), so a send failure here
+      // must be logged and named now -- the retry recovers nothing for it.
+      const sendResults = await mapWithConcurrency(
+        deliveries,
+        NOTIFY_DELIVER_SEND_CONCURRENCY,
+        async (delivery): Promise<{ deliveryId: string; ok: boolean }> => {
+          try {
+            await env.JOBS.send({
+              type: "notify-deliver",
+              requestedBy: "notify-evaluate",
+              deliveryId: delivery.id,
+            });
+            return { deliveryId: delivery.id, ok: true };
+          } catch (reason) {
+            console.error(JSON.stringify({ level: "error", event: "notify_deliver_fanout_send_failed", deliveryId: delivery.id, reason: String(reason) }));
+            return { deliveryId: delivery.id, ok: false };
+          }
+        },
       );
+      const failedDeliveryIds = sendResults.filter((result) => !result.ok).map((result) => result.deliveryId);
+      if (failedDeliveryIds.length > 0) {
+        throw new Error(`notify-evaluate deliver fan-out: ${failedDeliveryIds.length}/${sendResults.length} delivery send(s) failed: ${failedDeliveryIds.join(", ")}`);
+      }
       return;
     }
     case "notify-deliver":

@@ -1,6 +1,8 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { detectNotificationEvents } from "../../src/notifications/events";
-import type { GitHubWebhookPayload } from "../../src/types";
+import { NOTIFY_DELIVER_SEND_CONCURRENCY, processJob } from "../../src/queue/job-dispatch";
+import { createTestEnv } from "../helpers/d1";
+import type { DetectedNotificationEvent, GitHubWebhookPayload } from "../../src/types";
 
 const basePayload: GitHubWebhookPayload = {
   action: "submitted",
@@ -202,5 +204,134 @@ describe("detectNotificationEvents — merged PR (#702)", () => {
   it("falls back to the canonical PR URL when html_url is absent", () => {
     const events = detectNotificationEvents("pull_request", { ...mergedPayload, pull_request: { ...mergedPayload.pull_request!, html_url: undefined as never } }, "2026-05-29T00:00:01.000Z");
     expect(events[0]?.deeplink).toBe("https://github.com/JSONbored/loopover/pull/42");
+  });
+});
+
+function detectedEvent(overrides: Partial<DetectedNotificationEvent> = {}): DetectedNotificationEvent {
+  const login = overrides.recipientLogin ?? "miner-1";
+  return {
+    eventType: "pull_request_changes_requested",
+    recipientLogin: login,
+    repoFullName: "owner/repo",
+    pullNumber: 7,
+    dedupKey: `changes_requested:owner/repo#7:reviewer:${login}`,
+    deeplink: "https://github.com/owner/repo/pull/7",
+    actorLogin: "reviewer",
+    detectedAt: "2026-05-28T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("processJob notify-evaluate deliver fan-out (#10022)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("attempts every OTHER delivery's send even when one rejects, and throws once naming it", async () => {
+    let callIndex = 0;
+    let failedDeliveryId: string | undefined;
+    const sentDeliveryIds: string[] = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: unknown) {
+          const deliveryId = (message as { deliveryId?: string }).deliveryId;
+          const isSecondCall = callIndex === 1;
+          callIndex += 1;
+          if (deliveryId) sentDeliveryIds.push(deliveryId);
+          if (isSecondCall) {
+            failedDeliveryId = deliveryId;
+            throw new Error("simulated transient queue-send failure");
+          }
+          return undefined;
+        },
+      } as unknown as Queue,
+    });
+
+    const errorLogs: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errorLogs.push(String(args[0]));
+    });
+
+    const events = ["miner-1", "miner-2", "miner-3"].map((login) => detectedEvent({ recipientLogin: login }));
+    let thrown: unknown;
+    try {
+      await processJob(env, { type: "notify-evaluate", requestedBy: "webhook", events });
+    } catch (error) {
+      thrown = error;
+    }
+
+    // Every delivery's send was attempted exactly once, regardless of the middle one's rejection.
+    expect(sentDeliveryIds).toHaveLength(3);
+    expect(failedDeliveryId).toBeDefined();
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toMatch(/notify-evaluate deliver fan-out: 1\/3 delivery send\(s\) failed:/);
+    expect((thrown as Error).message).toContain(failedDeliveryId);
+
+    const failureLog = errorLogs.map((line) => JSON.parse(line) as Record<string, unknown>).find((log) => log.event === "notify_deliver_fanout_send_failed");
+    expect(failureLog).toMatchObject({ level: "error", event: "notify_deliver_fanout_send_failed", deliveryId: failedDeliveryId });
+  });
+
+  it("never issues more concurrent sends than NOTIFY_DELIVER_SEND_CONCURRENCY", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const env = createTestEnv({
+      JOBS: {
+        async send() {
+          inFlight += 1;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          inFlight -= 1;
+          return undefined;
+        },
+      } as unknown as Queue,
+    });
+
+    const events = Array.from({ length: 12 }, (_, index) => detectedEvent({ recipientLogin: `miner-${index}` }));
+    await expect(processJob(env, { type: "notify-evaluate", requestedBy: "webhook", events })).resolves.toBeUndefined();
+
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(NOTIFY_DELIVER_SEND_CONCURRENCY);
+  });
+
+  it("does not throw and sends exactly one notify-deliver message per delivery when every send succeeds", async () => {
+    const sent: Array<{ type: string; requestedBy: string; deliveryId: string }> = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: unknown) {
+          sent.push(message as { type: string; requestedBy: string; deliveryId: string });
+          return undefined;
+        },
+      } as unknown as Queue,
+    });
+
+    const errorLogs: string[] = [];
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      errorLogs.push(String(args[0]));
+    });
+
+    const events = ["miner-1", "miner-2", "miner-3"].map((login) => detectedEvent({ recipientLogin: login }));
+    await expect(processJob(env, { type: "notify-evaluate", requestedBy: "webhook", events })).resolves.toBeUndefined();
+
+    expect(sent).toHaveLength(3);
+    for (const message of sent) {
+      expect(message).toMatchObject({ type: "notify-deliver", requestedBy: "notify-evaluate" });
+      expect(typeof message.deliveryId).toBe("string");
+    }
+    expect(errorLogs.some((line) => line.includes("notify_deliver_fanout_send_failed"))).toBe(false);
+  });
+
+  it("does not throw when the batch resolves to zero deliveries", async () => {
+    const sent: unknown[] = [];
+    const env = createTestEnv({
+      JOBS: {
+        async send(message: unknown) {
+          sent.push(message);
+          return undefined;
+        },
+      } as unknown as Queue,
+    });
+
+    await expect(processJob(env, { type: "notify-evaluate", requestedBy: "webhook", events: [] })).resolves.toBeUndefined();
+    expect(sent).toHaveLength(0);
   });
 });

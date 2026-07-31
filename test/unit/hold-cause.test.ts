@@ -64,12 +64,19 @@ describe("derivePrDisposition heldBy (#9991)", () => {
     }
   });
 
-  it("stays empty when only the unstable mergeable state suppresses the merge", () => {
-    // That is GitHub's computation, not one of our declared inputs, and is reported separately.
+  it("REGRESSION (#10116): an unstable mergeable state is reported separately and holds NOTHING", () => {
+    // That is GitHub's computation, not one of our declared inputs. It used to set heldForManualReview
+    // anyway, which put the manual-review label -- an ENFORCEMENT label the executor and the merge train both
+    // read -- on every PR whose checks were red OR still running. `heldBy` stayed empty throughout, which is
+    // how those holds reached the ledger as reason "success" with no cause: 518 of them on the production Orb.
+    // The two fields now agree, and the state is carried by heldForUnstableMergeState alone.
     const disposition = derivePrDisposition(baseInput({ mergeableState: "unstable" }));
     expect(disposition.heldBy).toEqual([]);
     expect(disposition.heldForUnstableMergeState).toBe(true);
-    expect(disposition.heldForManualReview).toBe(true);
+    expect(disposition.heldForManualReview).toBe(false);
+    // ...and it is still not mergeable, and still not approvable. Dropping the hold must not promote it.
+    expect(disposition.wouldMerge).toBe(false);
+    expect(disposition.wouldApprove).toBe(false);
   });
 });
 

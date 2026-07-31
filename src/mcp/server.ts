@@ -665,7 +665,12 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
   if (!identity) return c.json({ error: "unauthorized" }, 401);
 
   const telemetry = buildMcpClientTelemetry(c.req.raw.headers, { defaultClientName: "mcp" })!;
-  const usageMetadata = await describeMcpUsageRequest(c.req.raw, telemetry.metadata);
+  // ONE clone-and-parse of the JSON-RPC body, here, BEFORE createMcpHandler below consumes it (#10190).
+  // A second `request.clone()` after that point throws `TypeError: unusable` -- the Fetch spec forbids
+  // cloning a request whose body is already disturbed -- which is why the post-response handshake read this
+  // replaces turned every `initialize` into an unhandled 500.
+  const envelope = await readMcpRequestEnvelope(c.req.raw);
+  const usageMetadata = describeMcpUsageRequest(envelope, c.req.raw.method, telemetry.metadata);
   const startedAt = Date.now();
   const executionCtx = getExecutionContext(c);
   // #9525: the dispatch chokepoint's sink is built per request so its deferred work rides this
@@ -693,7 +698,7 @@ export async function handleMcpRequest(c: AppContext): Promise<Response> {
     // a rejected handshake never inflates the session/client counts.
     if (response.status < 400) {
       if (usageMetadata.rpcMethod === "initialize") {
-        recordMcpInitialize(c.env, defer, await readInitializeHandshake(c.req.raw), analyticsContext);
+        recordMcpInitialize(c.env, defer, readInitializeHandshake(envelope), analyticsContext);
       } else if (usageMetadata.rpcMethod === "tools/list") {
         // Names come from this server's own registration chokepoint, not the cross-server contract
         // registry, so the event reports what was actually advertised to THIS client.
@@ -765,20 +770,35 @@ function trimmedHeader(value: string | null): string | undefined {
  * client. Returns an empty handshake for a malformed or absent body: the fields are optional by
  * contract, and a session that connected is still worth counting.
  */
-async function readInitializeHandshake(request: Request): Promise<McpInitializeTelemetry> {
-  const body = await request.clone().json().catch(() => null);
-  if (!body || typeof body !== "object") return {};
-  const clientInfo = (body as { params?: { clientInfo?: { name?: unknown; version?: unknown } } }).params?.clientInfo;
+function readInitializeHandshake(envelope: McpRequestEnvelope | null): McpInitializeTelemetry {
+  const clientInfo = envelope?.params?.clientInfo;
   return {
     clientName: typeof clientInfo?.name === "string" ? clientInfo.name : undefined,
     clientVersion: typeof clientInfo?.version === "string" ? clientInfo.version : undefined,
   };
 }
 
-async function describeMcpUsageRequest(request: Request, telemetryMetadata: Record<string, unknown> | undefined): Promise<Record<string, unknown>> {
+/** The JSON-RPC envelope fields the telemetry paths read. Deliberately structural and permissive: this is an
+ *  unvalidated client body, and every consumer below re-checks the type of the field it uses. */
+type McpRequestEnvelope = {
+  method?: unknown;
+  params?: { name?: unknown; clientInfo?: { name?: unknown; version?: unknown } };
+};
+
+/** Clone-and-parse the request body exactly once, at the top of {@link handleMcpRequest} (#10190). Returns
+ *  null for an absent or malformed body -- the telemetry fields are all optional by contract, and a request
+ *  that is still worth counting must never be failed over its own instrumentation. */
+async function readMcpRequestEnvelope(request: Request): Promise<McpRequestEnvelope | null> {
   const body = await request.clone().json().catch(() => null);
-  if (!body || typeof body !== "object") return { transport: "http", method: request.method, ...telemetryMetadata };
-  const envelope = body as { method?: unknown; params?: { name?: unknown } };
+  return body && typeof body === "object" ? (body as McpRequestEnvelope) : null;
+}
+
+function describeMcpUsageRequest(
+  envelope: McpRequestEnvelope | null,
+  method: string,
+  telemetryMetadata: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!envelope) return { transport: "http", method, ...telemetryMetadata };
   const rpcMethod = typeof envelope.method === "string" ? envelope.method : undefined;
   const toolName = envelope.params && typeof envelope.params.name === "string" ? envelope.params.name : undefined;
   return {

@@ -977,6 +977,67 @@ describe("review.max_findings display caps (#2049)", () => {
   });
 });
 
+describe("dedupeConcerns un-capped (#10010)", () => {
+  // dedupeConcerns (the extraction-layer dedupe one layer above dedupeLines) used to hard-cap at 20 with
+  // `slice(0, 20)` -- an UNDISCLOSED cap, unlike the disclosed truncation at render time. That silently dropped
+  // blockers/nits 21+ before they ever reached truncateFindingsForDisplay, so the "+N more" footer, the AI-context
+  // block, and the Nits sub-label all understated the real count. #9670 fixed the same defect one layer down in
+  // dedupeLines; this closes it here too.
+  const thirtyBlockers = Array.from({ length: 30 }, (_, i) => `blocker ${i + 1}`);
+  const thirtyNits = Array.from({ length: 30 }, (_, i) => `nit ${i + 1}`);
+
+  it("buildUnifiedReviewInput carries all 30 distinct blockers and all 30 distinct nits, not capped at 20", () => {
+    const input = buildUnifiedReviewInput({
+      changedFiles: 1,
+      reviews: [reviewNote("close", { blockers: thirtyBlockers, nits: thirtyNits })],
+    });
+    expect(input.blockers).toHaveLength(30);
+    expect(input.nits).toHaveLength(30);
+  });
+
+  it("renders exactly 12 blocker bullets with the true '+18 more' footer for 30 distinct blockers", () => {
+    const input = buildUnifiedReviewInput({ changedFiles: 1, reviews: [reviewNote("close", { blockers: thirtyBlockers })] });
+    const md = renderUnifiedReviewComment(input);
+    const humanSection = md.split("📋 Copy for AI agents")[0]!;
+    expect(humanSection.match(/- blocker \d+/g)).toHaveLength(12);
+    expect(md).toContain("- blocker 12");
+    expect(humanSection).not.toContain("- blocker 13");
+    expect(md).toContain("_+18 more_");
+    expect(md).not.toContain("_+8 more_"); // the old, wrongly-capped-at-20 hidden count
+  });
+
+  it("the copy-for-AI-agents block carries every one of the 30 blockers, not just the display-capped 12", () => {
+    const input = buildUnifiedReviewInput({ changedFiles: 1, reviews: [reviewNote("close", { blockers: thirtyBlockers })] });
+    const md = renderUnifiedReviewComment(input);
+    const aiSection = md.split("📋 Copy for AI agents")[1]!;
+    expect(aiSection).toContain("1. blocker 1");
+    expect(aiSection).toContain("30. blocker 30");
+  });
+
+  it("the Nits collapsible sub-label reports the true deduped count of 30, not 20", () => {
+    const input = buildUnifiedReviewInput({ changedFiles: 1, reviews: [reviewNote("merge", { nits: thirtyNits })] });
+    const md = renderUnifiedReviewComment(input);
+    expect(md).toContain("30 non-blocking");
+    expect(md).not.toContain("20 non-blocking");
+  });
+
+  it("does not silently drop concerns past 20 before the disclosed truncation stage (#9670 follow-up)", () => {
+    const twentyFiveBlockers = Array.from({ length: 25 }, (_, i) => `blocker ${i + 1}`);
+    // A display cap equal to the item count (not null -- null is byte-identical to "unset", i.e. the 12-item
+    // default, per the maxFindingsCaps doc comment) puts truncateFindingsForDisplay on its `items.length <= cap`
+    // arm: display truncation never kicks in, so a missing bullet here can only be dedupeConcerns' old cap.
+    const input = buildUnifiedReviewInput({
+      changedFiles: 1,
+      reviews: [reviewNote("close", { blockers: twentyFiveBlockers })],
+      maxFindingsCaps: { blockers: 25, nits: null },
+    });
+    const md = renderUnifiedReviewComment(input);
+    expect(input.blockers).toHaveLength(25);
+    for (const line of twentyFiveBlockers) expect(md).toContain(`- ${line}`);
+    expect(md).not.toMatch(/_\+\d+ more_/);
+  });
+});
+
 describe("review.comment_verbosity (#2047)", () => {
   const input: UnifiedReviewInput = {
     ...base,

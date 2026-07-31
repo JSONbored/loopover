@@ -133,6 +133,14 @@ export const LocalBranchAnalysisInput = CurrentBranchInput.extend({
     .optional(),
 });
 
+/**
+ * What the STDIO server serves: it reads `login`/`repoFullName` off the active session and the
+ * checkout's own remote instead of asking the caller to restate them (#10034). Derived rather than
+ * hand-written, per the rule the registry states: a narrowing is only ever a `.partial()`/`.omit()`
+ * of the contract it narrows, never a fresh `z.object({...})` beside the registration.
+ */
+export const StdioLocalBranchAnalysisInput = LocalBranchAnalysisInput.partial({ login: true, repoFullName: true });
+
 export const preflightCurrentBranchTool = defineTool({
   name: "loopover_preflight_current_branch",
   title: "Preflight current branch",
@@ -242,6 +250,10 @@ export const reviewPrBeforePushTool = defineTool({
 export const DraftPrBodyInput = LocalBranchAnalysisInput.extend({
   format: z.enum(["json", "markdown"]).optional(),
 });
+
+/** Same stdio narrowing as `StdioLocalBranchAnalysisInput`, plus the `format` field this tool alone takes. */
+export const StdioDraftPrBodyInput = DraftPrBodyInput.partial({ login: true, repoFullName: true });
+
 export const draftPrBodyTool = defineTool({
   name: "loopover_draft_pr_body",
   title: "Draft PR body",

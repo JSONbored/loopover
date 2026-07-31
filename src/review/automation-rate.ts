@@ -47,12 +47,13 @@ export const AUTOMATION_RATE_PROVENANCE_HORIZON_ISO = "2026-07-29T00:00:00.000Z"
 const AUTOMATION_ENACTING_ACTIONS = ["merge", "close"] as const;
 
 /** The action recording that the gate declined to decide and handed the PR to a person. Module-private for
- *  the same reason as the set above. */
+ *  the same reason as the set above.
+ *
+ *  Together with the enacting set, this is what DECIDES a PR -- the published set the fold keys `decided` on.
+ *  There is deliberately no exported union of the two: #10013 removed the `action IN (...)` SQL filter that
+ *  was its only consumer, and an exported constant naming a set nothing selects on invites a reader to
+ *  believe the read still restricts by it. The fold tests each half directly instead. */
 const AUTOMATION_HOLD_ACTION = "hold";
-
-/** Every action that DECIDES a PR -- an enacted decision, or a hold. This is the published set the fold
- *  keys `decided` on; the read no longer restricts by it (#10013), so it does not gate what rows are seen. */
-export const AUTOMATION_COUNTED_ACTIONS: readonly string[] = [...AUTOMATION_ENACTING_ACTIONS, AUTOMATION_HOLD_ACTION];
 
 /** How completely a week could be measured. `full` weeks see every manual signal; `holds_only` weeks predate
  *  the provenance fields and can only under-count manual work. */

@@ -65,13 +65,20 @@ export function writeRateLimitRepoKey(actionClass: string, repoFullName: string)
   return `${actionClass.trim()}:${repoFullName.trim().toLowerCase()}`;
 }
 
+/** Own-property lookup: `policies`/`buckets` are plain object records, so a bare `table[key]` walks the
+ *  prototype chain — an `actionClass` naming an `Object.prototype` member ("constructor"/"toString"/"valueOf")
+ *  would resolve an inherited value instead of the intended fallback. Read own properties only (#9999). */
+function ownValue<T>(table: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(table, key) ? table[key] : undefined;
+}
+
 function policyFor(
   policies: WriteRateLimitPolicies,
   actionClass: string,
   scope: "global" | "perRepo",
 ): LocalRateLimitConfig {
   const table = scope === "global" ? policies.global : policies.perRepo;
-  return table[actionClass] ?? PERMISSIVE_CONFIG;
+  return ownValue(table, actionClass) ?? PERMISSIVE_CONFIG;
 }
 
 function emptyBucket(nowMs: number): LocalRateBucket {
@@ -109,13 +116,17 @@ export function evaluateWriteRateLimit(input: {
   const policies = input.policies ?? DEFAULT_WRITE_RATE_LIMIT_POLICIES;
   const randomFn = input.randomFn ?? (() => 0.5);
   const nowMs = Number.isFinite(input.nowMs) ? input.nowMs : 0;
-  const repoKey = writeRateLimitRepoKey(input.actionClass, input.repoFullName);
+  // Normalize the action class ONCE, then key the global bucket, the per-repo key, and both policy lookups
+  // off the same value — a stray-whitespace actionClass must not resolve the per-repo key trimmed while the
+  // global bucket and both policies fall through to PERMISSIVE_CONFIG on the raw value (#9999).
+  const actionClass = input.actionClass.trim();
+  const repoKey = writeRateLimitRepoKey(actionClass, input.repoFullName);
   const backoffAttempt = input.backoffAttempts[repoKey] ?? 0;
 
-  const globalBucket = input.buckets.global[input.actionClass] ?? emptyBucket(nowMs);
-  const perRepoBucket = input.buckets.perRepo[repoKey] ?? emptyBucket(nowMs);
-  const globalConfig = policyFor(policies, input.actionClass, "global");
-  const perRepoConfig = policyFor(policies, input.actionClass, "perRepo");
+  const globalBucket = ownValue(input.buckets.global, actionClass) ?? emptyBucket(nowMs);
+  const perRepoBucket = ownValue(input.buckets.perRepo, repoKey) ?? emptyBucket(nowMs);
+  const globalConfig = policyFor(policies, actionClass, "global");
+  const perRepoConfig = policyFor(policies, actionClass, "perRepo");
 
   const global = evaluateLocalRateLimit(globalBucket, globalConfig, nowMs);
   const perRepo = evaluateLocalRateLimit(perRepoBucket, perRepoConfig, nowMs);
@@ -149,16 +160,19 @@ export function evaluateWriteRateLimit(input: {
 /** Record a permitted write against both bucket scopes. */
 export function recordWriteRateLimitAllowed(
   buckets: WriteRateLimitBucketStore,
-  actionClass: string,
+  actionClassInput: string,
   repoFullName: string,
   nowMs: number,
   policies: WriteRateLimitPolicies = DEFAULT_WRITE_RATE_LIMIT_POLICIES,
 ): WriteRateLimitBucketStore {
+  // Normalize ONCE and key the global bucket by the same value evaluateWriteRateLimit reads it with, so a
+  // decision and the state written for it can never address different buckets (#9999).
+  const actionClass = actionClassInput.trim();
   const repoKey = writeRateLimitRepoKey(actionClass, repoFullName);
   const globalConfig = policyFor(policies, actionClass, "global");
   const perRepoConfig = policyFor(policies, actionClass, "perRepo");
-  const globalBucket = buckets.global[actionClass] ?? emptyBucket(nowMs);
-  const perRepoBucket = buckets.perRepo[repoKey] ?? emptyBucket(nowMs);
+  const globalBucket = ownValue(buckets.global, actionClass) ?? emptyBucket(nowMs);
+  const perRepoBucket = ownValue(buckets.perRepo, repoKey) ?? emptyBucket(nowMs);
   return {
     global: {
       ...buckets.global,
@@ -174,9 +188,10 @@ export function recordWriteRateLimitAllowed(
 /** Bump the jitter backoff attempt after a throttled write (does not mutate rate buckets). */
 export function recordWriteRateLimitDenied(
   backoffAttempts: WriteRateLimitBackoffStore,
-  actionClass: string,
+  actionClassInput: string,
   repoFullName: string,
 ): WriteRateLimitBackoffStore {
+  const actionClass = actionClassInput.trim();
   const key = writeRateLimitRepoKey(actionClass, repoFullName);
   return { ...backoffAttempts, [key]: (backoffAttempts[key] ?? 0) + 1 };
 }
@@ -184,9 +199,10 @@ export function recordWriteRateLimitDenied(
 /** Clear backoff attempts after a successful write. */
 export function clearWriteRateLimitBackoff(
   backoffAttempts: WriteRateLimitBackoffStore,
-  actionClass: string,
+  actionClassInput: string,
   repoFullName: string,
 ): WriteRateLimitBackoffStore {
+  const actionClass = actionClassInput.trim();
   const key = writeRateLimitRepoKey(actionClass, repoFullName);
   if (!(key in backoffAttempts)) return backoffAttempts;
   const next = { ...backoffAttempts };

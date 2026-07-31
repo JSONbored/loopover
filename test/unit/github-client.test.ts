@@ -1443,3 +1443,104 @@ describe("isRateLimitedResponse", () => {
     await expect(isRateLimitedResponse(response)).resolves.toBe(false);
   });
 });
+
+describe("timeoutFetch — githubBypassResponseCache vs the volatile single-flight coalescer (#10032)", () => {
+  // A sensitive-class GitHub read (cls===null but volatile-eligible) is exactly the shape the coalescer serves:
+  // two concurrent NON-bypass reads share one in-flight promise. A bypass read forces cls=null too, so without
+  // the fix it would be ADMITTED to that same coalescer and answered by another caller's in-flight response
+  // (its transient failure included) instead of performing its own live network read.
+  const VOLATILE_URL = "https://api.github.com/repos/o/r/issues/7/events?per_page=100&page=1";
+
+  it("REGRESSION: githubBypassResponseCache must not be answered by the volatile single-flight coalescer", async () => {
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    let fetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      const mine = ++fetches;
+      if (mine === 1) {
+        markFetchStarted();
+        await fetchGate;
+      }
+      return Response.json({ body: mine });
+    });
+
+    // Leader bypass read is in flight (had it published into the coalescer, a follower would replay it); the
+    // second bypass read must still issue its OWN request, not join the leader.
+    const first = timeoutFetch(VOLATILE_URL, { githubBypassResponseCache: true });
+    await fetchStarted;
+    const second = timeoutFetch(VOLATILE_URL, { githubBypassResponseCache: true });
+    releaseFetch();
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(fetches).toBe(2);
+    expect(a.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBeNull();
+    expect(b.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBeNull();
+  });
+
+  it("a bypass GET concurrent with a NON-bypass leader gets its own body, not the leader's replay", async () => {
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    let fetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      const mine = ++fetches;
+      if (mine === 1) {
+        markFetchStarted();
+        await fetchGate;
+        return Response.json({ caller: "leader" });
+      }
+      return Response.json({ caller: "bypass-own" });
+    });
+
+    // The non-bypass leader registers its shared promise in the coalescer first; the bypass read must not join
+    // it -- it fetches for itself and gets its own body.
+    const leader = timeoutFetch(VOLATILE_URL);
+    await fetchStarted;
+    const bypass = timeoutFetch(VOLATILE_URL, { githubBypassResponseCache: true });
+    releaseFetch();
+    const bypassResponse = await bypass;
+
+    expect(bypassResponse.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBeNull();
+    expect(await bypassResponse.json()).toEqual({ caller: "bypass-own" });
+    await leader;
+    expect(fetches).toBe(2);
+  });
+
+  it("leaves the volatile path unchanged for NON-bypass reads: two concurrent GETs still coalesce to one fetch", async () => {
+    let markFetchStarted!: () => void;
+    const fetchStarted = new Promise<void>((resolve) => {
+      markFetchStarted = resolve;
+    });
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    let fetches = 0;
+    vi.stubGlobal("fetch", async () => {
+      ++fetches;
+      markFetchStarted();
+      await fetchGate;
+      return Response.json({ ok: true });
+    });
+
+    const leader = timeoutFetch(VOLATILE_URL);
+    await fetchStarted;
+    const joiner = timeoutFetch(VOLATILE_URL);
+    releaseFetch();
+    const [, joinerResponse] = await Promise.all([leader, joiner]);
+
+    expect(fetches).toBe(1);
+    expect(joinerResponse.headers.get(GITHUB_RESPONSE_CACHE_REPLAY_HEADER)).toBe("coalesced");
+  });
+});

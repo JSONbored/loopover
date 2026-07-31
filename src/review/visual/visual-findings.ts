@@ -134,6 +134,10 @@ export type VisualVisionFinding = { path: string; body: string; category?: "regr
 /** Cap on findings kept from a single vision response — mirrors `composeAdvisoryNotes`'s selectivity so a
  *  verbose model can't pad the comment with a long list of minor observations. */
 const MAX_VISUAL_FINDINGS = 3;
+/** Upper bound on a model-authored finding `path` after public-safe filtering, so one finding's title cannot
+ *  flood a public comment. A real route path is far shorter; a value past this is truncated for display and
+ *  simply won't match any captured route in findVisualEvidence (#10062). */
+const MAX_VISUAL_PATH_CHARS = 256;
 
 export const VISUAL_VISION_SYSTEM_PROMPT = [
   "You are reviewing a BEFORE (production) vs AFTER (this pull request's preview deploy) screenshot pair for the same route.",
@@ -217,10 +221,14 @@ export function parseVisualVisionResponse(text: string): VisualVisionFinding[] {
     if (out.length >= MAX_VISUAL_FINDINGS) break;
     if (!entry || typeof entry !== "object") continue;
     const record = entry as Record<string, unknown>;
-    const path = typeof record.path === "string" ? record.path.trim() : "";
+    // path is model-authored free text off the vision JSON, interpolated into a public finding title — filter
+    // it through toPublicSafe exactly as body is, dropping the entry when it returns null (#10062).
+    const rawPath = typeof record.path === "string" ? record.path : "";
+    const filteredPath = toPublicSafe(rawPath);
     const rawBody = typeof record.body === "string" ? record.body : "";
     const body = toPublicSafe(rawBody);
-    if (!path || !body) continue;
+    if (!filteredPath || !body) continue;
+    const path = filteredPath.slice(0, MAX_VISUAL_PATH_CHARS);
     const category = record.category === "regression" || record.category === "unrelated" ? record.category : undefined;
     out.push(category ? { path, body, category } : { path, body });
   }

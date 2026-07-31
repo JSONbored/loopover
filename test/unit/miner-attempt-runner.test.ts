@@ -281,6 +281,23 @@ describe("runMinerAttempt (#2337) — the real create->review->gate->submit pipe
     expect(result.reason).toBe("claim_superseded");
   });
 
+  it("REGRESSION (#10004): threads the attempt's own apiBaseUrl into the freshness candidate, so a forge.internal attempt matches its own host's active row instead of a released github.com row for the same issue", async () => {
+    const deps = baseDeps({
+      claimLedger: {
+        listClaims: () => [
+          // Lowest id, github.com, released -- this attempt is NOT on github.com, so an unthreaded (always
+          // github.com) candidate would wrongly match THIS row first and abort claim_superseded.
+          { repoFullName: "acme/widgets", issueNumber: 7, status: "released", apiBaseUrl: "https://api.github.com" },
+          // This attempt's OWN host and row -- must be the one matched once apiBaseUrl is actually threaded through.
+          { repoFullName: "acme/widgets", issueNumber: 7, status: "active", apiBaseUrl: "https://forge.internal" },
+        ],
+      },
+    });
+    const result = await runMinerAttempt(baseAttemptInput({ apiBaseUrl: "https://forge.internal" }), deps);
+
+    expect(result.outcome).toBe("submitted");
+  });
+
   it("blocked: the submission-gate itself declines (e.g. global kill-switch) before the governor ever runs", async () => {
     const deps = baseDeps();
     const result = await runMinerAttempt(baseAttemptInput({ killSwitchScope: "global" }), deps);

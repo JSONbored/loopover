@@ -20,6 +20,7 @@
 // delete a later claimer's live lock (#2129/#2135).
 
 import { randomUUID } from "node:crypto";
+import { registerHeldLock, unregisterHeldLock } from "./held-lock-registry";
 import { RetryableJobError } from "./retryable";
 
 /** Result of a transient-lock claim attempt. `ownerToken` is the random value THIS call wrote when it actually
@@ -212,11 +213,12 @@ export async function claimPrActuationLock(
   repoFullName: string,
   prNumber: number,
 ): Promise<TransientLockClaim> {
-  return claimTransientLock(
-    env,
-    prActuationLockKey(repoFullName, prNumber),
-    PR_ACTUATION_LOCK_TTL_SECONDS,
-  );
+  const key = prActuationLockKey(repoFullName, prNumber);
+  const claim = await claimTransientLock(env, key, PR_ACTUATION_LOCK_TTL_SECONDS);
+  if (claim.acquired && claim.ownerToken !== null) {
+    registerHeldLock(key, claim.ownerToken, () => releaseTransientLockIfOwner(env, key, claim.ownerToken));
+  }
+  return claim;
 }
 export async function releasePrActuationLock(
   env: Env,
@@ -224,7 +226,9 @@ export async function releasePrActuationLock(
   prNumber: number,
   ownerToken: string | null,
 ): Promise<void> {
-  await releaseTransientLockIfOwner(env, prActuationLockKey(repoFullName, prNumber), ownerToken);
+  const key = prActuationLockKey(repoFullName, prNumber);
+  await releaseTransientLockIfOwner(env, key, ownerToken);
+  if (ownerToken !== null) unregisterHeldLock(key, ownerToken);
 }
 
 // A plain thrown Error still reaches the queue's retry path (this call site is deliberately uncaught, same as
@@ -266,11 +270,12 @@ export async function claimContributorCapLock(
   repoFullName: string,
   authorLogin: string,
 ): Promise<TransientLockClaim> {
-  return claimTransientLock(
-    env,
-    contributorCapLockKey(repoFullName, authorLogin),
-    CONTRIBUTOR_CAP_LOCK_TTL_SECONDS,
-  );
+  const key = contributorCapLockKey(repoFullName, authorLogin);
+  const claim = await claimTransientLock(env, key, CONTRIBUTOR_CAP_LOCK_TTL_SECONDS);
+  if (claim.acquired && claim.ownerToken !== null) {
+    registerHeldLock(key, claim.ownerToken, () => releaseTransientLockIfOwner(env, key, claim.ownerToken));
+  }
+  return claim;
 }
 export async function releaseContributorCapLock(
   env: Env,
@@ -278,5 +283,7 @@ export async function releaseContributorCapLock(
   authorLogin: string,
   ownerToken: string | null,
 ): Promise<void> {
-  await releaseTransientLockIfOwner(env, contributorCapLockKey(repoFullName, authorLogin), ownerToken);
+  const key = contributorCapLockKey(repoFullName, authorLogin);
+  await releaseTransientLockIfOwner(env, key, ownerToken);
+  if (ownerToken !== null) unregisterHeldLock(key, ownerToken);
 }

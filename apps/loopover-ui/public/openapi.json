@@ -14906,7 +14906,18 @@
             "type": "string"
           },
           "targetRepo": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": {
+                  "nullable": true
+                }
+              }
+            ]
           },
           "constraints": {
             "type": "array",
@@ -14998,7 +15009,18 @@
             "type": "string"
           },
           "targetRepo": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": {
+                  "nullable": true
+                }
+              }
+            ]
           },
           "constraints": {
             "type": "array",

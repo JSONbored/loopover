@@ -208,10 +208,13 @@ function normalizeNonNegativeInteger(value: unknown, field: string, fallback: nu
 }
 
 function normalizeCapLimits(value: unknown, fallback: AmsCapLimits, warnings: string[]): AmsCapLimits {
-  if (value === undefined || value === null) return fallback;
+  // Fresh copy on the fallback paths too (same reasoning as normalizeNetworkAllowlist): `fallback` is the
+  // deep-frozen DEFAULT_AMS_POLICY_SPEC.capLimits, so returning it by reference would alias the shared
+  // singleton into a caller's parsed spec.
+  if (value === undefined || value === null) return { ...fallback };
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push('AmsPolicySpec field "capLimits" must be a mapping; falling back to defaults.');
-    return fallback;
+    return { ...fallback };
   }
   const record = value as Record<string, unknown>;
   return {
@@ -226,10 +229,12 @@ function normalizeConvergenceThresholds(
   fallback: PortfolioConvergenceThresholds,
   warnings: string[],
 ): PortfolioConvergenceThresholds {
-  if (value === undefined || value === null) return fallback;
+  // Fresh copy on the fallback paths too: `fallback` is the deep-frozen
+  // DEFAULT_AMS_POLICY_SPEC.convergenceThresholds, so returning it by reference would alias the shared singleton.
+  if (value === undefined || value === null) return { ...fallback };
   if (typeof value !== "object" || Array.isArray(value)) {
     warnings.push('AmsPolicySpec field "convergenceThresholds" must be a mapping; falling back to defaults.');
-    return fallback;
+    return { ...fallback };
   }
   const record = value as Record<string, unknown>;
   return {

@@ -27,6 +27,7 @@ import {
   SCENARIO_MAX_LINKED_ISSUE_NUMBERS,
   SCENARIO_MAX_REPO_FULL_NAME_CHARS,
 } from "@loopover/contract";
+import { validateIdeaSubmission } from "@loopover/engine";
 import { MAX_NOTIFICATION_DELIVERY_ID_LENGTH as SRC_DELIVERY_ID, MAX_NOTIFICATION_MARK_READ_IDS as SRC_MARK_READ } from "../../src/db/repositories";
 import { MAX_FOCUS_MANIFEST_BYTES as SRC_MANIFEST_BYTES } from "../../src/signals/focus-manifest";
 import { MAX_LOCAL_SCORER_WARNING_CHARS as SRC_WARNING_CHARS, MAX_LOCAL_SCORER_WARNING_COUNT as SRC_WARNING_COUNT } from "../../src/signals/local-scorer-diagnostics";
@@ -108,6 +109,18 @@ describe("the moved schemas accept and reject what they always did (#9750)", () 
     // empty submission must REACH the handler rather than be rejected by the schema.
     expect(intakeIdeaSchema.safeParse({}).success).toBe(true);
     expect(intakeIdeaSchema.safeParse({ constraints: Array.from({ length: 51 }, () => "c") }).success).toBe(false);
+    expect(intakeIdeaSchema.safeParse({ targetRepo: { kind: "provision" } }).success).toBe(true);
+    expect(intakeIdeaSchema.safeParse({ targetRepo: { kind: "existing", repo: "acme/widgets" } }).success).toBe(true);
+    expect(intakeIdeaSchema.safeParse({ targetRepo: "acme/widgets" }).success).toBe(true);
+    expect(intakeIdeaSchema.safeParse({ targetRepo: 42 }).success).toBe(false);
+  });
+
+  it("#10064: malformed object targetRepo passes the schema but is rejected by validateIdeaSubmission", () => {
+    const body = { targetRepo: { kind: "existing" } };
+    expect(intakeIdeaSchema.safeParse(body).success).toBe(true);
+    const validated = validateIdeaSubmission(body);
+    expect(validated.ok).toBe(false);
+    if (!validated.ok) expect(validated.errors).toContain("target_repo_required");
   });
 
   it("leaves check-before-start entirely optional — the repository is the path param, not the body", () => {

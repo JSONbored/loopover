@@ -3,7 +3,6 @@
 // would let the rate be inflated.
 import { describe, expect, it } from "vitest";
 import {
-  AUTOMATION_COUNTED_ACTIONS,
   AUTOMATION_RATE_PROVENANCE_HORIZON_ISO,
   buildAutomationRateSeries,
   loadAutomationRateSeries,
@@ -106,6 +105,28 @@ describe("buildAutomationRateSeries", () => {
     ]);
     expect(series.decided).toBe(1);
     expect(series.automated).toBe(1);
+  });
+
+  it("counts a PR MANUAL when a human signal rides a NON-deciding verdict, not just a deciding one (#10013)", () => {
+    // The bug: `queryAutomationRows` restricted rows by `action`, so a human signal carried on a non-deciding
+    // verdict (a re-labelled PR, a maintainer-triggered re-run recorded as `label`/`update_branch`) never
+    // reached the fold. The PR's only surviving row was the clean `merge`, so a PR a person actually touched
+    // read as AUTOMATED. With the filter gone the fold sees the human-signal row and ORs it in.
+    const humanOnLabel = buildAutomationRateSeries([
+      row({ pullNumber: 1, action: "label", reevaluationActor: "JSONbored", createdAt: "2026-07-29T10:00:00.000Z" }),
+      row({ pullNumber: 1, action: "merge", createdAt: "2026-07-29T11:00:00.000Z" }),
+    ]);
+    expect(humanOnLabel.decided).toBe(1);
+    expect(humanOnLabel.automated).toBe(0);
+    expect(humanOnLabel.weeks[0]?.manual).toBe(1);
+
+    // Same for a maintainer_request reason riding a non-deciding verdict.
+    const requestOnUpdate = buildAutomationRateSeries([
+      row({ pullNumber: 2, action: "update_branch", reevaluationReason: "maintainer_request", createdAt: "2026-07-29T10:00:00.000Z" }),
+      row({ pullNumber: 2, action: "merge", createdAt: "2026-07-29T11:00:00.000Z" }),
+    ]);
+    expect(requestOnUpdate.automated).toBe(0);
+    expect(requestOnUpdate.weeks[0]?.manual).toBe(1);
   });
 
   it("counts a hold-only PR as decided-and-manual, never as undecided", () => {
@@ -217,12 +238,13 @@ describe("loadAutomationRateSeries", () => {
     await loadAutomationRateSeries(env);
     expect(sql).toContain("FROM decision_records");
     expect(sql).toContain("reevaluation_actor");
-    // The action filter is built FROM the same constant the fold classifies on, so the placeholder count and
-    // the bind count cannot drift apart -- a mismatch is a D1 error at runtime that no injected-rows test
-    // above would ever reach.
-    expect(sql).toContain("action IN (");
-    expect((sql.match(/\?/g) ?? []).length).toBe(binds.length);
-    expect(binds.slice(1)).toEqual([...AUTOMATION_COUNTED_ACTIONS]);
+    // #10013: the read must NOT restrict rows by action -- a human signal (reevaluation_actor /
+    // reevaluation_reason='maintainer_request') can ride a non-deciding verdict, and the old `action IN (...)`
+    // filter dropped exactly those rows, undercounting manual work. The only bind is the `created_at >= ?`
+    // window bound: one placeholder, one bind, and no action list.
+    expect(sql).not.toContain("action IN (");
+    expect((sql.match(/\?/g) ?? []).length).toBe(1);
+    expect(binds).toEqual([expect.any(String)]);
   });
 
   it("degrades to an empty series when the read throws, never failing the stats endpoint", async () => {

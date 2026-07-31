@@ -235,6 +235,27 @@ describe("normalizeScreenshotTableGateConfig", () => {
     expect(warnings.some((w) => w.includes("action"))).toBe(true);
   });
 
+  it("#9996: the invalid-action warning names all three valid tiers, including block", () => {
+    const warnings: string[] = [];
+    const result = normalizeScreenshotTableGateConfig({ enabled: true, action: "blok" }, warnings);
+    expect(warnings.length).toBe(1);
+    expect(warnings[0]).toContain("block");
+    expect(result.action).toBe("close");
+  });
+
+  it("#9996: an absent action still pushes no warning", () => {
+    const warnings: string[] = [];
+    normalizeScreenshotTableGateConfig({ enabled: true }, warnings);
+    expect(warnings.length).toBe(0);
+  });
+
+  it("#9996: a valid block action resolves with no warning", () => {
+    const warnings: string[] = [];
+    const result = normalizeScreenshotTableGateConfig({ enabled: true, action: "block" }, warnings);
+    expect(result.action).toBe("block");
+    expect(warnings.length).toBe(0);
+  });
+
   it("rejects a non-string/empty message with a warning, falling back to undefined", () => {
     const warnings: string[] = [];
     const result = normalizeScreenshotTableGateConfig({ message: "   " }, warnings);

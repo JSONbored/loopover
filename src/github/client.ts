@@ -633,7 +633,12 @@ export async function timeoutFetch(input: RequestInfo | URL, init?: GitHubTimeou
   const headers = requestHeaders(input, init);
   const conditional = hasConditionalRequestHeader(headers);
   const cls = method === "GET" && !conditional && !init?.githubBypassResponseCache ? githubCacheClassForUrl(url) : null;
-  if (method === "GET" && !conditional && cls === null && isVolatileSingleFlightEligibleGithubUrl(url, headers)) {
+  // A bypass read forces `cls = null` (line above), which is exactly the condition that admits a URL to the
+  // volatile coalescer -- so without this guard the flag would ROUTE the read INTO single-flight, letting one
+  // caller's transient failure become every concurrent caller's answer (#10032). Gate the volatile branch on
+  // the flag too, the same way the cache branch already is, so a bypass read goes straight to the network and
+  // never publishes itself into `inFlightVolatileGets` for another caller to replay.
+  if (method === "GET" && !conditional && !init?.githubBypassResponseCache && cls === null && isVolatileSingleFlightEligibleGithubUrl(url, headers)) {
     return fetchWithVolatileSingleFlight(input, init, volatileSingleFlightScope(url, headers));
   }
   const useCache = responseCache !== null && cls !== null;

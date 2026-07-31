@@ -41,17 +41,19 @@ import { safeAll } from "./public-stats";
 export const AUTOMATION_RATE_PROVENANCE_HORIZON_ISO = "2026-07-29T00:00:00.000Z";
 
 /** The action classes that ENACT a decision. A PR reaching one of these, with no human signal, is what
- *  "automated" means. Module-private: AUTOMATION_COUNTED_ACTIONS below is the exported surface, and it is
- *  what both the fold and the read consume -- one definition, rather than a WHERE clause and a predicate
- *  that can drift apart. */
+ *  "automated" means. The FOLD classifies on this, not the read: the read (#10013) now selects every
+ *  verdict in the window so a human signal carried on a non-deciding verdict is not filtered away before
+ *  the fold ever sees it. */
 const AUTOMATION_ENACTING_ACTIONS = ["merge", "close"] as const;
 
 /** The action recording that the gate declined to decide and handed the PR to a person. Module-private for
- *  the same reason as the set above. */
+ *  the same reason as the set above.
+ *
+ *  Together with the enacting set, this is what DECIDES a PR -- the published set the fold keys `decided` on.
+ *  There is deliberately no exported union of the two: #10013 removed the `action IN (...)` SQL filter that
+ *  was its only consumer, and an exported constant naming a set nothing selects on invites a reader to
+ *  believe the read still restricts by it. The fold tests each half directly instead. */
 const AUTOMATION_HOLD_ACTION = "hold";
-
-/** Every action that puts a PR in the series at all -- an enacted decision, or a hold. */
-export const AUTOMATION_COUNTED_ACTIONS: readonly string[] = [...AUTOMATION_ENACTING_ACTIONS, AUTOMATION_HOLD_ACTION];
 
 /** How completely a week could be measured. `full` weeks see every manual signal; `holds_only` weeks predate
  *  the provenance fields and can only under-count manual work. */
@@ -214,9 +216,11 @@ async function queryAutomationRows(env: unknown, sinceIso: string): Promise<Auto
             reevaluation_reason AS reevaluationReason,
             reevaluation_actor  AS reevaluationActor
        FROM decision_records
-      WHERE created_at >= ?
-        AND action IN (${AUTOMATION_COUNTED_ACTIONS.map(() => "?").join(", ")})`,
+      WHERE created_at >= ?`,
+    // #10013: select EVERY verdict in the window, not just the enacting/hold actions. A human signal
+    // (reevaluation_actor / reevaluation_reason = 'maintainer_request') can ride a NON-deciding verdict (a
+    // `label`, an `update_branch`); the old `action IN (...)` filter dropped those rows, so a PR a human
+    // actually touched read as automated. buildAutomationRateSeries still keys `enacted`/`held` off `action`.
     sinceIso,
-    ...AUTOMATION_COUNTED_ACTIONS,
   );
 }

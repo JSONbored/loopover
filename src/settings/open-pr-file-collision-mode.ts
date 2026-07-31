@@ -1,11 +1,13 @@
 export type OpenPrFileCollisionMode = "inherit" | "off" | "enabled";
 
-/** Truthy convention matches the rest of this codebase's `LOOPOVER_*` flags (exact `"true"` string) -- opt-in
- *  and default OFF: the enrichment call this gates costs an extra GitHub API round-trip per open PR
+/** Truthy convention matches the rest of this codebase's `LOOPOVER_*` flags (`/^(1|true|yes|on)$/i`, trimmed
+ *  + case-insensitive, e.g. `selfTuneFlagOn`/`isReputationEnabled`) -- so `1`, `on`, `TRUE`, and a `.env`
+ *  value carrying trailing whitespace all read as truthy, not silently as OFF. Opt-in and default OFF: the
+ *  enrichment call this gates costs an extra GitHub API round-trip per open PR
  *  (enrichOpenPullRequestsWithChangedFiles), so an operator should deliberately turn it on rather than pay
  *  that cost by default. */
 export function isOpenPrFileCollisionEnabledGlobally(env: { LOOPOVER_OPEN_PR_FILE_COLLISION?: string | undefined }): boolean {
-  return env.LOOPOVER_OPEN_PR_FILE_COLLISION === "true";
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_OPEN_PR_FILE_COLLISION ?? "").trim());
 }
 
 /** Per-repo override resolved against the global default. Mirrors `resolveDuplicateWinnerEnabled`'s

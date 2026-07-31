@@ -462,6 +462,15 @@ export function FairnessReportPage() {
                   >
                     verify this review
                   </Link>
+                  . For the full definition — which verdicts count, why a held-then-merged PR is
+                  manual, and what the pre-2026-07-29 weeks can and cannot measure — see the{" "}
+                  <Link
+                    to="/docs/$slug"
+                    params={{ slug: "fairness-methodology" }}
+                    className="underline underline-offset-2"
+                  >
+                    fairness methodology
+                  </Link>
                   .
                 </p>
 

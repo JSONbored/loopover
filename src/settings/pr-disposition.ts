@@ -104,6 +104,10 @@ export type PrDisposition = {
   mergeable: MergeableAssessment;
   /** The SAME formula agent-actions.ts's heldForManualReview computes — one definition, two readers. */
   heldForManualReview: boolean;
+  /** #9991: which declared inputs actually held, in MERGE_HOLD_INPUTS declaration order. Empty when the only
+   *  suppressor is the unstable mergeable state — that is GitHub's computation, not one of our declared hold
+   *  inputs, and it is reported by `heldForUnstableMergeState` instead. */
+  heldBy: MergeHoldInput[];
   /** True when the ONLY thing suppressing a would-merge is the unstable mergeable state (#8758's loud
    *  hold): the planner uses it to attach the check-naming comment; the comment surface uses it to
    *  downgrade "safe to merge". */
@@ -136,7 +140,16 @@ export function derivePrDisposition(input: PrDispositionInput): PrDisposition {
   const releasedHolds: Partial<Record<MergeHoldInput, boolean>> = {
     guardrailHit: input.guardrailEscalationCleared === true,
   };
-  const heldForManualReview = MERGE_HOLD_INPUT_KEYS.some((key) => input[key] === true && releasedHolds[key] !== true) || unstableHolds;
+  // #9991: WHICH inputs held, not merely whether any did. This was a `.some(...)` over exactly this set that
+  // threw the answer away, which is why the ledger could only fall back to the gate conclusion -- leaving 518
+  // holds on the production Orb filed under reason "success", a bucket conflating seven distinct mechanisms
+  // that #9729 cannot run a per-path clearance against.
+  //
+  // Filtered from MERGE_HOLD_INPUT_KEYS rather than restated, so a hold added to the table is enumerated here
+  // automatically -- restatement is the thing that table exists to remove. Order is the table's own
+  // declaration order, which makes the recorded cause deterministic for identical inputs.
+  const heldBy = MERGE_HOLD_INPUT_KEYS.filter((key) => input[key] === true && releasedHolds[key] !== true);
+  const heldForManualReview = heldBy.length > 0 || unstableHolds;
   const heldForUnstableMergeState = unstableHolds;
   const wouldApprove = input.reviewGood && !heldForManualReview && mergeable !== "conflict";
   const wouldMerge = input.reviewGood && !heldForManualReview && mergeable === "clean";
@@ -146,7 +159,7 @@ export function derivePrDisposition(input: PrDispositionInput): PrDisposition {
   // holds the PLANNER (the rebase rail acts) — a deliberate, documented asymmetry, not drift: the two
   // surfaces answer different questions ("is it safe to claim mergeable NOW" vs "should a human step in").
   const commentMergeStateHeld = mergeable === "conflict" || mergeable === "behind" || unstableHolds;
-  return { mergeable, heldForManualReview, heldForUnstableMergeState, wouldApprove, wouldMerge, commentMergeStateHeld };
+  return { mergeable, heldForManualReview, heldBy, heldForUnstableMergeState, wouldApprove, wouldMerge, commentMergeStateHeld };
 }
 
 /** The comment surface's merge-state downgrade as a standalone predicate (#8759): the bridge

@@ -8,14 +8,25 @@ describe("isDuplicateWinnerEnabledGlobally", () => {
     expect(isDuplicateWinnerEnabledGlobally({ LOOPOVER_DUPLICATE_WINNER: "" })).toBe(false);
   });
 
-  it("is ON only for the exact string \"true\"", () => {
-    expect(isDuplicateWinnerEnabledGlobally({ LOOPOVER_DUPLICATE_WINNER: "true" })).toBe(true);
+  it("is ON for every value the codebase truthy convention accepts (#10054)", () => {
+    // Was `=== "true"` only, which silently read `1` / `on` / `TRUE` / a whitespace-padded `.env` value as
+    // OFF. It now mirrors selfTuneFlagOn's `/^(1|true|yes|on)$/i.test((X ?? "").trim())`, trimmed + i-flag.
+    for (const value of ["1", "true", "TRUE", "yes", "on", " true "]) {
+      expect(isDuplicateWinnerEnabledGlobally({ LOOPOVER_DUPLICATE_WINNER: value }), value).toBe(true);
+    }
   });
 
-  it("stays OFF for any other value, including truthy-looking ones", () => {
-    for (const value of ["1", "yes", "on", "True", "TRUE", " true "]) {
-      expect(isDuplicateWinnerEnabledGlobally({ LOOPOVER_DUPLICATE_WINNER: value })).toBe(false);
+  it("stays OFF for a falsy or unrecognised value", () => {
+    for (const value of ["0", "false", "off", "no", "maybe"]) {
+      expect(isDuplicateWinnerEnabledGlobally({ LOOPOVER_DUPLICATE_WINNER: value }), value).toBe(false);
     }
+  });
+
+  it("the =1 form an operator naturally writes actually enables the feature through the resolver (#10054)", () => {
+    // The end-to-end regression: `1` is the value the convention regex accepts first and env.d.ts publishes
+    // for a sibling flag, but under `=== "true"` it read OFF -- so a repo on `inherit` stayed off even after
+    // the operator set it. The fix must carry all the way through resolveDuplicateWinnerEnabled.
+    expect(resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally({ LOOPOVER_DUPLICATE_WINNER: "1" }), "inherit")).toBe(true);
   });
 });
 

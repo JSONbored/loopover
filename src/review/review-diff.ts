@@ -101,29 +101,54 @@ function splitHunks(patch: string): string[] {
  * loses boilerplate/context, instead of a blind head-slice that drops whatever is at the tail. Kept
  * hunks are emitted in original order so the diff still reads top-to-bottom.
  */
+const TRUNCATED_NOTICE = "… (this file's diff truncated)";
+/** The "\n" + notice appended when hunks are dropped; its length is RESERVED before selecting hunks so the
+ *  combined string fits `budget` (#10017). */
+const droppedNotice = (dropped: number): string => `\n… (${dropped} lower-signal hunk(s) dropped)`;
+
 export function keepHighSignalHunks(patch: string, budget: number): string {
-  if (budget <= 0) return "… (this file's diff truncated)";
+  if (budget <= 0) return TRUNCATED_NOTICE;
   const hunks = splitHunks(patch);
   if (hunks.length <= 1) {
-    return patch.length > budget ? `${patch.slice(0, budget)}\n… (this file's diff truncated)` : patch;
+    // Reserve the notice's length so `slice + notice` fits budget (#10017): slice to budget - notice.length,
+    // never below 0. If even the notice does not fit, return just the (truncated) notice.
+    if (patch.length <= budget) return patch;
+    const room = budget - (TRUNCATED_NOTICE.length + 1); // +1 for the "\n" before the notice
+    return room > 0 ? `${patch.slice(0, room)}\n${TRUNCATED_NOTICE}` : TRUNCATED_NOTICE.slice(0, budget);
   }
   const ranked = hunks.map((h, i) => ({ i, len: h.length, sig: addedLineCount(h) })).sort((a, b) => b.sig - a.sig);
-  const keep = new Set<number>();
-  let used = 0;
+  // A dropped-hunk notice is emitted only when something is actually dropped, so budget for the whole set FIRST
+  // without reserving it; if all hunks fit, no notice is needed and the join alone fits (#10017). `chosen`
+  // preserves ranked (signal) order so the lowest-signal kept hunk is the one trimmed if the notice must fit.
+  const fits = (hunkCount: number, chars: number, notice: number): boolean => chars + Math.max(0, hunkCount - 1) + notice <= budget;
+  const chosen: number[] = [];
+  let usedChars = 0;
   for (const r of ranked) {
-    // Kept hunks are emitted with `.join("\n")` below — N hunks use N-1 separators — so charge the
-    // separator only for hunks AFTER the first. Charging `+ 1` for every hunk over-counted the output by
-    // one and dropped a hunk that fit exactly at the budget boundary.
-    const sep = keep.size > 0 ? 1 : 0;
-    if (used + r.len + sep > budget) continue;
-    keep.add(r.i);
-    used += r.len + sep;
+    if (!fits(chosen.length + 1, usedChars + r.len, 0)) continue;
+    chosen.push(r.i);
+    usedChars += r.len;
   }
-  const top = ranked[0];
-  if (keep.size === 0 && top) keep.add(top.i); // always keep the single highest-signal hunk
-  const dropped = hunks.length - keep.size;
-  const kept = hunks.filter((_, i) => keep.has(i)).join("\n");
-  return dropped > 0 ? `${kept}\n… (${dropped} lower-signal hunk(s) dropped)` : kept;
+  let droppedCount = hunks.length - chosen.length;
+  if (chosen.length > 0 && droppedCount > 0) {
+    // Some hunks dropped: the notice now counts. Trim lowest-signal kept hunks until kept + notice fits.
+    while (chosen.length > 1 && !fits(chosen.length, usedChars, droppedNotice(droppedCount + 1).length)) {
+      const removed = chosen.pop()!; // ranked order → this is the lowest-signal kept hunk
+      usedChars -= hunks[removed]!.length;
+      droppedCount += 1;
+    }
+  }
+  if (chosen.length === 0 || (chosen.length === 1 && !fits(1, usedChars, droppedNotice(droppedCount).length))) {
+    // Not even one whole hunk fits alongside the notice: return the highest-signal hunk's CONTENT truncated to
+    // fit (with the notice) -- same shape as the single-hunk path, never nothing, never over budget (#10017).
+    const top = ranked[0]!;
+    const notice = droppedNotice(hunks.length - 1);
+    const room = budget - notice.length;
+    return room > 0 ? `${hunks[top.i]!.slice(0, room)}${notice}` : notice.slice(0, budget);
+  }
+  // Emit the kept hunks in FILE order (as the original filter+join did), independent of the signal ranking
+  // used only for selection/trimming above.
+  const kept = [...chosen].sort((a, b) => a - b).map((i) => hunks[i]!).join("\n");
+  return droppedCount > 0 ? `${kept}${droppedNotice(droppedCount)}` : kept;
 }
 
 /** A changed file, shape-agnostic so any caller's file record can map into it. The explicit `| undefined`
@@ -147,13 +172,16 @@ export function buildUnifiedReviewDiff(files: ReviewDiffFile[], budget: number =
   const ordered = [...files].sort(
     (a, b) => diffFilePriority(a.path) - diffFilePriority(b.path) || addedLineCount(b.patch) - addedLineCount(a.patch),
   );
+  const truncationNotice = `### …diff truncated (${files.length} files total)\n`;
   let diff = "";
   for (const file of ordered) {
     const status = file.status ?? "modified";
     const header = `### ${file.path} (${status}) +${file.additions ?? 0}/-${file.deletions ?? 0}\n`;
     const remaining = budget - diff.length;
     if (remaining < 240) {
-      diff += `### …diff truncated (${files.length} files total)\n`;
+      // The 240 floor comfortably exceeds this notice's length, and each file's body budget already reserved it
+      // (see the `- truncationNotice.length` below), so appending it here keeps the total within budget (#10017).
+      diff += truncationNotice;
       break;
     }
     if (!file.patch) {
@@ -162,8 +190,10 @@ export function buildUnifiedReviewDiff(files: ReviewDiffFile[], budget: number =
     }
     let body = file.patch;
     if (header.length + body.length + 2 > remaining) {
-      // Hunk-aware: keep the highest-signal hunks that fit rather than a blind head-slice.
-      body = keepHighSignalHunks(file.patch, remaining - header.length - 4);
+      // Hunk-aware: keep the highest-signal hunks that fit rather than a blind head-slice. Reserve the
+      // truncation notice's length too, so if a LATER file triggers the break there is always room to append
+      // it without the total exceeding budget (#10017).
+      body = keepHighSignalHunks(file.patch, remaining - header.length - 4 - truncationNotice.length);
     }
     diff += `${header}${body}\n\n`;
   }

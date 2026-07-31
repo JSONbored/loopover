@@ -139,7 +139,7 @@ export function applySurfaceGate(
   if (generic.blockers.length === 0 && generic.conclusion === "success") return surface; // generic was clean → surface stands
   if (generic.blockers.length === 0) {
     if (surface.conclusion === "success") return generic;
-    return surface;
+    return { ...surface, warnings: [...generic.warnings, ...surface.warnings] };
   }
   // #3907: opt-in escape hatch from guard #3 below. Default (null/undefined/"advisory") preserves today's
   // behavior byte-identically. "gate" skips the override entirely, so an AI-judgment-only failure falls

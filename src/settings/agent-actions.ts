@@ -1,7 +1,7 @@
 import type { AgentActionClass, AutoMaintainPolicy, AutoMergeMethod, AutonomyPolicy } from "../types";
 import { AI_JUDGMENT_BLOCKER_CODES, type GateCheckConclusion } from "../rules/advisory";
 import { DEFAULT_AUTO_MAINTAIN_POLICY, autonomyRequiresApproval, isActingAutonomyLevel, resolveAutonomy } from "./autonomy";
-import { assessMergeableState, derivePrDisposition } from "./pr-disposition";
+import { assessMergeableState, derivePrDisposition, type MergeHoldInput, type PrDispositionInput } from "./pr-disposition";
 import { changedPathsHittingGuardrail, isGuardrailHit } from "../signals/change-guardrail";
 import { AGENT_LABEL_PENDING_CLOSURE } from "../review/linked-issue-hard-rules";
 import { REVIEW_THREAD_BLOCKER_CODE } from "../review/review-thread-findings";
@@ -897,6 +897,75 @@ function maybePlanCopycatLabel(actions: PlannedAgentAction[], input: AgentAction
  * request-changes; never both merge and close), each entry already filtered to an acting autonomy class.
  * Ordered least → most irreversible: label, then the review, then the disposition.
  */
+
+/**
+ * PURE. The {@link PrDispositionInput} the planner feeds {@link derivePrDisposition}, extracted so a caller
+ * that needs the HOLD CAUSE can recompute it from the same plan input (#9991).
+ *
+ * Extracted rather than threaded out of `planAgentMaintenanceActions`: that function returns
+ * `PlannedAgentAction[]`, and a hold's defining shape is that NOTHING was planned -- so there is no action to
+ * hang the cause on, and widening the return type would churn five production call sites and roughly thirty
+ * test ones for a field only the ledger write needs. One shared builder, called twice, is cheaper and keeps
+ * the two answers derived from the same expression rather than from two constructions that can drift.
+ *
+ * `derived` carries the four values the planner computes on its way here; every one is itself a function of
+ * `input`, which is what makes recomputing this outside the planner sound rather than approximate.
+ */
+function buildPrDispositionInput(
+  input: AgentActionPlanInput,
+  derived: { reviewGood: boolean; guardrailHit: boolean; guardrailEscalationCleared: boolean; closeActing: boolean },
+): PrDispositionInput {
+  return {
+    mergeableState: input.pr.mergeableState,
+    reviewGood: derived.reviewGood,
+    guardrailHit: derived.guardrailHit,
+    guardrailEscalationCleared: derived.guardrailEscalationCleared,
+    migrationCollisionHold: input.migrationCollisionHold !== undefined,
+    unlinkedIssueMatchHold: input.unlinkedIssueMatchHold !== undefined,
+    priorityEligibilityHold: input.priorityEligibilityHold !== undefined,
+    screenshotEvidenceHold: input.screenshotEvidenceHold !== undefined,
+    advisoryCheckHold: input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0,
+    // Deliberately conjoined with "nothing else adverse": an unstable state is only attributed to the ignore
+    // list when our own aggregate found NO failing check of any kind. If some other non-required check is
+    // also red, failingDetails is non-empty and the hold stands -- an ignore must never mask a real failure.
+    unstableExplainedByIgnoredChecks:
+      input.ignoredCheckNonPassing !== undefined && input.ignoredCheckNonPassing.length > 0 && (input.nonRequiredCheckFailures ?? []).length === 0 && input.ciState !== "failed",
+    unlinkedIssueMatchCloseWithoutCloseActing: input.unlinkedIssueMatchClose !== undefined && !derived.closeActing,
+  };
+}
+
+/**
+ * PURE. Which declared hold inputs are suppressing this PR's merge, in MERGE_HOLD_INPUTS declaration order.
+ *
+ * #9991: the ledger recorded `reason_code: "success"` for a held PR, because `deriveDecisionReasonCode` falls
+ * through to the gate conclusion when there is no blocker and no policy close. On the production Orb that is
+ * 518 holds across 146 pull requests filed under a value that is not a reason at all -- and #9729 cannot run a
+ * per-path backtest clearance against a bucket conflating seven mechanisms.
+ *
+ * Recomputed from the plan input rather than returned by the planner, for the reason in
+ * {@link buildPrDispositionInput}: a hold's defining shape is that no action was planned, so there is nothing
+ * in `PlannedAgentAction[]` to carry it. Both call sites go through the same builder, so the cause recorded in
+ * the ledger is the same expression that suppressed the merge, not a second opinion about it.
+ *
+ * Empty when nothing declared held it -- including when the only suppressor is the unstable mergeable state,
+ * which is GitHub's computation rather than one of our declared inputs and is reported separately by
+ * `heldForUnstableMergeState`.
+ */
+export function resolveHoldCause(input: AgentActionPlanInput): MergeHoldInput[] {
+  const level = (actionClass: AgentActionClass) => resolveAutonomy(input.autonomy, actionClass);
+  const guardrailHit = isGuardrailHit(input.changedPaths, input.hardGuardrailGlobs);
+  const reviewGood = input.conclusion === "success" && input.ciState === "passed";
+  const escalationConfigured =
+    input.guardrailEscalationEffort != null ||
+    input.guardrailEscalationSelfConsistencyRuns != null ||
+    input.guardrailEscalationModel != null ||
+    input.guardrailEscalationProvider != null;
+  const guardrailEscalationCleared = guardrailHit && reviewGood && escalationConfigured && input.guardrailEscalationOnCleanReview === "proceed";
+  return derivePrDisposition(
+    buildPrDispositionInput(input, { reviewGood, guardrailHit, guardrailEscalationCleared, closeActing: isActingAutonomyLevel(level("close")) }),
+  ).heldBy;
+}
+
 export function planAgentMaintenanceActions(input: AgentActionPlanInput): PlannedAgentAction[] {
   const actions: PlannedAgentAction[] = [];
   const autoMaintain = input.autoMaintain ?? DEFAULT_AUTO_MAINTAIN_POLICY;
@@ -1151,23 +1220,7 @@ export function planAgentMaintenanceActions(input: AgentActionPlanInput): Planne
     input.guardrailEscalationProvider != null;
   const guardrailEscalationCleared =
     guardrailHit && reviewGood && escalationConfigured && input.guardrailEscalationOnCleanReview === "proceed";
-  const disposition = derivePrDisposition({
-    mergeableState: input.pr.mergeableState,
-    reviewGood,
-    guardrailHit,
-    guardrailEscalationCleared,
-    migrationCollisionHold: input.migrationCollisionHold !== undefined,
-    unlinkedIssueMatchHold: input.unlinkedIssueMatchHold !== undefined,
-    priorityEligibilityHold: input.priorityEligibilityHold !== undefined,
-    screenshotEvidenceHold: input.screenshotEvidenceHold !== undefined,
-    advisoryCheckHold: input.advisoryCheckHold !== undefined && input.advisoryCheckHold.length > 0,
-    // Deliberately conjoined with "nothing else adverse": an unstable state is only attributed to the ignore
-    // list when our own aggregate found NO failing check of any kind. If some other non-required check is
-    // also red, failingDetails is non-empty and the hold stands -- an ignore must never mask a real failure.
-    unstableExplainedByIgnoredChecks:
-      input.ignoredCheckNonPassing !== undefined && input.ignoredCheckNonPassing.length > 0 && (input.nonRequiredCheckFailures ?? []).length === 0 && input.ciState !== "failed",
-    unlinkedIssueMatchCloseWithoutCloseActing: input.unlinkedIssueMatchClose !== undefined && !acting("close"),
-  });
+  const disposition = derivePrDisposition(buildPrDispositionInput(input, { reviewGood, guardrailHit, guardrailEscalationCleared, closeActing: acting("close") }));
   const heldForManualReview = disposition.heldForManualReview;
   const mergeableStateUnstable = disposition.heldForUnstableMergeState;
   const labels = resolveAgentDispositionLabels(input);

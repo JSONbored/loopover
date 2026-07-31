@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.21.1](https://github.com/JSONbored/loopover/compare/engine-v3.21.0...engine-v3.21.1) (2026-07-31)
+
+
+### Fixes
+
+* **orb:** gate the ai_review_inconclusive hold on aiReviewGateMode ([#10239](https://github.com/JSONbored/loopover/issues/10239)) ([00e3ee9](https://github.com/JSONbored/loopover/commit/00e3ee98e6f9843317313217013071a5fbaf4b2b))
+
 ## [3.21.0](https://github.com/JSONbored/loopover/compare/engine-v3.20.0...engine-v3.21.0) (2026-07-31)
 
 

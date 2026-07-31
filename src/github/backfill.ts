@@ -10,6 +10,7 @@ import {
   getPullRequestDetailSyncState,
   listRepoGithubTotalsSnapshotHistory,
   getRepoSyncSegment,
+  listRepoSyncSegments,
   getRepoSyncState,
   listOpenIssueNumbers,
   listOpenPullRequests,
@@ -327,6 +328,25 @@ const DEFAULT_LIMITS: BackfillLimits = {
 
 const FRESH_SYNC_MS = 6 * 60 * 60 * 1000;
 const ERROR_BACKOFF_MS = 60 * 60 * 1000;
+/** The segments the open-data fan-out dispatches -- and therefore the only ones whose freshness may gate it. */
+const OPEN_DATA_SEGMENTS: readonly BackfillSegmentName[] = ["labels", "open_issues", "open_pull_requests", "recent_merged_pull_requests"];
+const OPEN_DATA_BACKFILL_SKIPPED_METRIC = "loopover_github_open_data_backfill_skipped_total";
+
+/** Age of the OPEN-DATA crawl itself: the oldest completion across the four segments the fan-out below actually
+ *  dispatches. A segment that has never run (no row, or an unparseable completedAt) is infinitely old, so a repo
+ *  still owed its first crawl of any one segment is never treated as fresh. Measures ATTEMPTS, not successes --
+ *  a segment that ran minutes ago and came back `waiting_rate_limit` is not owed another attempt yet, which is
+ *  exactly the re-sync storm #4497 set out to stop. */
+function openDataCrawlAgeMs(segments: RepoSyncSegmentRecord[], nowMs: number): number {
+  const completedBySegment = new Map(segments.map((segment) => [segment.segment, segment.completedAt]));
+  let ageMs = 0;
+  for (const name of OPEN_DATA_SEGMENTS) {
+    const completedMs = Date.parse(completedBySegment.get(name) ?? "");
+    if (!Number.isFinite(completedMs)) return Number.POSITIVE_INFINITY;
+    ageMs = Math.max(ageMs, nowMs - completedMs);
+  }
+  return ageMs;
+}
 
 /** Shared freshness/error-backoff decision (#4497): a repo whose last sync is either a fresh success (within
  *  FRESH_SYNC_MS) or a recent error (within ERROR_BACKOFF_MS) should be skipped rather than re-synced, unless
@@ -334,16 +354,30 @@ const ERROR_BACKOFF_MS = 60 * 60 * 1000;
  *  timestamp, or the existing sync is stale enough to redo). Shared by backfillRegisteredRepositories (the
  *  admin-endpoint/test path) and enqueueRepositoryOpenDataBackfill (the real scheduled-cron path) so both
  *  respect the SAME cadence -- previously only the former checked this, so the scheduled path re-synced every
- *  registered repo every 30 minutes forever regardless of freshness or a permanent error state. */
+ *  registered repo every 30 minutes forever regardless of freshness or a permanent error state.
+ *
+ *  The fresh-success window is measured on the open-data SEGMENTS' own completions, not on
+ *  repo_sync_state.lastCompletedAt (#10193). That column is a repo-wide clock that
+ *  refreshRepoSyncStateFromSegments rewrites at the end of EVERY segment write path, including two that run far
+ *  more often than FRESH_SYNC_MS and dispatch no open-data work: the ~2-minute re-gate sweep's own
+ *  open_pull_requests refresh (queue/processors.ts refreshOpenPullRequestsForScheduledSweep, which bypasses this
+ *  gate with force) and the backfill-pr-details follow-on it enqueues. Reading it here made the gate
+ *  self-perpetuating -- it never aged past the window, so labels/open_issues/recent_merged_pull_requests went
+ *  undispatched from the moment #4529 shipped. Only recent_merged_pull_requests showed it, because it is the one
+ *  open-data table with no webhook or sweep writer to mask the frozen crawl. The error-backoff window still reads
+ *  lastCompletedAt: a repo-level error state is repo-wide by nature. */
 function syncFreshnessSkipReason(
   syncState: RepoSyncStateRecord | null,
+  openDataSegments: RepoSyncSegmentRecord[],
   force: boolean | undefined,
 ): { freshSuccess: boolean; recentError: boolean } | null {
   if (force || !syncState?.lastCompletedAt || syncState.status === "never_synced") return null;
-  const ageMs = Date.now() - Date.parse(syncState.lastCompletedAt);
+  const nowMs = Date.now();
+  const stateAgeMs = nowMs - Date.parse(syncState.lastCompletedAt);
   const freshSuccess =
-    (syncState.status === "success" || syncState.status === "partial" || syncState.status === "capped") && Number.isFinite(ageMs) && ageMs < FRESH_SYNC_MS;
-  const recentError = syncState.status === "error" && Number.isFinite(ageMs) && ageMs < ERROR_BACKOFF_MS;
+    (syncState.status === "success" || syncState.status === "partial" || syncState.status === "capped") &&
+    openDataCrawlAgeMs(openDataSegments, nowMs) < FRESH_SYNC_MS;
+  const recentError = syncState.status === "error" && Number.isFinite(stateAgeMs) && stateAgeMs < ERROR_BACKOFF_MS;
   return freshSuccess || recentError ? { freshSuccess, recentError } : null;
 }
 const SEGMENT_PAGE_BUDGET: Record<BackfillMode, number> = { light: 2, full: 10, resume: 10 };
@@ -447,8 +481,8 @@ export async function backfillRegisteredRepositories(
         warnings,
       };
     }
-    const syncState = await getRepoSyncState(env, repo.fullName);
-    const skipReason = syncFreshnessSkipReason(syncState, options.force);
+    const [syncState, syncSegments] = await Promise.all([getRepoSyncState(env, repo.fullName), listRepoSyncSegments(env, repo.fullName)]);
+    const skipReason = syncFreshnessSkipReason(syncState, syncSegments, options.force);
     if (skipReason && syncState) {
       return {
         repoFullName: repo.fullName,
@@ -482,9 +516,22 @@ export async function enqueueRepositoryOpenDataBackfill(
   // gate -- this is the path the real scheduled cron actually dispatches through (see that function's own
   // routing comment), which previously had NO freshness/error-backoff check at all and re-synced every
   // registered repo every 30 minutes forever, backing off neither for a fresh success nor a permanent error.
-  const previous = await getRepoSyncState(env, repo.fullName);
-  const skipReason = syncFreshnessSkipReason(previous, options.force);
+  const [previous, syncSegments] = await Promise.all([getRepoSyncState(env, repo.fullName), listRepoSyncSegments(env, repo.fullName)]);
+  const skipReason = syncFreshnessSkipReason(previous, syncSegments, options.force);
   if (skipReason && previous) {
+    // #10193: the skip used to be reported ONLY as a warnings[] string, which this function's cron caller
+    // (queue/job-dispatch.ts's backfill-registered-repos case) discards -- so a repo whose open-data crawl was
+    // skipped on every 30-minute tick for three weeks left no log line, metric, or audit trail anywhere, and the
+    // dead crawl was found only by noticing the table it feeds had stopped growing. A starved crawl is now visible.
+    incr(OPEN_DATA_BACKFILL_SKIPPED_METRIC, { reason: skipReason.freshSuccess ? "fresh_success" : "recent_error" });
+    console.log(
+      JSON.stringify({
+        event: "open_data_backfill_skipped",
+        repoFullName: repo.fullName,
+        reason: skipReason.freshSuccess ? "fresh_success" : "recent_error",
+        openDataCrawlAgeMs: openDataCrawlAgeMs(syncSegments, Date.now()),
+      }),
+    );
     return {
       ok: true,
       repoFullName: repo.fullName,
@@ -518,9 +565,8 @@ export async function enqueueRepositoryOpenDataBackfill(
     lastCompletedAt: previous?.lastCompletedAt,
     warnings: previous?.warnings ?? [],
   });
-  const segments: BackfillSegmentName[] = ["labels", "open_issues", "open_pull_requests", "recent_merged_pull_requests"];
   await Promise.all(
-    segments.map((segment, index) =>
+    OPEN_DATA_SEGMENTS.map((segment, index) =>
       env.JOBS.send(
         { type: "backfill-repo-segment", requestedBy: options.requestedBy, repoFullName: repo.fullName, ...repoInstallationPayload(repo), segment, mode, ...(options.force === undefined ? {} : { force: options.force }) },
         { delaySeconds: index * 15 },

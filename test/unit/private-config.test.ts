@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import { parse as yamlParse } from "yaml";
 import {
   GLOBAL_CONFIG_CANDIDATES,
   isReviewSkillEnabled,
@@ -21,6 +22,14 @@ import {
 } from "../../src/selfhost/private-config";
 import { loadRepoReviewContext, setLocalReviewContextReader, type RepoFocusManifestFetcher } from "../../src/signals/focus-manifest-loader";
 import { MAX_FOCUS_MANIFEST_BYTES, parseFocusManifestContent } from "../../src/signals/focus-manifest";
+
+// Wraps the real `yaml` parser in a spyable fn (default behavior unchanged) so a couple of #9065
+// retry tests below can force a single non-Error throw without touching every other test in this
+// file, which all rely on real YAML parsing.
+vi.mock("yaml", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("yaml")>();
+  return { ...actual, parse: vi.fn(actual.parse) };
+});
 
 async function readLocalManifestContent(reader: RepoFocusManifestFetcher, repo: string): Promise<string | null> {
   const result = await reader(repo);
@@ -398,6 +407,57 @@ describe("makeLocalManifestReader — shared base layer (#1959)", () => {
   });
 });
 
+describe("makeLocalManifestReader — #9065 JSON→YAML retry for a leading `{`/`[` layer", () => {
+  it("merges a per-repo YAML flow-mapping layer with the global default instead of silently dropping it", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    writeFileSync(join(dir, ".loopover.yml"), "gate:\n  duplicates: block\n"); // global default
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".loopover.yml"), "{gate: {linkedIssue: advisory}}"); // valid YAML flow mapping, invalid strict JSON
+    const reader = makeLocalManifestReader(dir);
+    const loaded = await readLocalManifestLoad(reader!, "owner/repo");
+    expect(loaded!.warnings).toEqual([]); // no false "malformed or oversized" warning
+    const manifest = parseFocusManifestContent(loaded!.content);
+    expect(manifest.gate.linkedIssue).toBe("advisory"); // per-repo layer's value, not dropped in favor of the global default
+    expect(manifest.gate.duplicates).toBe("block"); // still inherited from global — both layers participated in the merge
+  });
+
+  it("serves a lone per-repo YAML flow-mapping layer with no false malformed warning", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".loopover.yml"), "{gate: {linkedIssue: advisory}}");
+    const reader = makeLocalManifestReader(dir);
+    const loaded = await readLocalManifestLoad(reader!, "owner/repo");
+    expect(loaded!.warnings).toEqual([]); // single-layer passthrough must not increment the false-alarm metric either
+    expect(loaded!.content).toBe("{gate: {linkedIssue: advisory}}"); // raw text, unchanged
+    const manifest = parseFocusManifestContent(loaded!.content);
+    expect(manifest.gate.linkedIssue).toBe("advisory"); // round-trips through the runtime manifest parser to the same value
+  });
+
+  it("still drops a per-repo layer that isn't JSON-shaped and fails plain YAML parsing, and still warns", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    writeFileSync(join(dir, ".loopover.yml"), "gate:\n  duplicates: block\n"); // global default
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".loopover.yml"), "gate: [unterminated"); // doesn't start with `{`/`[` — plain-YAML branch, still fails to parse
+    const reader = makeLocalManifestReader(dir);
+    const loaded = await readLocalManifestLoad(reader!, "owner/repo");
+    expect(loaded!.content).toBe("gate:\n  duplicates: block\n"); // per-repo layer dropped, falls back to global alone
+    expect(loaded!.warnings).toHaveLength(1);
+    expect(loaded!.warnings[0]).toContain("per-repo manifest");
+  });
+
+  it("still drops a per-repo layer that fails both the JSON and the YAML retry, and still warns", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
+    writeFileSync(join(dir, ".loopover.yml"), "gate:\n  duplicates: block\n"); // global default
+    mkdirSync(join(dir, "repo"));
+    writeFileSync(join(dir, "repo", ".loopover.yml"), "{not: valid: yaml: ["); // starts with `{`, invalid JSON AND invalid YAML
+    const reader = makeLocalManifestReader(dir);
+    const loaded = await readLocalManifestLoad(reader!, "owner/repo");
+    expect(loaded!.content).toBe("gate:\n  duplicates: block\n"); // per-repo layer dropped, falls back to global alone
+    expect(loaded!.warnings).toHaveLength(1);
+    expect(loaded!.warnings[0]).toContain("per-repo manifest"); // dropped-layer warning still fires, same as before the retry
+  });
+});
+
 describe("makeLocalManifestReader — review.shared_config overlay (#2046)", () => {
   it("records sharedConfigSource when the shared base contributes a review block", async () => {
     const dir = mkdtempSync(join(tmpdir(), "gt-repo-config-"));
@@ -653,6 +713,35 @@ describe("validateConfigWriteContent (#7721)", () => {
   });
   it("accepts a valid JSON mapping", () => {
     expect(validateConfigWriteContent('{"gate": {"mode": "advisory"}}')).toEqual({ ok: true });
+  });
+  it("accepts a YAML flow mapping that isn't valid strict JSON (#9065 retry)", () => {
+    expect(validateConfigWriteContent("{gate: {linkedIssue: advisory}}")).toEqual({ ok: true });
+  });
+  it("still rejects a document that fails both the JSON attempt and the YAML retry", () => {
+    const result = validateConfigWriteContent("{not: valid: yaml: [");
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("Failed to parse as JSON");
+  });
+  it("agrees with parseFocusManifestContent on a flow-mapping document (#9065 read/write symmetry)", () => {
+    const flowMapping = "{gate: {linkedIssue: advisory}}";
+    expect(validateConfigWriteContent(flowMapping)).toEqual({ ok: true });
+    const manifest = parseFocusManifestContent(flowMapping);
+    expect(manifest.gate.linkedIssue).toBe("advisory"); // the runtime parser accepts the same document, to a non-empty manifest
+  });
+  it("stringifies a non-Error thrown by the initial JSON attempt when the YAML retry also fails", () => {
+    const jsonSpy = vi.spyOn(JSON, "parse").mockImplementationOnce(() => {
+      throw "boom"; // eslint-disable-line no-throw-literal
+    });
+    const result = validateConfigWriteContent("{not: valid: yaml: [");
+    jsonSpy.mockRestore();
+    expect(result).toEqual({ ok: false, error: "Failed to parse as JSON: boom" });
+  });
+  it("stringifies a non-Error thrown by the plain-YAML parse attempt", () => {
+    vi.mocked(yamlParse).mockImplementationOnce(() => {
+      throw "boom"; // eslint-disable-line no-throw-literal
+    });
+    const result = validateConfigWriteContent("gate:\n  mode: advisory\n");
+    expect(result).toEqual({ ok: false, error: "Failed to parse as YAML: boom" });
   });
 });
 

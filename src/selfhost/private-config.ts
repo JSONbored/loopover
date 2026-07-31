@@ -144,20 +144,37 @@ function extractReviewMapping(mapping: Record<string, unknown>): Record<string, 
   return null;
 }
 
-/** Tolerantly parse raw config text into a plain mapping for MERGE PURPOSES ONLY — same 2-line YAML/JSON detection
+/** Tolerantly parse raw config text into a plain mapping for MERGE PURPOSES ONLY — same YAML/JSON detection
  *  `parseFocusManifestContent` (focus-manifest.ts) uses, duplicated locally rather than exported from there so that
- *  file's public surface stays unchanged for what is otherwise two lines of logic. Returns null — "not mergeable" —
- *  for empty/oversized text, a parse error, or a parsed value that isn't a plain mapping (null/array/scalar); every
- *  one of those cases makes the caller fall back to legacy single-candidate behavior instead of attempting a merge. */
+ *  file's public surface stays unchanged for what is otherwise a handful of lines of logic, INCLUDING #9065's
+ *  JSON→YAML retry (focus-manifest.ts:4556): a YAML flow mapping (e.g. unquoted keys) can start with "{"/"[" while
+ *  being invalid strict JSON, so a `JSON.parse` failure on a `{`/`[`-leading document retries as YAML before giving
+ *  up. The two parsers are meant to stay in lockstep. Returns null — "not mergeable" — for empty/oversized text, a
+ *  parse error (on both attempts, when retried), or a parsed value that isn't a plain mapping (null/array/scalar);
+ *  every one of those cases makes the caller fall back to legacy single-candidate behavior instead of attempting a
+ *  merge. */
 function parseConfigMapping(text: string): Record<string, unknown> | null {
   const trimmed = text.trim();
   if (!trimmed || trimmed.length > MAX_FOCUS_MANIFEST_BYTES) return null;
   const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
   let parsed: unknown;
-  try {
-    parsed = looksLikeJson ? JSON.parse(trimmed) : parseYaml(trimmed);
-  } catch {
-    return null;
+  if (looksLikeJson) {
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch {
+      // #9065: retry as YAML before giving up — see this function's JSDoc.
+      try {
+        parsed = parseYaml(trimmed);
+      } catch {
+        return null;
+      }
+    }
+  } else {
+    try {
+      parsed = parseYaml(trimmed);
+    } catch {
+      return null;
+    }
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
   return parsed as Record<string, unknown>;
@@ -398,9 +415,11 @@ export type ConfigBackupEntry = { name: string; path: string; mtimeMs: number };
 /** Validate write content against the same YAML/JSON-mapping shape the read path's own
  *  {@link parseConfigMapping} enforces for merging, but with a specific, actionable error message instead of a
  *  bare null — a write rejection needs to tell the caller WHY, unlike a read fallback which just moves on to the
- *  next layer. Deliberately reuses the same MAX_FOCUS_MANIFEST_BYTES ceiling and JSON/YAML detection heuristic
- *  (leading `{`/`[`) as parseConfigMapping so a document that would merge cleanly on read also validates cleanly
- *  on write, and vice versa. */
+ *  next layer. Deliberately reuses the same MAX_FOCUS_MANIFEST_BYTES ceiling, JSON/YAML detection heuristic
+ *  (leading `{`/`[`), and #9065 JSON→YAML retry (focus-manifest.ts:4556) as parseConfigMapping so a document that
+ *  would merge cleanly on read also validates cleanly on write, and vice versa; the two are meant to stay in
+ *  lockstep. On a genuine double failure (neither JSON nor the YAML retry parses) the error still names the
+ *  original JSON parse failure and its message, since that's the branch a `{`/`[`-leading document took first. */
 export function validateConfigWriteContent(text: string): ConfigValidationResult {
   const trimmed = text.trim();
   if (!trimmed) return { ok: false, error: "Content is empty." };
@@ -409,10 +428,24 @@ export function validateConfigWriteContent(text: string): ConfigValidationResult
   }
   const looksLikeJson = trimmed.startsWith("{") || trimmed.startsWith("[");
   let parsed: unknown;
-  try {
-    parsed = looksLikeJson ? JSON.parse(trimmed) : parseYaml(trimmed);
-  } catch (error) {
-    return { ok: false, error: `Failed to parse as ${looksLikeJson ? "JSON" : "YAML"}: ${error instanceof Error ? error.message : String(error)}` };
+  if (looksLikeJson) {
+    try {
+      parsed = JSON.parse(trimmed);
+    } catch (jsonError) {
+      // #9065: retry as YAML before rejecting — mirrors parseConfigMapping's retry, which mirrors
+      // focus-manifest.ts:4556's.
+      try {
+        parsed = parseYaml(trimmed);
+      } catch {
+        return { ok: false, error: `Failed to parse as JSON: ${jsonError instanceof Error ? jsonError.message : String(jsonError)}` };
+      }
+    }
+  } else {
+    try {
+      parsed = parseYaml(trimmed);
+    } catch (error) {
+      return { ok: false, error: `Failed to parse as YAML: ${error instanceof Error ? error.message : String(error)}` };
+    }
   }
   if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
     return { ok: false, error: "Content must parse to a YAML/JSON mapping (object) at the top level, not a scalar, array, or null." };

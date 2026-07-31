@@ -43,13 +43,20 @@ function log(level: "warn" | "error", event: string, fields: Record<string, unkn
 /** The shape a tool handler returns. `isError` distinguishes "the tool answered no" from a throw. */
 type ToolResultLike = { isError?: boolean; structuredContent?: unknown } | undefined;
 
+/** Outcome attributes discovered after the handler runs. Never throws. */
+export type SetMcpSpanOutcomeAttributes = (attributes: Record<string, unknown>) => void;
+
 export type DispatchTelemetrySink = {
   /** Both usage events. Never throws. */
   recordToolCall: (call: McpToolCallTelemetry, properties: { usage: Record<string, unknown>; mcpToolCall: Record<string, unknown> }) => void;
   /** A genuine throw. Never throws. */
   captureException: (error: unknown, call: McpToolCallTelemetry) => void;
   /** Wrap the call in a span when tracing is on; a no-op passthrough when it is not. */
-  withSpan: <T>(name: string, attributes: Record<string, unknown>, fn: () => Promise<T>) => Promise<T>;
+  withSpan: <T>(
+    name: string,
+    attributes: Record<string, unknown>,
+    fn: (setOutcomeAttributes: SetMcpSpanOutcomeAttributes) => Promise<T>,
+  ) => Promise<T>;
   /**
    * Session/server/client identity for the canonical `$mcp_*` events (#10175).
    *
@@ -65,7 +72,7 @@ export type DispatchTelemetrySink = {
 export const NOOP_DISPATCH_SINK: DispatchTelemetrySink = {
   recordToolCall: () => undefined,
   captureException: () => undefined,
-  withSpan: async (_name, _attributes, fn) => fn(),
+  withSpan: async (_name, _attributes, fn) => fn(() => {}),
 };
 
 function describe(toolName: string): { category: string; excluded: boolean } {
@@ -91,7 +98,6 @@ export function instrumentToolDispatch<TArgs extends unknown[], TResult extends 
   return async (...args: TArgs): Promise<TResult> => {
     const { category, excluded } = describe(toolName);
     const startedAt = Date.now();
-    const attributes = { tool: toolName, category, surface: "remote" as const };
 
     const emit = (call: McpToolCallTelemetry, payloads: { arguments?: unknown; result?: unknown }): void => {
       try {
@@ -104,8 +110,16 @@ export function instrumentToolDispatch<TArgs extends unknown[], TResult extends 
       }
     };
 
-    try {
-      return await sink.withSpan(mcpToolSpanName(toolName), attributes, async () => {
+    const publishSpanOutcome = (setOutcomeAttributes: SetMcpSpanOutcomeAttributes, call: McpToolCallTelemetry): void => {
+      try {
+        setOutcomeAttributes(buildMcpToolSpanAttributes(call));
+      } catch {
+        // Telemetry must never surface into the tool caller.
+      }
+    };
+
+    return await sink.withSpan(mcpToolSpanName(toolName), {}, async (setOutcomeAttributes) => {
+      try {
         const result = await handler(...args);
         const ok = result?.isError !== true;
         const call: McpToolCallTelemetry = {
@@ -121,29 +135,31 @@ export function instrumentToolDispatch<TArgs extends unknown[], TResult extends 
           ...(ok ? {} : { errorCode: resolveErrorCode(toolErrorEnvelope(result?.structuredContent)) }),
         };
         emit(call, { arguments: args[0], result: result?.structuredContent });
+        publishSpanOutcome(setOutcomeAttributes, call);
         if (!ok) {
           // One line per failed call, with the same closed property set and no payload content.
           log("warn", "mcp_tool_call_failed", buildMcpToolSpanAttributes(call));
         }
         return result;
-      });
-    } catch (error) {
-      const call: McpToolCallTelemetry = {
-        tool: toolName,
-        category,
-        surface: "remote",
-        ok: false,
-        durationMs: Date.now() - startedAt,
-        errorCode: resolveErrorCode(error),
-      };
-      emit(call, { arguments: args[0] });
-      try {
-        sink.captureException(error, call);
-      } catch {
-        // Same guarantee on the crash path.
+      } catch (error) {
+        const call: McpToolCallTelemetry = {
+          tool: toolName,
+          category,
+          surface: "remote",
+          ok: false,
+          durationMs: Date.now() - startedAt,
+          errorCode: resolveErrorCode(error),
+        };
+        emit(call, { arguments: args[0] });
+        publishSpanOutcome(setOutcomeAttributes, call);
+        try {
+          sink.captureException(error, call);
+        } catch {
+          // Same guarantee on the crash path.
+        }
+        log("error", "mcp_tool_call_threw", buildMcpToolSpanAttributes(call));
+        throw error;
       }
-      log("error", "mcp_tool_call_threw", buildMcpToolSpanAttributes(call));
-      throw error;
-    }
+    });
   };
 }

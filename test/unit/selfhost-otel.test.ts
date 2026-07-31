@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { buildMcpToolSpanAttributes } from "@loopover/contract";
 
 const otelMocks = vi.hoisted(() => {
   const exportedSpans: any[] = [];
@@ -482,6 +483,35 @@ describe("self-host OpenTelemetry", () => {
       "loopover.decision_outcome": "success",
     });
     await expect(reviewTraceAttributes({})).resolves.toEqual({});
+  });
+
+  it("applies MCP dispatch span outcome attributes through otelSafeAttributes (#10042)", async () => {
+    await initOpenTelemetry(env({
+      OTEL_TRACES_EXPORTER: "otlp",
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://collector/v1/traces",
+    }));
+    const call = {
+      tool: "loopover_get_repo_context",
+      category: "maintainer",
+      surface: "remote" as const,
+      ok: false,
+      durationMs: 7,
+      errorCode: "timeout" as const,
+    };
+    await withOtelSpan("mcp.tool/loopover_get_repo_context", {}, () =>
+      Promise.resolve().then(() => setCurrentOtelSpanAttributes(buildMcpToolSpanAttributes(call))),
+    );
+    await flushOpenTelemetry();
+    const span = otelMocks.exportedSpans.find((entry) => entry.name === "mcp.tool/loopover_get_repo_context");
+    expect(span.attributes).toMatchObject({
+      tool: "loopover_get_repo_context",
+      category: "maintainer",
+      surface: "remote",
+      transport: "local",
+      ok: false,
+      duration_ms: 7,
+      error_code: "timeout",
+    });
   });
 
   it("swallows exporter flush and shutdown failures", async () => {

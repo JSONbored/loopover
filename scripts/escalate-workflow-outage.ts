@@ -19,21 +19,82 @@
 //
 // ── ONCE PER OUTAGE ───────────────────────────────────────────────────────────────────────────────────────
 // An open tracking issue is reused rather than a fresh one filed per commit, for the same reason.
+//
+// ── A HAND RETRY IS NOT AN OUTAGE (#10234) ────────────────────────────────────────────────────────────────
+// The premise above -- "a deterministic failure fails identically every time" -- holds just as well for a
+// maintainer retrying a publish before its dependency is live, and only the first of those is an outage
+// nobody is watching. #10171 was exactly that: six consecutive publish-miner.yml failures escalated to an
+// issue, and every one was a hand `gh workflow run` against main, failing ETARGET on a @loopover/contract
+// version that was not published yet. The next run after contract landed succeeded with no code change.
+// The workflow was never broken. An alert that fires on the maintainer's own retries is the unread noise
+// #9951 built this to escape, just relocated.
+//
+// ── WHY PROVENANCE HAS TO BE STAMPED ──────────────────────────────────────────────────────────────────────
+// The obvious fix -- filter on the run's `event` / `triggering_actor` / `head_branch` -- does not work here,
+// and it is worth recording why so it is not attempted again. The reconcile path in mcp-release-please.yml
+// (`dispatch_and_wait`) issues a BARE `gh workflow run "$workflow"`: no `--ref`, no inputs, under a PAT. So
+// its runs land as `workflow_dispatch` / `main` / the PAT owner -- the identical triple a laptop produces.
+// Verified live: publish-miner run #484 (`30637452300`), which the reconcile job's own log shows it
+// dispatched, is indistinguishable on every one of those fields from the six manual #10171 failures. And
+// `GET /actions/runs/:id` carries no `inputs` key, so a dispatch input cannot be read back either.
+//
+// `run-name:` IS rendered into `display_title`, which the runs API does return -- the same trick
+// visual-capture-fallback.yml already uses to correlate a dispatch back to its PR. So the publish workflows
+// stamp AUTOMATION_RUN_NAME_MARKER into their run name when the automation dispatches them, and the streak
+// below counts only runs carrying it.
 
 import { execFileSync } from "node:child_process";
 
 /**
- * PURE. How many runs at the head of the history did NOT succeed.
+ * The marker the publish workflows render into `run-name:` when the release automation dispatches them,
+ * and which `isAutomationDispatched` reads back out of `display_title`.
  *
- * `runs` is newest-first, as the GitHub API returns it. A window with no success anywhere means the whole
- * window is bad -- that is the standing-outage case, and reporting `length` rather than 0 is what makes it
- * escalate instead of silently reading as healthy. That distinction is the entire point: the naive
- * `indexOf("success")` returns -1 there, and -1 treated as a count would report "no failures" for the worst
- * possible state.
+ * Changing this string is a two-sided edit -- every `.github/workflows/publish-*.yml` `run-name:` must
+ * change with it, or every automated run silently reads as manual and the escalation goes permanently
+ * quiet. scripts/check-dispatch-provenance-stamped.ts fails the build if the two sides drift apart.
  */
-export function leadingNonSuccessCount(runs: readonly (string | null | undefined)[]): number {
-  const firstSuccess = runs.findIndex((conclusion) => conclusion === "success");
-  return firstSuccess === -1 ? runs.length : firstSuccess;
+export const AUTOMATION_RUN_NAME_MARKER = "[automated]";
+
+/** The fields of a workflow run this script reads. Mirrors the GitHub runs API's own names. */
+export type WorkflowRunSummary = {
+  readonly conclusion: string | null | undefined;
+  readonly event: string | null | undefined;
+  readonly displayTitle: string | null | undefined;
+};
+
+/**
+ * PURE. Was this run started by automation rather than by a human at a terminal?
+ *
+ * Only `workflow_dispatch` is ambiguous. Every other trigger -- `push` (selfhost.yml), `schedule`,
+ * `workflow_run` -- is automation by construction, so it counts exactly as it did before #10234; that is
+ * what keeps this change from silently narrowing the selfhost.yml caller it also serves.
+ *
+ * The default for an unrecognised dispatch is therefore "manual", i.e. EXCLUDED. That is the deliberate
+ * direction: a maintainer's own failed dispatch is already visible to the maintainer who ran it, so
+ * dropping it costs nothing, while counting it re-creates #10171.
+ */
+export function isAutomationDispatched(run: WorkflowRunSummary): boolean {
+  if (run.event !== "workflow_dispatch") return true;
+  return (run.displayTitle ?? "").includes(AUTOMATION_RUN_NAME_MARKER);
+}
+
+/**
+ * PURE. How many AUTOMATION-dispatched runs at the head of the history did NOT succeed.
+ *
+ * `runs` is newest-first, as the GitHub API returns it. Manual dispatches are dropped entirely rather than
+ * merely "not resetting" the streak -- excluding is the safer of the two, since a run nobody automated is
+ * not evidence about the automated path in either direction.
+ *
+ * A window with no success anywhere means the whole window is bad -- that is the standing-outage case, and
+ * reporting `length` rather than 0 is what makes it escalate instead of silently reading as healthy. That
+ * distinction is the entire point: the naive `indexOf("success")` returns -1 there, and -1 treated as a
+ * count would report "no failures" for the worst possible state. Note this now applies to the FILTERED
+ * list, so a history of nothing but manual runs correctly reports 0 rather than its full length.
+ */
+export function leadingNonSuccessCount(runs: readonly WorkflowRunSummary[]): number {
+  const automated = runs.filter(isAutomationDispatched);
+  const firstSuccess = automated.findIndex((run) => run.conclusion === "success");
+  return firstSuccess === -1 ? automated.length : firstSuccess;
 }
 
 /** The tracking issue's title for a workflow. Stable, and derived from the workflow file name, so the
@@ -48,10 +109,12 @@ function gh(args: readonly string[]): string {
 
 function outageBody(workflow: string, streak: number, threshold: number): string {
   return [
-    `\`${workflow}\` has failed on **${streak} consecutive runs**.`,
+    `\`${workflow}\` has failed on **${streak} consecutive automation-dispatched runs**.`,
     "",
     "That is no longer a flake being retried -- a deterministic failure fails identically every time, so this",
     "has been broken for that entire stretch and every run since the first one was already telling us so.",
+    "",
+    "Manually-dispatched runs are excluded from this count (#10234), so this is not a maintainer's own retries.",
     "",
     "Check the most recent run's logs, fix the cause, and close this issue. It is re-filed automatically only",
     `if the failure streak reaches ${threshold} again after a success.`,
@@ -80,11 +143,18 @@ function main(): void {
     process.exit(2);
   }
 
-  let conclusions: (string | null)[] = [];
+  let runs: WorkflowRunSummary[] = [];
   try {
-    conclusions = JSON.parse(
-      gh(["api", `repos/${repo}/actions/workflows/${workflow}/runs?per_page=10&status=completed`, "--jq", "[.workflow_runs[].conclusion]"]),
-    ) as (string | null)[];
+    runs = JSON.parse(
+      gh([
+        "api",
+        `repos/${repo}/actions/workflows/${workflow}/runs?per_page=10&status=completed`,
+        "--jq",
+        // `display_title` is where `run-name:` lands, and it is the only field that recovers dispatch
+        // provenance -- see the header. Renamed to camelCase here so WorkflowRunSummary stays idiomatic.
+        "[.workflow_runs[] | {conclusion, event, displayTitle: .display_title}]",
+      ]),
+    ) as WorkflowRunSummary[];
   } catch (error) {
     // Never fail the caller over the ALERTING path -- the workflow this runs in has already failed, and
     // turning "could not check the streak" into a second red is pure noise on top of the real problem.
@@ -92,9 +162,9 @@ function main(): void {
     return;
   }
 
-  const streak = leadingNonSuccessCount(conclusions);
+  const streak = leadingNonSuccessCount(runs);
   if (streak < threshold) {
-    console.log(`${workflow}: ${streak} consecutive failure(s) -- below the ${threshold}-run escalation threshold, treating as transient.`);
+    console.log(`${workflow}: ${streak} consecutive automated failure(s) -- below the ${threshold}-run escalation threshold, treating as transient.`);
     return;
   }
 

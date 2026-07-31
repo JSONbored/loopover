@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   getPullRequest,
   markPullRequestManualReviewLabelApplied,
+  markPullRequestVisualCaptureSatisfied,
+  markPullRequestVisualCaptureUnobtainable,
   clearPullRequestManualReviewLabelProvenance,
   getActiveReviewStartedAt,
   getBounty,
@@ -783,5 +785,47 @@ describe("listMergedPullRequestsInWindow (#10168)", () => {
     await seedAll(env);
     expect(await listMergedPullRequestsInWindow(env, "other/repo", "2026-07-31T00:00:00Z", "2026-07-31T23:59:59Z")).toEqual([]);
     expect(await listMergedPullRequestsInWindow(env, "owner/repo", "2026-07-30T00:00:00Z", "2026-07-30T23:59:59Z")).toEqual([]);
+  });
+});
+
+describe("visual-capture unobtainable provenance (#10270)", () => {
+  const seed = async (env: ReturnType<typeof createTestEnv>) => {
+    await upsertRepositoryFromGitHub(env, { full_name: "owner/repo", name: "repo", id: 1, private: false } as never, 4242);
+    await upsertPullRequestFromGitHub(env, "owner/repo", {
+      number: 12, title: "t", state: "open", user: { login: "c" }, head: { sha: "head1" }, labels: [], created_at: "2026-07-05T10:00:00.000Z",
+    } as never);
+  };
+
+  it("REGRESSION: the mark round-trips to the RECORD, not just to the column", async () => {
+    // The bug: the write worked, the column held the value, and the row->record mapper never populated the
+    // field -- so `pr.visualCaptureUnobtainableSha` was `undefined` at every reader, `captureUnobtainable` was
+    // permanently false, and #9881's degrade never fired once in production (0 events in 30 days on the Orb
+    // while a row carried the mark). Asserting the COLUMN would have passed throughout; only reading it back
+    // through getPullRequest, the way every real caller does, catches it.
+    const env = createTestEnv();
+    await seed(env);
+    await markPullRequestVisualCaptureUnobtainable(env, "owner/repo", 12, "head1");
+
+    const stored = await getPullRequest(env, "owner/repo", 12);
+    expect(stored?.visualCaptureUnobtainableSha).toBe("head1");
+    // The comparison every reader actually performs -- this is what was permanently false.
+    expect(Boolean(stored?.headSha) && stored?.visualCaptureUnobtainableSha === stored?.headSha).toBe(true);
+  });
+
+  it("absent by default, so an unmarked PR never reads as unobtainable", async () => {
+    const env = createTestEnv();
+    await seed(env);
+    expect((await getPullRequest(env, "owner/repo", 12))?.visualCaptureUnobtainableSha).toBeNull();
+  });
+
+  it("a successful capture CLEARS it -- evidence exists now, so the degrade must stop applying", async () => {
+    const env = createTestEnv();
+    await seed(env);
+    await markPullRequestVisualCaptureUnobtainable(env, "owner/repo", 12, "head1");
+    await markPullRequestVisualCaptureSatisfied(env, "owner/repo", 12, "head1");
+
+    const stored = await getPullRequest(env, "owner/repo", 12);
+    expect(stored?.visualCaptureUnobtainableSha).toBeNull();
+    expect(stored?.visualCaptureSatisfiedSha).toBe("head1");
   });
 });

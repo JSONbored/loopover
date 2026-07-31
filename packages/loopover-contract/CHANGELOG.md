@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.21.1](https://github.com/JSONbored/loopover/compare/contract-v3.21.0...contract-v3.21.1) (2026-07-31)
+
+
+### Chores
+
+* **contract:** Synchronize engine-and-dependents versions
+
 ## [3.21.0](https://github.com/JSONbored/loopover/compare/contract-v3.20.0...contract-v3.21.0) (2026-07-31)
 
 

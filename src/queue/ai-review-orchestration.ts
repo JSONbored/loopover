@@ -26,7 +26,7 @@ import {
 import { buildPullRequestAdvisory } from "../rules/advisory";
 import { recordAuditEvent, getDecryptedRepositoryAiKey, getRepository, listCheckSummaries, listPullRequestFiles } from "../db/repositories";
 import { registerHeldLock, unregisterHeldLock } from "./held-lock-registry";
-import { recordRoutingShadow } from "../services/reviewer-routing";
+import { recordRoutingShadow, routingShadowMetrics } from "../services/reviewer-routing";
 import { judgmentAgreementMetrics, scoreJudgmentAgreement } from "../review/judgment-agreement";
 import { persistDecisionReplayPrompt } from "../review/decision-replay";
 import { createInstallationToken } from "../github/app";
@@ -992,11 +992,23 @@ export async function runAiReviewForAdvisory(
     // preferred for this repo (audit metadata only; the recap aggregates it). Same best-effort discipline
     // as the votes above: internally fail-safe, zero AI spend, and a no-signal review records nothing.
     if (result.reviewerVotes.length >= 2) {
-      await recordRoutingShadow(env, {
+      const shadow = await recordRoutingShadow(env, {
         repoFullName: args.repoFullName,
         prNumber: args.pr.number,
         actualProviders: result.reviewerVotes.map((vote) => vote.reviewer),
       });
+      // #10265: the same shadow decision onto the review's own AI trace, so how decisively the evidence
+      // favours a reviewer can be read against what that review cost. Reuses the decision `recordRoutingShadow`
+      // already returned rather than re-reading the track records. A null decision (no density / tie / read
+      // error) emits nothing, and the capture is a no-op with PostHog off or no ambient trace.
+      if (shadow) {
+        for (const metric of routingShadowMetrics(shadow)) {
+          capturePostHogAiMetric({
+            ...metric,
+            context: { repo: args.repoFullName, pullNumber: args.pr.number, agent: shadow.preferredProvider },
+          });
+        }
+      }
     }
     const findings: AdvisoryFinding[] = [];
     // #9124: the model/prompt commitments an AI-judgment finding carries — computed once, shared by both the

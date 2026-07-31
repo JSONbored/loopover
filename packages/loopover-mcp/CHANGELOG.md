@@ -5,6 +5,21 @@
 ### Fixes
 - Blunt slop-risk / issue-slop REST + CLI to match the MCP tools (#6990) (#7052)
 
+## [3.21.0](https://github.com/JSONbored/loopover/compare/mcp-v3.20.0...mcp-v3.21.0) (2026-07-31)
+
+
+### Fixes
+
+* **mcp:** shape a remote JSON-RPC error into a tool result in the gateway proxy ([#10216](https://github.com/JSONbored/loopover/issues/10216)) ([fa9789e](https://github.com/JSONbored/loopover/commit/fa9789e6319798fe746fcb8a78b81139f4ced417))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.20.0 to ^3.21.0
+    * @loopover/engine bumped from ^3.20.0 to ^3.21.0
+
 ## [3.20.0](https://github.com/JSONbored/loopover/compare/mcp-v3.19.0...mcp-v3.20.0) (2026-07-31)
 
 

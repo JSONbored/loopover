@@ -1,7 +1,7 @@
 {
-  "packages/loopover-contract": "3.20.0",
-  "packages/loopover-mcp": "3.20.0",
-  "packages/loopover-engine": "3.20.0",
-  "packages/loopover-miner": "3.20.0",
+  "packages/loopover-contract": "3.21.0",
+  "packages/loopover-mcp": "3.21.0",
+  "packages/loopover-engine": "3.21.0",
+  "packages/loopover-miner": "3.21.0",
   "packages/loopover-ui-kit": "1.5.1"
 }

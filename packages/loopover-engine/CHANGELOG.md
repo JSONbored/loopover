@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.21.0](https://github.com/JSONbored/loopover/compare/engine-v3.20.0...engine-v3.21.0) (2026-07-31)
+
+
+### Features
+
+* **observability:** capture every miner AI generation, and stop fabricating zero token counts ([#10233](https://github.com/JSONbored/loopover/issues/10233)) ([ba35c8b](https://github.com/JSONbored/loopover/commit/ba35c8babc661b9ab97d00ee0a4080a5fed899fa))
+
 ## [3.20.0](https://github.com/JSONbored/loopover/compare/engine-v3.19.0...engine-v3.20.0) (2026-07-31)
 
 

@@ -122,3 +122,85 @@ describe("discovery routes (#9526)", () => {
     expect(card.remotes[0]!.url).toBe("https://api.loopover.ai/mcp");
   });
 });
+
+// #10039: a self-host card must describe only what THIS deployment's /mcp actually registers. "admin" is
+// the one category gated behind LOOPOVER_MCP_ADMIN_ENABLED (createServer's isMcpAdminEnabled) rather than
+// availability alone, so a card built from availability filtering only would advertise five tools the
+// server refuses as unknown on a default (flag-unset) self-host deployment.
+describe("admin-tool exclusion from a self-host card when the admin surface is not enabled (#10039)", () => {
+  const ADMIN_TOOL_NAMES = [
+    "loopover_admin_get_config",
+    "loopover_admin_write_config",
+    "loopover_admin_list_config_backups",
+    "loopover_admin_trigger_redeploy",
+    "loopover_admin_rotate_secret",
+  ];
+
+  it("lists none of the five admin tools when LOOPOVER_MCP_ADMIN_ENABLED is unset on a self-host env", async () => {
+    const env = createTestEnv();
+    expect(env.SELFHOST_TRANSIENT_CACHE, "the test env is the self-host runtime").toBeTruthy();
+    expect(env.LOOPOVER_MCP_ADMIN_ENABLED, "the flag defaults off").toBeFalsy();
+
+    const card = (await (await app.fetch(new Request("https://api.loopover.ai/.well-known/mcp.json"), env)).json()) as {
+      tools: Array<{ name: string }>;
+    };
+    const index = (await (await app.fetch(new Request("https://api.loopover.ai/.well-known/agent-tools/index.json"), env)).json()) as {
+      tools: Array<{ name: string }>;
+    };
+    const cardNames = card.tools.map((tool) => tool.name);
+    const indexNames = index.tools.map((tool) => tool.name);
+    for (const name of ADMIN_TOOL_NAMES) {
+      expect(cardNames, `${name} must not be on the flag-off self-host card`).not.toContain(name);
+      expect(indexNames, `${name} must not be on the flag-off self-host index`).not.toContain(name);
+    }
+  });
+
+  it("lists all five admin tools when LOOPOVER_MCP_ADMIN_ENABLED=1 on the same self-host env", async () => {
+    const env = createTestEnv({ LOOPOVER_MCP_ADMIN_ENABLED: "1" });
+    expect(env.SELFHOST_TRANSIENT_CACHE, "the test env is the self-host runtime").toBeTruthy();
+
+    const card = (await (await app.fetch(new Request("https://api.loopover.ai/.well-known/mcp.json"), env)).json()) as {
+      tools: Array<{ name: string }>;
+    };
+    const index = (await (await app.fetch(new Request("https://api.loopover.ai/.well-known/agent-tools/index.json"), env)).json()) as {
+      tools: Array<{ name: string }>;
+    };
+    const cardNames = card.tools.map((tool) => tool.name);
+    const indexNames = index.tools.map((tool) => tool.name);
+    for (const name of ADMIN_TOOL_NAMES) {
+      expect(cardNames, `${name} must be on the flag-on self-host card`).toContain(name);
+      expect(indexNames, `${name} must be on the flag-on self-host index`).toContain(name);
+    }
+  });
+
+  it("the flag-on and flag-off documents do not leak through the memo, with no reset needed", async () => {
+    // Same module instance, same (deployment, version, baseUrl) -- only the flag differs. Deliberately does
+    // NOT call resetDiscoveryCacheForTesting between the two requests: that would mask a memo key that
+    // forgot to carry the flag, since a fresh cache always misses regardless.
+    const off = await app.fetch(new Request("https://api.loopover.ai/.well-known/mcp.json"), createTestEnv());
+    const on = await app.fetch(new Request("https://api.loopover.ai/.well-known/mcp.json"), createTestEnv({ LOOPOVER_MCP_ADMIN_ENABLED: "1" }));
+
+    const offBody = await off.text();
+    const onBody = await on.text();
+    expect(onBody).not.toBe(offBody);
+    expect(on.headers.get("etag")).not.toBe(off.headers.get("etag"));
+
+    const offNames = (JSON.parse(offBody) as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name);
+    const onNames = (JSON.parse(onBody) as { tools: Array<{ name: string }> }).tools.map((tool) => tool.name);
+    for (const name of ADMIN_TOOL_NAMES) {
+      expect(offNames).not.toContain(name);
+      expect(onNames).toContain(name);
+    }
+  });
+
+  it("does not affect the cloud deployment's documents, which never listed the selfhost-only admin tools", async () => {
+    const cloudEnv = { ...createTestEnv({ LOOPOVER_MCP_ADMIN_ENABLED: "1" }), SELFHOST_TRANSIENT_CACHE: undefined } as unknown as Env;
+    const card = (await (await app.fetch(new Request("https://api.loopover.ai/.well-known/mcp.json"), cloudEnv)).json()) as {
+      deployment: string;
+      tools: Array<{ name: string }>;
+    };
+    expect(card.deployment).toBe("cloud");
+    const names = card.tools.map((tool) => tool.name);
+    for (const name of ADMIN_TOOL_NAMES) expect(names).not.toContain(name);
+  });
+});

@@ -8,7 +8,8 @@
 // mounts the SAME routes over its own availability-filtered tool list. That is what makes a self-hosted
 // card truthful rather than a copy of the cloud one — a `cloud`-only tool is absent from a self-host card
 // because it is absent from that deployment's list, not because a second implementation remembered to
-// exclude it.
+// exclude it. The same truthfulness applies to a tool that is available but not REGISTERED (#10039's
+// admin category): a self-host card omits it too, because it is absent from what `/mcp` actually serves.
 import {
   buildAgentToolsIndex,
   buildAnthropicTools,
@@ -26,19 +27,31 @@ export type DiscoveryContext = {
   deployment: DiscoveryDeployment;
   baseUrl: string;
   tools: readonly McpToolDefinition[];
+  /** Whether THIS deployment currently registers the "admin" category (#10039's `isMcpAdminEnabled`).
+   *  Carried on the context (rather than re-derived from `tools`) so it can also feed the memo key below. */
+  adminEnabled: boolean;
 };
 
 /**
- * The tools a deployment truthfully serves: `both` plus its own kind.
+ * The tools a deployment truthfully serves: `both` plus its own kind, minus whatever it does not actually
+ * REGISTER (#10039).
  *
  * Locality is deliberately NOT filtered here. A `local-git` tool is still part of the catalog a client
  * discovers — the remote simply expects the caller to supply the branch metadata rather than reading a
  * checkout — so hiding it would under-describe the server.
+ *
+ * `availability` is not the only thing that decides whether a deployment serves a tool: "admin" is
+ * registered in `createServer()` only when `isMcpAdminEnabled(env)` is true, so a card built without regard
+ * to that flag would advertise five tools `/mcp` refuses as unknown on a default self-host deployment. This
+ * mirrors that same registration condition rather than re-deriving a category allowlist, so a second
+ * conditionally-registered category needs only a change here, not a new hardcoded filter at each caller.
  */
-export function toolsForDeployment(deployment: DiscoveryDeployment): McpToolDefinition[] {
+export function toolsForDeployment(deployment: DiscoveryDeployment, adminEnabled: boolean): McpToolDefinition[] {
   // `both` is not listed: the registry's filter treats it as the ABSENCE of a restriction, so it already
   // satisfies either constraint. Naming it here would read as if it were a third deployment.
-  return listToolDefinitions({ availability: [deployment] });
+  const tools = listToolDefinitions({ availability: [deployment] });
+  if (adminEnabled) return tools;
+  return tools.filter((tool) => tool.category !== "admin");
 }
 
 /**
@@ -100,7 +113,10 @@ export function respondWithDocument(document: DiscoveryDocument, ifNoneMatch: st
 const DOCUMENT_CACHE = new Map<string, Record<string, DiscoveryDocument>>();
 
 export function discoveryDocumentsFor(context: DiscoveryContext): Record<string, DiscoveryDocument> {
-  const key = `${context.deployment}|${context.version}|${context.baseUrl}`;
+  // `adminEnabled` rides along: without it, the first request on an isolate would pick a tool list and the
+  // memo would keep serving it to every later request on the same (deployment, version, baseUrl), even one
+  // that arrives after the flag flips.
+  const key = `${context.deployment}|${context.version}|${context.baseUrl}|${context.adminEnabled}`;
   let documents = DOCUMENT_CACHE.get(key);
   if (!documents) {
     documents = buildDiscoveryDocuments(context);

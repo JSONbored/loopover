@@ -259,6 +259,37 @@ describe("MCP contract validator (#9520)", () => {
     }
   }, 180_000);
 
+  it("REGRESSION (#10038): the stdio and miner servers advertise _meta.category for every listed tool", async () => {
+    // registerStdioTool and registerMinerTool used to omit `_meta` entirely, so half of the stdio
+    // server's tools/list (its locally-registered tools, as opposed to the proxied ones that inherit
+    // the remote's `_meta`) and all of the miner's carried no category, even though checkAdvertisedMetadata
+    // above already re-runs on every surface and would have caught it once the field was modelled.
+    const categoryByName = new Map(listToolDefinitions().map((tool) => [tool.name, tool.category]));
+
+    const stdio = await import("../../packages/loopover-mcp/bin/loopover-mcp");
+    const stdioClient = await connect(stdio.server);
+    try {
+      const listed = (await stdioClient.listTools()).tools as unknown as ListedTool[];
+      expect(listed.length).toBeGreaterThan(0);
+      for (const tool of listed) {
+        expect(tool._meta?.category).toBe(categoryByName.get(tool.name));
+      }
+    } finally {
+      await stdioClient.close().catch(() => undefined);
+    }
+
+    const minerClient = await connect(createMinerMcpServer({}));
+    try {
+      const listed = (await minerClient.listTools()).tools as unknown as ListedTool[];
+      expect(listed.length).toBeGreaterThan(0);
+      for (const tool of listed) {
+        expect(tool._meta?.category).toBe(categoryByName.get(tool.name));
+      }
+    } finally {
+      await minerClient.close().catch(() => undefined);
+    }
+  }, 180_000);
+
   it("REGRESSION: one tool name has ONE locality, which is what makes gateway collisions impossible", () => {
     // #9526's gateway mounts every `remote` tool onto the stdio server, which serves the `local-git` ones.
     // That is only safe because a NAME belongs to exactly one entry in the one registry — the same name

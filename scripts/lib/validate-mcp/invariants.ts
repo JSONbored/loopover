@@ -12,6 +12,7 @@ export type ListedTool = {
   annotations?: { readOnlyHint?: boolean | undefined; destructiveHint?: boolean | undefined } | undefined;
   inputSchema?: { type?: string; properties?: Record<string, unknown>; required?: string[] } | undefined;
   outputSchema?: { type?: string } | undefined;
+  _meta?: { category?: string | undefined } | undefined;
 };
 
 /**
@@ -73,6 +74,9 @@ export function checkAdvertisedMetadata(expected: readonly McpToolDefinition[], 
       if (advertised.annotations?.[hint] !== tool.annotations[hint]) {
         failures.push(`${tool.name} advertises ${hint}=${String(advertised.annotations?.[hint])}, registry says ${String(tool.annotations[hint])}`);
       }
+    }
+    if (advertised._meta?.category !== tool.category) {
+      failures.push(`${tool.name} advertises _meta.category=${String(advertised._meta?.category)}, registry says ${String(tool.category)}`);
     }
   }
   return failures;

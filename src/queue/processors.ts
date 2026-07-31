@@ -4490,11 +4490,30 @@ export async function reReviewStoredPullRequest(
   // and the AI review alone can outlive the 600s TTL. Renew it while the work runs so a slow-but-healthy pass
   // cannot have its lock claimed out from under it mid-flight. Compare-and-extend, so if this pass has already
   // lost the key it learns that instead of extending the new owner's lock.
+  let actuationLockLost = false;
   const actuationHeartbeat = startLockHeartbeat(
     env,
     prActuationLockKeyForHeartbeat(repoFullName, pr.number),
     actuationLock.ownerToken,
     PR_ACTUATION_LOCK_TTL_SECONDS,
+    {
+      // #10019: a renewal that comes back "not ours" means another pass already re-claimed this PR's
+      // actuation lock (TTL lapse + re-claim, or a maintainer's forced-re-run steal, #9008). The maintenance
+      // pass below performs the irreversible merge/close/comment actuation, so this pass must not reach it --
+      // the check right after the publish call throws before that happens.
+      onLost: () => {
+        actuationLockLost = true;
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "pr_actuation_lock_lost",
+            repoFullName,
+            pullNumber: pr.number,
+            deliveryId,
+          }),
+        );
+      },
+    },
   );
   let gate: ReturnType<typeof evaluateGateCheck> | undefined;
   try {
@@ -4542,6 +4561,13 @@ export async function reReviewStoredPullRequest(
       );
       return undefined;
     });
+    // #10019: mirrors the initial contention check above (throw, uncaught, so the queue's attempt-free retry
+    // handles it) -- this pass learned mid-flight that it no longer owns the actuation lock, so it must abort
+    // before the maintenance pass below performs any merge/close/comment mutation instead of racing the new
+    // owner.
+    if (actuationLockLost) {
+      throw new PrActuationLockContendedError(repoFullName, pr.number, "actuation-lock-lost");
+    }
     await withReviewPipelineSpan(
       "selfhost.review.maintenance",
       {
@@ -10731,6 +10757,11 @@ async function maybePublishPrPublicSurface(
   let inlineCommentsPerCategoryForReview: number | null = null;
   let aiReviewExpected = false;
   let aiReviewWasReused = false;
+  // #10019: set by the AI-review lock heartbeat's onLost callback below when a renewal reports this pass no
+  // longer owns the key. Declared here (not inside the `if (aiReviewWillRun)` block that starts the heartbeat)
+  // so aiReviewCacheReadDecideAndRun -- a sibling function in this same scope -- can read it before writing
+  // ai_review_cache.
+  let aiReviewLockLost = false;
   let gateFinalized = false;
   // #6685: hoisted the same way aiReviewExpected/aiReviewWasReused are above -- assigned inside the try block
   // below, read at the draft-republish skip check past it (autoReviewSkipReason itself is try-block-scoped).
@@ -11839,6 +11870,25 @@ async function maybePublishPrPublicSurface(
           aiReviewHeadSha,
           settings.aiReviewMode,
           aiReviewLock.ownerToken,
+          {
+            // #10019: a renewal that comes back "not ours" means another pass already re-claimed this lock
+            // (TTL lapse + re-claim, or a maintainer's forced-re-run steal, #9008) -- this pass's eventual
+            // verdict must not overwrite the new owner's. aiReviewCacheReadDecideAndRun checks this flag
+            // before persisting anything.
+            onLost: () => {
+              aiReviewLockLost = true;
+              console.error(
+                JSON.stringify({
+                  level: "error",
+                  event: "ai_review_lock_lost",
+                  repoFullName,
+                  pullNumber: pr.number,
+                  headSha: aiReviewHeadSha,
+                  aiReviewMode: settings.aiReviewMode,
+                }),
+              );
+            },
+          },
         );
         try {
           await aiReviewCacheReadDecideAndRun(aiReviewLock);
@@ -12142,95 +12192,104 @@ async function maybePublishPrPublicSurface(
               deliveryId: webhook.deliveryId,
               preComputedReputationSkip,
             });
-            // #9016 (security): a FRESH verdict (this branch only runs on a genuine cache miss — never for a
-            // reused cache hit, which is not a new independent roll) is checked against the PR's flip history.
-            // The AI reviewer is non-deterministic, so a contributor can otherwise force re-rolls (a no-op
-            // recommit, or a same-head retry after the non-cacheable cooldown lapses) until a lucky CLEAN roll
-            // auto-merges a PR another roll flagged as blocked. Scoped to block mode only — advisory mode never
-            // gates on the AI verdict, so there is nothing to shop for there. Best-effort/fail-open by
-            // construction (recordVerdictFlip never throws); a persistable placeholder never counts as a roll.
-            if (aiReview && aiReview.persistable !== false && settings.aiReviewMode === "block") {
-              const verdictFlip = await recordVerdictFlip(env, repoFullName, pr.number, aiReview.findings ?? [], inputFingerprint);
-              if (verdictFlip.escalate) {
-                advisory.findings.push({
-                  code: "ai_review_inconclusive",
-                  severity: "warning",
-                  title: "AI review verdict has flip-flopped too many times",
-                  detail: `This PR's AI review result has changed direction ${verdictFlip.flipCount} times across recent re-reviews of the same or similar content. Repeated re-rolls of a non-deterministic reviewer are held for a human instead of trusting the newest roll.`,
-                  action: "A maintainer should review this PR directly, or push a substantive fix so the next review reflects real content change.",
-                });
-                incr("loopover_ai_review_verdict_flip_escalated_total");
-                await recordAuditEvent(env, {
-                  eventType: "github_app.ai_review_verdict_flip_escalated",
-                  actor: author,
-                  targetKey: `${repoFullName}#${pr.number}`,
-                  outcome: "completed",
-                  detail: `verdict flipped ${verdictFlip.flipCount} times; held for human review`,
-                  metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null, flipCount: verdictFlip.flipCount },
-                }).catch(() => undefined);
+            // #10019: the heartbeat learned mid-review that this pass no longer owns the lock (renewIfValue
+            // reported someone else re-claimed the key). The winning pass persists the real verdict within
+            // seconds, so this pass's own result must be discarded rather than racing that write -- same
+            // shape (and same reason) as the lock-contended placeholder a pass that never acquired the lock
+            // returns above.
+            if (aiReviewLockLost) {
+              aiReview = aiReviewLockContendedResult(advisory);
+            } else {
+              // #9016 (security): a FRESH verdict (this branch only runs on a genuine cache miss — never for a
+              // reused cache hit, which is not a new independent roll) is checked against the PR's flip history.
+              // The AI reviewer is non-deterministic, so a contributor can otherwise force re-rolls (a no-op
+              // recommit, or a same-head retry after the non-cacheable cooldown lapses) until a lucky CLEAN roll
+              // auto-merges a PR another roll flagged as blocked. Scoped to block mode only — advisory mode never
+              // gates on the AI verdict, so there is nothing to shop for there. Best-effort/fail-open by
+              // construction (recordVerdictFlip never throws); a persistable placeholder never counts as a roll.
+              if (aiReview && aiReview.persistable !== false && settings.aiReviewMode === "block") {
+                const verdictFlip = await recordVerdictFlip(env, repoFullName, pr.number, aiReview.findings ?? [], inputFingerprint);
+                if (verdictFlip.escalate) {
+                  advisory.findings.push({
+                    code: "ai_review_inconclusive",
+                    severity: "warning",
+                    title: "AI review verdict has flip-flopped too many times",
+                    detail: `This PR's AI review result has changed direction ${verdictFlip.flipCount} times across recent re-reviews of the same or similar content. Repeated re-rolls of a non-deterministic reviewer are held for a human instead of trusting the newest roll.`,
+                    action: "A maintainer should review this PR directly, or push a substantive fix so the next review reflects real content change.",
+                  });
+                  incr("loopover_ai_review_verdict_flip_escalated_total");
+                  await recordAuditEvent(env, {
+                    eventType: "github_app.ai_review_verdict_flip_escalated",
+                    actor: author,
+                    targetKey: `${repoFullName}#${pr.number}`,
+                    outcome: "completed",
+                    detail: `verdict flipped ${verdictFlip.flipCount} times; held for human review`,
+                    metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null, flipCount: verdictFlip.flipCount },
+                  }).catch(() => undefined);
+                }
               }
-            }
-            // `persistable === false` (only the lock-contention placeholder — see runAiReviewForAdvisory's return
-            // type doc comment) is excluded from EVERY write, not just the durable one: it describes a transient
-            // scheduling race, not a real AI opinion, and the concurrent pass it deferred to persists the real
-            // result within seconds — writing this placeholder (even non-durably) could replay a stale "another
-            // pass is running" message for the rest of the cooldown window, well after that race resolved.
-            if (aiReview && aiReview.persistable !== false) {
-              // A dynamic-context result is never durably cacheable (see the comment above); otherwise defer to
-              // the review's own verdict (consensus defect / inconclusive → false).
-              const cacheableForStorage = !dynamicReviewContextActive && aiReview.cacheable !== false;
-              if (!cacheableForStorage) {
-                incr("loopover_ai_review_non_cacheable_total");
-                await recordAuditEvent(env, {
-                  eventType: "github_app.ai_review_non_cacheable",
-                  actor: author,
-                  targetKey: `${repoFullName}#${pr.number}`,
-                  outcome: "completed",
-                  detail: "AI review outcome is not durably cacheable; persisted for bounded-cooldown reuse only",
-                  metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
-                }).catch(() => undefined);
-              }
-              await putCachedAiReview(
-                env,
-                repoFullName,
-                pr.number,
-                advisory.headSha,
-                settings.aiReviewMode,
-                {
-                  ...aiReview,
-                  cacheable: cacheableForStorage,
-                  metadata: {
-                    /* v8 ignore next -- runAiReviewForAdvisory (the sole path reaching here) always sets metadata on its "ok" returns; the nullish fallback is a type-level (optional field) safeguard, not a reachable runtime path. */
-                    ...(aiReview.metadata ?? {}),
-                    inputFingerprint,
-                    // #9019: `cacheable=0` conflates TWO independent, unrelated reasons -- (a) a dynamic review
-                    // context (grounding/RAG), where the verdict itself is perfectly CONCLUSIVE but simply not
-                    // durable across time, and (b) the review's own verdict being inconclusive/consensus-
-                    // disputed. Only (b) should be retried; (a) is correctly reused once published (#2119).
-                    // Recording the review's OWN verdict here keeps the two separable at read time without
-                    // needing a schema migration, since `cacheable` alone can no longer tell them apart.
-                    inconclusive: aiReview.cacheable === false,
-                    // Persist line-anchored findings for post-submission MCP readback (#4519). Inline comments
-                    // themselves are still only posted on a fresh review (see inlineFindings hoisting above);
-                    // this metadata is read-only structured output, not a cache-replay trigger.
-                    ...(aiReview.inlineFindings && aiReview.inlineFindings.length > 0
-                      ? { inlineFindings: aiReview.inlineFindings }
-                      : {}),
+              // `persistable === false` (only the lock-contention placeholder — see runAiReviewForAdvisory's return
+              // type doc comment) is excluded from EVERY write, not just the durable one: it describes a transient
+              // scheduling race, not a real AI opinion, and the concurrent pass it deferred to persists the real
+              // result within seconds — writing this placeholder (even non-durably) could replay a stale "another
+              // pass is running" message for the rest of the cooldown window, well after that race resolved.
+              if (aiReview && aiReview.persistable !== false) {
+                // A dynamic-context result is never durably cacheable (see the comment above); otherwise defer to
+                // the review's own verdict (consensus defect / inconclusive → false).
+                const cacheableForStorage = !dynamicReviewContextActive && aiReview.cacheable !== false;
+                if (!cacheableForStorage) {
+                  incr("loopover_ai_review_non_cacheable_total");
+                  await recordAuditEvent(env, {
+                    eventType: "github_app.ai_review_non_cacheable",
+                    actor: author,
+                    targetKey: `${repoFullName}#${pr.number}`,
+                    outcome: "completed",
+                    detail: "AI review outcome is not durably cacheable; persisted for bounded-cooldown reuse only",
+                    metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
+                  }).catch(() => undefined);
+                }
+                await putCachedAiReview(
+                  env,
+                  repoFullName,
+                  pr.number,
+                  advisory.headSha,
+                  settings.aiReviewMode,
+                  {
+                    ...aiReview,
+                    cacheable: cacheableForStorage,
+                    metadata: {
+                      /* v8 ignore next -- runAiReviewForAdvisory (the sole path reaching here) always sets metadata on its "ok" returns; the nullish fallback is a type-level (optional field) safeguard, not a reachable runtime path. */
+                      ...(aiReview.metadata ?? {}),
+                      inputFingerprint,
+                      // #9019: `cacheable=0` conflates TWO independent, unrelated reasons -- (a) a dynamic review
+                      // context (grounding/RAG), where the verdict itself is perfectly CONCLUSIVE but simply not
+                      // durable across time, and (b) the review's own verdict being inconclusive/consensus-
+                      // disputed. Only (b) should be retried; (a) is correctly reused once published (#2119).
+                      // Recording the review's OWN verdict here keeps the two separable at read time without
+                      // needing a schema migration, since `cacheable` alone can no longer tell them apart.
+                      inconclusive: aiReview.cacheable === false,
+                      // Persist line-anchored findings for post-submission MCP readback (#4519). Inline comments
+                      // themselves are still only posted on a fresh review (see inlineFindings hoisting above);
+                      // this metadata is read-only structured output, not a cache-replay trigger.
+                      ...(aiReview.inlineFindings && aiReview.inlineFindings.length > 0
+                        ? { inlineFindings: aiReview.inlineFindings }
+                        : {}),
+                    },
                   },
-                },
-              ).catch((error) => {
-                // #regate-churn (req 3/9): a swallowed write failure here is exactly how the cache goes silently
-                // stale in production — make it observable instead of a bare no-op catch.
-                incr("loopover_ai_review_cache_write_error_total");
-                return recordAuditEvent(env, {
-                  eventType: "github_app.ai_review_cache_write_error",
-                  actor: author,
-                  targetKey: `${repoFullName}#${pr.number}`,
-                  outcome: "error",
-                  detail: errorMessage(error),
-                  metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
-                }).catch(() => undefined);
-              });
+                ).catch((error) => {
+                  // #regate-churn (req 3/9): a swallowed write failure here is exactly how the cache goes silently
+                  // stale in production — make it observable instead of a bare no-op catch.
+                  incr("loopover_ai_review_cache_write_error_total");
+                  return recordAuditEvent(env, {
+                    eventType: "github_app.ai_review_cache_write_error",
+                    actor: author,
+                    targetKey: `${repoFullName}#${pr.number}`,
+                    outcome: "error",
+                    detail: errorMessage(error),
+                    metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
+                  }).catch(() => undefined);
+                });
+              }
             }
           }
         },

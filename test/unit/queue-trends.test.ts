@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import * as repositoriesModule from "../../src/db/repositories";
 import { getRepoQueueTrendSnapshot, persistRepoGithubTotalsSnapshot, persistSignalSnapshot, upsertPullRequestFromGitHub, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { generateSignalSnapshots } from "../../src/queue/processors";
-import { buildQueueTrendReport, buildUnavailableQueueTrendReport, type QueueTrendReport } from "../../src/services/queue-trends";
+import { buildQueueTrendReport, buildUnavailableQueueTrendReport, QUEUE_TREND_HISTORY_DAYS, QUEUE_TREND_SNAPSHOT_LIMIT, type QueueTrendReport } from "../../src/services/queue-trends";
 import type { RepoGithubTotalsSnapshotRecord } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
 
@@ -10,6 +10,12 @@ describe("queue trend windows", () => {
   afterEach(() => {
     vi.restoreAllMocks();
   });
+
+  it("keeps QUEUE_TREND_SNAPSHOT_LIMIT sized for four rows/day across the history window (#10020)", () => {
+    expect(QUEUE_TREND_HISTORY_DAYS).toBeGreaterThanOrEqual(30);
+    expect(QUEUE_TREND_SNAPSHOT_LIMIT).toBeGreaterThanOrEqual(QUEUE_TREND_HISTORY_DAYS * 4);
+  });
+
   it("builds deterministic 7/14/30-day queue pressure and review velocity windows", () => {
     const report = buildQueueTrendReport({
       repoFullName: "owner/repo",

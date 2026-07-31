@@ -6190,7 +6190,10 @@ export async function listRecentSignalSnapshotsForTargets(
 ): Promise<Map<string, SignalSnapshotRecord[]>> {
   const result = new Map<string, SignalSnapshotRecord[]>();
   if (targetKeys.length === 0) return result;
-  const perTargetLimit = Math.max(1, Math.min(maxPerTarget, 100));
+  // #10020 / #9699: allow caps large enough for multi-week daily snapshot series (e.g. QUEUE_TREND_SNAPSHOT_LIMIT
+  // = 140). The previous hard 100 matched listSignalSnapshots' latest-row backstop and re-truncated time-bounded
+  // history that needed more than 100 in-window rows.
+  const perTargetLimit = Math.max(1, Math.min(maxPerTarget, 500));
   // The time bound (#9699) is applied INSIDE the windowed subquery so row_number() ranks over the in-window
   // set, not the whole table — otherwise a repo with many recent snapshots could rank its cap entirely within
   // the last few days and never surface the older weeks the trend card needs. maxPerTarget stays the backstop.

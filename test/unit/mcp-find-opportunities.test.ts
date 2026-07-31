@@ -161,4 +161,27 @@ describe("MCP loopover_find_opportunities", () => {
     expect(targets.isError).toBe(true);
     expect(JSON.stringify(targets.content)).toMatch(/session cannot access this repository/i);
   });
+
+  it("agrees with POST /v1/opportunities/find that a non-integer limit is refused (#10040)", async () => {
+    const env = createTestEnv();
+    const body = { targets: [{ owner: "acme", repo: "allowed" }], limit: 7.9 };
+
+    const client = await connect(env);
+    const mcp = await client.callTool({ name: "loopover_find_opportunities", arguments: body });
+    expect(mcp.isError).toBe(true);
+
+    const { createApp } = await import("../../src/api/routes");
+    const app = createApp();
+    const rest = await app.request(
+      "/v1/opportunities/find",
+      {
+        method: "POST",
+        headers: { authorization: `Bearer ${env.LOOPOVER_API_TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      },
+      env,
+    );
+    expect(rest.status).toBe(400);
+    await expect(rest.json()).resolves.toMatchObject({ status: "invalid_request", reason: "invalid_body" });
+  });
 });

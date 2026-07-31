@@ -447,13 +447,26 @@ const CONTRACT_SRC = "packages/loopover-contract/src";
  * output, broken build. Reading the directory means a constant can move, or a new module can appear,
  * without this script knowing anything about it.
  *
- * `index.ts` is excluded because it re-exports the generated file (importing it back would be a cycle),
- * and the generated file itself because a schema cannot import its own copy.
+ * One level of subdirectories is walked too (#10040): `tools/**` holds most of the package's zod
+ * declarations (`FindOpportunitiesInput`, `RetrieveIssueContextInput`, ...), and a scan that only saw
+ * `src/*.ts` would silently miss every one of them, the same "valid output, broken build" failure the
+ * top-level case above already guards against.
+ *
+ * `index.ts` is excluded at both levels because it re-exports the generated file (importing it back
+ * would be a cycle), and the generated file itself because a schema cannot import its own copy.
  */
 export function contractModuleExports(): Map<string, ReadonlySet<string>> {
-  const modules = listModules(CONTRACT_SRC)
-    .filter((file) => file.endsWith(".ts") && file !== "index.ts" && file !== "api-schemas.ts")
-    .sort();
+  const files: string[] = [];
+  for (const entry of listModules(CONTRACT_SRC)) {
+    if (entry.endsWith(".ts")) {
+      files.push(entry);
+      continue;
+    }
+    for (const nested of listModules(`${CONTRACT_SRC}/${entry}`)) {
+      if (nested.endsWith(".ts")) files.push(`${entry}/${nested}`);
+    }
+  }
+  const modules = files.filter((file) => file !== "index.ts" && !file.endsWith("/index.ts") && file !== "api-schemas.ts").sort();
   return new Map(modules.map((file) => [`./${file.replace(/\.ts$/, ".js")}`, new Set(exportedNames(readModule(`${CONTRACT_SRC}/${file}`)))]));
 }
 

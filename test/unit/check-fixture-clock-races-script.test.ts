@@ -4,9 +4,13 @@
 // here matter as much as the positive one. Reading the clock live is CORRECT wherever the passage of time is
 // itself under test; the distinguishing property is whether the helper projects a fixture timestamp from an
 // offset its caller varies.
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
-import { findFixtureClockRaces } from "../../scripts/check-fixture-clock-races";
+import { FIXTURE_TEST_ROOTS, findFixtureClockRaces, walk } from "../../scripts/check-fixture-clock-races";
 
 describe("findFixtureClockRaces (#9955)", () => {
   it("REGRESSION: catches the exact queue-trends shape that reached CI", () => {
@@ -104,5 +108,53 @@ seed(dayAgo(2));
 seed(dayAgo(3));
 `;
     expect(findFixtureClockRaces("f.test.ts", source)).toHaveLength(1);
+  });
+
+  it("REGRESSION (#10043): reports the daysAgoIso shape that lived in packages/loopover-engine/test unscanned", () => {
+    // Verbatim the pre-fix helper from packages/loopover-engine/test/issue-quality-report.test.ts, plus its
+    // two call sites -- the exact shape the checker never saw because main() only walked test/.
+    const source = `
+function daysAgoIso(days: number): string {
+  return new Date(Date.now() - days * 86_400_000).toISOString();
+}
+const stale = build(daysAgoIso(60));
+const ancient = build(daysAgoIso(100));
+`;
+    expect(findFixtureClockRaces("packages/loopover-engine/test/x.test.ts", source)).toEqual([
+      { file: "packages/loopover-engine/test/x.test.ts", helper: "daysAgoIso", calls: 2 },
+    ]);
+  });
+});
+
+describe("FIXTURE_TEST_ROOTS and walk (#10043)", () => {
+  it("scans both the root suite and the engine suite", () => {
+    expect(FIXTURE_TEST_ROOTS).toContain("test");
+    expect(FIXTURE_TEST_ROOTS).toContain("packages/loopover-engine/test");
+  });
+
+  it("walk tolerates a missing directory instead of throwing", () => {
+    const out: string[] = [];
+    expect(() => walk(join(tmpdir(), "check-fixture-clock-races-missing-dir-fixture"), out)).not.toThrow();
+    expect(out).toEqual([]);
+  });
+
+  it("walk reaches a fixture under EITHER root the same way, mirroring main()'s per-root loop", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "fixture-clock-races-"));
+    try {
+      const rootTestDir = join(workspace, "test", "unit");
+      const engineTestDir = join(workspace, "packages", "loopover-engine", "test");
+      mkdirSync(rootTestDir, { recursive: true });
+      mkdirSync(engineTestDir, { recursive: true });
+      writeFileSync(join(rootTestDir, "root-fixture.test.ts"), "export const rootFixture = 1;\n");
+      writeFileSync(join(engineTestDir, "engine-fixture.test.ts"), "export const engineFixture = 1;\n");
+
+      const found: string[] = [];
+      for (const testRoot of FIXTURE_TEST_ROOTS) walk(join(workspace, testRoot), found);
+
+      expect(found).toContain(join(rootTestDir, "root-fixture.test.ts"));
+      expect(found).toContain(join(engineTestDir, "engine-fixture.test.ts"));
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
 });

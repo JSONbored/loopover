@@ -32,6 +32,11 @@ import { fileURLToPath, URL } from "node:url";
 
 export type FixtureClockRace = { file: string; helper: string; calls: number };
 
+/** Every directory whose fixtures the checker walks. `packages/loopover-engine/test` is a second,
+ *  independently-run required suite (`npm run test --workspace @loopover/engine`) with its own convention
+ *  for this bug shape, and is scanned alongside the root suite so a violation there fails the same way. */
+export const FIXTURE_TEST_ROOTS = ["test", "packages/loopover-engine/test"] as const;
+
 /** Helper declarations of the racy shape: takes an offset parameter AND computes from a fresh `Date.now()`. */
 const OFFSET_HELPER_RE = /(?:^|\n)\s*(?:export\s+)?(?:function\s+(\w+)\s*\(([^)]*)\)|const\s+(\w+)\s*=\s*\(([^)]*)\)\s*(?::[^=]+)?=>)/g;
 
@@ -80,7 +85,10 @@ export function findFixtureClockRaces(file: string, source: string): FixtureCloc
   return races;
 }
 
-function walk(dir: string, out: string[]): void {
+/** Recursively collects `*.test.ts` files under `dir` into `out`, tolerating a missing directory (a checkout
+ *  without the engine package must still run rather than crash). Exported so the roots loop's tolerance and
+ *  reach can be asserted directly rather than only through `main()`'s unmockable filesystem paths. */
+export function walk(dir: string, out: string[]): void {
   let entries: ReadonlyArray<{ name: string; isDirectory(): boolean }>;
   try {
     entries = readdirSync(dir, { withFileTypes: true });
@@ -101,7 +109,7 @@ function walk(dir: string, out: string[]): void {
 function main(): void {
   const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
   const files: string[] = [];
-  walk(join(root, "test"), files);
+  for (const testRoot of FIXTURE_TEST_ROOTS) walk(join(root, testRoot), files);
 
   const races = files.flatMap((file) => findFixtureClockRaces(file.slice(root.length + 1), readFileSync(file, "utf8")));
   if (races.length > 0) {

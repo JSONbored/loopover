@@ -23,6 +23,8 @@ import { fileURLToPath, URL } from "node:url";
 
 export type TypecheckGap = { workspace: string; script: string };
 
+export type WorkspaceWithTypecheck = { name: string; dir: string };
+
 /** Every `npm run <name>` this script body invokes (the root package's own scripts). */
 function referencedRootScripts(body: string): string[] {
   // `npm run x`, `npm run x --silent`, `npm --silent run x` -- all forms used in this package.json.
@@ -51,13 +53,14 @@ function referencedWorkspaces(body: string): string[] {
 /**
  * PURE: workspaces that declare a `typecheck` script the root `typecheck` never reaches.
  *
- * `scripts` is the root package's script map; `workspacesWithTypecheck` is every workspace package name that
- * declares one. Reachability follows `npm run` references transitively from `entry`, because a workspace is
- * covered whether it is invoked directly or through an intermediate script.
+ * `scripts` is the root package's script map; `workspacesWithTypecheck` is every workspace that declares
+ * one (package name + directory). Reachability follows `npm run` references transitively from `entry`,
+ * because a workspace is covered whether it is invoked directly, through an intermediate script, or via
+ * `tsc -p <dir>/tsconfig.json`.
  */
 export function findTypecheckGaps(
   scripts: Readonly<Record<string, string>>,
-  workspacesWithTypecheck: readonly string[],
+  workspacesWithTypecheck: readonly WorkspaceWithTypecheck[],
   entry = "typecheck",
 ): TypecheckGap[] {
   const covered = new Set<string>();
@@ -79,13 +82,18 @@ export function findTypecheckGaps(
     queue.push(...referencedRootScripts(body));
   }
   return workspacesWithTypecheck
-    .filter((workspace) => !covered.has(workspace) && !covered.has(workspace.replace(/^@[\w-]+\//, "")))
-    .map((workspace) => ({ workspace, script: "typecheck" }));
+    .filter(
+      (workspace) =>
+        !covered.has(workspace.name) &&
+        !covered.has(workspace.name.replace(/^@[\w-]+\//, "")) &&
+        !covered.has(workspace.dir),
+    )
+    .map((workspace) => ({ workspace: workspace.name, script: "typecheck" }));
 }
 
 /** Workspace package names (and their directories) that declare their own `typecheck` script. */
-export function workspacesDeclaringTypecheck(root: string): { name: string; dir: string }[] {
-  const out: { name: string; dir: string }[] = [];
+export function workspacesDeclaringTypecheck(root: string): WorkspaceWithTypecheck[] {
+  const out: WorkspaceWithTypecheck[] = [];
   for (const group of ["apps", "packages"]) {
     let dirs: string[];
     try {
@@ -109,7 +117,7 @@ function main(): void {
   const root = join(fileURLToPath(new URL(".", import.meta.url)), "..");
   const rootManifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { scripts?: Record<string, string> };
   const declared = workspacesDeclaringTypecheck(root);
-  const gaps = findTypecheckGaps(rootManifest.scripts ?? {}, declared.map((entry) => entry.name));
+  const gaps = findTypecheckGaps(rootManifest.scripts ?? {}, declared);
 
   if (gaps.length > 0) {
     console.error("`npm run typecheck` does not reach every workspace that declares one:\n");

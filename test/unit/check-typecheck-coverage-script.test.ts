@@ -18,7 +18,9 @@ describe("findTypecheckGaps (#9860)", () => {
       // Present in the repo, but reachable only from test:ci -- never from `typecheck`.
       "ui:typecheck": "npm --workspace @loopover/ui run typecheck",
     };
-    expect(findTypecheckGaps(scripts, ["@loopover/ui"])).toEqual([{ workspace: "@loopover/ui", script: "typecheck" }]);
+    expect(findTypecheckGaps(scripts, [{ name: "@loopover/ui", dir: "apps/loopover-ui" }])).toEqual([
+      { workspace: "@loopover/ui", script: "typecheck" },
+    ]);
   });
 
   it("counts a workspace reached THROUGH an intermediate script as covered", () => {
@@ -29,33 +31,73 @@ describe("findTypecheckGaps (#9860)", () => {
       "ui:typecheck": "npm run ui:kit:build && npm --workspace @loopover/ui run typecheck",
       "ui:kit:build": "npm --workspace @loopover/ui-kit run build",
     };
-    expect(findTypecheckGaps(scripts, ["@loopover/ui"])).toEqual([]);
+    expect(findTypecheckGaps(scripts, [{ name: "@loopover/ui", dir: "apps/loopover-ui" }])).toEqual([]);
   });
 
   it("counts a project typechecked directly by path as covered, without its own script being invoked", () => {
     // `typecheck:packages` runs tsc against the project file rather than calling the workspace's script.
+    // Inputs must match what main() produces: { name, dir }, not a bare directory string (#10044).
     const scripts = {
       typecheck: "npm run typecheck:packages",
       "typecheck:packages": "tsc -p packages/loopover-contract/tsconfig.json --noEmit",
     };
-    expect(findTypecheckGaps(scripts, ["packages/loopover-contract"])).toEqual([]);
+    expect(findTypecheckGaps(scripts, [{ name: "@loopover/contract", dir: "packages/loopover-contract" }])).toEqual([]);
+  });
+
+  it("REGRESSION (#10044): a workspace covered ONLY by tsc -p <dir> is not reported when identified by scoped package name", () => {
+    // Before the fix, covered held "packages/loopover-contract" while the filter only checked
+    // "@loopover/contract" / "contract" — so the -p branch was dead for every real main() call.
+    const scripts = {
+      typecheck: "npm run typecheck:packages",
+      "typecheck:packages": "tsc -p packages/loopover-contract/tsconfig.json --noEmit",
+    };
+    expect(findTypecheckGaps(scripts, [{ name: "@loopover/contract", dir: "packages/loopover-contract" }])).toEqual([]);
+  });
+
+  it("reports a gap when a different workspace's -p path does not cover this one", () => {
+    const scripts = {
+      typecheck: "npm run typecheck:packages",
+      "typecheck:packages": "tsc -p packages/loopover-contract/tsconfig.json --noEmit",
+    };
+    expect(findTypecheckGaps(scripts, [{ name: "@loopover/ui", dir: "apps/loopover-ui" }])).toEqual([
+      { workspace: "@loopover/ui", script: "typecheck" },
+    ]);
   });
 
   it("handles the reversed flag order, since both spellings appear in this package.json", () => {
     const scripts = { typecheck: "npm run typecheck --workspace @loopover/ui" };
-    expect(findTypecheckGaps(scripts, ["@loopover/ui"])).toEqual([]);
+    expect(findTypecheckGaps(scripts, [{ name: "@loopover/ui", dir: "apps/loopover-ui" }])).toEqual([]);
   });
 
   it("does NOT count a workspace whose BUILD is run but whose typecheck is not", () => {
     // A build may typecheck as a side effect, but that is a property of that script's current body, not a
     // guarantee. Treating it as coverage would silently accept a build that later stops emitting types.
     const scripts = { typecheck: "npm run ui:kit:build", "ui:kit:build": "npm --workspace @loopover/ui-kit run build" };
-    expect(findTypecheckGaps(scripts, ["@loopover/ui-kit"])).toEqual([{ workspace: "@loopover/ui-kit", script: "typecheck" }]);
+    expect(findTypecheckGaps(scripts, [{ name: "@loopover/ui-kit", dir: "packages/loopover-ui-kit" }])).toEqual([
+      { workspace: "@loopover/ui-kit", script: "typecheck" },
+    ]);
+  });
+
+  it("treats a workspace as covered when covered holds the unscoped name (scoped-name strip hit)", () => {
+    // Reversed-flag form with an unscoped workspace token puts "ui" in covered; the filter must still
+    // recognise @loopover/ui via name.replace(/^@[\w-]+\//, "").
+    const scripts = { typecheck: "npm run typecheck --workspace ui" };
+    expect(findTypecheckGaps(scripts, [{ name: "@loopover/ui", dir: "apps/loopover-ui" }])).toEqual([]);
+  });
+
+  it("does not treat a workspace as covered via scoped-name strip when the unscoped token is absent", () => {
+    // Body has no -p match and no workspace reference — strip fallback misses; gap is reported by name.
+    const scripts = { typecheck: "tsc --noEmit" };
+    expect(findTypecheckGaps(scripts, [{ name: "@loopover/ui", dir: "apps/loopover-ui" }])).toEqual([
+      { workspace: "@loopover/ui", script: "typecheck" },
+    ]);
   });
 
   it("terminates on a cyclic script graph instead of looping forever", () => {
     const scripts = { typecheck: "npm run a", a: "npm run b", b: "npm run a" };
-    expect(findTypecheckGaps(scripts, ["@loopover/ui"])).toEqual([{ workspace: "@loopover/ui", script: "typecheck" }]);
+    expect(findTypecheckGaps(scripts, [{ name: "@loopover/ui", dir: "apps/loopover-ui" }])).toEqual([
+      { workspace: "@loopover/ui", script: "typecheck" },
+    ]);
   });
 
   it("reports nothing when no workspace declares a typecheck at all", () => {
@@ -64,6 +106,8 @@ describe("findTypecheckGaps (#9860)", () => {
 
   it("tolerates a missing entry script rather than throwing", () => {
     // A renamed root script must fail loudly as a REPORT, not as a crash mid-CI.
-    expect(findTypecheckGaps({}, ["@loopover/ui"])).toEqual([{ workspace: "@loopover/ui", script: "typecheck" }]);
+    expect(findTypecheckGaps({}, [{ name: "@loopover/ui", dir: "apps/loopover-ui" }])).toEqual([
+      { workspace: "@loopover/ui", script: "typecheck" },
+    ]);
   });
 });

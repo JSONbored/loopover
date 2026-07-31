@@ -67,6 +67,10 @@ const STAGED_AHEAD_OF_CONSUMERS: ReadonlyMap<string, string> = new Map([
     "The maintainer chat grounding-tool registry (#9189, spec #9187). Deliberately ahead of its route: the six tools are defined over an INJECTED GroundingServices surface, and binding that surface to the real readers (queueSnapshotFromBinding, verifyDecisionLedger, resolveProofPage, loadRepoFocusManifest, getRepository) plus wiring the protected route and its authz is the second half of #9189. The registry's own invariants -- read-only by construction, allowlisted response shapes, determinism, per-tool budgets -- are fully covered by test/unit/grounding-registry.test.ts today.",
   ],
   [
+    "src/review/verdict-stability.ts",
+    "Verdict-stability backoff (#10184). Deliberately ahead of its call sites: the decision logic and its persistence are complete and fully covered by test/unit/verdict-stability.test.ts, but WIRING the skip belongs in a focused change with its own review — it suppresses re-evaluation in processors.ts's hottest path, and getting it wrong stops reviewing PRs rather than merely wasting work. #10184 wires it: record on the persistDecisionRecord path (the single ledger write every verdict passes through) and consult it before the publish-and-maintain pass.",
+  ],
+  [
     "src/review/benchmark-eval-records.ts",
     "The benchmark score-record emitter + leaderboard derivation (#9265). Deliberately ahead of its serving route: #9216's endpoint sub-issue wires GET /v1/public/eval-scores to emit benchmark_run records, and #9264 supplies the attestation envelopes its `attested` tier needs. Fully covered by test/unit/benchmark-eval-records.test.ts today.",
   ],

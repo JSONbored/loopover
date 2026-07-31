@@ -77,7 +77,12 @@ export function normalizeScreenshotTableGateConfig(input: unknown, warnings: str
   const action = isScreenshotTableGateAction(record.action)
     ? record.action
     : (() => {
-        if (record.action !== undefined) warnings.push(`settings.requireScreenshotTable.action must be "close" or "advisory" (#4110 removed request_changes/comment as dead config surface); using the default "close".`);
+        // Derived from VALID_ACTIONS (mirrors normalizeSelfLoopAutonomy in ams-policy-spec.ts) so a future
+        // tier addition can't desynchronize this message again.
+        if (record.action !== undefined)
+          warnings.push(
+            `settings.requireScreenshotTable.action must be one of ${VALID_ACTIONS.join(", ")} (#4110 removed request_changes/comment as dead config surface); using the default "${DEFAULT_SCREENSHOT_TABLE_GATE.action}".`,
+          );
         return DEFAULT_SCREENSHOT_TABLE_GATE.action;
       })();
   const message = typeof record.message === "string" && record.message.trim().length > 0 ? record.message.trim() : undefined;

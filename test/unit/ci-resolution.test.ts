@@ -4,8 +4,10 @@ import {
   cachedLiveCiAggregate,
   cachedRequiredStatusContexts,
   observeRequiredContextsLookup,
+  refreshLiveCiAggregate,
   refreshLiveMergeState,
   REQUIRED_CONTEXTS_UNRESOLVED_METRIC,
+  reuseOrRefreshLiveCiAggregate,
   setMergeStateUnknownRetryDelayMsForTest,
 } from "../../src/queue/ci-resolution";
 import type { LiveGithubFacts } from "../../src/queue/processors";
@@ -132,6 +134,66 @@ describe("cachedLiveCiAggregate request-scoped memoization (#4498)", () => {
     await cachedLiveCiAggregate(env, { ...base, advisoryCheckRuns: twoEntry });
     await cachedLiveCiAggregate(env, { ...base, advisoryCheckRuns: [...twoEntry].reverse() });
     expect(liveCiSpy).toHaveBeenCalledTimes(3); // +1 only, the reversed list reused the key
+  });
+});
+
+describe("ignoredCheckRuns is threaded into the live CI aggregate, not just its cache key (#10018)", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+  const IGNORED = [{ name: "Contributor trust", appSlug: "example-security-app" }];
+  const okAggregate = {
+    ciState: "passed" as const,
+    hasPending: false,
+    hasVisiblePending: false,
+    hasMissingRequiredContext: false,
+    failingDetails: [],
+    nonRequiredFailingDetails: [],
+    advisoryHoldDetails: [],
+    ignoredCheckDetails: [],
+    ciCompletenessWarning: null,
+  };
+  // Distinct headSha per call so the request-scoped memo never serves one test's aggregate to another.
+  const base = (headSha: string) => ({
+    repoFullName: "owner/repo",
+    facts: emptyFacts(),
+    prNumber: 7,
+    headSha,
+    baseRef: null,
+    token: "tok",
+    expectedCiContexts: null,
+    advisoryCheckRuns: null,
+  });
+  // fetchLiveCiAggregatePreferGraphQl's 8th positional argument (index 7) is ignoredCheckRuns.
+  const eighthArg = (spy: ReturnType<typeof vi.spyOn>) => spy.mock.calls[0]?.[7];
+
+  it("cachedLiveCiAggregate forwards the ignore list as the 8th positional argument", async () => {
+    const env = createTestEnv();
+    const spy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue(okAggregate);
+    await cachedLiveCiAggregate(env, { ...base("sha-cached"), ignoredCheckRuns: IGNORED });
+    expect(eighthArg(spy)).toEqual(IGNORED);
+  });
+
+  it("refreshLiveCiAggregate forwards the ignore list as the 8th positional argument", async () => {
+    const env = createTestEnv();
+    const spy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue(okAggregate);
+    await refreshLiveCiAggregate(env, { ...base("sha-refresh"), ignoredCheckRuns: IGNORED });
+    expect(eighthArg(spy)).toEqual(IGNORED);
+  });
+
+  it("reuseOrRefreshLiveCiAggregate (the positional-arg entry point) forwards the ignore list", async () => {
+    const env = createTestEnv();
+    const spy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue(okAggregate);
+    // reuseOrRefreshLiveCiAggregate is positional: ignoredCheckRuns is its 11th arg (after advisoryCheckRuns).
+    await reuseOrRefreshLiveCiAggregate(env, "owner/repo", emptyFacts(), 7, "abc123", null, "tok", null, undefined, null, IGNORED);
+    expect(eighthArg(spy)).toEqual(IGNORED);
+  });
+
+  it("REGRESSION #10018: an unconfigured repo (ignoredCheckRuns null) still passes null/undefined through — byte-identical", async () => {
+    const env = createTestEnv();
+    const spy = vi.spyOn(backfillModule, "fetchLiveCiAggregatePreferGraphQl").mockResolvedValue(okAggregate);
+    await cachedLiveCiAggregate(env, { ...base("sha-null"), ignoredCheckRuns: null });
+    expect(eighthArg(spy) ?? null).toBeNull(); // no ignore list configured ⇒ the arg is null/undefined
   });
 });
 

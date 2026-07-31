@@ -245,6 +245,11 @@ function fetchLiveCiAggregateWithRequiredContexts(
         // would keep serving a stale aggregate computed against the old advisory list.
         requiredContextsKey: `${resolvedRequiredContextsKeyPart(requiredContexts)}|adv:${advisoryCheckRunsKeyPart(args.advisoryCheckRuns)}|ign:${ignoredCheckRunsKeyPart(args.ignoredCheckRuns)}`,
         advisoryCheckRuns: args.advisoryCheckRuns,
+        // #10018: thread the ignore list into the aggregate itself, not just its cache key — it was folded
+        // into `requiredContextsKey` above but dropped from the arg object, so `cachedFetchLiveCiAggregate`'s
+        // `ignoredCheckRuns` was always undefined and a maintainer-declared ignored check never actually
+        // dropped out of the live CI aggregate the maintenance planner reads. Mirrors advisoryCheckRuns above.
+        ignoredCheckRuns: args.ignoredCheckRuns,
         forceRefresh: args.forceRefresh,
         requiredContextsResolved: resolved,
         admissionKey: args.admissionKey,
@@ -282,6 +287,7 @@ export function cachedLiveCiAggregate(
       token: args.token,
       expectedCiContexts: args.expectedCiContexts,
       advisoryCheckRuns: args.advisoryCheckRuns,
+      ignoredCheckRuns: args.ignoredCheckRuns, // #10018: forward the ignore list, mirroring advisoryCheckRuns
       forceRefresh: false,
       admissionKey: args.admissionKey,
     }),
@@ -318,6 +324,7 @@ export function refreshLiveCiAggregate(
       token: args.token,
       expectedCiContexts: args.expectedCiContexts,
       advisoryCheckRuns: args.advisoryCheckRuns,
+      ignoredCheckRuns: args.ignoredCheckRuns, // #10018: forward the ignore list, mirroring advisoryCheckRuns
       forceRefresh: true,
       admissionKey: args.admissionKey,
     }),

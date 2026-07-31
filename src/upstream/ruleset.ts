@@ -347,7 +347,19 @@ export async function fileUpstreamDriftIssues(env: Env, manifestOverride?: Upstr
   let skipped = 0;
   let unchanged = 0;
   for (const report of reports) {
-    const existing = (await validateRecordedGitHubIssue(repo, token, report)) ?? (await findGitHubIssueForFingerprint(repo, token, report.fingerprint));
+    const recorded = await validateRecordedGitHubIssue(repo, token, report);
+    let existing = recorded.existing;
+    // #10027: a read failure on EITHER lookup (rate-limit, 5xx, thrown fetch, exhausted page cap) means we
+    // learned nothing about whether an issue already exists for this fingerprint -- falling through to
+    // createGitHubDriftIssue in that state is exactly what files a duplicate on every failing cron tick. Still
+    // attempt the fingerprint search when the fast path came back empty (mirrors the original `??` fallback), but
+    // OR the two errored flags together so either lookup's failure blocks the create below.
+    let readFailure = recorded.errored;
+    if (!existing) {
+      const searched = await findGitHubIssueForFingerprint(repo, token, report.fingerprint);
+      existing = searched.existing;
+      readFailure = readFailure || searched.errored;
+    }
     if (existing) {
       // Keep the recorded issue reference correct even when the content below turns out unchanged -- this is a
       // local D1 write (no GitHub API cost), and it is what lets validateRecordedGitHubIssue's fast path replace
@@ -368,6 +380,13 @@ export async function fileUpstreamDriftIssues(env: Env, manifestOverride?: Upstr
       }
       await updateUpstreamDriftReportIssue(env, report.fingerprint, issue);
       updated += 1;
+      continue;
+    }
+    if (readFailure) {
+      // Neither lookup could confirm an issue is absent -- leave the report's stored issueNumber/issueUrl
+      // untouched and count it skipped rather than risk filing a duplicate for a fingerprint that may already
+      // have one.
+      skipped += 1;
       continue;
     }
     const issue = await createGitHubDriftIssue(repo, token, report, assignees);
@@ -1088,18 +1107,33 @@ function publicDriftReport(report: UpstreamDriftReportRecord): Record<string, Js
  *  (#4503) -- body/labels/assignees are exactly the three fields updateGitHubDriftIssue's payload writes. */
 type ExistingDriftIssue = { number: number; url: string; body: string | null; labels: string[]; assignees: string[] };
 
+/** The result shape shared by {@link findGitHubIssueForFingerprint} and {@link validateRecordedGitHubIssue},
+ *  mirroring `LastCloserResult.errored` (`src/github/pr-actions.ts:292-300`): `errored: true` means the lookup
+ *  learned NOTHING (a non-OK response, a thrown fetch, a JSON-parse failure, or an exhausted page cap) and the
+ *  caller must NOT treat that as proof no issue exists. `existing: null, errored: false` means the lookup
+ *  completed and genuinely found no match (or, for the recorded-issue fast path, that the recorded issue failed
+ *  a validity check) -- the existing fall-through to the fingerprint search, or to filing a new issue, is
+ *  unchanged for that case. #10027 */
+type DriftIssueLookupResult = { existing: ExistingDriftIssue | null; errored: boolean };
+
+/** Bounds the fingerprint-search pagination walk, matching the convention already used by every sibling GitHub
+ *  list walk in this codebase (COMMENT_SEARCH_PAGE_LIMIT, REVIEW_PAGE_LIMIT, MAX_WORKFLOW_RUN_LIST_PAGES,
+ *  PR_DETAIL_MAX_PAGES all cap at 10) -- without it, a pathological number of open `signals`-labeled issues turns
+ *  one drift-reconcile pass into an unbounded fetch loop. #10027 */
+const FINGERPRINT_SEARCH_PAGE_LIMIT = 10;
+
 function githubIssueLabelNames(labels: Array<string | { name?: string }> | undefined): string[] {
   return (labels ?? []).map((label) => (typeof label === "string" ? label : (label.name ?? ""))).filter((name) => name.length > 0);
 }
 
-async function findGitHubIssueForFingerprint(repo: string, token: string, fingerprint: string): Promise<ExistingDriftIssue | null> {
+async function findGitHubIssueForFingerprint(repo: string, token: string, fingerprint: string): Promise<DriftIssueLookupResult> {
   const [owner, name] = repo.split("/");
-  if (!owner || !name) return null;
+  if (!owner || !name) return { existing: null, errored: false };
   try {
-    for (let page = 1; ; page += 1) {
+    for (let page = 1; page <= FINGERPRINT_SEARCH_PAGE_LIMIT; page += 1) {
       const url = `https://api.github.com/repos/${owner}/${name}/issues?state=open&labels=signals&per_page=100&page=${page}`;
       const response = await timeoutFetch(url, { headers: githubHeaders({ token, accept: "application/vnd.github+json" }) });
-      if (!response.ok) return null;
+      if (!response.ok) return { existing: null, errored: true };
       const issues = (await response.json()) as Array<{
         number?: number;
         html_url?: string;
@@ -1110,18 +1144,24 @@ async function findGitHubIssueForFingerprint(repo: string, token: string, finger
       const match = issues.find((issue) => issue.body?.includes(`gittensory-upstream-drift:${fingerprint}`));
       if (match?.number && match.html_url)
         return {
-          number: match.number,
-          url: match.html_url,
-          /* v8 ignore next -- unreachable: `match` only exists when `issue.body?.includes(...)` was truthy above,
-           *  which already requires match.body to be a defined, non-empty string. */
-          body: match.body ?? null,
-          labels: githubIssueLabelNames(match.labels),
-          assignees: (match.assignees ?? []).map((assignee) => assignee.login ?? "").filter((login) => login.length > 0),
+          existing: {
+            number: match.number,
+            url: match.html_url,
+            /* v8 ignore next -- unreachable: `match` only exists when `issue.body?.includes(...)` was truthy above,
+             *  which already requires match.body to be a defined, non-empty string. */
+            body: match.body ?? null,
+            labels: githubIssueLabelNames(match.labels),
+            assignees: (match.assignees ?? []).map((assignee) => assignee.login ?? "").filter((login) => login.length > 0),
+          },
+          errored: false,
         };
-      if (!response.headers.get("link")?.includes('rel="next"')) return null;
+      if (!response.headers.get("link")?.includes('rel="next"')) return { existing: null, errored: false };
     }
+    // Exhausted the page cap without a match or an absent-rel="next" signal -- a truncated search is not proof
+    // that no issue exists, so this reports a read failure rather than "nothing found". #10027
+    return { existing: null, errored: true };
   } catch {
-    return null;
+    return { existing: null, errored: true };
   }
 }
 
@@ -1151,15 +1191,15 @@ async function updateGitHubDriftIssue(repo: string, token: string, issueNumber: 
   return payload.number && payload.html_url ? { number: payload.number, url: payload.html_url } : null;
 }
 
-async function validateRecordedGitHubIssue(repo: string, token: string, report: UpstreamDriftReportRecord): Promise<ExistingDriftIssue | null> {
-  if (!Number.isInteger(report.issueNumber) || !report.issueNumber || report.issueNumber <= 0 || !report.issueUrl) return null;
+async function validateRecordedGitHubIssue(repo: string, token: string, report: UpstreamDriftReportRecord): Promise<DriftIssueLookupResult> {
+  if (!Number.isInteger(report.issueNumber) || !report.issueNumber || report.issueNumber <= 0 || !report.issueUrl) return { existing: null, errored: false };
   const parsedUrl = parseGitHubIssueUrl(report.issueUrl);
   const [owner, name] = repo.split("/");
-  if (!owner || !name || !parsedUrl || parsedUrl.number !== report.issueNumber) return null;
-  if (parsedUrl.owner.toLowerCase() !== owner.toLowerCase() || parsedUrl.name.toLowerCase() !== name.toLowerCase()) return null;
+  if (!owner || !name || !parsedUrl || parsedUrl.number !== report.issueNumber) return { existing: null, errored: false };
+  if (parsedUrl.owner.toLowerCase() !== owner.toLowerCase() || parsedUrl.name.toLowerCase() !== name.toLowerCase()) return { existing: null, errored: false };
   try {
     const response = await timeoutFetch(`https://api.github.com/repos/${owner}/${name}/issues/${report.issueNumber}`, { headers: githubHeaders({ token, accept: "application/vnd.github+json" }) });
-    if (!response.ok) return null;
+    if (!response.ok) return { existing: null, errored: true };
     const issue = (await response.json()) as {
       number?: number;
       html_url?: string;
@@ -1168,23 +1208,26 @@ async function validateRecordedGitHubIssue(repo: string, token: string, report: 
       labels?: Array<string | { name?: string }>;
       assignees?: Array<{ login?: string }>;
     };
-    if (issue.number !== report.issueNumber || !issue.html_url || issue.state !== "open") return null;
-    if (!issue.body?.includes(`gittensory-upstream-drift:${report.fingerprint}`)) return null;
-    if (!issue.labels?.some((label) => (typeof label === "string" ? label : label.name)?.toLowerCase() === "signals")) return null;
+    if (issue.number !== report.issueNumber || !issue.html_url || issue.state !== "open") return { existing: null, errored: false };
+    if (!issue.body?.includes(`gittensory-upstream-drift:${report.fingerprint}`)) return { existing: null, errored: false };
+    if (!issue.labels?.some((label) => (typeof label === "string" ? label : label.name)?.toLowerCase() === "signals")) return { existing: null, errored: false };
     const issueUrl = parseGitHubIssueUrl(issue.html_url);
-    if (!issueUrl || issueUrl.number !== report.issueNumber) return null;
-    if (issueUrl.owner.toLowerCase() !== owner.toLowerCase() || issueUrl.name.toLowerCase() !== name.toLowerCase()) return null;
+    if (!issueUrl || issueUrl.number !== report.issueNumber) return { existing: null, errored: false };
+    if (issueUrl.owner.toLowerCase() !== owner.toLowerCase() || issueUrl.name.toLowerCase() !== name.toLowerCase()) return { existing: null, errored: false };
     return {
-      number: report.issueNumber,
-      url: issue.html_url,
-      /* v8 ignore next -- unreachable: `issue.body?.includes(...)` above already required issue.body to be a
-       *  defined, non-empty string, or this function would have returned null before reaching here. */
-      body: issue.body ?? null,
-      labels: githubIssueLabelNames(issue.labels),
-      assignees: (issue.assignees ?? []).map((assignee) => assignee.login ?? "").filter((login) => login.length > 0),
+      existing: {
+        number: report.issueNumber,
+        url: issue.html_url,
+        /* v8 ignore next -- unreachable: `issue.body?.includes(...)` above already required issue.body to be a
+         *  defined, non-empty string, or this function would have returned null before reaching here. */
+        body: issue.body ?? null,
+        labels: githubIssueLabelNames(issue.labels),
+        assignees: (issue.assignees ?? []).map((assignee) => assignee.login ?? "").filter((login) => login.length > 0),
+      },
+      errored: false,
     };
   } catch {
-    return null;
+    return { existing: null, errored: true };
   }
 }
 

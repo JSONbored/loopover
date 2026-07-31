@@ -43,6 +43,7 @@ jobs:
       mcp: ${{ steps.filter.outputs.mcp }}
       mcpCliHarness: ${{ steps.filter.outputs.mcpCliHarness }}
       engine: ${{ steps.filter.outputs.engine }}
+      contract: ${{ steps.filter.outputs.contract }}
       discoveryIndex: ${{ steps.filter.outputs.discoveryIndex }}
       miner: ${{ steps.filter.outputs.miner }}
       minerTestHarness: ${{ steps.filter.outputs.minerTestHarness }}
@@ -187,6 +188,10 @@ jobs:
               - 'package-lock.json'
             engine:
               - 'packages/loopover-engine/**'
+              - 'package-lock.json'
+            contract:
+              - 'packages/loopover-contract/**'
+              - 'scripts/gen-contract-api-schemas.ts'
               - 'package-lock.json'
             miner:
               - 'packages/loopover-miner/**'
@@ -478,6 +483,56 @@ jobs:
         env:
           NODE_OPTIONS: ""
         run: node --experimental-strip-types scripts/validate-observability-configs.ts
+      # ── DRIFT CHECKS THAT CI PREVIOUSLY DID NOT RUN (#10269) ────────────────────────────────────────
+      # `npm run test:ci` (the local gate) and this file are two independently hand-maintained lists, and
+      # they had drifted: 22 of the 42 checks reachable from `test:ci` ran in NO workflow at all. They were
+      # therefore enforced only when a human happened to run the full local aggregate -- which on a repo
+      # whose gate auto-merges on green CI makes them a convention, not a gate. #10237 is the same class
+      # having already fired twice on one artifact, found both times by a human and never by CI.
+      #
+      # Deliberately ONE ungated block rather than 19 individually-gated steps. Per-check path gating is
+      # where the fidelity bugs actually live -- #10268 had to add a whole `contract` filter because
+      # nothing here watched packages/loopover-contract/** -- and 19 hand-chosen gates would be exactly the
+      # hand-maintained list #9860 exists to reject. These are all sub-second file-reading scripts, so
+      # running them unconditionally costs far less than choosing 19 gates correctly.
+      #
+      # Ordering: this sits after "Build contract package" because the two control-plane generators import
+      # @loopover/contract/control-plane. Everything else here reads source, package.json or workflow files.
+      #
+      # NOT here, on purpose: mcp:tool-reference:check resolves @loopover/engine through node_modules to
+      # its dist/, so it cannot run before "Build engine package" -- it has its own step below, carrying
+      # that build's condition rather than a gate chosen from its own inputs. It is the ONLY check in this
+      # set with a build prerequisite; verified by deleting packages/loopover-engine/dist and re-running
+      # all of them, which is also how CI caught it here rather than anyone predicting it.
+      #
+      # NOT here either: db:migrations:immutable:check, release-commit-parsing:check and
+      # releasable-commit-types:check all need git history this job does not have (its checkout is shallow
+      # by design). They run in `drift-checks-history` below -- see that job for why putting them here
+      # would have been worse than leaving them unwired.
+      - name: Drift checks (unconditional)
+        run: |
+          set -euo pipefail
+          npm run turbo-inputs:check
+          npm run workspace-dep-ranges:check
+          npm run control-plane:contract:check
+          npm run control-plane:openapi:check
+          npm run coverage-boltons:check
+          npm run ui-derived-types:check
+          npm run server-manifest:check
+          npm run dead-exports:check
+          npm run publishable-deps:check
+          npm run fixture-clock-races:check
+          npm run typecheck-coverage:check
+          npm run test-wiring:check
+          npm run checkers-wired:check
+          npm run focus-manifest-fields:check
+          npm run maintainer-associations:check
+          npm run release-linked-versions:check
+          npm run mcp:client-config:check
+          npm run record-mapper-fields:check
+          npm run verdict-backoff-chokepoint:check
+          npm run dispatch-provenance:check
+          npm run ci-drift-checks-wired:check
       # Runs ahead of Typecheck AND "Test with coverage" (#ci-engine-build-order): src/mcp/find-opportunities.ts
       # (root backend, since #2281/#3985) imports packages/loopover-miner/lib/opportunity-fanout.js --
       # a .js-suffixed specifier esbuild/Vite resolve straight to the real (gitignored, uncompiled)
@@ -545,6 +600,16 @@ jobs:
       - name: Build engine package
         if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.miner == 'true' }}
         run: npx turbo run build --filter=@loopover/engine
+      # The one drift check with a build prerequisite (#10269): it resolves a bare `@loopover/engine`
+      # specifier through node_modules to dist/, so it must follow the build above and carries that build's
+      # condition VERBATIM. The gate is therefore derived ("run iff the thing I need was built"), not
+      # hand-picked from this check's own inputs -- which is the distinction that keeps it out of the
+      # hand-maintained-gate class the unconditional block above exists to avoid. If the two conditions ever
+      # diverge this check silently stops running, so they must move together, exactly as the Typecheck step
+      # and this build already must.
+      - name: MCP tool-reference drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.engine == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.mcp == 'true' || needs.changes.outputs.miner == 'true' }}
+        run: npm run mcp:tool-reference:check
       # Mirrors "MCP package check"/"Miner package check" below: the published npm tarball is a
       # different surface than the workspace build above (files field, forbidden paths/content,
       # stale README wording) and needs its own dry-run validation (#8591).
@@ -822,6 +887,19 @@ jobs:
       - name: OpenAPI drift check
         if: ${{ github.event_name == 'push' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.uiContract == 'true' }}
         run: npm run ui:openapi:check
+      # Same generated-artifact-drift class as the OpenAPI check above, and it was enforced ONLY by the
+      # local `npm run test:ci` aggregate -- exactly the local-only gap called out on the selfhost/miner
+      # env-reference steps in validate-code, which each went stale with zero CI signal until someone
+      # happened to run the full local script. It has now bitten this file twice (#10237): once when the
+      # discovery-route schemas were added without teaching the generator, leaving `main` red for every PR
+      # that ran the local gate, and again when #10160 added `linkedIssueMaintainerExempt` without
+      # regenerating. Neither surfaced in CI.
+      # Its inputs are src/openapi/schemas.ts (`backend`), apps/loopover-ui/public/openapi.json (`ui`), and
+      # the contract package's own modules, which it scans to emit imports -- hence the third filter, added
+      # with this step because nothing here previously watched packages/loopover-contract/** at all.
+      - name: Contract api-schemas drift check
+        if: ${{ github.event_name == 'push' || needs.changes.outputs.backend == 'true' || needs.changes.outputs.ui == 'true' || needs.changes.outputs.contract == 'true' }}
+        run: npm run contract:api-schemas:check
       # Checks apps/loopover-ui/src' known-latest MCP version string against the published package, so
       # its dependency is `ui` (the file it scans) + `mcp` (the package it checks against) -- NOT the
       # OpenAPI contract, which this script never reads.
@@ -956,6 +1034,58 @@ jobs:
   # never serializes with the fast drift/typecheck/build checks -- that split remains). It ran 2023-style
   # as a 3-shard matrix for wall-clock; unsharded again 2026-07-24 (see the job's own header comment) to
   # trade PR latency for 2 fewer runners per PR and the simpler, flake-free single-report pipeline.
+  # The three drift checks that need real git history (#10269). They are a SEPARATE job purely because
+  # validate-code's checkout is shallow on purpose ("this job no longer uploads to Codecov ... so it has no
+  # reason to fetch full history anymore"), and each of these three degrades differently and silently there:
+  #
+  #   - db:migrations:immutable:check  exits 1 with "no orb-v* tags visible", so it would fail EVERY PR.
+  #   - release-commit-parsing:check   returns [] and PASSES when it cannot resolve the base.
+  #   - releasable-commit-types:check  prints "cannot resolve ...; skipping" and exits 0.
+  #
+  # The last two are why this is a job and not a step in validate-code: wired there they would be
+  # permanently green while verifying nothing, which is the "guards nothing while looking like a guard"
+  # failure (#9860) that #10269 exists to fix. Reproducing that at the CI layer while claiming to fix it
+  # would be worse than leaving them unwired, because the green would then be read as coverage.
+  drift-checks-history:
+    name: drift-checks-history
+    needs: changes
+    if: ${{ github.event_name == 'push' || github.event.pull_request.draft != true }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # fetch-depth: 0 + tags is the entire point of this job -- the immutability check compares migration
+      # blobs against every orb-v* tag, and both commit checks diff against origin/<base>.
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Setup workspace
+        uses: ./.github/actions/setup-workspace
+      # A PR checkout leaves no ref for the base branch, and both commit checks diff against
+      # `origin/<base>`. Fetch it explicitly rather than assuming fetch-depth: 0 created the remote ref.
+      - name: Fetch base ref
+        if: ${{ github.event_name == 'pull_request' }}
+        run: git fetch --no-tags --quiet origin "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+      # Fails loudly if the history this job exists to provide is somehow absent, rather than letting the
+      # two skip-on-error checks below report a green that means nothing.
+      - name: Assert history is present
+        run: |
+          set -euo pipefail
+          tags="$(git tag -l 'orb-v*' | wc -l | tr -d ' ')"
+          if [ "$tags" -eq 0 ]; then
+            echo "::error::No orb-v* tags after fetch-tags -- the history checks below would be vacuous."
+            exit 1
+          fi
+          echo "orb-v* tags visible: $tags"
+      - name: Released-migration immutability check
+        run: npm run db:migrations:immutable:check
+      - name: Release commit-parsing check
+        run: npm run release-commit-parsing:check
+      - name: Releasable commit-types check
+        run: npm run releasable-commit-types:check
+
   validate-tests:
     name: validate-tests
     needs: changes
@@ -1283,7 +1413,7 @@ jobs:
   # Path-filtered jobs report "skipped", which is treated as success.
   validate:
     name: validate
-    needs: [changes, validate-code, validate-tests]
+    needs: [changes, validate-code, validate-tests, drift-checks-history]
     if: ${{ always() }}
     # Pure result-aggregation (reads needs.*.result, echoes pass/fail) -- no build/test work, so it never
     # needed the self-hosted pool's cached toolchain (#2507).

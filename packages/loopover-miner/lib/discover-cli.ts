@@ -33,7 +33,10 @@ import type { PortfolioQueueStore } from "./portfolio-queue.js";
 import { initRankedCandidatesStore } from "./ranked-candidates.js";
 import type { RankedCandidatesStore } from "./ranked-candidates.js";
 import { extractContributionProfile } from "./contribution-profile-extract.js";
-import { initContributionProfileCache } from "./contribution-profile-cache.js";
+import {
+  initContributionProfileCache,
+  resolveContributionProfileCacheDbPath,
+} from "./contribution-profile-cache.js";
 import { filterCandidatesByProfiles } from "./contribution-profile-filter.js";
 import type { ContributionProfile } from "./contribution-profile.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "./cli-error.js";
@@ -139,7 +142,13 @@ export type RunDiscoverOptions = {
    *  resolveContributionProfilesForDiscover; injectable so tests avoid the network. */
   resolveContributionProfiles?: (
     repoFullNames: string[],
-    ctx: { githubToken?: string; apiBaseUrl?: string; nowMs?: number },
+    ctx: {
+      githubToken?: string;
+      apiBaseUrl?: string;
+      nowMs?: number;
+      env?: Record<string, string | undefined>;
+      dryRun?: boolean;
+    },
   ) => Promise<Map<string, unknown>>;
 };
 
@@ -457,8 +466,12 @@ export function renderDiscoverSummary(result: DiscoverResult): string {
  * repo's label taxonomy/docs unauthenticated (rate limits), so it safe-defaults to no eligibility filtering.
  * That also keeps callers that don't supply a token (the common CLI path, and every test) hermetic.
  *
+ * #10000: honour `ctx.env` for the cache DB path (same as every other store in runDiscover) and honour
+ * `ctx.dryRun` with the #9679 event-ledger discipline — never open/create a missing cache file on a dry run,
+ * and never `put` during a dry run even when an existing file is opened for reads.
+ *
  * @param {string[]} repoFullNames unique repos among the fanned-out candidates
- * @param {{ githubToken?: string, apiBaseUrl?: string, nowMs?: number, initCache?: typeof initContributionProfileCache, extract?: typeof extractContributionProfile }} ctx
+ * @param {{ githubToken?: string, apiBaseUrl?: string, nowMs?: number, env?: Record<string, string | undefined>, dryRun?: boolean, initCache?: typeof initContributionProfileCache, extract?: typeof extractContributionProfile }} ctx
  * @returns {Promise<Map<string, object>>}
  */
 export async function resolveContributionProfilesForDiscover(
@@ -467,6 +480,8 @@ export async function resolveContributionProfilesForDiscover(
     githubToken?: string;
     apiBaseUrl?: string;
     nowMs?: number;
+    env?: Record<string, string | undefined>;
+    dryRun?: boolean;
     initCache?: unknown;
     extract?: unknown;
   } = {},
@@ -475,24 +490,33 @@ export async function resolveContributionProfilesForDiscover(
   if (!ctx.githubToken) return profiles;
   const initCache = (ctx.initCache as typeof initContributionProfileCache | undefined) ?? initContributionProfileCache;
   const extract = (ctx.extract as typeof extractContributionProfile | undefined) ?? extractContributionProfile;
-  const cache = initCache();
+  const env = ctx.env ?? process.env;
+  const cacheDbPath = resolveContributionProfileCacheDbPath(env);
+  // #10000 / #9679: opening a not-yet-existing SQLite store is itself a write (mkdir + create + migrate). On a
+  // dry run only open when the file already exists; reads are fine, puts are not.
+  const openCache = !ctx.dryRun || existsSync(cacheDbPath);
+  const cache = openCache ? initCache(cacheDbPath) : null;
   try {
     for (const repoFullName of repoFullNames) {
-      const cached = cache.get(repoFullName, ctx.nowMs);
-      if (cached && !cached.stale) {
-        profiles.set(repoFullName, cached.profile);
-        continue;
+      if (cache) {
+        const cached = cache.get(repoFullName, ctx.nowMs);
+        if (cached && !cached.stale) {
+          profiles.set(repoFullName, cached.profile);
+          continue;
+        }
       }
       const profile = await extract(repoFullName, {
         githubToken: ctx.githubToken,
         // exactOptionalPropertyTypes: omit apiBaseUrl when unset (pre-existing optional-prop shape).
         ...(ctx.apiBaseUrl !== undefined ? { apiBaseUrl: ctx.apiBaseUrl } : {}),
       } as Parameters<typeof extractContributionProfile>[1]);
-      cache.put(profile, ctx.nowMs);
+      if (cache && !ctx.dryRun) {
+        cache.put(profile, ctx.nowMs);
+      }
       profiles.set(repoFullName, profile);
     }
   } finally {
-    cache.close();
+    cache?.close();
   }
   return profiles;
 }
@@ -580,6 +604,9 @@ export async function runDiscover(args: string[], options: RunDiscoverOptions = 
         githubToken,
         ...(apiBaseUrl !== undefined ? { apiBaseUrl } : {}),
         ...(options.nowMs !== undefined ? { nowMs: options.nowMs } : {}),
+        // #10000: thread caller env + dryRun so the default resolver never writes the contribution-profile cache.
+        env: options.env ?? process.env,
+        dryRun: true,
       });
       // RunDiscoverOptions.resolveContributionProfiles is typed as Map<string, unknown> (pre-existing .d.ts);
       // the filter expects ContributionProfile values — same runtime objects.
@@ -702,6 +729,9 @@ export async function runDiscover(args: string[], options: RunDiscoverOptions = 
       githubToken,
       ...(apiBaseUrl !== undefined ? { apiBaseUrl } : {}),
       ...(options.nowMs !== undefined ? { nowMs: options.nowMs } : {}),
+      // #10000: same env threading as the dry-run path; dryRun omitted/false so cache opens + puts normally.
+      env: options.env ?? process.env,
+      dryRun: false,
     });
     // RunDiscoverOptions.resolveContributionProfiles is typed as Map<string, unknown> (pre-existing .d.ts);
     // the filter expects ContributionProfile values — same runtime objects.

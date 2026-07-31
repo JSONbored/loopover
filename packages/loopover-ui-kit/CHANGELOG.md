@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.5.0](https://github.com/JSONbored/loopover/compare/ui-kit-v1.4.0...ui-kit-v1.5.0) (2026-07-31)
+
+
+### Features
+
+* **analytics:** complete the PostHog migration — retire Umami, fix the MCP event contract ([#10177](https://github.com/JSONbored/loopover/issues/10177)) ([2cafde3](https://github.com/JSONbored/loopover/commit/2cafde31b127d6a4b5d1083d72e5b1184ed78f7d)), closes [#8293](https://github.com/JSONbored/loopover/issues/8293) [#8299](https://github.com/JSONbored/loopover/issues/8299) [#10175](https://github.com/JSONbored/loopover/issues/10175) [#10176](https://github.com/JSONbored/loopover/issues/10176)
+
+
+### Fixes
+
+* **ui-kit:** expose PaginationEllipsis More pages outside aria-hidden ([#10136](https://github.com/JSONbored/loopover/issues/10136)) ([291fcd9](https://github.com/JSONbored/loopover/commit/291fcd9b2b7a9107825ff836aca5ad39268eb102)), closes [#10052](https://github.com/JSONbored/loopover/issues/10052)
+* **ui-kit:** render chart tooltip zero inside tabular-nums span ([#10114](https://github.com/JSONbored/loopover/issues/10114)) ([21855f2](https://github.com/JSONbored/loopover/commit/21855f2dd6faa493de33b89d379cff7ec5ae807c)), closes [#10051](https://github.com/JSONbored/loopover/issues/10051)
+* **ui-kit:** stop useStreamingText cancel() from overwriting a settled status ([#10121](https://github.com/JSONbored/loopover/issues/10121)) ([3d7fdbf](https://github.com/JSONbored/loopover/commit/3d7fdbf4eefb2d5a626b4174ef1bc45e6c0209f1))
+
 ## [1.4.0](https://github.com/JSONbored/loopover/compare/ui-kit-v1.3.1...ui-kit-v1.4.0) (2026-07-31)
 
 

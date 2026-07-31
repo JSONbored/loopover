@@ -307,8 +307,10 @@ export async function findPreviewUrlFromPrComments(params: {
 /**
  * State of the per-PR preview BUILD (Cloudflare Workers Builds check-run) for a head SHA, so capture can tell
  * "still building / its URL-comment is just lagging" (keep polling) apart from "failed" (show the terminal
- * failed card) and "no preview build at all" (don't poll). Returns 'absent' on any read failure (fail-safe:
- * never an infinite poll on a transient error).
+ * failed card) and "no preview build at all" (don't poll). A SUCCESSFUL read that finds no matching check-run
+ * returns 'absent'; a read that THREW returns 'unreadable' (still a value — the "never an infinite poll on a
+ * transient error" fail-safe is preserved — but a distinct one, so a caller can tell a proven "no build here"
+ * apart from "couldn't check", e.g. before recording structurally-unobtainable capture, #10059).
  */
 export async function getPreviewBuildState(params: {
   token: string;
@@ -316,7 +318,7 @@ export async function getPreviewBuildState(params: {
   sha: string;
   apiVersion?: string | undefined;
   rateLimitAdmissionKey?: GitHubRateLimitAdmissionKey | undefined;
-}): Promise<"building" | "succeeded" | "failed" | "absent"> {
+}): Promise<"building" | "succeeded" | "failed" | "absent" | "unreadable"> {
   const base = `https://api.github.com/repos/${params.repo.owner}/${params.repo.repo}`;
   const opts = { token: params.token, apiVersion: params.apiVersion, rateLimitAdmissionKey: params.rateLimitAdmissionKey };
   try {
@@ -333,7 +335,7 @@ export async function getPreviewBuildState(params: {
     );
     return state ?? "absent";
   } catch {
-    return "absent";
+    return "unreadable";
   }
 }
 

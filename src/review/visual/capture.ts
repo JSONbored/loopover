@@ -707,6 +707,9 @@ export async function buildCapture(
   let previewFailed = target.previewFailed === true;
   let previewUnobtainable = false;
   let previewPending = false;
+  // Whether the deployments read below threw. The structurally-unobtainable flag's contract (#9881) is that
+  // the deployments read SUCCEEDED and found none — so a call where it threw must never set the flag (#10059).
+  let deploymentsReadFailed = false;
   // Hoisted above the discovery block below (was previously computed after it) so the eternal-"loading"-
   // placeholder fix's `buildState === "absent"` branch can consult it -- seeing this whole file top to
   // bottom, its own later use (guarding the actions_fallback dispatch) is unchanged.
@@ -721,8 +724,13 @@ export async function buildCapture(
         const status = await getLatestDeploymentStatus({ token, repo, sha: target.headSha, ref: target.headRef, apiVersion, rateLimitAdmissionKey });
         previewBase = status.url ?? "";
         previewFailed = status.failed;
+        // getLatestDeploymentStatus reports a read failure (403/rate-limit/5xx) via `error: true` rather than
+        // throwing — that call did NOT prove there is no deployment, so it must suppress previewUnobtainable
+        // exactly as a thrown read does (#10059).
+        if (status.error === true) deploymentsReadFailed = true;
       } catch {
         previewBase = "";
+        deploymentsReadFailed = true;
       }
       if (!previewBase && !previewFailed && target.previewFromChecks && target.headSha) {
         previewBase = (await findPreviewUrlFromChecks({ token, repo, sha: target.headSha, apiVersion, rateLimitAdmissionKey })) ?? "";
@@ -745,7 +753,7 @@ export async function buildCapture(
               await recordPreviewPollAttempt(env, target.headSha);
               previewPending = true;
             }
-          } else if (buildState === "absent" && !actionsFallbackEnabled) {
+          } else if ((buildState === "absent" || buildState === "unreadable") && !actionsFallbackEnabled) {
             // Eternal-"loading"-placeholder fix: 'absent' means no Workers-Builds-named check-run was found
             // AT ALL, not "still building" -- previously this fell through as a silent no-op, leaving
             // previewPending/previewFailed both false, so the caller's afterPlaceholder always resolved to
@@ -763,7 +771,11 @@ export async function buildCapture(
               // #9881: `absent` means no preview check-run was ever found, and the budget is now spent -- so
               // this is not a late or broken deploy, it is a repo with no preview pipeline. Recording it is
               // what lets the screenshot-table gate decline to CLOSE on evidence it could never obtain.
-              previewUnobtainable = true;
+              // #10059: record it ONLY on a PROVEN absence — the check-run read succeeded (`absent`, not the
+              // `unreadable` catch) AND the deployments read succeeded. A transient read failure is not proof.
+              if (buildState === "absent" && !deploymentsReadFailed) {
+                previewUnobtainable = true;
+              }
             } else {
               await recordPreviewPollAttempt(env, target.headSha);
               previewPending = true;

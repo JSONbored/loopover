@@ -66,6 +66,7 @@ import {
   webhookEvents,
 } from "./schema";
 import { DEFAULT_REVIEW_EVASION_LABEL } from "../settings/agent-actions";
+import { cacheOutcomeMetadata } from "../services/cache-outcome";
 import type { LinkedIssueSatisfactionResult } from "../services/linked-issue-satisfaction";
 import type {
   Advisory,
@@ -3033,6 +3034,14 @@ export async function getGlobalAgentFrozenState(env: Env): Promise<{ frozen: boo
 
 export async function recordAuditEvent(env: Env, event: AuditEventRecord): Promise<void> {
   const db = getDb(env.DB);
+  // #10208: stamp the shared (cache_surface, cache_outcome) pair on the ~20 events that report a cache
+  // outcome under three different vocabularies (`*_cache_hit`, `*_reuse`, `*_one_shot_skip`), so one query can
+  // aggregate all of them. Done HERE rather than at each call site precisely so a future call site cannot omit
+  // it -- the omission is what made the vocabularies diverge in the first place. The caller's own metadata
+  // wins on a key collision: an explicit value at a call site is more specific than this classification, and
+  // this must never silently overwrite one.
+  const cacheOutcome = cacheOutcomeMetadata(event.eventType);
+  const metadata = cacheOutcome ? { ...cacheOutcome, ...(event.metadata ?? {}) } : event.metadata ?? {};
   await db.insert(auditEvents).values({
     id: event.id ?? crypto.randomUUID(),
     eventType: event.eventType,
@@ -3041,7 +3050,7 @@ export async function recordAuditEvent(env: Env, event: AuditEventRecord): Promi
     targetKey: event.targetKey,
     outcome: event.outcome,
     detail: event.detail,
-    metadataJson: jsonString(event.metadata ?? {}),
+    metadataJson: jsonString(metadata),
     createdAt: event.createdAt ?? nowIso(),
   });
 }

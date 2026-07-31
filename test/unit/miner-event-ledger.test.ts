@@ -7,6 +7,7 @@ import {
   appendEvent,
   closeDefaultEventLedger,
   initEventLedger,
+  latestSeq,
   readEvents,
   resolveEventLedgerDbPath,
 } from "../../packages/loopover-miner/lib/event-ledger";
@@ -77,6 +78,16 @@ describe("loopover-miner event ledger (#2290)", () => {
     const seqs = ledger.readEvents().map((entry) => entry.seq);
     expect(seqs).toEqual(Array.from({ length: 50 }, (_unused, i) => i + 1)); // 1..50, gapless
     expect(new Set(seqs).size).toBe(50); // all unique
+  });
+
+  it("(#10008) latestSeq() reports the current MAX(seq) without reading any row", () => {
+    const ledger = tempLedger();
+    expect(ledger.latestSeq()).toBe(0);
+    ledger.appendEvent({ type: "discovered_issue", payload: { i: 1 } });
+    ledger.appendEvent({ type: "discovered_issue", payload: { i: 2 } });
+    const third = ledger.appendEvent({ type: "discovered_issue", payload: { i: 3 } });
+    expect(ledger.latestSeq()).toBe(3);
+    expect(ledger.latestSeq()).toBe(third.seq);
   });
 
   it("filters by repoFullName", () => {
@@ -199,6 +210,7 @@ describe("loopover-miner event ledger (#2290)", () => {
     try {
       const entry = appendEvent({ type: "discovered_issue", repoFullName: "acme/widgets", payload: { issueNumber: 1 } });
       expect(readEvents()).toEqual([entry]);
+      expect(latestSeq()).toBe(entry.seq);
       // First close releases the real singleton; the second hits the already-closed no-op early return.
       closeDefaultEventLedger();
       closeDefaultEventLedger();

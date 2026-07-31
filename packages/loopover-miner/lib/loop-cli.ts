@@ -339,7 +339,7 @@ export async function runLoop(args: string[], options: RunLoopOptions = {}): Pro
 
   let usage: GovernorCapUsage = governorState.loadCapUsage();
   const cycles: LoopCycleSummary[] = [];
-  let sinceSeq = eventLedger.readEvents({}).at(-1)?.seq ?? 0;
+  let sinceSeq = eventLedger.latestSeq();
   let haltReason: string | null = null;
   let amsPolicyWithWarnings: { source: string; warnings: string[] } | null = null;
 

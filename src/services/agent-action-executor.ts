@@ -1465,7 +1465,7 @@ async function stageForApproval(env: Env, ctx: AgentActionExecutionContext, acti
   if (!created) return false;
   /* v8 ignore next -- a repo full name always has an owner segment; the empty fallback is purely defensive. */
   const recipientLogin = ctx.repoFullName.split("/")[0] ?? "";
-  await insertNotificationDeliveryIfAbsent(env, {
+  const { created: deliveryCreated, delivery } = await insertNotificationDeliveryIfAbsent(env, {
     dedupKey: `agent.pending_action:${ctx.repoFullName}#${ctx.pullNumber}:${action.actionClass}`,
     channel: "badge",
     recipientLogin,
@@ -1477,5 +1477,20 @@ async function stageForApproval(env: Env, ctx: AgentActionExecutionContext, acti
     deeplink: `https://github.com/${ctx.repoFullName}/pull/${ctx.pullNumber}`,
     actorLogin: AGENT_ACTOR,
   });
+  // #10025: enqueue the notify-deliver job that promotes this pending row to delivered — without it the badge
+  // sits invisible in notification_deliveries until the stranded-delivery sweep rescues it 10+ minutes later.
+  // Mirrors evaluateAndEnqueueNotificationDeliveries' `created && status === "pending"` guard: a dedup hit
+  // (already sent) or a rate-limit-suppressed non-pending row enqueues nothing. Best-effort: a failed send
+  // must not abort staging (still returns true), only log.
+  // The `status === "pending"` arm mirrors evaluateAndEnqueueNotificationDeliveries' guard and honours the
+  // "send nothing for a suppressed row" contract, but this insert never passes a status, so the delivery is
+  // always pending here -- the false arm is unreachable from THIS caller (rate-limit suppression lives in
+  // evaluateNotificationEvent, a different helper), hence the ignore. `created` false IS reachable (a dedup).
+  /* v8 ignore next -- `delivery.status === "pending"` is always true from this caller; the guard is the shared contract */
+  if (deliveryCreated && delivery.status === "pending") {
+    await env.JOBS.send({ type: "notify-deliver", requestedBy: "agent-approval", deliveryId: delivery.id }).catch((error: unknown) => {
+      console.warn(JSON.stringify({ event: "approval_notification_enqueue_failed", deliveryId: delivery.id, repoFullName: ctx.repoFullName, pullNumber: ctx.pullNumber, message: errorMessage(error).slice(0, 200) }));
+    });
+  }
   return true;
 }

@@ -24,6 +24,7 @@ import { resolvePerRepoContributorCapMatch } from "../queue/processors";
 import { isBelowAccountAgeThreshold } from "../queue/account-age-throttle";
 import { isAutoCloseExempt } from "../settings/auto-close-exempt";
 import { isPerTenantAdmin } from "../auth/security";
+import { errorMessage } from "../utils/json";
 import type { AgentPendingActionParams, AgentPendingActionRecord } from "../types";
 
 export type ApprovalDecision = "accept" | "reject";
@@ -614,7 +615,7 @@ export async function sweepStaleApprovalQueue(env: Env, nowMs: number = Date.now
     const recipientLogin = row.repoFullName.split("/")[0] ?? "";
     if (plan.kind === "remind") {
       const ageDays = plan.bucket;
-      const { created } = await insertNotificationDeliveryIfAbsent(env, {
+      const inserted = await insertNotificationDeliveryIfAbsent(env, {
         // The bucket index is what makes this fire again at all: the dedup key changes once per interval, so
         // the ~2-minute sweep cadence collapses to exactly one badge per interval with no extra persisted state.
         dedupKey: `agent.pending_action.reminder:${row.repoFullName}#${row.pullNumber}:${row.actionClass}:${plan.bucket}`,
@@ -627,8 +628,21 @@ export async function sweepStaleApprovalQueue(env: Env, nowMs: number = Date.now
         body: `${row.reason ?? "A staged action"} — accept to execute it, or reject to cancel. It expires after ${Math.round(APPROVAL_EXPIRY_MS / (24 * 60 * 60 * 1000))} days.`,
         deeplink: `https://github.com/${row.repoFullName}/pull/${row.pullNumber}`,
         actorLogin: "loopover",
-      }).catch(() => ({ created: false }));
-      if (created) reminded += 1;
+      }).catch(() => null);
+      if (inserted?.created) {
+        reminded += 1;
+        // #10025: enqueue the notify-deliver job so the reminder badge — the #9032 escape hatch for a
+        // maintainer who missed the first badge — actually reaches the feed, instead of waiting 10+ minutes
+        // for the stranded-delivery sweep. Best-effort: a failed send still counts the reminder and continues.
+        // As in stageForApproval: this insert never passes a status, so the delivery is always pending here --
+        // the false arm is unreachable from this caller. The check mirrors the shared enqueue contract.
+        /* v8 ignore next -- `inserted.delivery.status === "pending"` is always true from this caller */
+        if (inserted.delivery.status === "pending") {
+          await env.JOBS.send({ type: "notify-deliver", requestedBy: "agent-approval", deliveryId: inserted.delivery.id }).catch((error: unknown) => {
+            console.warn(JSON.stringify({ event: "approval_notification_enqueue_failed", deliveryId: inserted.delivery.id, repoFullName: row.repoFullName, pullNumber: row.pullNumber, message: errorMessage(error).slice(0, 200) }));
+          });
+        }
+      }
       continue;
     }
     // Atomic pending→expired, so a maintainer accepting at the exact moment the sweep expires the row still

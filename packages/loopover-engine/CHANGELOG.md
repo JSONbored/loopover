@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.18.3](https://github.com/JSONbored/loopover/compare/engine-v3.18.2...engine-v3.18.3) (2026-07-31)
+
+
+### Fixes
+
+* **engine:** derive the screenshotTableGate invalid-action warning from VALID_ACTIONS ([#10105](https://github.com/JSONbored/loopover/issues/10105)) ([3295614](https://github.com/JSONbored/loopover/commit/3295614fc4ef64182e5e8ea1e872f9c22eb26a25))
+
 ## [3.18.2](https://github.com/JSONbored/loopover/compare/engine-v3.18.1...engine-v3.18.2) (2026-07-31)
 
 

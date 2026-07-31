@@ -226,6 +226,66 @@ describe("discovery-index GitHubClient (#7164)", () => {
       expect(calls).toHaveLength(1);
     });
 
+    it("retries a body-signalled secondary rate limit with no Retry-After header and a non-zero x-ratelimit-remaining", async () => {
+      const secondaryLimitBody = JSON.stringify({
+        message: "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+      });
+      const { fetchImpl, calls } = makeFetchStub([
+        new Response(secondaryLimitBody, { status: 403, headers: { "x-ratelimit-remaining": "4980" } }),
+        new Response("[]", { status: 200 }),
+      ]);
+      const client = new GitHubClient({ token: "tok", fetchImpl, sleepFn: vi.fn(), maxAttempts: 2 });
+      const result = await client.fetchRepoIssues("owner/repo");
+      expect(result).toEqual({ issues: [], warnings: [] });
+      expect(calls).toHaveLength(2);
+    });
+
+    it("retries a body-signalled secondary rate limit matching GitHub's older abuse-detection wording", async () => {
+      const { fetchImpl, calls } = makeFetchStub([
+        new Response(JSON.stringify({ message: "You have triggered an abuse detection mechanism." }), {
+          status: 403,
+          headers: { "x-ratelimit-remaining": "4980" },
+        }),
+        new Response("[]", { status: 200 }),
+      ]);
+      const client = new GitHubClient({ token: "tok", fetchImpl, sleepFn: vi.fn(), maxAttempts: 2 });
+      const { warnings } = await client.fetchRepoIssues("owner/repo");
+      expect(warnings).toEqual([]);
+      expect(calls).toHaveLength(2);
+    });
+
+    it("treats a 403 with an unreadable cloned body as not rate limited", async () => {
+      const unreadableResponse = {
+        status: 403,
+        ok: false,
+        headers: new Headers({ "x-ratelimit-remaining": "4980" }),
+        clone: () => ({ text: () => Promise.reject(new Error("body already consumed")) }),
+      } as unknown as Response;
+      const calls: string[] = [];
+      const fetchImpl = (async (url: string | URL) => {
+        calls.push(String(url));
+        return unreadableResponse;
+      }) as unknown as typeof fetch;
+      const client = new GitHubClient({ token: "tok", fetchImpl, sleepFn: vi.fn(), maxAttempts: 3 });
+      const { warnings } = await client.fetchRepoIssues("owner/repo");
+      expect(calls).toHaveLength(1);
+      expect(warnings[0]).toMatch(/403/);
+    });
+
+    it("REGRESSION: a body-signalled secondary rate limit is retried, not surfaced as a truncated result", async () => {
+      const secondaryLimitBody = JSON.stringify({
+        message: "You have exceeded a secondary rate limit. Please wait a few minutes before you try again.",
+      });
+      const { fetchImpl } = makeFetchStub([
+        new Response(secondaryLimitBody, { status: 403, headers: { "x-ratelimit-remaining": "4980" } }),
+        new Response(JSON.stringify([{ number: 1, title: "A" }]), { status: 200 }),
+      ]);
+      const client = new GitHubClient({ token: "tok", fetchImpl, sleepFn: vi.fn(), maxAttempts: 2 });
+      const { issues, warnings } = await client.fetchRepoIssues("owner/repo");
+      expect(issues).toHaveLength(1);
+      expect(warnings).toEqual([]);
+    });
+
     it("applies a per-attempt request timeout signal when configured", async () => {
       const { fetchImpl, calls } = makeFetchStub([new Response("[]", { status: 200 })]);
       const client = new GitHubClient({ token: "tok", fetchImpl, sleepFn: vi.fn(), requestTimeoutMs: 5000 });

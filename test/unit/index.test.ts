@@ -19,7 +19,10 @@ describe("worker entrypoint", () => {
 
   it("delegates fetch requests to the Hono app", async () => {
     const env = createTestEnv();
-    const response = await worker.fetch(new Request("https://loopover.test/health"), env);
+    const response = await worker.fetch(
+      new Request("https://loopover.test/health"),
+      env,
+    );
     expect(response.status).toBe(200);
   });
 
@@ -32,7 +35,12 @@ describe("worker entrypoint", () => {
       messages: [
         {
           id: "dlq-msg-1",
-          body: { type: "github-webhook", deliveryId: "d-dlq", eventName: "pull_request", payload: {} },
+          body: {
+            type: "github-webhook",
+            deliveryId: "d-dlq",
+            eventName: "pull_request",
+            payload: {},
+          },
           ack: () => acked.push("dlq-msg-1"),
           retry: () => retried.push("dlq-msg-1"),
         },
@@ -54,7 +62,13 @@ describe("worker entrypoint", () => {
       messages: [
         {
           id: "wh-dlq-1",
-          body: { type: "github-webhook", deliveryId: "d-wh-dlq", eventName: "pull_request", payload: {}, redriven: true },
+          body: {
+            type: "github-webhook",
+            deliveryId: "d-wh-dlq",
+            eventName: "pull_request",
+            payload: {},
+            redriven: true,
+          },
           ack: () => acked.push("wh-dlq-1"),
           retry: () => retried.push("wh-dlq-1"),
         },
@@ -71,14 +85,22 @@ describe("worker entrypoint", () => {
     const env = createTestEnv();
     delete env.SELFHOST_TRANSIENT_CACHE;
     const sent: import("../../src/types").JobMessage[] = [];
-    env.WEBHOOKS = { send: async (message: import("../../src/types").JobMessage) => void sent.push(message) } as unknown as Queue;
+    env.WEBHOOKS = {
+      send: async (message: import("../../src/types").JobMessage) =>
+        void sent.push(message),
+    } as unknown as Queue;
     const acked: string[] = [];
     const batch = {
       queue: "loopover-webhooks-dlq",
       messages: [
         {
           id: "wh-dlq-broker-only",
-          body: { type: "github-webhook", deliveryId: "d-broker-only", eventName: "pull_request", payload: {} },
+          body: {
+            type: "github-webhook",
+            deliveryId: "d-broker-only",
+            eventName: "pull_request",
+            payload: {},
+          },
           ack: () => acked.push("wh-dlq-broker-only"),
           retry: () => undefined,
         },
@@ -94,14 +116,21 @@ describe("worker entrypoint", () => {
   it("acks and ignores stale review-execution jobs from a broker-only Cloudflare runtime", async () => {
     const env = createTestEnv();
     delete env.SELFHOST_TRANSIENT_CACHE;
-    const warned = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const warned = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
     const acked: string[] = [];
     const retried: string[] = [];
     const batch = {
       messages: [
         {
           id: "hosted-review-job",
-          body: { type: "github-webhook", deliveryId: "d-hosted-review", eventName: "pull_request", payload: {} },
+          body: {
+            type: "github-webhook",
+            deliveryId: "d-hosted-review",
+            eventName: "pull_request",
+            payload: {},
+          },
           ack: () => acked.push("hosted-review-job"),
           retry: () => retried.push("hosted-review-job"),
         },
@@ -120,7 +149,10 @@ describe("worker entrypoint", () => {
 
   it("acks successful queue messages and retries failed messages", async () => {
     const env = createTestEnv();
-    vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
+    vi.stubGlobal(
+      "fetch",
+      async () => new Response("missing", { status: 404 }),
+    );
     const acked: string[] = [];
     const retried: string[] = [];
     const batch = {
@@ -149,8 +181,20 @@ describe("worker entrypoint", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
     const env = createTestEnv();
-    await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 5, resetAt: "2026-06-24T12:30:00.000Z", observedAt: "2026-06-24T12:00:00.000Z" });
-    vi.stubGlobal("fetch", async () => new Response("missing", { status: 404 }));
+    await recordGitHubRateLimitObservation(env, {
+      repoFullName: "owner/repo",
+      resource: "rest",
+      path: "/x",
+      statusCode: 200,
+      limitValue: 5000,
+      remaining: 5,
+      resetAt: "2026-06-24T12:30:00.000Z",
+      observedAt: "2026-06-24T12:00:00.000Z",
+    });
+    vi.stubGlobal(
+      "fetch",
+      async () => new Response("missing", { status: 404 }),
+    );
     const retries: Array<{ delaySeconds?: number } | undefined> = [];
     const batch = {
       messages: [
@@ -175,20 +219,47 @@ describe("worker entrypoint", () => {
     vi.setSystemTime(new Date("2026-06-24T12:00:00.000Z"));
     const env = createTestEnv();
     // Scoped to this job's own installation bucket (#audit-rate-scoping) — installationId 123 below.
-    await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", admissionKey: "installation:123", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 120, resetAt: "2026-06-24T12:10:00.000Z", observedAt: "2026-06-24T12:00:00.000Z" });
+    await recordGitHubRateLimitObservation(env, {
+      repoFullName: "owner/repo",
+      admissionKey: "installation:123",
+      resource: "rest",
+      path: "/x",
+      statusCode: 200,
+      limitValue: 5000,
+      remaining: 120,
+      resetAt: "2026-06-24T12:10:00.000Z",
+      observedAt: "2026-06-24T12:00:00.000Z",
+    });
     const acked: string[] = [];
     const retries: Array<{ delaySeconds?: number } | undefined> = [];
-    const requeued: Array<{ message: import("../../src/types").JobMessage; delaySeconds?: number }> = [];
+    const requeued: Array<{
+      message: import("../../src/types").JobMessage;
+      delaySeconds?: number;
+    }> = [];
     env.JOBS = {
-      async send(message: import("../../src/types").JobMessage, options?: { delaySeconds?: number }) {
-        requeued.push({ message, ...(options?.delaySeconds === undefined ? {} : { delaySeconds: options.delaySeconds }) });
+      async send(
+        message: import("../../src/types").JobMessage,
+        options?: { delaySeconds?: number },
+      ) {
+        requeued.push({
+          message,
+          ...(options?.delaySeconds === undefined
+            ? {}
+            : { delaySeconds: options.delaySeconds }),
+        });
       },
     } as unknown as Queue;
     const batch = {
       messages: [
         {
           id: "background-regate",
-          body: { type: "agent-regate-pr", deliveryId: "sweep:owner/repo#7", repoFullName: "owner/repo", prNumber: 7, installationId: 123 },
+          body: {
+            type: "agent-regate-pr",
+            deliveryId: "sweep:owner/repo#7",
+            repoFullName: "owner/repo",
+            prNumber: 7,
+            installationId: 123,
+          },
           ack: () => acked.push("background-regate"),
           retry: (options?: { delaySeconds?: number }) => retries.push(options),
         },
@@ -247,13 +318,33 @@ describe("worker entrypoint", () => {
     const env = createTestEnv();
     // reconcile-open-prs has no per-installation field, so it draws from the SAME shared (no-admissionKey)
     // observation refresh-registry's own equivalent test above uses.
-    await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 5, resetAt: "2026-06-24T12:30:00.000Z", observedAt: "2026-06-24T12:00:00.000Z" });
+    await recordGitHubRateLimitObservation(env, {
+      repoFullName: "owner/repo",
+      resource: "rest",
+      path: "/x",
+      statusCode: 200,
+      limitValue: 5000,
+      remaining: 5,
+      resetAt: "2026-06-24T12:30:00.000Z",
+      observedAt: "2026-06-24T12:00:00.000Z",
+    });
     const acked: string[] = [];
     const retries: Array<{ delaySeconds?: number } | undefined> = [];
-    const requeued: Array<{ message: import("../../src/types").JobMessage; delaySeconds?: number }> = [];
+    const requeued: Array<{
+      message: import("../../src/types").JobMessage;
+      delaySeconds?: number;
+    }> = [];
     env.JOBS = {
-      async send(message: import("../../src/types").JobMessage, options?: { delaySeconds?: number }) {
-        requeued.push({ message, ...(options?.delaySeconds === undefined ? {} : { delaySeconds: options.delaySeconds }) });
+      async send(
+        message: import("../../src/types").JobMessage,
+        options?: { delaySeconds?: number },
+      ) {
+        requeued.push({
+          message,
+          ...(options?.delaySeconds === undefined
+            ? {}
+            : { delaySeconds: options.delaySeconds }),
+        });
       },
     } as unknown as Queue;
     const batch = {
@@ -274,7 +365,12 @@ describe("worker entrypoint", () => {
     // budget would have been silently ignored and runOpenPrReconciliation would have run immediately.
     expect(acked).toEqual(["reconcile-tick"]);
     expect(retries).toEqual([]);
-    expect(requeued).toEqual([{ message: { type: "reconcile-open-prs", requestedBy: "schedule" }, delaySeconds: 900 }]); // delayUntil clamps to [30, 900]
+    expect(requeued).toEqual([
+      {
+        message: { type: "reconcile-open-prs", requestedBy: "schedule" },
+        delaySeconds: 900,
+      },
+    ]); // delayUntil clamps to [30, 900]
     vi.useRealTimers();
   });
 
@@ -285,7 +381,17 @@ describe("worker entrypoint", () => {
     // refresh-installation-health carries no installationId (it loops over every installation internally), so
     // githubRateLimitAdmissionKeyForJob resolves it to `null` -- its dequeue-time check reads the unscoped
     // (admissionKey: undefined) latest-observations window, which any recent exhausted REST observation trips.
-    await recordGitHubRateLimitObservation(env, { repoFullName: null, admissionKey: "installation:1", resource: "rest", path: "/app/installations/1", statusCode: 200, limitValue: 5000, remaining: 5, resetAt: "2026-06-24T12:30:00.000Z", observedAt: "2026-06-24T12:00:00.000Z" });
+    await recordGitHubRateLimitObservation(env, {
+      repoFullName: null,
+      admissionKey: "installation:1",
+      resource: "rest",
+      path: "/app/installations/1",
+      statusCode: 200,
+      limitValue: 5000,
+      remaining: 5,
+      resetAt: "2026-06-24T12:30:00.000Z",
+      observedAt: "2026-06-24T12:00:00.000Z",
+    });
     const fetchCalls: string[] = [];
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       fetchCalls.push(input.toString());
@@ -293,17 +399,31 @@ describe("worker entrypoint", () => {
     });
     const acked: string[] = [];
     const retries: Array<{ delaySeconds?: number } | undefined> = [];
-    const requeued: Array<{ message: import("../../src/types").JobMessage; delaySeconds?: number }> = [];
+    const requeued: Array<{
+      message: import("../../src/types").JobMessage;
+      delaySeconds?: number;
+    }> = [];
     env.JOBS = {
-      async send(message: import("../../src/types").JobMessage, options?: { delaySeconds?: number }) {
-        requeued.push({ message, ...(options?.delaySeconds === undefined ? {} : { delaySeconds: options.delaySeconds }) });
+      async send(
+        message: import("../../src/types").JobMessage,
+        options?: { delaySeconds?: number },
+      ) {
+        requeued.push({
+          message,
+          ...(options?.delaySeconds === undefined
+            ? {}
+            : { delaySeconds: options.delaySeconds }),
+        });
       },
     } as unknown as Queue;
     const batch = {
       messages: [
         {
           id: "installation-health-tick",
-          body: { type: "refresh-installation-health", requestedBy: "schedule" },
+          body: {
+            type: "refresh-installation-health",
+            requestedBy: "schedule",
+          },
           ack: () => acked.push("installation-health-tick"),
           retry: (options?: { delaySeconds?: number }) => retries.push(options),
         },
@@ -318,7 +438,15 @@ describe("worker entrypoint", () => {
     expect(fetchCalls).toEqual([]);
     expect(acked).toEqual(["installation-health-tick"]);
     expect(retries).toEqual([]);
-    expect(requeued).toEqual([{ message: { type: "refresh-installation-health", requestedBy: "schedule" }, delaySeconds: 900 }]); // delayUntil clamps to [30, 900]
+    expect(requeued).toEqual([
+      {
+        message: {
+          type: "refresh-installation-health",
+          requestedBy: "schedule",
+        },
+        delaySeconds: 900,
+      },
+    ]); // delayUntil clamps to [30, 900]
     vi.useRealTimers();
   });
 
@@ -327,22 +455,22 @@ describe("worker entrypoint", () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();
       if (url.includes("master_repositories.json")) return Response.json({});
-      if (url.includes("api.gittensor.io") || url.includes("mirror.gittensor.io")) return new Response("missing", { status: 404 });
+      if (
+        url.includes("api.gittensor.io") ||
+        url.includes("mirror.gittensor.io")
+      )
+        return new Response("missing", { status: 404 });
       return Response.json([]);
     });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(
-      {} as ScheduledController,
-      env,
-      {
-        waitUntil: (promise: Promise<unknown>) => {
-          waitUntil.push(promise);
-        },
-        passThroughOnException: () => {},
-        exports: {},
-        props: {},
-      } as unknown as ExecutionContext,
-    );
+    await worker.scheduled({} as ScheduledController, env, {
+      waitUntil: (promise: Promise<unknown>) => {
+        waitUntil.push(promise);
+      },
+      passThroughOnException: () => {},
+      exports: {},
+      props: {},
+    } as unknown as ExecutionContext);
     await Promise.allSettled(waitUntil);
     expect(waitUntil).toHaveLength(1);
   });
@@ -358,12 +486,24 @@ describe("worker entrypoint", () => {
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:14:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
     // A regular */2 tick (not :00, not :30) enqueues ONLY the light auto-maintain sweep — the heavier sync/health
     // jobs are gated to :00/:30, so the tight cadence stays cheap while merges/closes fire promptly.
-    expect(sent).toEqual([{ type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false }, { type: "agent-regate-sweep", requestedBy: "schedule" }]);
+    expect(sent).toEqual([
+      {
+        type: "anchor-decision-ledger",
+        requestedBy: "schedule",
+        isHourly: false,
+      },
+      { type: "sample-service-status", requestedBy: "schedule" },
+      { type: "agent-regate-sweep", requestedBy: "schedule" },
+    ]);
   });
 
   it("enqueues the APR repo-transfer poll on an hourly tick only when LOOPOVER_APR_TRANSFER_POLL is set (#7741)", async () => {
@@ -378,10 +518,17 @@ describe("worker entrypoint", () => {
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
-    expect(captured).toContainEqual({ type: "poll-apr-repo-transfers", requestedBy: "schedule" });
+    expect(captured).toContainEqual({
+      type: "poll-apr-repo-transfers",
+      requestedBy: "schedule",
+    });
   });
 
   it("keeps enqueueing scheduled sweeps while prior per-PR regate jobs are queued (#2119)", async () => {
@@ -398,20 +545,35 @@ describe("worker entrypoint", () => {
           snapshotCalled = true;
           return {
             totals: { pending: 2, processing: 0, dead: 0, due: 2 },
-            byType: [{ type: "agent-regate-pr", status: "pending", count: 2, due: 2 }],
+            byType: [
+              { type: "agent-regate-pr", status: "pending", count: 2, due: 2 },
+            ],
           };
         },
       } as unknown as Queue,
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:30:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:30:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
     expect(sent).toEqual([
-      { type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false },
+      {
+        type: "anchor-decision-ledger",
+        requestedBy: "schedule",
+        isHourly: false,
+      },
+      { type: "sample-service-status", requestedBy: "schedule" },
       { type: "agent-regate-sweep", requestedBy: "schedule" },
-      { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
+      {
+        type: "backfill-registered-repos",
+        requestedBy: "schedule",
+        mode: "light",
+      },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
       { type: "backlog-convergence-sweep", requestedBy: "schedule" },
@@ -428,20 +590,40 @@ describe("worker entrypoint", () => {
         },
         snapshot: async () => ({
           totals: { pending: 0, processing: 1, dead: 0, due: 0 },
-          byType: [{ type: "agent-regate-sweep", status: "processing", count: 1, due: 0 }],
+          byType: [
+            {
+              type: "agent-regate-sweep",
+              status: "processing",
+              count: 1,
+              due: 0,
+            },
+          ],
         }),
       } as unknown as Queue,
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:30:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:30:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
     // No SECOND "agent-regate-sweep" trigger is enqueued behind the one already in flight; the other :30 jobs
     // are unaffected since they never depended on the (removed, broad) backlog check.
     expect(sent).toEqual([
-      { type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false },
-      { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
+      {
+        type: "anchor-decision-ledger",
+        requestedBy: "schedule",
+        isHourly: false,
+      },
+      { type: "sample-service-status", requestedBy: "schedule" },
+      {
+        type: "backfill-registered-repos",
+        requestedBy: "schedule",
+        mode: "light",
+      },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
       { type: "backlog-convergence-sweep", requestedBy: "schedule" },
@@ -457,21 +639,41 @@ describe("worker entrypoint", () => {
         },
         snapshot: async () => ({
           totals: { pending: 0, processing: 1, dead: 0, due: 0 },
-          byType: [{ type: "backlog-convergence-sweep", status: "processing", count: 1, due: 0 }],
+          byType: [
+            {
+              type: "backlog-convergence-sweep",
+              status: "processing",
+              count: 1,
+              due: 0,
+            },
+          ],
         }),
       } as unknown as Queue,
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:30:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:30:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
     // No SECOND "backlog-convergence-sweep" trigger is enqueued behind the one already in flight; the other :30
     // jobs (including agent-regate-sweep, whose OWN backlog is unaffected) still fire normally.
     expect(sent).toEqual([
-      { type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false },
+      {
+        type: "anchor-decision-ledger",
+        requestedBy: "schedule",
+        isHourly: false,
+      },
+      { type: "sample-service-status", requestedBy: "schedule" },
       { type: "agent-regate-sweep", requestedBy: "schedule" },
-      { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
+      {
+        type: "backfill-registered-repos",
+        requestedBy: "schedule",
+        mode: "light",
+      },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
     ]);
@@ -492,13 +694,27 @@ describe("worker entrypoint", () => {
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:14:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
     // Fails OPEN on a broken snapshot binding: the sweep still enqueues, and the failure is surfaced (not
     // silently swallowed) so an operator can see the introspection is unavailable.
-    expect(sent).toEqual([{ type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false }, { type: "agent-regate-sweep", requestedBy: "schedule" }]);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("selfhost_queue_snapshot_failed"));
+    expect(sent).toEqual([
+      {
+        type: "anchor-decision-ledger",
+        requestedBy: "schedule",
+        isHourly: false,
+      },
+      { type: "sample-service-status", requestedBy: "schedule" },
+      { type: "agent-regate-sweep", requestedBy: "schedule" },
+    ]);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("selfhost_queue_snapshot_failed"),
+    );
   });
 
   it("does not enqueue review sweeps from a broker-only Cloudflare runtime (anchoring still runs -- it is not a review sweep, #9274)", async () => {
@@ -513,10 +729,21 @@ describe("worker entrypoint", () => {
     delete env.SELFHOST_TRANSIENT_CACHE;
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:14:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
-    expect(sent).toEqual([{ type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false }]);
+    expect(sent).toEqual([
+      {
+        type: "anchor-decision-ledger",
+        requestedBy: "schedule",
+        isHourly: false,
+      },
+      { type: "sample-service-status", requestedBy: "schedule" },
+    ]);
   });
 
   it("keeps broker-only Cloudflare maintenance cheap on :30 ticks", async () => {
@@ -531,11 +758,20 @@ describe("worker entrypoint", () => {
     delete env.SELFHOST_TRANSIENT_CACHE;
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:30:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:30:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
     expect(sent).toEqual([
-      { type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: false },
+      {
+        type: "anchor-decision-ledger",
+        requestedBy: "schedule",
+        isHourly: false,
+      },
+      { type: "sample-service-status", requestedBy: "schedule" },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
     ]);
@@ -544,12 +780,29 @@ describe("worker entrypoint", () => {
   it("THROTTLES the sweep when the GitHub REST budget is at/below the maintenance headroom (#6 backpressure)", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
-      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
     });
     // Seed a low REST observation (remaining 50 <= MAINTENANCE_RESERVED_HEADROOM=150) with a future reset.
-    await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 50, resetAt: new Date(Date.now() + 600_000).toISOString(), observedAt: new Date().toISOString() });
+    await recordGitHubRateLimitObservation(env, {
+      repoFullName: "owner/repo",
+      resource: "rest",
+      path: "/x",
+      statusCode: 200,
+      limitValue: 5000,
+      remaining: 50,
+      resetAt: new Date(Date.now() + 600_000).toISOString(),
+      observedAt: new Date().toISOString(),
+    });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:14:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
     // The sweep is NOT enqueued this tick — the shared budget is reserved for webhooks; the next tick retries.
     expect(sent.find((m) => m.type === "agent-regate-sweep")).toBeUndefined();
@@ -558,30 +811,68 @@ describe("worker entrypoint", () => {
   it("THROTTLES the open-data backfill too when the REST budget is at/below the maintenance headroom, keeping the cheap health jobs (#audit-rate-headroom)", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
-      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
     });
     // Low REST budget (remaining 50 <= MAINTENANCE_RESERVED_HEADROOM=150) with a future reset.
-    await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 50, resetAt: new Date(Date.now() + 600_000).toISOString(), observedAt: new Date().toISOString() });
+    await recordGitHubRateLimitObservation(env, {
+      repoFullName: "owner/repo",
+      resource: "rest",
+      path: "/x",
+      statusCode: 200,
+      limitValue: 5000,
+      remaining: 50,
+      resetAt: new Date(Date.now() + 600_000).toISOString(),
+      observedAt: new Date().toISOString(),
+    });
     const waitUntil: Promise<unknown>[] = [];
     // A :30 tick is when the backfill would normally enqueue — assert it does NOT while the budget is reserved.
-    await worker.scheduled(controllerFor("2026-05-25T05:30:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:30:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
     // Backfill (+ sweep) yield the budget to webhooks; the cheap single-call health jobs still run.
-    expect(sent.some((m) => m.type === "backfill-registered-repos")).toBe(false);
+    expect(sent.some((m) => m.type === "backfill-registered-repos")).toBe(
+      false,
+    );
     expect(sent.some((m) => m.type === "agent-regate-sweep")).toBe(false);
     expect(sent.some((m) => m.type === "repair-data-fidelity")).toBe(true);
-    expect(sent.some((m) => m.type === "refresh-installation-health")).toBe(true);
+    expect(sent.some((m) => m.type === "refresh-installation-health")).toBe(
+      true,
+    );
   });
 
   it("enqueues the open-data backfill on a :30 tick when there is REST headroom (#audit-rate-headroom)", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
-      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
     });
     // Ample REST budget (remaining 4000 > MAINTENANCE_RESERVED_HEADROOM=150) → the throttle does NOT engage.
-    await recordGitHubRateLimitObservation(env, { repoFullName: "owner/repo", resource: "rest", path: "/x", statusCode: 200, limitValue: 5000, remaining: 4000, resetAt: new Date(Date.now() + 600_000).toISOString(), observedAt: new Date().toISOString() });
+    await recordGitHubRateLimitObservation(env, {
+      repoFullName: "owner/repo",
+      resource: "rest",
+      path: "/x",
+      statusCode: 200,
+      limitValue: 5000,
+      remaining: 4000,
+      resetAt: new Date(Date.now() + 600_000).toISOString(),
+      observedAt: new Date().toISOString(),
+    });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-05-25T05:30:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:30:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
     expect(sent.some((m) => m.type === "backfill-registered-repos")).toBe(true);
     expect(sent.some((m) => m.type === "agent-regate-sweep")).toBe(true);
@@ -598,16 +889,29 @@ describe("worker entrypoint", () => {
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
     // refresh-registry is absent: a fresh self-host instance (this test's default createTestEnv) has no repo
     // opted into the experimental gittensor plugin, so the job is never enqueued (#experimental-gittensor-plugin)
     // — see "re-includes refresh-registry once a repo opts into the experimental gittensor plugin" below.
     expect(sent).toEqual([
-      { type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: true },
+      {
+        type: "anchor-decision-ledger",
+        requestedBy: "schedule",
+        isHourly: true,
+      },
+      { type: "sample-service-status", requestedBy: "schedule" },
       { type: "agent-regate-sweep", requestedBy: "schedule" },
-      { type: "backfill-registered-repos", requestedBy: "schedule", mode: "light" },
+      {
+        type: "backfill-registered-repos",
+        requestedBy: "schedule",
+        mode: "light",
+      },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
       { type: "backlog-convergence-sweep", requestedBy: "schedule" },
@@ -631,17 +935,35 @@ describe("worker entrypoint", () => {
         },
       } as unknown as Queue,
     });
-    await (env.DB as unknown as { prepare: (s: string) => { bind: (...v: unknown[]) => { run: () => Promise<unknown> } } })
-      .prepare("INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 0)")
+    await (
+      env.DB as unknown as {
+        prepare: (s: string) => {
+          bind: (...v: unknown[]) => { run: () => Promise<unknown> };
+        };
+      }
+    )
+      .prepare(
+        "INSERT INTO repositories (full_name, owner, name, is_installed, is_registered) VALUES (?, ?, ?, 1, 0)",
+      )
       .bind("JSONbored/loopover", "JSONbored", "loopover")
       .run();
-    await (await import("../../src/signals/focus-manifest-loader")).upsertRepoFocusManifest(env, "JSONbored/loopover", { experimental: { gittensor: true } });
+    await (
+      await import("../../src/signals/focus-manifest-loader")
+    ).upsertRepoFocusManifest(env, "JSONbored/loopover", {
+      experimental: { gittensor: true },
+    });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
-    expect(sent.some((message) => message.type === "refresh-registry")).toBe(true);
+    expect(sent.some((message) => message.type === "refresh-registry")).toBe(
+      true,
+    );
   });
 
   it("always enqueues refresh-registry on a cloud (non-self-hosted) runtime, regardless of gittensor opt-in (#experimental-gittensor-plugin)", async () => {
@@ -656,12 +978,18 @@ describe("worker entrypoint", () => {
     delete env.SELFHOST_TRANSIENT_CACHE;
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
     // Cloud never consults gittensorEnabledRepoFullNames at all — the `!selfHostedReviews` short-circuit
     // fires before the opted-in check, exactly like before this narrowing existed.
-    expect(sent.some((message) => message.type === "refresh-registry")).toBe(true);
+    expect(sent.some((message) => message.type === "refresh-registry")).toBe(
+      true,
+    );
   });
 
   it("enqueues full-sync scheduled work every six hours", async () => {
@@ -675,14 +1003,27 @@ describe("worker entrypoint", () => {
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T06:00:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T06:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
     // refresh-registry is absent here too — see the comment on "enqueues hourly refreshes..." above.
     expect(sent).toEqual([
-      { type: "anchor-decision-ledger", requestedBy: "schedule", isHourly: true },
+      {
+        type: "anchor-decision-ledger",
+        requestedBy: "schedule",
+        isHourly: true,
+      },
+      { type: "sample-service-status", requestedBy: "schedule" },
       { type: "agent-regate-sweep", requestedBy: "schedule" },
-      { type: "backfill-registered-repos", requestedBy: "schedule", mode: "full" },
+      {
+        type: "backfill-registered-repos",
+        requestedBy: "schedule",
+        mode: "full",
+      },
       { type: "repair-data-fidelity", requestedBy: "schedule" },
       { type: "refresh-installation-health", requestedBy: "schedule" },
       { type: "backlog-convergence-sweep", requestedBy: "schedule" },
@@ -721,13 +1062,18 @@ describe("worker entrypoint", () => {
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-05-25T06:00:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T06:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
     // The enqueued SET is unchanged — jitter only spreads run_after timing, never which jobs are sent.
     // refresh-registry is absent here too — see the comment on "enqueues hourly refreshes..." above.
     expect(sent.map((s) => s.message.type)).toEqual([
       "anchor-decision-ledger",
+      "sample-service-status",
       "agent-regate-sweep",
       "backfill-registered-repos",
       "repair-data-fidelity",
@@ -752,12 +1098,16 @@ describe("worker entrypoint", () => {
     }
     // The priority sweep specifically stays immediate; at least one periodic job is actually deferred, so a
     // top-of-6h tick no longer fires every heavy fan-out parent in the same instant.
-    expect(sent.find((s) => s.message.type === "agent-regate-sweep")?.delaySeconds).toBeUndefined();
+    expect(
+      sent.find((s) => s.message.type === "agent-regate-sweep")?.delaySeconds,
+    ).toBeUndefined();
     expect(sent.some((s) => (s.delaySeconds ?? 0) > 0)).toBe(true);
   });
 
   it("enqueues the ops-alerts job hourly ONLY when LOOPOVER_REVIEW_OPS is ON (flag-OFF is byte-identical)", async () => {
-    const sentFor = async (opsFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+    const sentFor = async (
+      opsFlag?: string,
+    ): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
         ...(opsFlag === undefined ? {} : { LOOPOVER_REVIEW_OPS: opsFlag }),
@@ -768,17 +1118,25 @@ describe("worker entrypoint", () => {
         } as unknown as Queue,
       });
       const waitUntil: Promise<unknown>[] = [];
-      await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+      await worker.scheduled(
+        controllerFor("2026-05-25T05:00:00.000Z"),
+        env,
+        executionContext(waitUntil),
+      );
       await Promise.all(waitUntil);
       return sent;
     };
 
     // Flag OFF (default) → no ops-alerts job; the enqueued set is unchanged from today.
     expect((await sentFor()).some((m) => m.type === "ops-alerts")).toBe(false);
-    expect((await sentFor("false")).some((m) => m.type === "ops-alerts")).toBe(false);
+    expect((await sentFor("false")).some((m) => m.type === "ops-alerts")).toBe(
+      false,
+    );
     // Flag ON → exactly one ops-alerts job, enqueued in the hourly window.
     const on = await sentFor("true");
-    expect(on.filter((m) => m.type === "ops-alerts")).toEqual([{ type: "ops-alerts", requestedBy: "schedule" }]);
+    expect(on.filter((m) => m.type === "ops-alerts")).toEqual([
+      { type: "ops-alerts", requestedBy: "schedule" },
+    ]);
   });
 
   it("does NOT enqueue ops-alerts outside the hourly window even when LOOPOVER_REVIEW_OPS is ON", async () => {
@@ -792,7 +1150,11 @@ describe("worker entrypoint", () => {
       } as unknown as Queue,
     });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-05-25T05:15:00.000Z"), env, executionContext(waitUntil)); // non-hourly
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:15:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    ); // non-hourly
     await Promise.all(waitUntil);
     expect(sent.some((m) => m.type === "ops-alerts")).toBe(false);
   });
@@ -807,11 +1169,19 @@ describe("worker entrypoint", () => {
       } as unknown as Queue,
       LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/loopover",
     });
-    await upsertRepoFocusManifest(env, "JSONbored/loopover", { ops: { enabled: true } });
+    await upsertRepoFocusManifest(env, "JSONbored/loopover", {
+      ops: { enabled: true },
+    });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
-    expect(sent.filter((m) => m.type === "ops-alerts")).toEqual([{ type: "ops-alerts", requestedBy: "schedule" }]);
+    expect(sent.filter((m) => m.type === "ops-alerts")).toEqual([
+      { type: "ops-alerts", requestedBy: "schedule" },
+    ]);
   });
 
   it("a present ops manifest override suppresses ops-alerts hourly even when LOOPOVER_REVIEW_OPS is ON (#6275)", async () => {
@@ -825,18 +1195,28 @@ describe("worker entrypoint", () => {
       } as unknown as Queue,
       LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/loopover",
     });
-    await upsertRepoFocusManifest(env, "JSONbored/loopover", { ops: { enabled: false } });
+    await upsertRepoFocusManifest(env, "JSONbored/loopover", {
+      ops: { enabled: false },
+    });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
     expect(sent.some((m) => m.type === "ops-alerts")).toBe(false);
   });
 
   it("enqueues sync-brokered-installed-repos hourly ONLY in broker mode (ORB_ENROLLMENT_SECRET set, flag-OFF is byte-identical)", async () => {
-    const sentFor = async (enrollmentSecret?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+    const sentFor = async (
+      enrollmentSecret?: string,
+    ): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        ...(enrollmentSecret === undefined ? {} : { ORB_ENROLLMENT_SECRET: enrollmentSecret }),
+        ...(enrollmentSecret === undefined
+          ? {}
+          : { ORB_ENROLLMENT_SECRET: enrollmentSecret }),
         JOBS: {
           async send(message: import("../../src/types").JobMessage) {
             sent.push(message);
@@ -844,16 +1224,26 @@ describe("worker entrypoint", () => {
         } as unknown as Queue,
       });
       const waitUntil: Promise<unknown>[] = [];
-      await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+      await worker.scheduled(
+        controllerFor("2026-05-25T05:00:00.000Z"),
+        env,
+        executionContext(waitUntil),
+      );
       await Promise.all(waitUntil);
       return sent;
     };
 
     // Non-brokered (default) → no sync job; the enqueued set is unchanged from today.
-    expect((await sentFor()).some((m) => m.type === "sync-brokered-installed-repos")).toBe(false);
+    expect(
+      (await sentFor()).some((m) => m.type === "sync-brokered-installed-repos"),
+    ).toBe(false);
     // Brokered (an enrollment secret is configured) → exactly one sync job, enqueued in the hourly window.
     const brokered = await sentFor("orbsec_x");
-    expect(brokered.filter((m) => m.type === "sync-brokered-installed-repos")).toEqual([{ type: "sync-brokered-installed-repos", requestedBy: "schedule" }]);
+    expect(
+      brokered.filter((m) => m.type === "sync-brokered-installed-repos"),
+    ).toEqual([
+      { type: "sync-brokered-installed-repos", requestedBy: "schedule" },
+    ]);
   });
 
   it("does NOT enqueue sync-brokered-installed-repos outside the hourly window even in broker mode", async () => {
@@ -867,16 +1257,26 @@ describe("worker entrypoint", () => {
       } as unknown as Queue,
     });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-05-25T05:15:00.000Z"), env, executionContext(waitUntil)); // non-hourly
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:15:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    ); // non-hourly
     await Promise.all(waitUntil);
-    expect(sent.some((m) => m.type === "sync-brokered-installed-repos")).toBe(false);
+    expect(sent.some((m) => m.type === "sync-brokered-installed-repos")).toBe(
+      false,
+    );
   });
 
   it("enqueues the sweep-liveness-watchdog job hourly ONLY when LOOPOVER_SWEEP_WATCHDOG is ON (flag-OFF is byte-identical)", async () => {
-    const sentFor = async (watchdogFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+    const sentFor = async (
+      watchdogFlag?: string,
+    ): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        ...(watchdogFlag === undefined ? {} : { LOOPOVER_SWEEP_WATCHDOG: watchdogFlag }),
+        ...(watchdogFlag === undefined
+          ? {}
+          : { LOOPOVER_SWEEP_WATCHDOG: watchdogFlag }),
         JOBS: {
           async send(message: import("../../src/types").JobMessage) {
             sent.push(message);
@@ -884,21 +1284,35 @@ describe("worker entrypoint", () => {
         } as unknown as Queue,
       });
       const waitUntil: Promise<unknown>[] = [];
-      await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+      await worker.scheduled(
+        controllerFor("2026-05-25T05:00:00.000Z"),
+        env,
+        executionContext(waitUntil),
+      );
       await Promise.all(waitUntil);
       return sent;
     };
 
     // Flag OFF (default) → no sweep-liveness-watchdog job; the enqueued set is unchanged from today.
-    expect((await sentFor()).some((m) => m.type === "sweep-liveness-watchdog")).toBe(false);
-    expect((await sentFor("false")).some((m) => m.type === "sweep-liveness-watchdog")).toBe(false);
+    expect(
+      (await sentFor()).some((m) => m.type === "sweep-liveness-watchdog"),
+    ).toBe(false);
+    expect(
+      (await sentFor("false")).some(
+        (m) => m.type === "sweep-liveness-watchdog",
+      ),
+    ).toBe(false);
     // Flag ON → exactly one sweep-liveness-watchdog job, enqueued in the hourly window.
     const on = await sentFor("true");
-    expect(on.filter((m) => m.type === "sweep-liveness-watchdog")).toEqual([{ type: "sweep-liveness-watchdog", requestedBy: "schedule" }]);
+    expect(on.filter((m) => m.type === "sweep-liveness-watchdog")).toEqual([
+      { type: "sweep-liveness-watchdog", requestedBy: "schedule" },
+    ]);
   });
 
   it("enqueues the loop-escalation-sweep job hourly ONLY when LOOPOVER_LOOP_ESCALATION is ON (flag-OFF is byte-identical)", async () => {
-    const sentFor = async (flag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+    const sentFor = async (
+      flag?: string,
+    ): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
         ...(flag === undefined ? {} : { LOOPOVER_LOOP_ESCALATION: flag }),
@@ -909,15 +1323,25 @@ describe("worker entrypoint", () => {
         } as unknown as Queue,
       });
       const waitUntil: Promise<unknown>[] = [];
-      await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+      await worker.scheduled(
+        controllerFor("2026-05-25T05:00:00.000Z"),
+        env,
+        executionContext(waitUntil),
+      );
       await Promise.all(waitUntil);
       return sent;
     };
 
-    expect((await sentFor()).some((m) => m.type === "loop-escalation-sweep")).toBe(false);
-    expect((await sentFor("false")).some((m) => m.type === "loop-escalation-sweep")).toBe(false);
+    expect(
+      (await sentFor()).some((m) => m.type === "loop-escalation-sweep"),
+    ).toBe(false);
+    expect(
+      (await sentFor("false")).some((m) => m.type === "loop-escalation-sweep"),
+    ).toBe(false);
     const on = await sentFor("true");
-    expect(on.filter((m) => m.type === "loop-escalation-sweep")).toEqual([{ type: "loop-escalation-sweep", requestedBy: "schedule" }]);
+    expect(on.filter((m) => m.type === "loop-escalation-sweep")).toEqual([
+      { type: "loop-escalation-sweep", requestedBy: "schedule" },
+    ]);
   });
 
   it("does NOT enqueue sweep-liveness-watchdog outside the hourly window even when LOOPOVER_SWEEP_WATCHDOG is ON", async () => {
@@ -931,13 +1355,20 @@ describe("worker entrypoint", () => {
       } as unknown as Queue,
     });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-05-25T05:15:00.000Z"), env, executionContext(waitUntil)); // non-hourly
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:15:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    ); // non-hourly
     await Promise.all(waitUntil);
     expect(sent.some((m) => m.type === "sweep-liveness-watchdog")).toBe(false);
   });
 
   it("enqueues the reconcile-open-prs job every 10 minutes ONLY when LOOPOVER_PR_RECONCILIATION is ON (flag-OFF is byte-identical)", async () => {
-    const sentFor = async (flag?: string, isoTime = "2026-05-25T05:10:00.000Z"): Promise<Array<import("../../src/types").JobMessage>> => {
+    const sentFor = async (
+      flag?: string,
+      isoTime = "2026-05-25T05:10:00.000Z",
+    ): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
         ...(flag === undefined ? {} : { LOOPOVER_PR_RECONCILIATION: flag }),
@@ -948,17 +1379,27 @@ describe("worker entrypoint", () => {
         } as unknown as Queue,
       });
       const waitUntil: Promise<unknown>[] = [];
-      await worker.scheduled(controllerFor(isoTime), env, executionContext(waitUntil));
+      await worker.scheduled(
+        controllerFor(isoTime),
+        env,
+        executionContext(waitUntil),
+      );
       await Promise.all(waitUntil);
       return sent;
     };
 
     // Flag OFF (default) → no reconcile-open-prs job; the enqueued set is unchanged from today.
-    expect((await sentFor()).some((m) => m.type === "reconcile-open-prs")).toBe(false);
-    expect((await sentFor("false")).some((m) => m.type === "reconcile-open-prs")).toBe(false);
+    expect((await sentFor()).some((m) => m.type === "reconcile-open-prs")).toBe(
+      false,
+    );
+    expect(
+      (await sentFor("false")).some((m) => m.type === "reconcile-open-prs"),
+    ).toBe(false);
     // Flag ON, on a 10-minute boundary → exactly one reconcile-open-prs job.
     const on = await sentFor("true");
-    expect(on.filter((m) => m.type === "reconcile-open-prs")).toEqual([{ type: "reconcile-open-prs", requestedBy: "schedule" }]);
+    expect(on.filter((m) => m.type === "reconcile-open-prs")).toEqual([
+      { type: "reconcile-open-prs", requestedBy: "schedule" },
+    ]);
   });
 
   it("does NOT enqueue reconcile-open-prs outside the 10-minute window even when LOOPOVER_PR_RECONCILIATION is ON", async () => {
@@ -972,16 +1413,25 @@ describe("worker entrypoint", () => {
       } as unknown as Queue,
     });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil)); // not a 10-minute boundary
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:14:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    ); // not a 10-minute boundary
     await Promise.all(waitUntil);
     expect(sent.some((m) => m.type === "reconcile-open-prs")).toBe(false);
   });
 
   it("enqueues the reconcile-active-review-tracking job every 10 minutes ONLY when LOOPOVER_ACTIVE_REVIEW_RECONCILIATION is ON (flag-OFF is byte-identical)", async () => {
-    const sentFor = async (flag?: string, isoTime = "2026-05-25T05:10:00.000Z"): Promise<Array<import("../../src/types").JobMessage>> => {
+    const sentFor = async (
+      flag?: string,
+      isoTime = "2026-05-25T05:10:00.000Z",
+    ): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        ...(flag === undefined ? {} : { LOOPOVER_ACTIVE_REVIEW_RECONCILIATION: flag }),
+        ...(flag === undefined
+          ? {}
+          : { LOOPOVER_ACTIVE_REVIEW_RECONCILIATION: flag }),
         JOBS: {
           async send(message: import("../../src/types").JobMessage) {
             sent.push(message);
@@ -989,17 +1439,33 @@ describe("worker entrypoint", () => {
         } as unknown as Queue,
       });
       const waitUntil: Promise<unknown>[] = [];
-      await worker.scheduled(controllerFor(isoTime), env, executionContext(waitUntil));
+      await worker.scheduled(
+        controllerFor(isoTime),
+        env,
+        executionContext(waitUntil),
+      );
       await Promise.all(waitUntil);
       return sent;
     };
 
     // Flag OFF (default) → no reconcile-active-review-tracking job; the enqueued set is unchanged from today.
-    expect((await sentFor()).some((m) => m.type === "reconcile-active-review-tracking")).toBe(false);
-    expect((await sentFor("false")).some((m) => m.type === "reconcile-active-review-tracking")).toBe(false);
+    expect(
+      (await sentFor()).some(
+        (m) => m.type === "reconcile-active-review-tracking",
+      ),
+    ).toBe(false);
+    expect(
+      (await sentFor("false")).some(
+        (m) => m.type === "reconcile-active-review-tracking",
+      ),
+    ).toBe(false);
     // Flag ON, on a 10-minute boundary → exactly one reconcile-active-review-tracking job.
     const on = await sentFor("true");
-    expect(on.filter((m) => m.type === "reconcile-active-review-tracking")).toEqual([{ type: "reconcile-active-review-tracking", requestedBy: "schedule" }]);
+    expect(
+      on.filter((m) => m.type === "reconcile-active-review-tracking"),
+    ).toEqual([
+      { type: "reconcile-active-review-tracking", requestedBy: "schedule" },
+    ]);
   });
 
   it("does NOT enqueue reconcile-active-review-tracking outside the 10-minute window even when LOOPOVER_ACTIVE_REVIEW_RECONCILIATION is ON", async () => {
@@ -1013,38 +1479,80 @@ describe("worker entrypoint", () => {
       } as unknown as Queue,
     });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil)); // not a 10-minute boundary
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:14:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    ); // not a 10-minute boundary
     await Promise.all(waitUntil);
-    expect(sent.some((m) => m.type === "reconcile-active-review-tracking")).toBe(false);
+    expect(
+      sent.some((m) => m.type === "reconcile-active-review-tracking"),
+    ).toBe(false);
   });
 
   it("enqueues federated-peer-sync every 10 minutes ONLY when the loopover self-repo manifest opts in (#9148) — absent-manifest default is byte-identical", async () => {
-    const sentFor = async (enabled?: boolean, isoTime = "2026-05-25T05:10:00.000Z"): Promise<Array<import("../../src/types").JobMessage>> => {
+    const sentFor = async (
+      enabled?: boolean,
+      isoTime = "2026-05-25T05:10:00.000Z",
+    ): Promise<Array<import("../../src/types").JobMessage>> => {
       clearFederatedIntelligenceManifestOverrideCacheForTest(); // each sub-case below is a fresh env; don't let the prior case's cached override leak in
       const sent: Array<import("../../src/types").JobMessage> = [];
-      const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/loopover", JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue });
-      if (enabled !== undefined) await upsertRepoFocusManifest(env, "JSONbored/loopover", { federatedIntelligence: { enabled } });
+      const env = createTestEnv({
+        LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/loopover",
+        JOBS: {
+          async send(message: import("../../src/types").JobMessage) {
+            sent.push(message);
+          },
+        } as unknown as Queue,
+      });
+      if (enabled !== undefined)
+        await upsertRepoFocusManifest(env, "JSONbored/loopover", {
+          federatedIntelligence: { enabled },
+        });
       const waitUntil: Promise<unknown>[] = [];
-      await worker.scheduled(controllerFor(isoTime), env, executionContext(waitUntil));
+      await worker.scheduled(
+        controllerFor(isoTime),
+        env,
+        executionContext(waitUntil),
+      );
       await Promise.all(waitUntil);
       return sent;
     };
 
     // No manifest block at all (absent federatedIntelligence, the fleet-wide default) → never enqueued.
-    expect((await sentFor(undefined)).some((m) => m.type === "federated-peer-sync")).toBe(false);
+    expect(
+      (await sentFor(undefined)).some((m) => m.type === "federated-peer-sync"),
+    ).toBe(false);
     // Manifest present but explicitly disabled → still never enqueued.
-    expect((await sentFor(false)).some((m) => m.type === "federated-peer-sync")).toBe(false);
+    expect(
+      (await sentFor(false)).some((m) => m.type === "federated-peer-sync"),
+    ).toBe(false);
     // Opted in, on a 10-minute boundary → exactly one federated-peer-sync job.
     const on = await sentFor(true);
-    expect(on.filter((m) => m.type === "federated-peer-sync")).toEqual([{ type: "federated-peer-sync", requestedBy: "schedule" }]);
+    expect(on.filter((m) => m.type === "federated-peer-sync")).toEqual([
+      { type: "federated-peer-sync", requestedBy: "schedule" },
+    ]);
   });
 
   it("does NOT enqueue federated-peer-sync outside the 10-minute window even when opted in", async () => {
     const sent: Array<import("../../src/types").JobMessage> = [];
-    const env = createTestEnv({ LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/loopover", JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue });
-    await upsertRepoFocusManifest(env, "JSONbored/loopover", { federatedIntelligence: { enabled: true } });
+    const env = createTestEnv({
+      LOOPOVER_DRIFT_ISSUE_REPO: "JSONbored/loopover",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await upsertRepoFocusManifest(env, "JSONbored/loopover", {
+      federatedIntelligence: { enabled: true },
+    });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil)); // not a 10-minute boundary
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:14:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    ); // not a 10-minute boundary
     await Promise.all(waitUntil);
     expect(sent.some((m) => m.type === "federated-peer-sync")).toBe(false);
   });
@@ -1078,16 +1586,20 @@ describe("worker entrypoint", () => {
     expect((await sentFor("false")).some((m) => m.type === "selftune")).toBe(
       false,
     );
-    expect((await sentFor("true")).filter((m) => m.type === "selftune")).toEqual([
-      { type: "selftune", requestedBy: "schedule" },
-    ]);
+    expect(
+      (await sentFor("true")).filter((m) => m.type === "selftune"),
+    ).toEqual([{ type: "selftune", requestedBy: "schedule" }]);
   });
 
   it("enqueues the satisfaction-floor-loosening tick hourly only when SATISFACTION_FLOOR_AUTOTUNE_ENABLED is ON (#8158)", async () => {
-    const sentFor = async (flag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+    const sentFor = async (
+      flag?: string,
+    ): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        ...(flag === undefined ? {} : ({ SATISFACTION_FLOOR_AUTOTUNE_ENABLED: flag } as Partial<Env>)),
+        ...(flag === undefined
+          ? {}
+          : ({ SATISFACTION_FLOOR_AUTOTUNE_ENABLED: flag } as Partial<Env>)),
         JOBS: {
           async send(message: import("../../src/types").JobMessage) {
             sent.push(message);
@@ -1095,30 +1607,52 @@ describe("worker entrypoint", () => {
         } as unknown as Queue,
       });
       const waitUntil: Promise<unknown>[] = [];
-      await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil));
+      await worker.scheduled(
+        controllerFor("2026-05-25T05:00:00.000Z"),
+        env,
+        executionContext(waitUntil),
+      );
       await Promise.all(waitUntil);
       return sent;
     };
 
     // createTestEnv defaults the flag to "false" — the undefined case exercises exactly that shipped default.
-    expect((await sentFor()).some((m) => m.type === "satisfaction-floor-loosening")).toBe(false);
-    expect((await sentFor("true")).filter((m) => m.type === "satisfaction-floor-loosening")).toEqual([
+    expect(
+      (await sentFor()).some((m) => m.type === "satisfaction-floor-loosening"),
+    ).toBe(false);
+    expect(
+      (await sentFor("true")).filter(
+        (m) => m.type === "satisfaction-floor-loosening",
+      ),
+    ).toEqual([
       { type: "satisfaction-floor-loosening", requestedBy: "schedule" },
     ]);
     // Off the hourly boundary, flag-ON still enqueues nothing.
     const sent: Array<import("../../src/types").JobMessage> = [];
     const env = createTestEnv({
       SATISFACTION_FLOOR_AUTOTUNE_ENABLED: "true" as never,
-      JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
     });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-05-25T05:14:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:14:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
-    expect(sent.some((m) => m.type === "satisfaction-floor-loosening")).toBe(false);
+    expect(sent.some((m) => m.type === "satisfaction-floor-loosening")).toBe(
+      false,
+    );
   });
 
   it("enqueues the rag-index-repo fan-out in the full-sync window ONLY when LOOPOVER_REVIEW_RAG is ON (flag-OFF is byte-identical)", async () => {
-    const sentFor = async (ragFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+    const sentFor = async (
+      ragFlag?: string,
+    ): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
         ...(ragFlag === undefined ? {} : { LOOPOVER_REVIEW_RAG: ragFlag }),
@@ -1129,17 +1663,27 @@ describe("worker entrypoint", () => {
         } as unknown as Queue,
       });
       const waitUntil: Promise<unknown>[] = [];
-      await worker.scheduled(controllerFor("2026-05-25T06:00:00.000Z"), env, executionContext(waitUntil)); // full-sync window
+      await worker.scheduled(
+        controllerFor("2026-05-25T06:00:00.000Z"),
+        env,
+        executionContext(waitUntil),
+      ); // full-sync window
       await Promise.all(waitUntil);
       return sent;
     };
 
     // Flag OFF (default) → no rag-index-repo job; the enqueued set is unchanged from today.
-    expect((await sentFor()).some((m) => m.type === "rag-index-repo")).toBe(false);
-    expect((await sentFor("false")).some((m) => m.type === "rag-index-repo")).toBe(false);
+    expect((await sentFor()).some((m) => m.type === "rag-index-repo")).toBe(
+      false,
+    );
+    expect(
+      (await sentFor("false")).some((m) => m.type === "rag-index-repo"),
+    ).toBe(false);
     // Flag ON → exactly one rag-index-repo fan-out job, enqueued in the full-sync window.
     const on = await sentFor("true");
-    expect(on.filter((m) => m.type === "rag-index-repo")).toEqual([{ type: "rag-index-repo", requestedBy: "schedule" }]);
+    expect(on.filter((m) => m.type === "rag-index-repo")).toEqual([
+      { type: "rag-index-repo", requestedBy: "schedule" },
+    ]);
   });
 
   it("does NOT enqueue rag-index-repo outside the full-sync window even when LOOPOVER_REVIEW_RAG is ON", async () => {
@@ -1153,7 +1697,11 @@ describe("worker entrypoint", () => {
       } as unknown as Queue,
     });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-05-25T05:00:00.000Z"), env, executionContext(waitUntil)); // hourly but NOT full-sync
+    await worker.scheduled(
+      controllerFor("2026-05-25T05:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    ); // hourly but NOT full-sync
     await Promise.all(waitUntil);
     expect(sent.some((m) => m.type === "rag-index-repo")).toBe(false);
   });
@@ -1169,10 +1717,18 @@ describe("worker entrypoint", () => {
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-06-01T09:00:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-06-01T09:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
-    expect(sent).toEqual(expect.arrayContaining([{ type: "repo-doc-refresh-sweep", requestedBy: "schedule" }]));
+    expect(sent).toEqual(
+      expect.arrayContaining([
+        { type: "repo-doc-refresh-sweep", requestedBy: "schedule" },
+      ]),
+    );
   });
 
   it("does NOT enqueue the repo-doc refresh sweep outside the 09:00 UTC window", async () => {
@@ -1186,7 +1742,11 @@ describe("worker entrypoint", () => {
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-06-01T10:00:00.000Z"), env, executionContext(waitUntil)); // hourly but not 09:00
+    await worker.scheduled(
+      controllerFor("2026-06-01T10:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    ); // hourly but not 09:00
     await Promise.all(waitUntil);
 
     expect(sent.some((m) => m.type === "repo-doc-refresh-sweep")).toBe(false);
@@ -1196,37 +1756,111 @@ describe("worker entrypoint", () => {
     const send = (over: Record<string, unknown>, when: string) => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+        JOBS: {
+          async send(message: import("../../src/types").JobMessage) {
+            sent.push(message);
+          },
+        } as unknown as Queue,
         ...over,
       });
       const waitUntil: Promise<unknown>[] = [];
-      return worker.scheduled(controllerFor(when), env, executionContext(waitUntil)).then(() => Promise.all(waitUntil)).then(() => sent);
+      return worker
+        .scheduled(controllerFor(when), env, executionContext(waitUntil))
+        .then(() => Promise.all(waitUntil))
+        .then(() => sent);
     };
-    const selfhost = { SELFHOST_TRANSIENT_CACHE: {} as never, LOOPOVER_DECISION_AUDIT: "true" };
+    const selfhost = {
+      SELFHOST_TRANSIENT_CACHE: {} as never,
+      LOOPOVER_DECISION_AUDIT: "true",
+    };
     // 2026-06-02 is a Tuesday.
-    expect((await send(selfhost, "2026-06-02T08:00:00.000Z")).some((m) => m.type === "decision-audit-sample")).toBe(true);
+    expect(
+      (await send(selfhost, "2026-06-02T08:00:00.000Z")).some(
+        (m) => m.type === "decision-audit-sample",
+      ),
+    ).toBe(true);
     // Wrong hour, wrong day, flag off, and cloud runtime each suppress the enqueue.
-    expect((await send(selfhost, "2026-06-02T09:00:00.000Z")).some((m) => m.type === "decision-audit-sample")).toBe(false);
-    expect((await send(selfhost, "2026-06-01T08:00:00.000Z")).some((m) => m.type === "decision-audit-sample")).toBe(false);
-    expect((await send({ ...selfhost, LOOPOVER_DECISION_AUDIT: "false" }, "2026-06-02T08:00:00.000Z")).some((m) => m.type === "decision-audit-sample")).toBe(false);
-    expect((await send({ LOOPOVER_DECISION_AUDIT: "true", SELFHOST_TRANSIENT_CACHE: undefined }, "2026-06-02T08:00:00.000Z")).some((m) => m.type === "decision-audit-sample")).toBe(false);
+    expect(
+      (await send(selfhost, "2026-06-02T09:00:00.000Z")).some(
+        (m) => m.type === "decision-audit-sample",
+      ),
+    ).toBe(false);
+    expect(
+      (await send(selfhost, "2026-06-01T08:00:00.000Z")).some(
+        (m) => m.type === "decision-audit-sample",
+      ),
+    ).toBe(false);
+    expect(
+      (
+        await send(
+          { ...selfhost, LOOPOVER_DECISION_AUDIT: "false" },
+          "2026-06-02T08:00:00.000Z",
+        )
+      ).some((m) => m.type === "decision-audit-sample"),
+    ).toBe(false);
+    expect(
+      (
+        await send(
+          {
+            LOOPOVER_DECISION_AUDIT: "true",
+            SELFHOST_TRANSIENT_CACHE: undefined,
+          },
+          "2026-06-02T08:00:00.000Z",
+        )
+      ).some((m) => m.type === "decision-audit-sample"),
+    ).toBe(false);
   });
 
   it("#8835: enqueues the risk-control recalibration daily at 07:00 UTC, flag-ON, on a self-host", async () => {
     const send = (over: Record<string, unknown>, when: string) => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        JOBS: { async send(message: import("../../src/types").JobMessage) { sent.push(message); } } as unknown as Queue,
+        JOBS: {
+          async send(message: import("../../src/types").JobMessage) {
+            sent.push(message);
+          },
+        } as unknown as Queue,
         ...over,
       });
       const waitUntil: Promise<unknown>[] = [];
-      return worker.scheduled(controllerFor(when), env, executionContext(waitUntil)).then(() => Promise.all(waitUntil)).then(() => sent);
+      return worker
+        .scheduled(controllerFor(when), env, executionContext(waitUntil))
+        .then(() => Promise.all(waitUntil))
+        .then(() => sent);
     };
-    const selfhost = { SELFHOST_TRANSIENT_CACHE: {} as never, LOOPOVER_RISK_CONTROL: "true" };
-    expect((await send(selfhost, "2026-06-03T07:00:00.000Z")).some((m) => m.type === "risk-control-recalibrate")).toBe(true);
-    expect((await send(selfhost, "2026-06-03T08:00:00.000Z")).some((m) => m.type === "risk-control-recalibrate")).toBe(false);
-    expect((await send({ ...selfhost, LOOPOVER_RISK_CONTROL: "0" }, "2026-06-03T07:00:00.000Z")).some((m) => m.type === "risk-control-recalibrate")).toBe(false);
-    expect((await send({ LOOPOVER_RISK_CONTROL: "true", SELFHOST_TRANSIENT_CACHE: undefined }, "2026-06-03T07:00:00.000Z")).some((m) => m.type === "risk-control-recalibrate")).toBe(false);
+    const selfhost = {
+      SELFHOST_TRANSIENT_CACHE: {} as never,
+      LOOPOVER_RISK_CONTROL: "true",
+    };
+    expect(
+      (await send(selfhost, "2026-06-03T07:00:00.000Z")).some(
+        (m) => m.type === "risk-control-recalibrate",
+      ),
+    ).toBe(true);
+    expect(
+      (await send(selfhost, "2026-06-03T08:00:00.000Z")).some(
+        (m) => m.type === "risk-control-recalibrate",
+      ),
+    ).toBe(false);
+    expect(
+      (
+        await send(
+          { ...selfhost, LOOPOVER_RISK_CONTROL: "0" },
+          "2026-06-03T07:00:00.000Z",
+        )
+      ).some((m) => m.type === "risk-control-recalibrate"),
+    ).toBe(false);
+    expect(
+      (
+        await send(
+          {
+            LOOPOVER_RISK_CONTROL: "true",
+            SELFHOST_TRANSIENT_CACHE: undefined,
+          },
+          "2026-06-03T07:00:00.000Z",
+        )
+      ).some((m) => m.type === "risk-control-recalibrate"),
+    ).toBe(false);
   });
 
   it("enqueues weekly value report generation during the Monday report window", async () => {
@@ -1240,22 +1874,35 @@ describe("worker entrypoint", () => {
     });
     const waitUntil: Promise<unknown>[] = [];
 
-    await worker.scheduled(controllerFor("2026-06-01T12:00:00.000Z"), env, executionContext(waitUntil));
+    await worker.scheduled(
+      controllerFor("2026-06-01T12:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    );
     await Promise.all(waitUntil);
 
     expect(sent).toEqual(
       expect.arrayContaining([
         { type: "rollup-product-usage", requestedBy: "schedule", days: 7 },
-        { type: "generate-weekly-value-report", requestedBy: "schedule", variant: "operator", days: 7 },
+        {
+          type: "generate-weekly-value-report",
+          requestedBy: "schedule",
+          variant: "operator",
+          days: 7,
+        },
       ]),
     );
   });
 
   it("enqueues the maintainer recap digest on the default weekly cadence (Monday 14:00 UTC) ONLY when LOOPOVER_MAINTAINER_RECAP is ON (#2248, flag-OFF is byte-identical)", async () => {
-    const sentFor = async (recapFlag?: string): Promise<Array<import("../../src/types").JobMessage>> => {
+    const sentFor = async (
+      recapFlag?: string,
+    ): Promise<Array<import("../../src/types").JobMessage>> => {
       const sent: Array<import("../../src/types").JobMessage> = [];
       const env = createTestEnv({
-        ...(recapFlag === undefined ? {} : { LOOPOVER_MAINTAINER_RECAP: recapFlag }),
+        ...(recapFlag === undefined
+          ? {}
+          : { LOOPOVER_MAINTAINER_RECAP: recapFlag }),
         JOBS: {
           async send(message: import("../../src/types").JobMessage) {
             sent.push(message);
@@ -1263,17 +1910,29 @@ describe("worker entrypoint", () => {
         } as unknown as Queue,
       });
       const waitUntil: Promise<unknown>[] = [];
-      await worker.scheduled(controllerFor("2026-06-01T14:00:00.000Z"), env, executionContext(waitUntil)); // Monday, 14:00 UTC
+      await worker.scheduled(
+        controllerFor("2026-06-01T14:00:00.000Z"),
+        env,
+        executionContext(waitUntil),
+      ); // Monday, 14:00 UTC
       await Promise.all(waitUntil);
       return sent;
     };
 
     // Flag OFF (default) → no recap job; the enqueued set is unchanged from today.
-    expect((await sentFor()).some((m) => m.type === "generate-maintainer-recap")).toBe(false);
-    expect((await sentFor("false")).some((m) => m.type === "generate-maintainer-recap")).toBe(false);
+    expect(
+      (await sentFor()).some((m) => m.type === "generate-maintainer-recap"),
+    ).toBe(false);
+    expect(
+      (await sentFor("false")).some(
+        (m) => m.type === "generate-maintainer-recap",
+      ),
+    ).toBe(false);
     // Flag ON, on the default weekly cadence tick → exactly one recap job.
     const on = await sentFor("true");
-    expect(on.filter((m) => m.type === "generate-maintainer-recap")).toEqual([{ type: "generate-maintainer-recap", requestedBy: "schedule" }]);
+    expect(on.filter((m) => m.type === "generate-maintainer-recap")).toEqual([
+      { type: "generate-maintainer-recap", requestedBy: "schedule" },
+    ]);
   });
 
   it("does NOT enqueue the maintainer recap digest outside its configured cadence even when LOOPOVER_MAINTAINER_RECAP is ON", async () => {
@@ -1287,9 +1946,15 @@ describe("worker entrypoint", () => {
       } as unknown as Queue,
     });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-06-02T14:00:00.000Z"), env, executionContext(waitUntil)); // Tuesday, not the weekly default day
+    await worker.scheduled(
+      controllerFor("2026-06-02T14:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    ); // Tuesday, not the weekly default day
     await Promise.all(waitUntil);
-    expect(sent.some((m) => m.type === "generate-maintainer-recap")).toBe(false);
+    expect(sent.some((m) => m.type === "generate-maintainer-recap")).toBe(
+      false,
+    );
   });
 
   it("honors a custom LOOPOVER_RECAP_CADENCE=daily, firing every day at the configured hour", async () => {
@@ -1304,9 +1969,15 @@ describe("worker entrypoint", () => {
       } as unknown as Queue,
     });
     const waitUntil: Promise<unknown>[] = [];
-    await worker.scheduled(controllerFor("2026-06-02T14:00:00.000Z"), env, executionContext(waitUntil)); // Tuesday — not the weekly default day
+    await worker.scheduled(
+      controllerFor("2026-06-02T14:00:00.000Z"),
+      env,
+      executionContext(waitUntil),
+    ); // Tuesday — not the weekly default day
     await Promise.all(waitUntil);
-    expect(sent.filter((m) => m.type === "generate-maintainer-recap")).toEqual([{ type: "generate-maintainer-recap", requestedBy: "schedule" }]);
+    expect(sent.filter((m) => m.type === "generate-maintainer-recap")).toEqual([
+      { type: "generate-maintainer-recap", requestedBy: "schedule" },
+    ]);
   });
 });
 

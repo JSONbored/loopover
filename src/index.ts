@@ -143,6 +143,10 @@ async function enqueueScheduledJobs(env: Env, controller: ScheduledController): 
   // impossible. The job's own decideLedgerAnchorSchedule (in ledger-anchor-scheduler.ts) is what actually
   // decides whether THIS tick does anything; a cheap two-query no-op the overwhelming majority of ticks.
   jobs.push({ type: "anchor-decision-ledger", requestedBy: "schedule", isHourly });
+  // #9985: sampled every tick, unconditionally. The board it feeds is only as good as its resolution, and a
+  // deployment with no alerting source configured simply records `unknown` -- which the aggregation reports
+  // as unmeasured coverage rather than as health.
+  jobs.push({ type: "sample-service-status", requestedBy: "schedule" });
   const selfHostedReviews = isSelfHostedReviewRuntime(env);
   const queueSnapshot = selfHostedReviews
     ? await queueSnapshotFromBinding(env.JOBS).catch((error) => {

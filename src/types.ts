@@ -65,6 +65,14 @@ export type JobMessage =
       isHourly: boolean;
     }
   | {
+      // #9985 (slice 2 of #9747): one status sample per component per tick, so the public board can answer
+      // "has it been healthy?" as well as "is it now". A single INSERT per component -- no fan-out, no
+      // GitHub budget -- which is why it rides every tick rather than the hourly clock: coarser sampling
+      // would make short incidents invisible to the derived history.
+      type: "sample-service-status";
+      requestedBy: "schedule" | "test";
+    }
+  | {
       type: "sync-brokered-installed-repos";
       requestedBy: "schedule" | "api" | "test";
     }

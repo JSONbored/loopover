@@ -8,6 +8,7 @@ import {
   recordRoutingShadow,
   REVIEWER_ROUTING_SHADOW_EVENT_TYPE,
   REVIEWER_VOTE_EVENT_TYPE,
+  REVIEWER_VOTE_SCAN_LIMIT,
   ROUTING_MIN_DECIDED,
 } from "../../src/services/reviewer-routing";
 import { buildRoutingRecapSection } from "../../src/services/maintainer-recap-routing";
@@ -104,6 +105,72 @@ describe("loadLiveProviderTrackRecords (#8229 stage 1 read path)", () => {
     env.DB = { prepare: () => { throw new Error("store down"); } } as never;
     expect(await loadLiveProviderTrackRecords(env)).toEqual([]);
   });
+
+  it("#10023 REGRESSION: a thrown read warns reviewer_vote_scan_failed AND returns [] (distinguishable from an empty ledger)", async () => {
+    const env = createTestEnv();
+    env.DB = { prepare: () => { throw new Error("boom-read"); } } as never;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(await loadLiveProviderTrackRecords(env)).toEqual([]);
+    const failWarns = warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes("reviewer_vote_scan_failed"));
+    expect(failWarns).toHaveLength(1);
+    expect(failWarns[0]).toContain("boom-read");
+    // recordRoutingShadow still resolves null on the failed read, never touching the review path.
+    expect(await recordRoutingShadow(env, { repoFullName: REPO, prNumber: 9, actualProviders: ["claude-code", "codex"] })).toBeNull();
+  });
+
+  it("#10023: the read keeps the NEWEST REVIEWER_VOTE_SCAN_LIMIT votes, dropping the oldest overflow", async () => {
+    const env = createTestEnv();
+    const store = createSignalStore(env);
+    const base = Date.parse("2026-06-01T00:00:00Z");
+    const targetKey = `${REPO}#newest`;
+    // A labeled corpus entry so the newest provider's votes have something to join to.
+    await store.recordRuleFired({ ruleId: "ai_consensus_defect", targetKey, outcome: "close", occurredAt: new Date(base).toISOString(), metadata: { confidence: 0.97 } });
+    await store.recordHumanOverride({ ruleId: "ai_consensus_defect", targetKey, verdict: "confirmed", occurredAt: new Date(base + 1).toISOString() });
+    // Seed LIMIT + 5 votes newest-last by created_at: the OLDEST 5 (provider "stale") must fall outside the
+    // newest-LIMIT window, and the newest vote (provider "fresh") must survive.
+    const total = REVIEWER_VOTE_SCAN_LIMIT + 5;
+    const stmts = Array.from({ length: total }, (_, i) => {
+      const provider = i < 5 ? "stale" : i === total - 1 ? "fresh" : "filler";
+      return env.DB.prepare("INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES (?, ?, ?, ?, 'completed', 'v', ?, ?)")
+        .bind(`vote-${String(i).padStart(6, "0")}`, REVIEWER_VOTE_EVENT_TYPE, provider, targetKey, JSON.stringify({ repoFullName: REPO, vote: "fail" }), new Date(base + 1_000 + i).toISOString());
+    });
+    await env.DB.batch(stmts);
+
+    const records = await loadLiveProviderTrackRecords(env, base + 10_000_000);
+    const providers = new Set(records.map((r) => r.provider));
+    expect(providers.has("fresh")).toBe(true); // the newest vote survived the bound
+    expect(providers.has("stale")).toBe(false); // the oldest 5 fell outside the newest-LIMIT window
+  }, 60_000);
+
+  it("#10023: a full page (rows === REVIEWER_VOTE_SCAN_LIMIT) warns reviewer_vote_scan_truncated; a shorter read does not", async () => {
+    const env = createTestEnv();
+    const base = Date.parse("2026-06-01T00:00:00Z");
+    const seed = async (count: number): Promise<void> => {
+      const stmts = Array.from({ length: count }, (_, i) =>
+        env.DB.prepare("INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES (?, ?, 'p', ?, 'completed', 'v', ?, ?)")
+          .bind(`t-${String(i).padStart(6, "0")}`, REVIEWER_VOTE_EVENT_TYPE, `${REPO}#${i}`, JSON.stringify({ repoFullName: REPO, vote: "fail" }), new Date(base + i).toISOString()),
+      );
+      await env.DB.batch(stmts);
+    };
+    // Exactly at the limit → truncation warn.
+    await seed(REVIEWER_VOTE_SCAN_LIMIT);
+    const warnAt = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await loadLiveProviderTrackRecords(env, base + 10_000_000);
+    expect(warnAt.mock.calls.map((c) => String(c[0])).some((m) => m.includes("reviewer_vote_scan_truncated"))).toBe(true);
+    warnAt.mockRestore();
+
+    // A fresh env below the limit → no truncation warn.
+    const env2 = createTestEnv();
+    const stmts = Array.from({ length: 3 }, (_, i) =>
+      env2.DB.prepare("INSERT INTO audit_events (id, event_type, actor, target_key, outcome, detail, metadata_json, created_at) VALUES (?, ?, 'p', ?, 'completed', 'v', ?, ?)")
+        .bind(`u-${i}`, REVIEWER_VOTE_EVENT_TYPE, `${REPO}#${i}`, JSON.stringify({ repoFullName: REPO, vote: "fail" }), new Date(base + i).toISOString()),
+    );
+    await env2.DB.batch(stmts);
+    const warnBelow = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await loadLiveProviderTrackRecords(env2, base + 10_000_000);
+    expect(warnBelow.mock.calls.map((c) => String(c[0])).some((m) => m.includes("reviewer_vote_scan_truncated"))).toBe(false);
+    warnBelow.mockRestore();
+  }, 60_000);
 
   it("REGRESSION: the vote read is totally ordered (ORDER BY created_at ASC, id ASC) so the LATER vote wins a re-review (#9638)", async () => {
     const env = createTestEnv();

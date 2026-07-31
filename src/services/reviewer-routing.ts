@@ -15,6 +15,7 @@
 import { buildBacktestCorpus, computeProviderTrackRecords, type ProviderReviewSignal, type ProviderTrackRecord } from "@loopover/engine";
 import { createSignalStore } from "../review/signal-tracking-wire";
 import { recordAuditEvent } from "../db/repositories";
+import { errorMessage } from "../utils/json";
 
 /** Audit event type a shadow decision writes — ONE stable type forever (the #8159 event discipline). */
 export const REVIEWER_ROUTING_SHADOW_EVENT_TYPE = "reviewer_routing_shadow";
@@ -25,6 +26,13 @@ export const ROUTING_MIN_DECIDED = 10;
 
 /** The trailing window the track-record read replays — mirrors the calibration corpus lookback. */
 const CORPUS_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
+
+/** Max reviewer_vote rows the track-record read scans in one pass (#10023). The read runs on every block-mode
+ *  dual review and pulls RAW rows (a metadata_json blob each), so an unbounded scan over a 90-day slice of an
+ *  ever-growing table would eventually throw and be swallowed into "no evidence". Bounds the worst-case cost to
+ *  the NEWEST this many votes, matching the bounded-read precedent in knob-loosening-run.ts. The newest 2,000
+ *  votes are an ample latest-vote-wins corpus; older ones fall outside the window the shadow acts on anyway. */
+export const REVIEWER_VOTE_SCAN_LIMIT = 2_000;
 
 export type RoutingShadowDecision = {
   repoFullName: string;
@@ -75,13 +83,22 @@ export async function loadLiveProviderTrackRecords(env: Env, nowMs: number = Dat
       // the LAST array element, so an unordered scan makes a re-voted PR's surviving stance backend-dependent
       // (#9638). created_at alone is insufficient — same-loop votes share a timestamp — so the id tie-break
       // is required, mirroring risk-control-wire.ts's `created_at, id` discipline.
-      "SELECT actor, target_key, metadata_json FROM audit_events WHERE event_type = ? AND created_at >= ? ORDER BY created_at ASC, id ASC",
+      // #10023: bound the scan to the NEWEST REVIEWER_VOTE_SCAN_LIMIT rows. A naive `ASC ... LIMIT n` would
+      // keep the OLDEST rows and invert the latest-vote-wins dedup, so select newest-first in a subquery and
+      // re-order the outer projection ASC, so computeProviderTrackRecords still receives ascending order.
+      "SELECT actor, target_key, metadata_json FROM (SELECT actor, target_key, metadata_json, created_at, id FROM audit_events WHERE event_type = ? AND created_at >= ? ORDER BY created_at DESC, id DESC LIMIT ?) ORDER BY created_at ASC, id ASC",
     )
-      .bind(REVIEWER_VOTE_EVENT_TYPE, new Date(nowMs - CORPUS_LOOKBACK_MS).toISOString())
+      .bind(REVIEWER_VOTE_EVENT_TYPE, new Date(nowMs - CORPUS_LOOKBACK_MS).toISOString(), REVIEWER_VOTE_SCAN_LIMIT)
       .all<{ actor: string; target_key: string; metadata_json: string }>();
-    const signals: ProviderReviewSignal[] = [];
     /* v8 ignore next -- defined-results guard, the loadKnobStatus convention */
-    for (const row of votes.results ?? []) {
+    const rows = votes.results ?? [];
+    if (rows.length === REVIEWER_VOTE_SCAN_LIMIT) {
+      // A full page means the corpus was truncated: the read under-counts, so say so rather than let the
+      // shadow silently under-record as the ledger grows — the distinction stage 2's rollout depends on.
+      console.warn(JSON.stringify({ event: "reviewer_vote_scan_truncated", rows: rows.length }));
+    }
+    const signals: ProviderReviewSignal[] = [];
+    for (const row of rows) {
       let metadata: { repoFullName?: unknown; vote?: unknown } = {};
       try {
         metadata = JSON.parse(row.metadata_json) as { repoFullName?: unknown; vote?: unknown };
@@ -98,7 +115,10 @@ export async function loadLiveProviderTrackRecords(env: Env, nowMs: number = Dat
     }
     const { fired, overrides } = await createSignalStore(env).queryRuleHistory("ai_consensus_defect", nowMs - CORPUS_LOOKBACK_MS);
     return computeProviderTrackRecords(signals, buildBacktestCorpus("ai_consensus_defect", fired, overrides));
-  } catch {
+  } catch (error) {
+    // #10023: say the read FAILED before failing safe, so "the shadow could not read its evidence" is
+    // distinguishable in the logs from a genuinely empty ledger — the two the stage-2 decision must tell apart.
+    console.warn(JSON.stringify({ event: "reviewer_vote_scan_failed", message: errorMessage(error).slice(0, 200) }));
     return []; // fail-safe: no records ⇒ downstream records nothing ⇒ byte-identical behavior
   }
 }

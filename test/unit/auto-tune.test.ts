@@ -237,6 +237,12 @@ describe("planCloseAutoTune (#close-precision-breaker) — tightening-only, clos
   it("does NOT engage when close precision is null (no would-close predictions with a known outcome)", () => {
     expect(planCloseAutoTune(report([row({ project: "p", decided: 30, wouldClose: 0, closeConfirmed: 0, closePrecision: null })]))).toHaveLength(0);
   });
+  it("#10014: the reordered guard's null arm is reachable — null weighted precision with wouldClose >= 10 skips (not a crash on the <-comparison)", () => {
+    // Before the reorder the `wouldClose < 10` arm short-circuited first, so once wouldClose >= 10 the trailing
+    // `== null` disjunct was dead. Null-checking FIRST (mirroring planAutoTune) makes this arm reachable: a
+    // null weighted precision at wouldClose=20 continues (no action), never reaching the `< FLOOR` comparison.
+    expect(planCloseAutoTune(report([row({ project: "p", decided: 30, wouldClose: 20, closeConfirmed: 0, closePrecision: 0.5, weightedClosePrecision: null })]))).toHaveLength(0);
+  });
   it("does NOT engage when close precision is healthy (it only ever tightens, never loosens)", () => {
     expect(planCloseAutoTune(report([row({ project: "p", decided: 30, wouldClose: 30, closeConfirmed: 29, closePrecision: 0.97 })]))).toHaveLength(0);
   });
@@ -421,15 +427,25 @@ describe("computeTuningRecommendations (#self-improve)", () => {
     expect(recs[0]?.severity).toBe("warn");
   });
 
-  it("renders an em-dash for a NULL close precision in the loosen-warn message (pct null branch)", () => {
-    // closeFalse > 0 but closePrecision is null (e.g. no would-close predictions had a known outcome): the
-    // loosen-warn message interpolates pct(null) → "—" rather than a percentage. Exercises pct's null side.
+  it("#10014: the loosen-warn fires on a weighted close precision below the floor, not on a raw closeFalse count", () => {
+    // The close-side gate now reads weightedClosePrecision against AUTOTUNE_CLOSE_PRECISION_FLOOR (0.85), the
+    // same reversal-discounted evidence the close breaker uses -- not the raw closeFalse count the weighted
+    // number discounts. A below-floor weighted precision emits a loosen-warn naming that weighted percentage.
     const recs = computeTuningRecommendations(
-      report([row({ project: "p", decided: 15, wouldMerge: 10, mergeConfirmed: 10, mergePrecision: 1.0, closeFalse: 2, closePrecision: null })]),
+      report([row({ project: "p", decided: 15, wouldMerge: 10, mergeConfirmed: 10, mergePrecision: 1.0, weightedMergePrecision: 1.0, closeFalse: 2, wouldClose: 6, closePrecision: 0.9, weightedClosePrecision: 0.2 })]),
     );
     const loosen = recs.find((r) => r.severity === "warn" && /loosen/i.test(r.message));
     expect(loosen).toBeDefined();
-    expect(loosen?.message).toContain("close precision —");
+    expect(loosen?.message).toContain("weighted close precision 20%");
+  });
+
+  it("#10014: a NULL weighted close precision no longer triggers a loosen-warn (the raw closeFalse path is gone)", () => {
+    // Previously closeFalse > 0 with a null closePrecision emitted a loosen-warn; now a null weighted close
+    // precision (no would-close outcomes) fires nothing, so a merge-clean project reads as ready, not held.
+    const recs = computeTuningRecommendations(
+      report([row({ project: "p", decided: 15, wouldMerge: 12, mergeConfirmed: 12, mergePrecision: 1.0, weightedMergePrecision: 1.0, closeFalse: 2, closePrecision: null, weightedClosePrecision: null })]),
+    );
+    expect(recs.find((r) => r.severity === "warn" && /loosen/i.test(r.message))).toBeUndefined();
   });
 
   it("says READY when close precision is also high and non-null (ready close-precision threshold branch)", () => {
@@ -444,11 +460,12 @@ describe("computeTuningRecommendations (#self-improve)", () => {
     expect(recs[0]?.message).toMatch(/ready to flip live/i);
   });
 
-  it("does NOT say ready when a non-null close precision is below the ready bar (close arm fails)", () => {
-    // Same ready conditions but closePrecision below READY_CLOSE_PRECISION (0.9) and no false closes → neither
-    // warn nor good fires, so the project yields no recommendation. Asserts the close arm gates 'good'.
+  it("#10014: does NOT say ready when the weighted close precision is below the ready bar (close arm gates 'good' on the weighted field)", () => {
+    // High merge precision but weightedClosePrecision at 0.88 — below the 0.9 ready bar yet at/above the 0.85
+    // loosen floor, so NEITHER the good arm nor the loosen-warn fires: the project yields no recommendation.
+    // Proves the ready guard's close arm now reads weightedClosePrecision, not the raw closePrecision.
     const recs = computeTuningRecommendations(
-      report([row({ project: "borderline", decided: 20, wouldMerge: 18, mergeConfirmed: 18, mergePrecision: 1.0, wouldClose: 4, closeConfirmed: 3, closeFalse: 0, closePrecision: 0.8 })]),
+      report([row({ project: "borderline", decided: 20, wouldMerge: 18, mergeConfirmed: 18, mergePrecision: 1.0, weightedMergePrecision: 1.0, wouldClose: 4, closeConfirmed: 3, closeFalse: 0, closePrecision: 0.95, weightedClosePrecision: 0.88 })]),
     );
     expect(recs).toHaveLength(0);
   });
@@ -463,6 +480,31 @@ describe("computeTuningRecommendations (#self-improve)", () => {
       ]),
     );
     expect(recs.map((r) => r.project)).toEqual(["alpha", "zeta"]);
+  });
+
+  it("REGRESSION #10014: the sample gate reads wouldMerge, not decided — 9 holds + 1 wrong would-merge is info-only, no overridePayload", () => {
+    // The exact shape planAutoTune's comment names: decided=10 clears the old `decided < MIN_DECIDED` gate, but
+    // it is 9 holds + 1 would-merge — a statistically meaningless sample the breaker already refuses. Under the
+    // fix it gates on wouldMerge (1 < 10) and emits an INFO rec with NO auto-applicable overridePayload, rather
+    // than a warn that queued a live confidence-floor raise off a single prediction.
+    const recs = computeTuningRecommendations(
+      report([row({ project: "o/r", decided: 10, wouldMerge: 1, mergeFalse: 1, mergePrecision: 0, weightedMergePrecision: 0, hold: 9 })]),
+    );
+    expect(recs).toHaveLength(1);
+    expect(recs[0]?.severity).toBe("info");
+    expect(recs[0]?.overridePayload).toBeUndefined();
+    expect(recs[0]?.message).toContain("would-merge");
+  });
+
+  it("REGRESSION #10014: a healthy RAW merge precision with a failing WEIGHTED one still warns with a tightening overridePayload", () => {
+    // A project whose merges are systematically reverted: mergePrecision 0.98 looks healthy, but the
+    // reversal-weighted precision the breaker gates on is 0.2. The advisor must read the weighted field and flag
+    // it (with the auto-applicable tightening payload), not stay silent on the raw number the breaker distrusts.
+    const recs = computeTuningRecommendations(
+      report([row({ project: "o/r", decided: 20, wouldMerge: 20, mergeConfirmed: 20, mergeFalse: 0, mergePrecision: 0.98, weightedMergePrecision: 0.2 })]),
+    );
+    const warn = recs.find((r) => r.severity === "warn");
+    expect(warn?.overridePayload).toEqual({ confidenceFloor: 0.95 });
   });
 });
 

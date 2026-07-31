@@ -381,7 +381,7 @@ describe("runAutoApplyRecommendations (#278 — closes the loop: queue tightenin
   it("refuses to promote a stale shadow tightening once the project's precision has since recovered", async () => {
     const { env, tables } = fakeEnv();
     tables.shadow.set("g", { confidence_floor: 0.95, scope_cap_files: null, scope_cap_lines: null, validated_until: "2026-06-19T00:00:00Z" });
-    await runAutoApplyRecommendations(env, ctx({ recs: [], mergePrecision: 0.92 }));
+    await runAutoApplyRecommendations(env, ctx({ recs: [], weightedMergePrecision: 0.92 }));
     expect(tables.live.has("g")).toBe(false); // NOT promoted
     expect(tables.shadow.has("g")).toBe(true); // stays queued rather than being silently dropped
   });
@@ -389,7 +389,7 @@ describe("runAutoApplyRecommendations (#278 — closes the loop: queue tightenin
   it("still promotes a soaked shadow override when the fresh precision has NOT recovered", async () => {
     const { env, tables } = fakeEnv();
     tables.shadow.set("g", { confidence_floor: 0.95, scope_cap_files: null, scope_cap_lines: null, validated_until: "2026-06-19T00:00:00Z" });
-    await runAutoApplyRecommendations(env, ctx({ recs: [], mergePrecision: 0.5 }));
+    await runAutoApplyRecommendations(env, ctx({ recs: [], weightedMergePrecision: 0.5 }));
     expect(tables.live.get("g")?.confidence_floor).toBe(0.95);
     expect(tables.shadow.has("g")).toBe(false);
   });

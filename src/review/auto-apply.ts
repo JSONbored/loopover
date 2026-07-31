@@ -382,11 +382,12 @@ export interface AutoApplyContext {
   baseScopeCap?: { files: number; lines: number };
   /** This project's decided-sample count from the gate eval (drives the promotion evidence gate). */
   decided: number;
-  /** This project's freshly-computed merge precision from THIS tick's gate eval (the same field
-   *  computeTuningRecommendations reads). Threaded into evaluateShadowPromotion so a shadow-queued tightening
-   *  cannot be promoted once the precision that originally warranted it has since recovered. Optional/nullable
-   *  because a project can have no would-merge samples yet (GateEvalRow.mergePrecision is null in that case). */
-  mergePrecision?: number | null;
+  /** This project's freshly-computed reversal-WEIGHTED merge precision from THIS tick's gate eval (the same
+   *  field computeTuningRecommendations gates on, #10014). Threaded into evaluateShadowPromotion so a
+   *  shadow-queued tightening cannot be promoted once the weighted precision that originally warranted it has
+   *  since recovered -- feeding the RAW number here would clear a hold the reversal-weighted breaker still
+   *  holds. Optional/nullable because a project can have no would-merge samples yet (it is null in that case). */
+  weightedMergePrecision?: number | null;
   /** The tuning advisor's recommendations for this project (only ones with an overridePayload are applied). */
   recs: TuningRec[];
   /** Current wall-clock (ms) — injected for determinism in tests. */
@@ -429,7 +430,7 @@ export async function runAutoApplyRecommendations(env: StorageEnv, ctx: AutoAppl
         decided: ctx.decided,
         validatedUntilIso: shadow.validatedUntil,
         nowIso,
-        ...(ctx.mergePrecision !== undefined ? { currentMergePrecision: ctx.mergePrecision } : {}),
+        ...(ctx.weightedMergePrecision !== undefined ? { currentMergePrecision: ctx.weightedMergePrecision } : {}),
       });
       if (gate.promote) {
         // Audit BEFORE the mutation — see applyOverrideRecommendation's force branch for why this ordering

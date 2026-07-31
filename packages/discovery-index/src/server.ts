@@ -7,7 +7,7 @@
 import { serve } from "@hono/node-server";
 import type { AiPolicyVerdict, DiscoveryIndexCandidate } from "@loopover/engine";
 import { createApp } from "./app.js";
-import { TtlCache } from "./cache.js";
+import { DEFAULT_CACHE_MAX_ENTRIES, TtlCache } from "./cache.js";
 import { DEFAULT_CACHE_TTL_MS } from "./discovery-query.js";
 import { GitHubClient } from "./github-client.js";
 import { captureUnhandledPostHogError, flushDiscoveryIndexPostHog, initDiscoveryIndexPostHog, resolvePostHogEnvironment, shutdownDiscoveryIndexPostHog } from "./posthog.js";
@@ -27,10 +27,10 @@ const softClaimTtlMs =
 
 const app = createApp({
   github: new GitHubClient({ token: githubToken }),
-  resultCache: new TtlCache<DiscoveryIndexCandidate[]>(),
-  policyCache: new TtlCache<AiPolicyVerdict>(),
+  resultCache: new TtlCache<DiscoveryIndexCandidate[]>(Date.now, DEFAULT_CACHE_MAX_ENTRIES),
+  policyCache: new TtlCache<AiPolicyVerdict>(Date.now, DEFAULT_CACHE_MAX_ENTRIES),
   cacheTtlMs,
-  softClaimStore: new SoftClaimStore(new TtlCache(), softClaimTtlMs),
+  softClaimStore: new SoftClaimStore(new TtlCache(Date.now, DEFAULT_CACHE_MAX_ENTRIES), softClaimTtlMs),
   githubConfigured: githubToken.trim().length > 0,
 });
 

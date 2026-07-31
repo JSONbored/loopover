@@ -417,9 +417,29 @@ export type PostHogAiGenerationEvent = {
  *  parallel concern to error tracking, not a substitute gate for it. */
 export function capturePostHogAiGeneration(event: PostHogAiGenerationEvent): void {
   if (!active || !client) return;
+  const operational = operationalProperties(event.context);
+  // #10185: the OTel trace this call already runs inside IS the trace PostHog should group by.
+  // operationalProperties has computed it (as plain `trace_id`/`span_id`) since #8296, but this
+  // function then minted a fresh randomUUID() for $ai_trace_id and threw it away -- so every
+  // generation became its own single-event trace and the review pipeline that produced them was
+  // never visible as one thing (13,428 events across 13,428 traces on the live project).
+  //
+  // withReviewPipelineSpan (./review-tracing.ts) wraps a whole review, so every provider attempt
+  // inside it -- both dual-review legs, every retry, every self-consistency run, the RAG embeddings
+  // -- shares that span's trace id and now nests under one PostHog trace.
+  //
+  // randomUUID() stays the fallback, NOT an error: AI_EMBED/AI_VISION/AI_ADVISORY and any call made
+  // outside a review span legitimately have no ambient trace, and an orphan trace is still a valid
+  // (if less useful) event. `$ai_span_id` is only set when there IS a real span to name.
+  const traceId = typeof operational.trace_id === "string" ? operational.trace_id : undefined;
+  const spanId = typeof operational.span_id === "string" ? operational.span_id : undefined;
   const properties: Record<string, unknown> = {
-    ...operationalProperties(event.context),
-    $ai_trace_id: randomUUID(),
+    ...operational,
+    $ai_trace_id: traceId ?? randomUUID(),
+    ...(spanId === undefined ? {} : { $ai_span_id: spanId }),
+    // Names the node in the trace tree. Provider-and-kind rather than the tool/feature name, because
+    // that is what this function actually knows -- the feature lives in ai_usage_events, not here.
+    $ai_span_name: `ai.${event.requestKind}/${nonBlank(event.provider) ?? "unknown"}`,
     $ai_model: nonBlank(event.model) ?? "unknown",
     $ai_provider: nonBlank(event.provider) ?? "unknown",
     // PostHog's own $ai_generation schema reports latency in SECONDS, not ms.
@@ -440,6 +460,13 @@ export function capturePostHogAiGeneration(event: PostHogAiGenerationEvent): voi
     distinctId: POSTHOG_DISTINCT_ID,
     event: event.requestKind === "embedding" ? "$ai_embedding" : "$ai_generation",
     properties,
+    // #10185: a real group, so "which repo costs the most in AI spend" is answerable in PostHog
+    // rather than only in the ai_usage_events SQL table. Deliberately reads the ALREADY-PROCESSED
+    // `repo` off operationalProperties rather than event.context: under the shared central key that
+    // value is HMAC-anonymized, and when the anon secret has not been injected the key is dropped
+    // entirely. Reusing it means the group inherits that fail-closed behavior for free -- a raw
+    // private repo name can never reach the group index by this path.
+    ...(typeof operational.repo === "string" ? { groups: { repo: operational.repo } } : {}),
   });
 }
 

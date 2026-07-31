@@ -188,4 +188,65 @@ describe("loadRepoOutcomePatternsMap", () => {
     ]);
     expect([...map.keys()]).toEqual(["owner/a"]);
   });
+
+  const seedSnapshot = async (env: ReturnType<typeof createTestEnv>, fullName: string, summary: string, targetKey = fullName) => {
+    await persistSignalSnapshot(env, {
+      id: crypto.randomUUID(),
+      signalType: REPO_OUTCOME_PATTERNS_SIGNAL,
+      targetKey,
+      repoFullName: fullName,
+      payload: snapshotPayload(fullName, summary) as unknown as Record<string, never>,
+      generatedAt: new Date().toISOString(),
+    });
+  };
+
+  it("#10024: returns exactly the registered repos' lowercased keys with their payloads; unregistered is absent", async () => {
+    const env = createTestEnv();
+    await seedSnapshot(env, "owner/one", "s1");
+    await seedSnapshot(env, "owner/two", "s2");
+    await seedSnapshot(env, "owner/three", "s3");
+    await seedSnapshot(env, "owner/nope", "s-nope"); // unregistered
+    const map = await loadRepoOutcomePatternsMap(env, [
+      { fullName: "owner/one", isRegistered: true },
+      { fullName: "owner/two", isRegistered: true },
+      { fullName: "owner/three", isRegistered: true },
+      { fullName: "owner/nope", isRegistered: false },
+    ]);
+    expect([...map.keys()].sort()).toEqual(["owner/one", "owner/three", "owner/two"]);
+    expect(map.get("owner/one")).toMatchObject({ summary: "s1" });
+    expect(map.has("owner/nope")).toBe(false);
+  });
+
+  it("#10024: the DB round-trip count does NOT grow with the registered-repo count (one batch, 3 vs 12 repos)", async () => {
+    const countPrepares = async (repoCount: number): Promise<number> => {
+      const env = createTestEnv();
+      let prepares = 0;
+      const realPrepare = env.DB.prepare.bind(env.DB);
+      env.DB.prepare = ((sql: string) => {
+        prepares += 1;
+        return realPrepare(sql);
+      }) as never;
+      const repos = Array.from({ length: repoCount }, (_, i) => ({ fullName: `owner/repo-${i}`, isRegistered: true }));
+      await loadRepoOutcomePatternsMap(env, repos);
+      return prepares;
+    };
+    // 3 and 12 both fit one batch (< SIGNAL_SNAPSHOT_TARGET_KEY_SQL_BATCH = 90), so the prepare count is equal.
+    expect(await countPrepares(3)).toBe(await countPrepares(12));
+  });
+
+  it("#10024 REGRESSION: a stored targetKey whose casing differs from the requested fullName still resolves to a lowercased map key", async () => {
+    const env = createTestEnv();
+    // The request uses "owner/Mixed"; listRecentSignalSnapshotsForTargets keys by the exact requested string,
+    // and the caller lowercases on the way out — so the map key is the lowercased form, never dropped.
+    await seedSnapshot(env, "owner/Mixed", "mixed", "owner/Mixed");
+    const map = await loadRepoOutcomePatternsMap(env, [{ fullName: "owner/Mixed", isRegistered: true }]);
+    expect([...map.keys()]).toEqual(["owner/mixed"]);
+    expect(map.get("owner/mixed")).toMatchObject({ summary: "mixed" });
+  });
+
+  it("#10024: no registered repos ⇒ empty map with no bulk read", async () => {
+    const env = createTestEnv();
+    const map = await loadRepoOutcomePatternsMap(env, [{ fullName: "owner/x", isRegistered: false }]);
+    expect(map.size).toBe(0);
+  });
 });

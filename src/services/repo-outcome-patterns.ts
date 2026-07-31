@@ -4,6 +4,7 @@ import {
   listPullRequestDetailSyncStates,
   listPullRequests,
   listRecentMergedPullRequests,
+  listRecentSignalSnapshotsForTargets,
   listRepoPullRequestFiles,
   listRepoPullRequestReviews,
   listSignalSnapshots,
@@ -57,14 +58,19 @@ export async function loadOrComputeRepoOutcomePatternsResponse(env: Env, fullNam
 
 export async function loadRepoOutcomePatternsMap(env: Env, repositories: Array<{ fullName: string; isRegistered: boolean }>): Promise<Map<string, RepoOutcomePatterns>> {
   const map = new Map<string, RepoOutcomePatterns>();
-  await Promise.all(
-    repositories
-      .filter((repo) => repo.isRegistered)
-      .map(async (repo) => {
-        const latest = (await listSignalSnapshots(env, REPO_OUTCOME_PATTERNS_SIGNAL, repo.fullName))[0];
-        if (latest) map.set(repo.fullName.toLowerCase(), latest.payload as unknown as RepoOutcomePatterns);
-      }),
-  );
+  // #10024: one BULK read (batched internally at SIGNAL_SNAPSHOT_TARGET_KEY_SQL_BATCH keys/round-trip) instead
+  // of one listSignalSnapshots query per registered repo, each of which pulled up to 100 full payloads to use
+  // exactly one. listRecentSignalSnapshotsForTargets (not the Latest variant) is the one that selects
+  // payload_json; maxPerTarget 1 = only the newest snapshot per repo. Mirrors repo-doc-refresh-runner's sweep.
+  const fullNames = repositories.filter((repo) => repo.isRegistered).map((repo) => repo.fullName);
+  const byTargetKey = await listRecentSignalSnapshotsForTargets(env, REPO_OUTCOME_PATTERNS_SIGNAL, fullNames, 1);
+  for (const repo of repositories) {
+    if (!repo.isRegistered) continue;
+    // listRecentSignalSnapshotsForTargets keys by the exact targetKey string, so read by fullName and lowercase
+    // on the way out to preserve the map's existing lowercased-key contract (decision-pack.ts's lookups).
+    const latest = byTargetKey.get(repo.fullName)?.[0];
+    if (latest) map.set(repo.fullName.toLowerCase(), latest.payload as unknown as RepoOutcomePatterns);
+  }
   return map;
 }
 

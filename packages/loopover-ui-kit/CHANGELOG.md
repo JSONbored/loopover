@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1](https://github.com/JSONbored/loopover/compare/ui-kit-v1.3.0...ui-kit-v1.3.1) (2026-07-31)
+
+
+### Dependencies
+
+* **ui-kit:** publish the stranded recharts v3 migration, and guard the class ([#9977](https://github.com/JSONbored/loopover/issues/9977)) ([c6fcee9](https://github.com/JSONbored/loopover/commit/c6fcee9908b9e354cafbf1a188ba3cb889c0dd44))
+
 ## [1.3.0](https://github.com/JSONbored/loopover/compare/ui-kit-v1.2.0...ui-kit-v1.3.0) (2026-07-29)
 
 

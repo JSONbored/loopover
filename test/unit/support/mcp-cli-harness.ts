@@ -270,7 +270,7 @@ export async function startFixtureServer(
       request.on("end", () => {
         const parsed = JSON.parse(raw || "{}") as { id?: unknown; params?: { name?: string; arguments?: unknown } };
         // A tool named `*_resultless` gets an envelope with NO `result` member, so the gateway's
-        // "hand back the whole payload" fallback can be exercised against a real response rather than a
+        // neither-result-nor-error handling (#10036) can be exercised against a real response rather than a
         // hand-built object. Keyed on the name because one fixture serves every gateway test.
         if (parsed.params?.name?.endsWith("_resultless")) {
           response.end(JSON.stringify({ jsonrpc: "2.0", id: parsed.id ?? 1, note: "no result member" }));

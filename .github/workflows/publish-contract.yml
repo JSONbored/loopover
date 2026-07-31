@@ -23,6 +23,18 @@ on:
         description: "Internal: set by the release automation's dispatch so this run skips re-creating the GitHub release it already made."
         type: boolean
         default: false
+      dispatched_by_automation:
+        description: "Internal: set by the release automation's dispatch so a hand retry is not counted as an outage. Informational -- it feeds run-name below and nothing else."
+        type: boolean
+        default: false
+
+# PROVENANCE STAMP (#10234). `run-name` is the ONLY dispatch-time signal the runs API gives back (as
+# `display_title`): the reconcile path dispatches bare against main under a PAT, so `event`, `head_branch`
+# and `triggering_actor` are identical to a human's `gh workflow run`, and run objects carry no `inputs`.
+# scripts/escalate-workflow-outage.ts recovers "was this automated?" from the marker below -- see its
+# header for the full story. The marker must stay in lockstep with that script's
+# AUTOMATION_RUN_NAME_MARKER; scripts/check-dispatch-provenance-stamped.ts fails the build if they drift.
+run-name: "Publish Contract Package${{ inputs.dispatched_by_automation && ' [automated]' || '' }}"
 
 permissions:
   contents: read

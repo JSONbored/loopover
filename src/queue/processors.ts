@@ -97,6 +97,7 @@ import {
   upsertRepositoryFromGitHub,
   getLatestAdvisoryForPullRequest,
 } from "../db/repositories";
+import { withLinkedIssueMaintainerExemption, type LinkedIssueExemptionAuthor } from "../settings/linked-issue-exemption";
 import { renameRepositoryIdentity } from "../db/repo-identity-rename";
 import {
   effectiveIssueCapForAccountAge,
@@ -1649,7 +1650,17 @@ export async function sweepRepoRegate(
     });
     const gate = evaluateGateCheck(
       advisory,
-      gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null, undefined, undefined, sweepCloseConfidenceOverride),
+      // #10158: the sweep must apply the SAME maintainer exemption the webhook path does, or the same PR
+      // gets one verdict live and a different one when the sweep re-gates it.
+      gateCheckPolicy(
+        withLinkedIssueMaintainerExemption(settings, await resolveLinkedIssueExemptionAuthor(env, sweepInstallationId, repoFullName, pr.authorLogin)),
+        null,
+        undefined,
+        pr.slopRisk ?? null,
+        undefined,
+        undefined,
+        sweepCloseConfidenceOverride,
+      ),
     );
     verdicts[String(pr.number)] = gate.conclusion;
     if (gate.conclusion === "failure" || gate.conclusion === "action_required")
@@ -5275,6 +5286,36 @@ async function maybeForceFreshRebase(
 // re-review a given PR at most once per this window. The re-review always re-fetches the LIVE CI, so the window
 // only bounds FREQUENCY, never correctness — a later out-of-window completion + the hourly sweep + the merge-time
 // re-check still catch the settled state.
+/**
+ * The author facts the linked-issue maintainer exemption reads (#10158), resolved identically at every gate
+ * evaluation so the same PR cannot get different verdicts from the webhook path and the re-gate sweep.
+ *
+ * Exactly the PROTECTED AUTHOR set used elsewhere in this file (`protectedAuthor`) -- owner, per-repo admin,
+ * or a protected automation author -- rather than a second definition of "maintainer". `isPerTenantAdmin`
+ * short-circuits to an env-allowlist lookup unless per-repo admin mode is on, so this is cheap on the common
+ * path; it fails CLOSED (not a maintainer) on any error, which degrades to today's behaviour rather than
+ * silently widening the exemption.
+ */
+async function resolveLinkedIssueExemptionAuthor(
+  env: Env,
+  installationId: number | null,
+  repoFullName: string,
+  // Nullable because the callers' PR records differ on this: some carry a guaranteed login, others a
+  // possibly-absent one. Normalised HERE rather than coerced at four call sites, so an unknown author can
+  // only ever resolve to "not a maintainer" -- coercing `null` to `""` at a call site would work today and
+  // silently become an owner match the day a repo is owned by the empty string's uppercase twin.
+  authorLogin: string | null | undefined,
+): Promise<LinkedIssueExemptionAuthor> {
+  const login = (authorLogin ?? "").trim();
+  if (login.length === 0) return { authorIsOwner: false, authorIsAdmin: false, authorIsAutomationBot: false };
+  const repoOwner = repoOwnerLoginFromFullName(repoFullName);
+  return {
+    authorIsOwner: repoOwner.length > 0 && login.toLowerCase() === repoOwner.toLowerCase(),
+    authorIsAdmin: await isPerTenantAdmin(env, installationId, repoFullName, login).catch(() => false),
+    authorIsAutomationBot: isProtectedAutomationAuthor(login, env),
+  };
+}
+
 const CI_COALESCE_WINDOW_SECONDS = 60;
 
 /**
@@ -12214,7 +12255,12 @@ async function maybePublishPrPublicSurface(
       guardrailMatches: guardrailPathMatches(guardrailChangedPaths, hardGuardrailGlobs),
     };
     const gatePolicy = gateCheckPolicy(
-      settings,
+      // #10158: the maintainer linked-issue exemption is applied to `settings` here rather than passed as an
+      // argument, because BOTH halves that must agree read this object -- `requireLinkedIssue` (does the
+      // finding get produced) and `linkedIssueGateMode` (does it block). Clamping once upstream makes them
+      // unable to disagree; gateCheckPolicy already takes seven positional arguments and does not need an
+      // eighth. Same call in the sweep and re-gate paths, so a PR cannot be judged differently by each.
+      withLinkedIssueMaintainerExemption(settings, await resolveLinkedIssueExemptionAuthor(env, installationId, repoFullName, pr.authorLogin)),
       readiness.total,
       confirmedContributor,
       slopRisk,
@@ -13853,7 +13899,7 @@ async function maybeProcessResolveCommand(env: Env, deliveryId: string, payload:
   if (!findingRef.ok) { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: findingRef.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: findingRef.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: findingRef.reason } }); return true; }
   const { advisory } = await buildAuthorizedPrActionAdvisory(env, req.repoFullName, pr, settings);
   await appendPublishedAiReviewFindingsForResolve(env, req.repoFullName, pr, settings.aiReviewMode, advisory);
-  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null, undefined, undefined, await resolveAutomaticCloseConfidence(env, req.repoFullName, await getAiReviewCloseConfidenceOverride(env, req.repoFullName))));
+  const gate = evaluateGateCheck(advisory, gateCheckPolicy(withLinkedIssueMaintainerExemption(settings, await resolveLinkedIssueExemptionAuthor(env, req.installationId ?? null, req.repoFullName, pr.authorLogin)), null, undefined, pr.slopRisk ?? null, undefined, undefined, await resolveAutomaticCloseConfidence(env, req.repoFullName, await getAiReviewCloseConfidenceOverride(env, req.repoFullName))));
   const selection = selectWarningsForResolve(gate.warnings, findingRef);
   if (selection.reason === "finding_not_found") { await recordAuditEvent(env, { eventType: "github_app.finding_resolved_skipped", actor: req.actor, targetKey, outcome: "completed", detail: selection.reason, metadata: { deliveryId, repoFullName: req.repoFullName, reason: selection.reason } }); await recordGithubProductUsage(env, "finding_resolved_skipped", { actor: req.actor, repoFullName: req.repoFullName, targetKey, outcome: "skipped", metadata: { reason: selection.reason } }); return true; }
   const mode = resolveAgentActionMode({ globalPaused: isGlobalAgentPause(env) || (await isGlobalAgentFrozen(env)), instanceMode: forcedSelfhostMode(env), agentPaused: settings.agentPaused, agentDryRun: settings.agentDryRun });
@@ -14100,7 +14146,7 @@ async function maybeProcessExplainCommand(env: Env, deliveryId: string, payload:
   }
   const { advisory } = await buildAuthorizedPrActionAdvisory(env, req.repoFullName, pr, settings);
   await appendPublishedAiReviewFindingsForResolve(env, req.repoFullName, pr, settings.aiReviewMode, advisory);
-  const gate = evaluateGateCheck(advisory, gateCheckPolicy(settings, null, undefined, pr.slopRisk ?? null, undefined, undefined, await resolveAutomaticCloseConfidence(env, req.repoFullName, await getAiReviewCloseConfidenceOverride(env, req.repoFullName))));
+  const gate = evaluateGateCheck(advisory, gateCheckPolicy(withLinkedIssueMaintainerExemption(settings, await resolveLinkedIssueExemptionAuthor(env, req.installationId ?? null, req.repoFullName, pr.authorLogin)), null, undefined, pr.slopRisk ?? null, undefined, undefined, await resolveAutomaticCloseConfidence(env, req.repoFullName, await getAiReviewCloseConfidenceOverride(env, req.repoFullName))));
   const selection = selectWarningsForResolve(gate.warnings, findingRef);
   if (selection.reason === "finding_not_found") {
     const notFound = sanitizePublicComment([AGENT_COMMAND_COMMENT_MARKER, "", "> [!NOTE]", `> **No review finding \`${findingRef.findingCode}\` on this PR**`, "> That id is not among this PR's current review findings — re-run `@loopover explain <finding-id>` with an id from the review summary.", "", "---", loopoverFooter(env)].join("\n"));

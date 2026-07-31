@@ -232,7 +232,14 @@ export function scrubRecord(obj: unknown, depth: number): void {
       delete rec[key];
       continue;
     }
-    if (shouldRedactKey(key)) {
+    // #10211: a secret-shaped KEY holding a NUMBER is a counter, not a credential. Every secret this module
+    // exists to catch -- a token, an API key, a password, a cookie, a DSN, a bearer header -- is a string;
+    // there is no numeric form of one to leak. Redacting numbers anyway silently destroyed real telemetry:
+    // SECRET_KEY matches /token/i, so PostHog's own `$ai_input_tokens`/`$ai_output_tokens` were rewritten to
+    // the "[redacted]" STRING, which PostHog then coerced to null on its numerically-typed properties. The
+    // result was that not one AI call in the project ever carried a token count, while cost came through
+    // untouched (`$ai_total_cost_usd` has no secret-shaped word in it).
+    if (shouldRedactKey(key) && typeof rec[key] !== "number") {
       rec[key] = REDACTED;
       continue;
     }

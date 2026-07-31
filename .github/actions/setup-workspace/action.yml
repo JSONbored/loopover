@@ -91,6 +91,31 @@ runs:
         echo "::error::npm ci failed after 3 attempts"
         exit 1
 
+    # UNCONDITIONAL -- this is the whole point, so read the `if:` above before adding one here.
+    #
+    # A cache HIT skips `npm ci`, and skipping `npm ci` skips every workspace's lifecycle scripts. The one
+    # that matters is `apps/loopover-ui`'s `postinstall: fumadocs-mdx`, which generates `.source/` -- the
+    # directory `tsconfig.json` maps `collections/*` onto. So on a cache hit the UI typechecked against
+    # modules that did not exist:
+    #
+    #   src/lib/docs-client-loader.tsx(1,32): error TS2307: Cannot find module 'collections/browser'
+    #   src/lib/docs-source.server.ts(1,22):  error TS2307: Cannot find module 'collections/server'
+    #
+    # This is the same shape as the `@eslint/js` hoist bug the cache step above documents: it reproduces on
+    # no developer machine, because a real `npm ci` always runs postinstall. It first bit when a lockfile
+    # change minted a fresh cache key -- the first run MISSED, installed, generated `.source`, passed, and
+    # saved; every run after that HIT and failed, so `main` went red four runs in a row while nothing in the
+    # tree had changed.
+    #
+    # REGENERATED, NOT CACHED. Adding `.source` to the cache paths would look like a smaller fix and would be
+    # wrong: the cache key is derived from the manifests and lockfile, while `.source` is derived from
+    # `source.config.ts` and `content/docs/**`. Caching it would serve a docs collection generated from
+    # different MDX than the commit under test -- a stale pass, which is worse than the honest failure. It is
+    # cheap to regenerate, so it is regenerated every time.
+    - name: Generate workspace codegen
+      shell: bash
+      run: npm run postinstall --workspace @loopover/ui
+
     # Placed immediately after install (not as an automatic post-job hook) so a cache is only ever
     # saved once npm ci has actually succeeded -- a job that fails here never reaches this step, so a
     # broken/partial node_modules can never get written to the cache for a future run to inherit.

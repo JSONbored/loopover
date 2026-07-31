@@ -322,6 +322,14 @@ export const SELFHOST_ENV_REFERENCE_ROWS: SelfHostEnvReferenceRow[] = [
     firstReference: "src/server.ts",
   },
   {
+    name: "LOOPOVER_POSTHOG_AI_CONTENT",
+    firstReference: "src/selfhost/posthog.ts",
+  },
+  {
+    name: "LOOPOVER_POSTHOG_AI_CONTENT_MAX_CHARS",
+    firstReference: "src/selfhost/posthog.ts",
+  },
+  {
     name: "LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS",
     firstReference: "src/selfhost/inert-config.ts",
   },
@@ -801,6 +809,8 @@ export const SELFHOST_ENV_REFERENCE_MARKDOWN = [
   "| `LOOPOVER_LEDGER_UNCHAINED_WAIVER` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_MCP_TOKEN` | `src/selfhost/preflight.ts` |",
   "| `LOOPOVER_METRICS_REPO_LABELS` | `src/server.ts` |",
+  "| `LOOPOVER_POSTHOG_AI_CONTENT` | `src/selfhost/posthog.ts` |",
+  "| `LOOPOVER_POSTHOG_AI_CONTENT_MAX_CHARS` | `src/selfhost/posthog.ts` |",
   "| `LOOPOVER_PUBLIC_SCORE_TERMS_ALLOWED_REPOS` | `src/selfhost/inert-config.ts` |",
   "| `LOOPOVER_PUBLIC_STATS_REPOS` | `src/selfhost/inert-config.ts` |",
   "| `LOOPOVER_REPO_CONFIG_DIR` | `src/server.ts` |",

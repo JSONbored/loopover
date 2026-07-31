@@ -331,6 +331,16 @@ describe("recordGateScoreSignals (#8223)", () => {
     expect((await createSignalStore(env).queryRuleHistory("slop_gate_score", 0)).fired).toEqual([]);
   });
 
+  it("records NOTHING for slop when slopGateMode is unset — mirrors buildSlopGateBlocker's own advisory default (#10015)", async () => {
+    // Regression: gateMode(effective.slopGateMode) used to bare-call gateMode without the `?? "advisory"`
+    // default, so an unset slopGateMode fail-closed to "block" here while buildSlopGateBlocker (the pure
+    // evaluator this capture is documented to mirror) resolved the same unset value to "advisory" and never
+    // evaluated. That mismatch wrote a "mode block" signal for a threshold comparison the gate never made.
+    const env = createTestEnv();
+    await recordGateScoreSignals(env, { slopRisk: 72, slopGateMinScore: 60 }, "owner/repo", 7);
+    expect((await createSignalStore(env).queryRuleHistory("slop_gate_score", 0)).fired).toEqual([]);
+  });
+
   it("fires quality_gate_score in advisory mode too — pass AND fail evaluations both leave corpus evidence", async () => {
     const env = createTestEnv();
     await recordGateScoreSignals(env, { qualityGateMode: "advisory", readinessScore: 80, qualityGateMinScore: 70 }, "owner/repo", 7);
@@ -347,6 +357,20 @@ describe("recordGateScoreSignals (#8223)", () => {
     await recordGateScoreSignals(env, { qualityGateMode: "advisory", qualityGateMinScore: 70 }, "owner/repo", 7);
     await recordGateScoreSignals(env, { qualityGateMode: "advisory", readinessScore: 40 }, "owner/repo", 7);
     expect((await createSignalStore(env).queryRuleHistory("quality_gate_score", 0)).fired).toEqual([]);
+  });
+
+  it("still fires quality_gate_score when qualityGateMode is unset — the #10015 default fix doesn't change this path's outcome", async () => {
+    // qualityMode resolves to "advisory" now instead of the old bare-call "block", but the firing condition
+    // is only `!== "off"` either way, so an unset qualityGateMode still records — pinning that the fix is
+    // scoped to the mismatch (slop's block-only firing condition) and doesn't regress quality's capture.
+    const env = createTestEnv();
+    await recordGateScoreSignals(env, { readinessScore: 40, qualityGateMinScore: 70 }, "owner/repo", 7);
+    const history = await createSignalStore(env).queryRuleHistory("quality_gate_score", 0);
+    expect(history.fired).toHaveLength(1);
+    expect(history.fired[0]).toMatchObject({
+      outcome: "below_threshold",
+      metadata: { rawSignal: "public readiness score 40/100 vs threshold 70/100 (mode advisory)" },
+    });
   });
 
   it("degrades silently when the SignalStore write rejects — the call resolves normally", async () => {

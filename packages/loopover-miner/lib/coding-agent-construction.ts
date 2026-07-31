@@ -9,7 +9,6 @@
 
 import { spawn as nodeSpawn } from "node:child_process";
 import {
-  CODING_AGENT_DRIVER_CONFIG_ENV,
   createCodingAgentDriver,
   resolveFirstConfiguredCodingAgentDriverName,
   type AgentSdkHooks,
@@ -22,7 +21,6 @@ import {
   type HouseRulesConfig,
   type HouseRulesOptions,
 } from "./coding-agent-house-rules.js";
-import { captureMinerPostHogAiGeneration } from "./posthog.js";
 
 /**
  * Real `child_process.spawn`-backed implementation of the engine's `CliSubprocessSpawnFn` contract. Captures
@@ -73,46 +71,6 @@ export function createRealCliSubprocessSpawn(): CliSubprocessSpawnFn {
     });
 }
 
-/** Wrap a real `CodingAgentDriver` with PostHog `$ai_generation` capture (#8296 AMS follow-up, epic #8286).
- *  Lives here, not in `@loopover/engine` (the pure driver package cannot depend on `posthog-node` or any
- *  vendor client -- the same "no cross-package import" boundary this file's own header already documents
- *  for its spawn implementation): this is the miner CLI's own host-bound construction site, exactly where
- *  `src/selfhost/`'s equivalent ORB-side wrapper (`withAiGenerationCapture`, ai.ts) lives relative to its
- *  own chain. `CodingAgentDriverResult` carries a single blended `costUsd`/`tokensUsed` (no input/output
- *  split, unlike ORB's `AiUsage`) -- captureMinerPostHogAiGeneration is deliberately built for that exact
- *  shape, never fabricating a split its source data doesn't have. A driver failure is reported via
- *  `result.ok === false` (the real, observed contract every shipped driver follows -- none of them throw
- *  for an ordinary task failure), with a genuine thrown exception handled defensively on top. */
-export function withCodingAgentAiGenerationCapture(providerName: string, model: string, driver: CodingAgentDriver): CodingAgentDriver {
-  return {
-    async run(task) {
-      const startedAtMs = Date.now();
-      try {
-        const result = await driver.run(task);
-        captureMinerPostHogAiGeneration({
-          provider: providerName,
-          model,
-          latencyMs: Date.now() - startedAtMs,
-          isError: !result.ok,
-          totalTokens: result.tokensUsed,
-          totalCostUsd: result.costUsd,
-          error: result.ok ? undefined : result.error,
-        });
-        return result;
-      } catch (error) {
-        captureMinerPostHogAiGeneration({
-          provider: providerName,
-          model,
-          latencyMs: Date.now() - startedAtMs,
-          isError: true,
-          error,
-        });
-        throw error;
-      }
-    },
-  };
-}
-
 export type ConstructProductionCodingAgentDriverOptions = {
   spawn?: CliSubprocessSpawnFn;
   query?: AgentSdkQueryFn;
@@ -150,7 +108,12 @@ export function constructProductionCodingAgentDriver(
     (providerName.trim().toLowerCase() === "agent-sdk"
       ? buildHouseRulesAgentSdkHooks(options.houseRulesConfig, options.houseRulesOptions)
       : undefined);
-  const driver = createCodingAgentDriver({
+  // #10200: `$ai_generation` capture is no longer attached here. It moved INTO `createCodingAgentDriver`
+  // (packages/loopover-engine/src/miner/driver-factory.ts) — the one chokepoint every real driver is built
+  // through — because attaching it at this construction site left `runCodingAgentAttempt`'s own path, which
+  // calls that factory directly, silently uncaptured. The host half of the seam is now
+  // `setMinerAiGenerationSink`, registered once by `initMinerPostHog` (posthog.ts).
+  return createCodingAgentDriver({
     providerName,
     env,
     spawn: options.spawn ?? createRealCliSubprocessSpawn(),
@@ -158,11 +121,4 @@ export function constructProductionCodingAgentDriver(
     ...(hooks !== undefined ? { hooks } : {}),
     ...(options.listChangedFiles !== undefined ? { listChangedFiles: options.listChangedFiles } : {}),
   });
-  // #8296 AMS follow-up: the configured model env var (CODING_AGENT_DRIVER_CONFIG_ENV), when this
-  // provider declares one -- agent-sdk declares none (its session uses the account/CLI default), so it
-  // falls back to the provider name itself, mirroring ai.ts's own "unconfigured -> falls back to a
-  // sensible default" convention.
-  const modelEnvKey = CODING_AGENT_DRIVER_CONFIG_ENV[providerName as keyof typeof CODING_AGENT_DRIVER_CONFIG_ENV]?.model;
-  const model = (modelEnvKey ? env[modelEnvKey] : undefined) || providerName;
-  return withCodingAgentAiGenerationCapture(providerName, model, driver);
 }

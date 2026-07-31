@@ -167,19 +167,24 @@ describe("mountRemoteTools against the real server (#9526)", () => {
     }
   });
 
-  it("hands back the WHOLE payload when the remote's envelope carries no `result`", async () => {
-    // The `??` fallback, and a real posture rather than a defensive shrug: a remote that answers a shape
-    // this package does not model must still reach the caller intact, so the caller can see what came back
-    // instead of an empty success.
+  it("shapes a resultless envelope into a conformant isError result rather than handing it back raw (#10036)", async () => {
+    // A remote answering neither `result` nor `error` is not a CallToolResult either -- returning it
+    // verbatim used to hand the client a bare `{ jsonrpc, id, note }` object with no `content`/`isError` at
+    // all. It must get the same treatment as a JSON-RPC error: a readable isError:true result.
     await mod.mountRemoteTools({
       argv: ["--stdio"],
       fetchImpl: remoteToolsFetch([{ name: "loopover_gateway_resultless" }]),
     });
     const client = await connect("gateway-resultless");
     try {
-      const raw = (await client.callTool({ name: "loopover_gateway_resultless", arguments: {} })) as { note?: string; isError?: boolean };
-      expect(raw.isError).toBeFalsy();
-      expect(raw.note, "the envelope itself reaches the caller when it carries no result").toBe("no result member");
+      const result = (await client.callTool({ name: "loopover_gateway_resultless", arguments: {} })) as {
+        isError?: boolean;
+        content?: Array<{ type: string; text?: string }>;
+        structuredContent?: { error?: { code?: string; message?: string } };
+      };
+      expect(result.isError).toBe(true);
+      expect(result.content?.[0]?.text).toBeTruthy();
+      expect(result.structuredContent?.error?.code).toBeTruthy();
     } finally {
       await client.close();
     }

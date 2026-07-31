@@ -26,7 +26,7 @@ import {
   type McpAnalyticsContext,
   type McpInitializeTelemetry,
 } from "@loopover/contract";
-import type { DispatchTelemetrySink } from "./dispatch-telemetry";
+import type { DispatchTelemetrySink, SetMcpSpanOutcomeAttributes } from "./dispatch-telemetry";
 import { getMcpDispatchSpanRunner } from "./dispatch-span-registry";
 
 const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
@@ -84,7 +84,11 @@ async function captureEvents(
 export function createDispatchTelemetrySink(
   env: DispatchTelemetryEnv,
   defer: DeferWork,
-  withSpan?: <T>(name: string, attributes: Record<string, unknown>, fn: () => Promise<T>) => Promise<T>,
+  withSpan?: <T>(
+    name: string,
+    attributes: Record<string, unknown>,
+    fn: (setOutcomeAttributes: SetMcpSpanOutcomeAttributes) => Promise<T>,
+  ) => Promise<T>,
   context: McpAnalyticsContext = {},
 ): DispatchTelemetrySink {
   return {
@@ -98,11 +102,15 @@ export function createDispatchTelemetrySink(
       if (!isWorkerPostHogConfigured(env)) return;
       // `mcp_tool` + `error_code` are the grouping properties: an exception dashboard broken down by
       // tool and cause is the thing an operator can act on, unlike a stack-only view.
-      defer(capturePostHogWorkerError(env, error, { path: `mcp.tool/${call.tool}`, method: call.errorCode ?? "unknown_error" }));
+      const errorCode = call.errorCode ?? "unknown_error";
+      defer(
+        capturePostHogWorkerError(env, error, { path: `mcp.tool/${call.tool}`, method: errorCode }, { mcp_tool: call.tool, error_code: errorCode }),
+      );
     },
     // The registry is consulted per call rather than captured at construction so a self-host boot
     // that fills the slot after the first request still traces.
-    withSpan: (name, attributes, fn) => (withSpan ?? getMcpDispatchSpanRunner() ?? ((_n, _a, run) => run()))(name, attributes, fn),
+    withSpan: (name, attributes, fn) =>
+      (withSpan ?? getMcpDispatchSpanRunner() ?? ((_n, _a, run) => run(() => {})))(name, attributes, fn),
   };
 }
 

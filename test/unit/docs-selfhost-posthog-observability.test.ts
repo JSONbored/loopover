@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { POSTHOG_AI_DEGRADED_EVENT, POSTHOG_MONITOR_HEARTBEAT_EVENT } from "../../src/selfhost/posthog";
+import { POSTHOG_AI_DEGRADED_EVENT, POSTHOG_AI_TRACE_EVENT, POSTHOG_MONITOR_HEARTBEAT_EVENT } from "../../src/selfhost/posthog";
 
 // Drift guard (#8287, #1468 -- 2026-07-25 Sentry removal): self-host PostHog docs must stay aligned with the
 // exported monitor-heartbeat event name. Sentry's own docs test (docs-selfhost-sentry-observability.test.ts)
@@ -38,6 +38,20 @@ describe("self-host PostHog observability docs (#8287)", () => {
   it("documents that $ai_model is the resolved model on the failure path too (#10186)", () => {
     expect(operations).toContain("Model labelling");
     expect(operations).toContain("<provider>-default");
+  });
+
+  it("documents content capture as opt-in, with the real env var names and the privacy warning (#10218)", () => {
+    // The page previously promised metadata-only unconditionally. That is now conditional, so the page must
+    // say WHICH var changes it and what enabling it actually sends -- a self-hoster's private diffs.
+    expect(operations).toContain("LOOPOVER_POSTHOG_AI_CONTENT");
+    expect(operations).toContain("LOOPOVER_POSTHOG_AI_CONTENT_MAX_CHARS");
+    expect(operations).toContain("Off by default");
+    expect(operations).toContain("private source code leaving your infrastructure");
+  });
+
+  it("documents the trace envelope with its real exported event name (#10221)", () => {
+    expect(operations).toContain(POSTHOG_AI_TRACE_EVENT);
+    expect(operations).toContain("Trace naming");
   });
 
   it("documents the cron-monitor heartbeat replacement with the real exported event name", () => {

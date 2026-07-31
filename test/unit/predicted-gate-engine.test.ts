@@ -684,7 +684,8 @@ describe("predicted-gate engine module coverage (#2283)", () => {
         findings: [{ code: "ai_review_inconclusive", severity: "warning", title: "ai", detail: "ai" }],
         generatedAt: "2026-01-01T00:00:00.000Z",
       },
-      {},
+      // #10016: the hold only fires under aiReviewGateMode: block now -- an unset mode resolves "advisory".
+      { aiReviewGateMode: "block" },
     );
     expect(aiHold.conclusion).toBe("neutral");
 

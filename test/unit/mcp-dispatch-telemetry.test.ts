@@ -28,6 +28,7 @@ import {
 } from "@loopover/contract";
 import { FORBIDDEN_CONTENT } from "../../scripts/forbidden-content";
 import { instrumentToolDispatch, NOOP_DISPATCH_SINK, type DispatchTelemetrySink } from "../../src/mcp/dispatch-telemetry";
+import { resolveMcpToolCallOk } from "../../src/mcp/server";
 
 const call: McpToolCallTelemetry = { tool: "loopover_get_repo_context", category: "maintainer", surface: "remote", ok: true, durationMs: 12 };
 
@@ -240,7 +241,7 @@ describe("MCP dispatch chokepoint (#9525)", () => {
       sink: {
         recordToolCall: (recorded) => calls.push(recorded),
         captureException: (error) => exceptions.push(error),
-        withSpan: async (_name, _attributes, fn) => fn(),
+        withSpan: async (_name, _attributes, fn) => fn(() => {}),
       },
     };
   };
@@ -316,7 +317,7 @@ describe("MCP dispatch chokepoint (#9525)", () => {
       captureException: () => {
         throw new Error("sink down");
       },
-      withSpan: async (_name, _attributes, fn) => fn(),
+      withSpan: async (_name, _attributes, fn) => fn(() => {}),
     };
     const ok = instrumentToolDispatch("loopover_get_repo_context", hostile, async (_args: unknown) => ({ structuredContent: { fine: true } }));
     await expect(ok({})).resolves.toMatchObject({ structuredContent: { fine: true } });
@@ -338,7 +339,10 @@ describe("MCP dispatch chokepoint (#9525)", () => {
     // every single call, so "does nothing and returns nothing" is worth asserting outright.
     expect(NOOP_DISPATCH_SINK.recordToolCall(call, { usage: {}, mcpToolCall: {} })).toBeUndefined();
     expect(NOOP_DISPATCH_SINK.captureException(new Error("x"), call)).toBeUndefined();
-    await expect(NOOP_DISPATCH_SINK.withSpan("n", {}, async () => "through")).resolves.toBe("through");
+    await expect(NOOP_DISPATCH_SINK.withSpan("n", {}, async (setOutcome) => {
+      setOutcome({ ok: false });
+      return "through";
+    })).resolves.toBe("through");
   });
 
   it("falls back to the unknown category for a tool with no contract entry", async () => {
@@ -346,6 +350,79 @@ describe("MCP dispatch chokepoint (#9525)", () => {
     const wrapped = instrumentToolDispatch("loopover_not_in_the_registry", spy, async (_args: unknown) => ({ structuredContent: {} }));
     await wrapped({});
     expect(calls[0]).toMatchObject({ category: "unknown" });
+  });
+});
+
+describe("MCP dispatch span outcome attributes (#10042)", () => {
+  it("publishes buildMcpToolSpanAttributes onto the span on success and on throw", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const spans: Array<{ name: string; open: Record<string, unknown>; outcome?: Record<string, unknown> }> = [];
+    const recordingSink: DispatchTelemetrySink = {
+      recordToolCall: () => undefined,
+      captureException: () => undefined,
+      withSpan: async (name, attributes, fn) => {
+        let outcome: Record<string, unknown> | undefined;
+        try {
+          const result = await fn((attrs) => {
+            outcome = attrs;
+          });
+          spans.push({ name, open: attributes, ...(outcome !== undefined ? { outcome } : {}) });
+          return result;
+        } catch (error) {
+          spans.push({ name, open: attributes, ...(outcome !== undefined ? { outcome } : {}) });
+          throw error;
+        }
+      },
+    };
+
+    const okWrapped = instrumentToolDispatch("loopover_get_repo_context", recordingSink, async (_args: unknown) => ({
+      structuredContent: { ok: 1 },
+    }));
+    await okWrapped({});
+    expect(spans[0]).toMatchObject({ name: "mcp.tool/loopover_get_repo_context", open: {} });
+    expect(spans[0]!.outcome).toMatchObject({
+      tool: "loopover_get_repo_context",
+      category: "maintainer",
+      surface: "remote",
+      transport: "local",
+      ok: true,
+    });
+    expect("error_code" in spans[0]!.outcome!).toBe(false);
+
+    const throwWrapped = instrumentToolDispatch("loopover_get_repo_context", recordingSink, async (_args: unknown) => {
+      throw new Error("request timed out");
+    });
+    await expect(throwWrapped({})).rejects.toThrow("request timed out");
+    expect(spans[1]!.outcome).toMatchObject({ ok: false, error_code: "timeout" });
+    expect(MCP_TELEMETRY_ERROR_CODES).toContain(spans[1]!.outcome!.error_code);
+
+    error.mockRestore();
+  });
+
+  it("keeps NOOP_DISPATCH_SINK.withSpan a pure passthrough that records nothing", async () => {
+    let setterCalled = false;
+    await expect(
+      NOOP_DISPATCH_SINK.withSpan("mcp.tool/x", { tool: "x" }, async (setOutcome) => {
+        setOutcome({ ok: false, error_code: "timeout" });
+        setterCalled = true;
+        return "through";
+      }),
+    ).resolves.toBe("through");
+    expect(setterCalled).toBe(true);
+  });
+
+  it("never lets a failing setOutcomeAttributes reach the caller", async () => {
+    const recordingSink: DispatchTelemetrySink = {
+      recordToolCall: () => undefined,
+      captureException: () => undefined,
+      withSpan: async (_name, _attributes, fn) => fn(() => {
+        throw new Error("span attrs down");
+      }),
+    };
+    const wrapped = instrumentToolDispatch("loopover_get_repo_context", recordingSink, async (_args: unknown) => ({
+      structuredContent: { ok: 1 },
+    }));
+    await expect(wrapped({})).resolves.toMatchObject({ structuredContent: { ok: 1 } });
   });
 });
 
@@ -451,5 +528,34 @@ describe("PostHog canonical MCP analytics contract (#10175)", () => {
     // A server advertising nothing is a real, diagnosable state; an absent key reads as "not
     // measured" instead.
     expect(buildMcpToolsListProperties([]).$mcp_listed_tool_names).toEqual([]);
+  });
+});
+
+describe("resolveMcpToolCallOk (#10035)", () => {
+  it("reports failure for a tools/call response whose result carries isError", async () => {
+    const response = new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [] } }), { status: 200 });
+    await expect(resolveMcpToolCallOk(response, true)).resolves.toBe(false);
+  });
+
+  it("reports failure for a tools/call response with a top-level JSON-RPC error", async () => {
+    const response = new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, error: { code: -32602, message: "bad params" } }), { status: 200 });
+    await expect(resolveMcpToolCallOk(response, true)).resolves.toBe(false);
+  });
+
+  it("reports success for a normal tool result", async () => {
+    const response = new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { structuredContent: {} } }), { status: 200 });
+    await expect(resolveMcpToolCallOk(response, true)).resolves.toBe(true);
+  });
+
+  it("falls back to the status-derived outcome when the body does not parse as JSON, rather than throwing", async () => {
+    const response = new Response("not-json", { status: 200 });
+    await expect(resolveMcpToolCallOk(response, true)).resolves.toBe(true);
+    await expect(resolveMcpToolCallOk(response.clone(), false)).resolves.toBe(false);
+  });
+
+  it("leaves the response body available for the caller after reading it for telemetry", async () => {
+    const response = new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: { isError: true, content: [] } }), { status: 200 });
+    await resolveMcpToolCallOk(response, true);
+    await expect(response.json()).resolves.toMatchObject({ result: { isError: true } });
   });
 });

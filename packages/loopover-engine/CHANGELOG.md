@@ -1,5 +1,26 @@
 # Changelog
 
+## [3.21.1](https://github.com/JSONbored/loopover/compare/engine-v3.21.0...engine-v3.21.1) (2026-07-31)
+
+
+### Fixes
+
+* **orb:** gate the ai_review_inconclusive hold on aiReviewGateMode ([#10239](https://github.com/JSONbored/loopover/issues/10239)) ([00e3ee9](https://github.com/JSONbored/loopover/commit/00e3ee98e6f9843317313217013071a5fbaf4b2b))
+
+## [3.21.0](https://github.com/JSONbored/loopover/compare/engine-v3.20.0...engine-v3.21.0) (2026-07-31)
+
+
+### Features
+
+* **observability:** capture every miner AI generation, and stop fabricating zero token counts ([#10233](https://github.com/JSONbored/loopover/issues/10233)) ([ba35c8b](https://github.com/JSONbored/loopover/commit/ba35c8babc661b9ab97d00ee0a4080a5fed899fa))
+
+## [3.20.0](https://github.com/JSONbored/loopover/compare/engine-v3.19.0...engine-v3.20.0) (2026-07-31)
+
+
+### Chores
+
+* **engine:** Synchronize engine-and-dependents versions
+
 ## [3.19.0](https://github.com/JSONbored/loopover/compare/engine-v3.18.4...engine-v3.19.0) (2026-07-31)
 
 

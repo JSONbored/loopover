@@ -149,6 +149,30 @@ describe("capturePostHogWorkerError", () => {
     expect(flushed).toBe(true);
   });
 
+  it("merges extraProperties into the captured exception alongside the fixed request shape (#10037)", async () => {
+    await capturePostHogWorkerError({ WORKER_POSTHOG_API_KEY: "phc_test" } as WorkerPostHogEnv, new Error("boom"), { path: "mcp.tool/loopover_x", method: "forbidden" }, {
+      mcp_tool: "loopover_x",
+      error_code: "forbidden",
+    });
+    const properties = mocks.captureException.mock.calls.at(-1)?.[2] as Record<string, unknown>;
+    expect(properties).toMatchObject({
+      environment: "production",
+      request_path: "mcp.tool/loopover_x",
+      request_method: "forbidden",
+      mcp_tool: "loopover_x",
+      error_code: "forbidden",
+    });
+  });
+
+  it("scrubs a secret-shaped extraProperties value the same way request_path is scrubbed (#10037)", async () => {
+    await capturePostHogWorkerError({ WORKER_POSTHOG_API_KEY: "phc_test" } as WorkerPostHogEnv, new Error("boom"), { path: "/x", method: "GET" }, {
+      leaked_token: `${"github" + "_pat_"}${"a".repeat(24)}`,
+    });
+    const properties = mocks.captureException.mock.calls.at(-1)?.[2] as Record<string, unknown>;
+    expect(properties.leaked_token).not.toContain("github_pat_");
+    expect(properties.leaked_token).toContain("[redacted]");
+  });
+
   it("never throws when the PostHog client construction fails", async () => {
     mocks.PostHog.mockImplementationOnce(() => {
       throw new Error("client construction failed");
@@ -221,6 +245,16 @@ describe("createWorkerPostHogErrorMiddleware", () => {
     expect((error as Error).message).toBe("handler exploded");
     expect((properties as Record<string, unknown>).request_path).toBe("/boom");
     expect((properties as Record<string, unknown>).request_method).toBe("GET");
+  });
+
+  it("still carries only request_path/request_method, never mcp_tool, when no extraProperties argument is passed (#10037)", async () => {
+    const { app, executionCtx, getWaited } = buildTestApp();
+    const res = await app.fetch(new Request("https://loopover.test/boom"), { WORKER_POSTHOG_API_KEY: "phc_test" } as WorkerPostHogEnv, executionCtx);
+    expect(res.status).toBe(500);
+    await getWaited();
+    const properties = mocks.captureException.mock.calls.at(-1)?.[2] as Record<string, unknown>;
+    expect(properties).toMatchObject({ request_path: "/boom", request_method: "GET" });
+    expect(properties).not.toHaveProperty("mcp_tool");
   });
 
   it("falls back to a no-op executionCtx when c.executionCtx throws (self-host calling the same Worker fetch handler outside a real isolate)", async () => {

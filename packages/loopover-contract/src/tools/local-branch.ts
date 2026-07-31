@@ -133,6 +133,14 @@ export const LocalBranchAnalysisInput = CurrentBranchInput.extend({
     .optional(),
 });
 
+/**
+ * What the STDIO server serves: it reads `login`/`repoFullName` off the active session and the
+ * checkout's own remote instead of asking the caller to restate them (#10034). Derived rather than
+ * hand-written, per the rule the registry states: a narrowing is only ever a `.partial()`/`.omit()`
+ * of the contract it narrows, never a fresh `z.object({...})` beside the registration.
+ */
+export const StdioLocalBranchAnalysisInput = LocalBranchAnalysisInput.partial({ login: true, repoFullName: true });
+
 export const preflightCurrentBranchTool = defineTool({
   name: "loopover_preflight_current_branch",
   title: "Preflight current branch",
@@ -242,6 +250,10 @@ export const reviewPrBeforePushTool = defineTool({
 export const DraftPrBodyInput = LocalBranchAnalysisInput.extend({
   format: z.enum(["json", "markdown"]).optional(),
 });
+
+/** Same stdio narrowing as `StdioLocalBranchAnalysisInput`, plus the `format` field this tool alone takes. */
+export const StdioDraftPrBodyInput = DraftPrBodyInput.partial({ login: true, repoFullName: true });
+
 export const draftPrBodyTool = defineTool({
   name: "loopover_draft_pr_body",
   title: "Draft PR body",
@@ -527,9 +539,11 @@ export const findOpportunitiesTool = defineTool({
 
 /** Same: the remote copy carried the bounds, the stdio copy carried none. */
 export const RetrieveIssueContextInput = z.object({
-  owner: z.string().max(39),
-  repo: z.string().max(100),
-  title: z.string().max(PREFLIGHT_LIMITS.titleChars),
+  // #10040: `.min(1)` matches `ownerRepoInput` and the hand-rolled `owner_and_repo_required` /
+  // `title_required` checks — the catalog previously published empty strings as valid.
+  owner: z.string().min(1).max(39),
+  repo: z.string().min(1).max(100),
+  title: z.string().min(1).max(PREFLIGHT_LIMITS.titleChars),
   body: z.string().max(PREFLIGHT_LIMITS.bodyChars).optional(),
   labels: z.array(z.string().max(PREFLIGHT_LIMITS.labelChars)).max(PREFLIGHT_LIMITS.labels).optional(),
   topK: z.number().int().min(1).max(12).optional(),

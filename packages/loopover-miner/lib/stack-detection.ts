@@ -100,11 +100,24 @@ function parseJson(text: any) {
   }
 }
 
-/** Pick a package.json script by exact name first, then by pattern, considering only string-valued scripts. */
+/** Script-name segments that denote a watch/non-terminating or write-mode variant (#10006). Matched
+ *  case-insensitively against whole `:`-delimited segments only, so `test:fixtures` is kept while
+ *  `test:watch` / `lint:fix` / `test:u` are not. */
+const EXCLUDED_SCRIPT_SEGMENTS = new Set(["watch", "dev", "serve", "fix", "write", "update", "u"]);
+
+function isExcludedScriptName(name: string): boolean {
+  return name.split(":").some((segment) => EXCLUDED_SCRIPT_SEGMENTS.has(segment.toLowerCase()));
+}
+
+/** Pick a package.json script by exact name first, then by pattern, considering only string-valued scripts.
+ *  Pattern fallback skips watch/write variants and picks the lexicographically smallest survivor (#10006). */
 function pickScript(scripts: any, exactName: any, pattern: any) {
   const names = Object.keys(scripts).filter((name) => typeof scripts[name] === "string");
   if (names.includes(exactName)) return exactName;
-  return names.find((name) => pattern.test(name)) ?? null;
+  const candidates = names
+    .filter((name) => pattern.test(name) && !isExcludedScriptName(name))
+    .sort();
+  return candidates[0] ?? null;
 }
 
 function nodeLockfile(exists: any) {

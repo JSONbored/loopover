@@ -676,12 +676,17 @@ three standalone bindings (`AI_EMBED`, `AI_VISION`, `AI_ADVISORY`).
     {
       title: "Content policy",
       description:
-        "Metadata only — never the prompt or completion text. $ai_generation's own optional content fields ($ai_input/$ai_output_choices) are never populated, the same redaction posture as every other capture path on this page.",
+        "Metadata only by default — no prompt or completion text leaves the box unless you explicitly opt in. $ai_generation's optional content fields ($ai_input/$ai_output_choices) stay unpopulated unless LOOPOVER_POSTHOG_AI_CONTENT is set, so upgrading never starts shipping content on its own.",
     },
     {
       title: "Model labelling",
       description:
         "$ai_model is always the model the provider actually resolved — on the failure path too. The core passes a Workers-AI model id that every self-host provider discards, so it is resolved to the real one (or <provider>-default) before capture and never reported verbatim.",
+    },
+    {
+      title: "Trace naming",
+      description:
+        "$ai_trace names the whole review in PostHog's Traces view. Emitted once per trace, by the outermost pipeline span, and only when at least one AI call actually ran under it — a pipeline span with no generations is never given a trace row.",
     },
     {
       title: "Degraded requests",
@@ -690,6 +695,28 @@ three standalone bindings (`AI_EMBED`, `AI_VISION`, `AI_ADVISORY`).
     },
   ]}
 />
+
+### Capturing prompts and completions (`LOOPOVER_POSTHOG_AI_CONTENT`)
+
+**Off by default, and deliberately so.** With it unset, no prompt, diff or model completion ever leaves the
+box — only the metadata listed above. Set `LOOPOVER_POSTHOG_AI_CONTENT=1` to populate `$ai_input` and
+`$ai_output_choices`, which is what unlocks PostHog's conversation view, sentiment, evaluations and
+LLM-judge surfaces. Read this before turning it on:
+
+- **Your PR diffs and review text go to PostHog.** The prompt for a review contains the diff and the
+  assembled repo context. On a private repository that is private source code leaving your infrastructure.
+  Only enable it on a project you are willing to have that content in.
+- **The same redaction still applies.** Captured content passes through the identical `before_send` scrub
+  (`src/selfhost/redaction-scrub.ts`) as every other field — credential shapes, JWTs and query-string
+  secrets are redacted from it. That is a backstop, not a licence: it removes credential shapes, not the
+  source code itself.
+- **Content is truncated.** Each message is capped at 10,000 characters
+  (`LOOPOVER_POSTHOG_AI_CONTENT_MAX_CHARS`) and marked `…[truncated]`. A review prompt can exceed 300,000
+  characters, so an uncapped capture would blow past PostHog's payload limits and be dropped entirely. A
+  non-numeric, zero or negative override falls back to the default rather than disabling the cap.
+- **Images are never captured.** An image content block is dropped, not base64-encoded into the event.
+- **On a failure, the prompt is captured but there is no completion** — a `claude_stalled_no_output` or a
+  context-length rejection is only diagnosable against the input that produced it.
 
 A CLI-subscription provider declining an embedding request (`claude_code_no_embed` / `codex_no_embed`)
 is routing working as designed — it is how an embed reaches an embed-capable provider — so it is exempt

@@ -703,4 +703,116 @@ describe("fetchCandidateIssues (#2307)", () => {
 
     expect(result.map((entry) => entry.issueNumber)).toEqual([70]);
   });
+
+  it("#10005: only folds a core-billed x-ratelimit-remaining into the summary, not the search bucket's", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/search/issues?")) {
+        return jsonResponse(
+          { items: [{ ...issue(80), repository: { full_name: "acme/widgets" } }] },
+          { headers: { "x-ratelimit-remaining": "29", "x-ratelimit-resource": "search" } },
+        );
+      }
+      if (url.endsWith("/contents/AI-USAGE.md")) {
+        return jsonResponse(
+          { type: "file", encoding: "base64", content: Buffer.from("Contributions welcome.", "utf8").toString("base64") },
+          { headers: { "x-ratelimit-remaining": "4990", "x-ratelimit-resource": "core" } },
+        );
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const result = await searchCandidateIssuesWithSummary("label:help-wanted", "token", { apiBaseUrl: API });
+
+    expect(result.rateLimitRemaining).toBe(4990);
+  });
+
+  it("#10005: rateLimitResetAt is likewise taken only from core-billed responses, not the search bucket's", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/search/issues?")) {
+        return jsonResponse(
+          { items: [{ ...issue(81), repository: { full_name: "acme/widgets" } }] },
+          {
+            headers: {
+              "x-ratelimit-remaining": "29",
+              "x-ratelimit-resource": "search",
+              "x-ratelimit-reset": "4000000000", // far future -- must not win
+            },
+          },
+        );
+      }
+      if (url.endsWith("/contents/AI-USAGE.md")) {
+        return jsonResponse(
+          { type: "file", encoding: "base64", content: Buffer.from("Contributions welcome.", "utf8").toString("base64") },
+          { headers: { "x-ratelimit-remaining": "4990", "x-ratelimit-resource": "core", "x-ratelimit-reset": "1800000300" } },
+        );
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const result = await searchCandidateIssuesWithSummary("label:help-wanted", "token", { apiBaseUrl: API });
+
+    expect(result.rateLimitResetAt).toBe("2027-01-15T08:05:00.000Z");
+  });
+
+  it("#10005: still records x-ratelimit-remaining when x-ratelimit-resource is absent (no forge regression)", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const headers = { "x-ratelimit-remaining": "12" };
+      if (url.endsWith("/contents/AI-USAGE.md")) return jsonResponse({}, { status: 404, headers });
+      if (url.endsWith("/contents/CONTRIBUTING.md")) return contentResponse("Contributions welcome.");
+      if (url.includes("/issues?")) return jsonResponse([issue(3)], { headers });
+      return jsonResponse({}, { status: 404, headers });
+    });
+
+    const result = await fetchCandidateIssuesWithSummary([{ owner: "acme", repo: "widgets" }], "token", {
+      apiBaseUrl: API,
+    });
+
+    expect(result.rateLimitRemaining).toBe(12);
+  });
+
+  it("REGRESSION: the search bucket's remaining budget does not pin the core fan-out to serial concurrency", async () => {
+    const repos = ["one", "two", "three", "four", "five"];
+    let activeContentsRequests = 0;
+    let maxActiveContentsRequests = 0;
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/search/issues?")) {
+        return jsonResponse(
+          {
+            items: repos.map((repo, index) => ({
+              ...issue(90 + index, `Issue in ${repo}`),
+              repository: { full_name: `acme/${repo}` },
+              html_url: `https://github.com/acme/${repo}/issues/${90 + index}`,
+            })),
+          },
+          { headers: { "x-ratelimit-remaining": "29", "x-ratelimit-resource": "search" } },
+        );
+      }
+      if (url.includes("/contents/AI-USAGE.md")) {
+        activeContentsRequests += 1;
+        maxActiveContentsRequests = Math.max(maxActiveContentsRequests, activeContentsRequests);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        activeContentsRequests -= 1;
+        return jsonResponse(
+          { type: "file", encoding: "base64", content: Buffer.from("Contributions welcome.", "utf8").toString("base64") },
+          { headers: { "x-ratelimit-remaining": "4990", "x-ratelimit-resource": "core" } },
+        );
+      }
+      return jsonResponse({}, { status: 404 });
+    });
+
+    const result = await searchCandidateIssuesWithSummary("label:help-wanted", "token", {
+      apiBaseUrl: API,
+      concurrency: 5,
+    });
+
+    // Before the #10005 fix, the search response's remaining:29 pinned rateLimitRemaining to 29 -- well under
+    // discovery-throttle's default 50 low-water-mark -- so resolveThrottledConcurrency serialized every one of
+    // these five policy-doc fetches to a single in-flight request regardless of the configured concurrency.
+    expect(result.rateLimitRemaining).toBe(4990);
+    expect(maxActiveContentsRequests).toBeGreaterThan(1);
+  });
 });

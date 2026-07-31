@@ -5,6 +5,7 @@ import { createSessionForGitHubUser, type AuthIdentity } from "../../src/auth/se
 import { upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { LoopoverMcp } from "../../src/mcp/server";
 import { validateIssueRagInput } from "../../src/mcp/issue-rag";
+import { PREFLIGHT_LIMITS } from "@loopover/contract";
 import { createTestEnv } from "../helpers/d1";
 
 async function connect(env: Env, identity?: AuthIdentity) {
@@ -20,32 +21,67 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("validateIssueRagInput (#4293)", () => {
-  it("rejects missing owner/repo/title and oversized fields", () => {
+describe("validateIssueRagInput (#4293, #10040)", () => {
+  it("rejects missing owner/repo/title after trim and non-integer topK", () => {
     expect(validateIssueRagInput({ owner: "", repo: "demo", title: "Add observability context for self-hosted review planning failures" }).ok).toBe(false);
     expect(validateIssueRagInput({ owner: "acme", repo: "", title: "Add observability context for self-hosted review planning failures" }).ok).toBe(false);
     expect(validateIssueRagInput({ owner: "acme", repo: "demo", title: "" }).ok).toBe(false);
-    expect(validateIssueRagInput({ owner: "a".repeat(40), repo: "demo", title: "Add observability context for self-hosted review planning failures" })).toMatchObject({ ok: false, reason: "owner_too_long" });
-    expect(validateIssueRagInput({ owner: "acme", repo: "demo", title: "Add observability context for self-hosted review planning failures", topK: 0 })).toMatchObject({ ok: false, reason: "invalid_top_k" });
+    expect(validateIssueRagInput({ owner: "acme", repo: "demo", title: "Add observability context for self-hosted review planning failures", topK: 0 })).toMatchObject({
+      ok: false,
+      reason: "invalid_top_k",
+    });
+    expect(validateIssueRagInput({ owner: "acme", repo: "demo", title: "Add observability context for self-hosted review planning failures", topK: 3.5 })).toMatchObject({
+      ok: false,
+      reason: "invalid_top_k",
+    });
+  });
+
+  it("rejects an over-long body instead of silently truncating it", () => {
+    expect(
+      validateIssueRagInput({
+        owner: "acme",
+        repo: "demo",
+        title: "Add observability context for self-hosted review planning failures",
+        body: "x".repeat(PREFLIGHT_LIMITS.bodyChars + 1),
+      }),
+    ).toMatchObject({ ok: false, reason: "body_too_long" });
+  });
+
+  it("rejects an over-long label after trim instead of silently dropping it via slice", () => {
+    expect(
+      validateIssueRagInput({
+        owner: "acme",
+        repo: "demo",
+        title: "Add observability context for self-hosted review planning failures",
+        labels: ["x".repeat(PREFLIGHT_LIMITS.labelChars + 1)],
+      }),
+    ).toMatchObject({ ok: false, reason: "invalid_labels" });
+  });
+
+  it("rejects whitespace-only title after trim when the schema already accepted minLength", () => {
+    expect(
+      validateIssueRagInput({
+        owner: "acme",
+        repo: "demo",
+        title: "   ",
+      }),
+    ).toMatchObject({ ok: false, reason: "title_required" });
   });
 });
 
 describe("MCP loopover_retrieve_issue_context", () => {
-  it("registers the tool and rejects invalid requests before authorization", async () => {
+  it("registers the tool and rejects an empty title at the contract schema", async () => {
     const env = createTestEnv();
     const client = await connect(env);
     const { tools } = await client.listTools();
     expect(tools.map((tool) => tool.name)).toContain("loopover_retrieve_issue_context");
 
+    // #10040: empty title fails RetrieveIssueContextInput.min(1) before the handler runs.
     const invalid = await client.callTool({
       name: "loopover_retrieve_issue_context",
       arguments: { owner: "acme", repo: "widgets", title: "" },
     });
-    expect(invalid.isError).toBeFalsy();
-    expect(invalid.structuredContent).toMatchObject({
-      status: "invalid_request",
-      reason: "title_required",
-    });
+    expect(invalid.isError).toBe(true);
   });
 
   it("returns query_too_short for a one-line issue below the retrieval floor", async () => {

@@ -814,7 +814,7 @@ describe("resolveLinkedIssueHasOpenReference (#unlinked-issue-guardrail-followup
     const fetchSpy = vi.fn();
     vi.stubGlobal("fetch", fetchSpy);
     const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [] });
-    expect(result).toBe(true);
+    expect(result.hasOpenReference).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -823,7 +823,7 @@ describe("resolveLinkedIssueHasOpenReference (#unlinked-issue-guardrail-followup
     vi.stubGlobal("fetch", fetchSpy);
     const tooMany = Array.from({ length: MAX_LINKED_ISSUE_NUMBERS + 1 }, (_, i) => i + 1);
     const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: tooMany });
-    expect(result).toBe(true);
+    expect(result.hasOpenReference).toBe(true);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -833,7 +833,7 @@ describe("resolveLinkedIssueHasOpenReference (#unlinked-issue-guardrail-followup
     );
     const atCap = Array.from({ length: MAX_LINKED_ISSUE_NUMBERS }, (_, i) => i + 1);
     const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: atCap });
-    expect(result).toBe(true);
+    expect(result.hasOpenReference).toBe(true);
   });
 
   it("returns true when the linked issue is confirmed open", async () => {
@@ -841,7 +841,7 @@ describe("resolveLinkedIssueHasOpenReference (#unlinked-issue-guardrail-followup
       input.toString().includes("/issues/") ? Response.json({ number: 7, state: "open", labels: [], assignees: [] }) : new Response("missing", { status: 404 }),
     );
     const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [7] });
-    expect(result).toBe(true);
+    expect(result.hasOpenReference).toBe(true);
   });
 
   it("returns false when the linked issue is confirmed CLOSED — the exact stale-link gaming case", async () => {
@@ -849,13 +849,13 @@ describe("resolveLinkedIssueHasOpenReference (#unlinked-issue-guardrail-followup
       input.toString().includes("/issues/") ? Response.json({ number: 7, state: "closed", labels: [], assignees: [] }) : new Response("missing", { status: 404 }),
     );
     const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [7] });
-    expect(result).toBe(false);
+    expect(result.hasOpenReference).toBe(false);
   });
 
   it("fails open (true) when the fetch errors transiently rather than confirming the issue is dead", async () => {
     vi.stubGlobal("fetch", async () => new Response("server error", { status: 500 }));
     const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [7] });
-    expect(result).toBe(true);
+    expect(result.hasOpenReference).toBe(true);
   });
 
   it("still resolves correctly (via the public-token fallback) when no installationId is supplied at all", async () => {
@@ -863,7 +863,7 @@ describe("resolveLinkedIssueHasOpenReference (#unlinked-issue-guardrail-followup
       input.toString().includes("/issues/") ? Response.json({ number: 7, state: "closed", labels: [], assignees: [] }) : new Response("missing", { status: 404 }),
     );
     const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [7], installationId: null });
-    expect(result).toBe(false);
+    expect(result.hasOpenReference).toBe(false);
   });
 
   it("falls back to the public token (and still resolves) when installationId is set but token minting fails", async () => {
@@ -871,7 +871,7 @@ describe("resolveLinkedIssueHasOpenReference (#unlinked-issue-guardrail-followup
       input.toString().includes("/app/installations/") ? new Response("forbidden", { status: 403 }) : input.toString().includes("/issues/") ? Response.json({ number: 7, state: "open", labels: [], assignees: [] }) : new Response("missing", { status: 404 }),
     );
     const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [7], installationId: 123 });
-    expect(result).toBe(true);
+    expect(result.hasOpenReference).toBe(true);
   });
 
   it("checks multiple linked issues and is true when only one of several is open", async () => {
@@ -882,7 +882,41 @@ describe("resolveLinkedIssueHasOpenReference (#unlinked-issue-guardrail-followup
       return new Response("missing", { status: 404 });
     });
     const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [1, 2] });
-    expect(result).toBe(true);
+    expect(result.hasOpenReference).toBe(true);
+  });
+
+  // #10168: the same fetch that answers the anti-gaming question also carries each issue's closure facts, so
+  // the supersession check costs no extra GitHub call.
+  it("carries the per-issue closure facts the same fetch already returned", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/issues/1")) return Response.json({ number: 1, state: "closed", closed_at: "2026-07-31T09:30:25Z", labels: [], assignees: [] });
+      if (url.endsWith("/issues/2")) return Response.json({ number: 2, state: "open", closed_at: null, labels: [], assignees: [] });
+      return new Response("missing", { status: 404 });
+    });
+    const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [1, 2] });
+    expect(result.closures).toEqual([
+      { issueNumber: 1, state: "closed", closedAt: "2026-07-31T09:30:25Z" },
+      { issueNumber: 2, state: "open", closedAt: null },
+    ]);
+  });
+
+  it("reports no closures when nothing was fetched, so no supersession can rest on a skipped pass", async () => {
+    const empty = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [] });
+    expect(empty.closures).toEqual([]);
+    const overCap = await resolveLinkedIssueHasOpenReference({
+      env: createTestEnv({}),
+      repoFullName: "owner/repo",
+      linkedIssues: Array.from({ length: MAX_LINKED_ISSUE_NUMBERS + 1 }, (_, index) => index + 1),
+    });
+    expect(overCap.closures).toEqual([]);
+  });
+
+  it("contributes nothing for an issue that could not be read — a supersession needs an issue we SAW closed", async () => {
+    vi.stubGlobal("fetch", async () => new Response("boom", { status: 500 }));
+    const result = await resolveLinkedIssueHasOpenReference({ env: createTestEnv({}), repoFullName: "owner/repo", linkedIssues: [7] });
+    expect(result.closures).toEqual([]);
+    expect(result.hasOpenReference).toBe(true);
   });
 });
 

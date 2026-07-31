@@ -26,7 +26,11 @@ afterEach(() => {
 describe("MCP dispatch span registry (#9525)", () => {
   it("is empty until a self-host boot fills it, and clears again", () => {
     expect(getMcpDispatchSpanRunner()).toBeUndefined();
-    const runner = async <T>(_name: string, _attributes: Record<string, unknown>, fn: () => Promise<T>): Promise<T> => fn();
+    const runner = async <T>(
+      _name: string,
+      _attributes: Record<string, unknown>,
+      fn: (setOutcomeAttributes: (attributes: Record<string, unknown>) => void) => Promise<T>,
+    ): Promise<T> => fn(() => {});
     setMcpDispatchSpanRunner(runner);
     expect(getMcpDispatchSpanRunner()).toBe(runner);
     setMcpDispatchSpanRunner(null);
@@ -98,11 +102,21 @@ describe("MCP dispatch telemetry sink (#9525)", () => {
     const seen: Array<{ name: string; attributes: Record<string, unknown> }> = [];
     setMcpDispatchSpanRunner(async (name, attributes, fn) => {
       seen.push({ name, attributes });
-      return fn();
+      return fn(() => {});
     });
     const sink = createDispatchTelemetrySink(env(), () => undefined);
     await expect(sink.withSpan("mcp.tool/x", { tool: "x" }, async () => "wrapped")).resolves.toBe("wrapped");
     expect(seen).toEqual([{ name: "mcp.tool/x", attributes: { tool: "x" } }]);
+  });
+
+  it("forwards setOutcomeAttributes through the registry runner (#10042)", async () => {
+    const outcomes: Record<string, unknown>[] = [];
+    setMcpDispatchSpanRunner(async (_name, _attributes, fn) => fn((attrs) => outcomes.push(attrs)));
+    const sink = createDispatchTelemetrySink(env(), () => undefined);
+    await sink.withSpan("mcp.tool/x", {}, async (setOutcome) => {
+      setOutcome({ ok: false, error_code: "timeout" });
+    });
+    expect(outcomes).toEqual([{ ok: false, error_code: "timeout" }]);
   });
 
   it("prefers an explicitly injected runner over the registry", async () => {
@@ -110,13 +124,71 @@ describe("MCP dispatch telemetry sink (#9525)", () => {
       throw new Error("registry runner should not have been used");
     });
     let injectedCalls = 0;
-    const injected = async <T>(_name: string, _attributes: Record<string, unknown>, fn: () => Promise<T>): Promise<T> => {
+    const injected = async <T>(
+      _name: string,
+      _attributes: Record<string, unknown>,
+      fn: (setOutcomeAttributes: (attributes: Record<string, unknown>) => void) => Promise<T>,
+    ): Promise<T> => {
       injectedCalls += 1;
-      return fn();
+      return fn(() => {});
     };
     const sink = createDispatchTelemetrySink(env(), () => undefined, injected);
     await expect(sink.withSpan("mcp.tool/x", {}, async () => "injected")).resolves.toBe("injected");
     expect(injectedCalls).toBe(1);
+  });
+});
+
+// The exception properties tests below mock posthog-node so they can read the properties the sink
+// actually hands to captureException, instead of only observing whether the deferred promise resolves.
+describe("MCP dispatch telemetry sink exception properties (#10037)", () => {
+  afterEach(() => {
+    vi.doUnmock("posthog-node");
+    vi.resetModules();
+  });
+
+  it("attaches mcp_tool and error_code to the captured exception, matching the stdio/miner sinks", async () => {
+    vi.resetModules();
+    const captureException = vi.fn();
+    const flush = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("posthog-node", () => ({
+      PostHog: vi.fn(function (this: { captureException: typeof captureException; flush: typeof flush }) {
+        this.captureException = captureException;
+        this.flush = flush;
+      }),
+    }));
+    const { createDispatchTelemetrySink: freshCreateDispatchTelemetrySink } = await import("../../src/mcp/dispatch-telemetry-sink");
+    const deferred: Promise<unknown>[] = [];
+    const sink = freshCreateDispatchTelemetrySink(env({ WORKER_POSTHOG_API_KEY: "phc_worker" }), (work) => deferred.push(work));
+    const forbiddenCall: McpToolCallTelemetry = { ...call, ok: false, errorCode: "forbidden" };
+
+    sink.captureException(new Error("boom"), forbiddenCall);
+    expect(deferred).toHaveLength(1);
+    await deferred[0];
+
+    const properties = captureException.mock.calls.at(-1)?.[2] as Record<string, unknown>;
+    expect(properties).toMatchObject({ mcp_tool: forbiddenCall.tool, error_code: "forbidden" });
+  });
+
+  it("defaults error_code to unknown_error when the call carries none", async () => {
+    vi.resetModules();
+    const captureException = vi.fn();
+    const flush = vi.fn().mockResolvedValue(undefined);
+    vi.doMock("posthog-node", () => ({
+      PostHog: vi.fn(function (this: { captureException: typeof captureException; flush: typeof flush }) {
+        this.captureException = captureException;
+        this.flush = flush;
+      }),
+    }));
+    const { createDispatchTelemetrySink: freshCreateDispatchTelemetrySink } = await import("../../src/mcp/dispatch-telemetry-sink");
+    const deferred: Promise<unknown>[] = [];
+    const sink = freshCreateDispatchTelemetrySink(env({ WORKER_POSTHOG_API_KEY: "phc_worker" }), (work) => deferred.push(work));
+    const noCodeCall: McpToolCallTelemetry = { ...call, ok: false };
+
+    sink.captureException(new Error("boom"), noCodeCall);
+    await deferred[0];
+
+    const properties = captureException.mock.calls.at(-1)?.[2] as Record<string, unknown>;
+    expect(properties).toMatchObject({ mcp_tool: noCodeCall.tool, error_code: "unknown_error" });
   });
 });
 
@@ -131,7 +203,11 @@ describe("LoopoverMcp telemetry-sink injection (#9525)", () => {
     const sink = {
       recordToolCall: (entry: McpToolCallTelemetry) => recorded.push(entry),
       captureException: () => undefined,
-      withSpan: async <T>(_name: string, _attributes: Record<string, unknown>, fn: () => Promise<T>) => fn(),
+      withSpan: async <T>(
+        _name: string,
+        _attributes: Record<string, unknown>,
+        fn: (setOutcomeAttributes: (attributes: Record<string, unknown>) => void) => Promise<T>,
+      ) => fn(() => {}),
     };
 
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();

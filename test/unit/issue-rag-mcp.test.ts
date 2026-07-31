@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { runIssueRagRetrieval, validateIssueRagInput } from "../../src/mcp/issue-rag";
 import { emptyIssueRagTelemetry } from "../../src/review/issue-rag-retrieval";
+import { PREFLIGHT_LIMITS } from "@loopover/contract";
 import { createTestEnv } from "../helpers/d1";
 
 describe("runIssueRagRetrieval (#4293)", () => {
@@ -21,19 +22,25 @@ describe("runIssueRagRetrieval (#4293)", () => {
     });
   });
 
-  it("rejects oversized repos and invalid labels", () => {
-    expect(validateIssueRagInput({ owner: "acme", repo: "r".repeat(101), title: "Add observability context for self-hosted review planning failures" })).toMatchObject({
-      ok: false,
-      reason: "repo_too_long",
-    });
+  it("rejects invalid labels and over-long bodies (length bounds for owner/repo/title live on the schema)", () => {
+    // #10040: repo/title max-length are on RetrieveIssueContextInput; this helper only rejects after trim /
+    // per-label length / body length / topK shape.
     expect(
       validateIssueRagInput({
         owner: "acme",
         repo: "demo",
         title: "Add observability context for self-hosted review planning failures",
-        labels: ["x".repeat(101)],
+        labels: ["x".repeat(PREFLIGHT_LIMITS.labelChars + 1)],
       }),
     ).toMatchObject({ ok: false, reason: "invalid_labels" });
+    expect(
+      validateIssueRagInput({
+        owner: "acme",
+        repo: "demo",
+        title: "Add observability context for self-hosted review planning failures",
+        body: "x".repeat(PREFLIGHT_LIMITS.bodyChars + 1),
+      }),
+    ).toMatchObject({ ok: false, reason: "body_too_long" });
   });
 
   it("covers validation branches for owner/title/body/labels/topK normalization", () => {
@@ -41,13 +48,14 @@ describe("runIssueRagRetrieval (#4293)", () => {
       ok: false,
       reason: "owner_and_repo_required",
     });
+    // #10040: over-long title is a schema concern; whitespace-only title is the helper's title_required.
     expect(
       validateIssueRagInput({
         owner: "acme",
         repo: "demo",
-        title: "x".repeat(301),
+        title: "   ",
       }),
-    ).toMatchObject({ ok: false, reason: "title_too_long" });
+    ).toMatchObject({ ok: false, reason: "title_required" });
     expect(
       validateIssueRagInput({
         owner: "acme",

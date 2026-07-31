@@ -47,6 +47,7 @@ import { CONFIDENCE_WHEN_UNSTATED } from "../services/ai-review";
 import { LOOPOVER_GATE_CHECK_NAME } from "../review/check-names";
 import { CLA_CHECK_UNRESOLVED_CODE, CLA_CONSENT_MISSING_CODE } from "../review/cla-check";
 import { REVIEW_THREAD_BLOCKER_CODE } from "../review/review-thread-findings";
+import type { SupersededByRival } from "../review/linked-issue-superseded";
 import { createSignalStore } from "../review/signal-tracking-wire";
 import { labelMatchesPattern } from "../scoring/preview";
 import { isMaintainerAuthorAssociation } from "../github/author-association";
@@ -209,6 +210,10 @@ export const GATE_SCORE_SIGNAL_CODES: readonly string[] = Object.freeze(["slop_g
 
 export const CONFIGURED_GATE_BLOCKER_SIGNAL_CODES: readonly string[] = Object.freeze([
   "missing_linked_issue",
+  // #10168: the superseded split-off of missing_linked_issue. Listed here for the same reason its sibling is
+  // -- it gates a real close, so its reversals must record under their own id rather than under the code it
+  // was split out of, or the per-rule precision check in downgradeCloseToHold can never see it.
+  "linked_issue_superseded",
   "duplicate_pr_risk",
   ...AI_JUDGMENT_BLOCKER_CODES,
   REVIEW_THREAD_BLOCKER_CODE,
@@ -392,6 +397,12 @@ export function buildPullRequestAdvisory(
      *  — this is fail-open by construction: the caller only ever sets it true after a live check confirms
      *  every reference is dead, never on ambiguity. */
     confirmedNoOpenLinkedIssue?: boolean;
+    /** #10168: the evidence that this PR's linked issue was closed by a rival that merged AFTER it opened,
+     *  resolved by the caller (`resolveSupersession`, review/linked-issue-superseded.ts). Present ⇒ the
+     *  `confirmedNoOpenLinkedIssue` case is reported as a supersession naming the rival, instead of as
+     *  `missing_linked_issue`'s unactionable "link it explicitly in the PR body". Absent/null ⇒ byte-identical
+     *  to before this existed, which is also what a fleet with the flag off always sees. */
+    supersededBy?: SupersededByRival | null | undefined;
     /** #9033: the repo's EFFECTIVE `copycatGateMode`/`copycatGateMinScore` (already resolved by the caller via
      *  `resolveRepositorySettings` — reward-eligible repos default this to `warn` even with no `.loopover.yml`
      *  entry, see `settings/copycat-gate-mode.ts`). Used ONLY to decide whether `pr`'s own persisted copycat
@@ -437,19 +448,17 @@ export function buildPullRequestAdvisory(
       action: "Re-deliver the webhook or wait for the next sync.",
     });
   } else {
-    addPullRequestFindings(
-      repo,
-      pr,
-      findings,
-      context.otherOpenPullRequests ?? [],
-      Boolean(context.requireLinkedIssue),
-      Boolean(context.duplicateWinnerEnabled),
-      context.linkedIssueAuthorLogins ?? [],
-      Boolean(context.confirmedNoOpenLinkedIssue),
-      context.copycatGateMode,
-      context.copycatGateMinScore,
-      context.scopedLinkedIssueClaimedAt,
-    );
+    addPullRequestFindings(repo, pr, findings, {
+      otherOpenPullRequests: context.otherOpenPullRequests ?? [],
+      requireLinkedIssue: Boolean(context.requireLinkedIssue),
+      duplicateWinnerEnabled: Boolean(context.duplicateWinnerEnabled),
+      linkedIssueAuthorLogins: context.linkedIssueAuthorLogins ?? [],
+      confirmedNoOpenLinkedIssue: Boolean(context.confirmedNoOpenLinkedIssue),
+      copycatGateMode: context.copycatGateMode,
+      copycatGateMinScore: context.copycatGateMinScore,
+      scopedLinkedIssueClaimedAt: context.scopedLinkedIssueClaimedAt,
+      supersededBy: context.supersededBy,
+    });
   }
   return advisory("pull_request", targetKey, repoFullName, findings, "Pull request advisory generated.", pr?.number, undefined, pr?.headSha ?? undefined);
 }
@@ -829,7 +838,16 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
     // automatically — NEVER a failure, so a contributor PR is never auto-CLOSED because a model hiccupped. This
     // is evaluated AFTER the deterministic blockers above, so a real violation (secret_leak, duplicate,
     // missing-issue, slop, quality) still blocks: an inconclusive AI can no longer bury a blocked PR in a hold.
-    if (advisoryResult.findings.some((finding) => finding.code === "ai_review_inconclusive")) {
+    // #10016: mirrors isEvaluationBlocker's CLA case -- the finding is produced in every aiReviewGateMode (the
+    // two producers in ai-review-orchestration.ts don't consult the mode), so only "block" should ever HOLD the
+    // gate on it. "advisory"/"off" mode's whole contract is "surface findings, never affect the verdict";
+    // unconditionally holding here diverted a clean, green advisory-mode PR to manual review over a race or a
+    // transient model failure the repo never opted into blocking on. The finding still reaches the panel via
+    // `gateWarnings` below either way -- only the HOLD is mode-gated, never the visibility.
+    if (
+      gateMode(effective.aiReviewGateMode ?? "advisory") === "block" &&
+      advisoryResult.findings.some((finding) => finding.code === "ai_review_inconclusive")
+    ) {
       return {
         enabled: true,
         conclusion: "neutral",
@@ -1037,25 +1055,49 @@ function hasDuplicateOverlapCorroboration(pr: PullRequestRecord, otherPr: PullRe
   return Boolean(theirsFiles && theirsFiles.length > 0);
 }
 
+/** #10210: the resolved per-PR signals {@link addPullRequestFindings} evaluates, as ONE object rather than a
+ *  positional tail. The tail had reached twelve arguments and had to be threaded in the identical ORDER
+ *  through this file and its deliberately-divergent engine twin
+ *  (packages/loopover-engine/src/advisory/gate-advisory.ts) on every addition -- a shape where transposing
+ *  two same-typed arguments compiles cleanly and silently changes the verdict. Named members make that
+ *  class of mistake unrepresentable, and cost nothing at the single call site, which already had a
+ *  `context` object to unpack. Declared locally, NOT shared with the twin: keeping the two files free of a
+ *  common import is the whole point of the divergence (#4518/#4881). */
+type PullRequestFindingSignals = {
+  otherOpenPullRequests: PullRequestRecord[];
+  requireLinkedIssue: boolean;
+  duplicateWinnerEnabled: boolean;
+  linkedIssueAuthorLogins: (string | null | undefined)[];
+  confirmedNoOpenLinkedIssue: boolean;
+  copycatGateMode: CopycatGateMode | null | undefined;
+  copycatGateMinScore: number | null | undefined;
+  /** #9160: pr's claim time, ALREADY SCOPED by the caller (queue/duplicate-detection.ts's
+   *  resolveScopedLinkedIssueClaimedAt) to only the issue(s) actually contested with an open sibling, instead
+   *  of pr.linkedIssueClaimedAt's blended-across-every-linked-issue value -- see that function's own doc
+   *  comment for why the blended column lets an unrelated, already-linked issue backdate a newly-added one's
+   *  claim. `undefined` (every non-DB caller, like decision-replay.ts) falls back to pr.linkedIssueClaimedAt. */
+  scopedLinkedIssueClaimedAt?: string | null | undefined;
+  /** #10168: present only when the caller proved a rival merged after this PR opened and closed its issue. */
+  supersededBy?: SupersededByRival | null | undefined;
+};
+
 function addPullRequestFindings(
   repo: RepositoryRecord | null,
   pr: PullRequestRecord,
   findings: AdvisoryFinding[],
-  otherOpenPullRequests: PullRequestRecord[],
-  requireLinkedIssue: boolean,
-  duplicateWinnerEnabled: boolean,
-  linkedIssueAuthorLogins: (string | null | undefined)[],
-  confirmedNoOpenLinkedIssue: boolean,
-  copycatGateMode: CopycatGateMode | null | undefined,
-  copycatGateMinScore: number | null | undefined,
-  // #9160: pr's claim time, ALREADY SCOPED by the caller (queue/duplicate-detection.ts's
-  // resolveScopedLinkedIssueClaimedAt) to only the issue(s) actually contested with an open sibling, instead of
-  // pr.linkedIssueClaimedAt's blended-across-every-linked-issue value -- see that function's own doc comment
-  // for why the blended column lets an unrelated, already-linked issue backdate a newly-added one's claim.
-  // `undefined` (every caller that hasn't been updated, and every non-DB caller like decision-replay.ts) falls
-  // back to pr.linkedIssueClaimedAt, byte-identical to before this existed.
-  scopedLinkedIssueClaimedAt?: string | null | undefined,
+  signals: PullRequestFindingSignals,
 ): void {
+  const {
+    otherOpenPullRequests,
+    requireLinkedIssue,
+    duplicateWinnerEnabled,
+    linkedIssueAuthorLogins,
+    confirmedNoOpenLinkedIssue,
+    copycatGateMode,
+    copycatGateMinScore,
+    scopedLinkedIssueClaimedAt,
+    supersededBy,
+  } = signals;
   if (pr.state !== "open") {
     findings.push({
       code: "pr_not_open",
@@ -1073,15 +1115,31 @@ function addPullRequestFindings(
   // issues API, which presupposes a real body was already parsed.
   const noLinkedIssueCited = pr.linkedIssues.length === 0 && pr.bodyObservedAt !== null;
   if ((noLinkedIssueCited || confirmedNoOpenLinkedIssue) && requireLinkedIssue) {
-    findings.push({
-      code: "missing_linked_issue",
-      severity: "warning",
-      title: "No linked issue detected",
-      detail: noLinkedIssueCited
-        ? "No closing reference or linked issue number was found in the PR metadata/body."
-        : "The PR cites an issue number, but it could not be verified as a currently open issue.",
-      action: "If this PR is intended to solve an issue, link it explicitly in the PR body.",
-    });
+    // #10168: a PR whose linked issue a merged rival closed did NOT fail to link an issue -- it linked one
+    // correctly and lost a race. Reporting that as `missing_linked_issue` gives advice that cannot work
+    // (re-linking a closed issue changes nothing), so the superseded case gets its own code and message.
+    // `supersededBy` is only ever set once the caller has proven both halves (the issue outlived this PR's
+    // creation, and a rival citing it merged into the window ending at its close), so this never displaces
+    // the anti-gaming reading for a PR that cited an already-dead issue.
+    if (supersededBy) {
+      findings.push({
+        code: "linked_issue_superseded",
+        severity: "warning",
+        title: "Superseded by a merged pull request",
+        detail: `Issue #${supersededBy.issueNumber} was closed by #${supersededBy.rivalPullNumber}, which merged after this pull request opened. The work this pull request targets is already on the default branch.`,
+        action: `Nothing is wrong with the issue link. If part of this pull request is still unaddressed by #${supersededBy.rivalPullNumber}, open a new issue describing what remains.`,
+      });
+    } else {
+      findings.push({
+        code: "missing_linked_issue",
+        severity: "warning",
+        title: "No linked issue detected",
+        detail: noLinkedIssueCited
+          ? "No closing reference or linked issue number was found in the PR metadata/body."
+          : "The PR cites an issue number, but it could not be verified as a currently open issue.",
+        action: "If this PR is intended to solve an issue, link it explicitly in the PR body.",
+      });
+    }
   } else {
     const linkedIssueOverlapPrs = otherOpenPullRequests.filter((otherPr) =>
       otherPr.linkedIssues.some((issueNumber) => pr.linkedIssues.includes(issueNumber)),
@@ -1290,6 +1348,11 @@ function resolveConfiguredGateMode(finding: AdvisoryFinding, policy: GateCheckPo
   // Missing linked issue defaults to ADVISORY — issues aren't always available, so it only blocks when a
   // repo explicitly opts in with linkedIssueGateMode: "block".
   if (code === "missing_linked_issue") return gateMode(policy.linkedIssueGateMode ?? "advisory");
+  // #10168: supersession rides the SAME knob it was split out of. A repo that opted into
+  // `linkedIssueGateMode: "block"` already asked for an unlinked PR to be acted on; splitting the message in
+  // two must not quietly change WHETHER it is acted on, only what the contributor is told and which code the
+  // ledger records. A repo on the "advisory" default keeps getting an advisory finding here too.
+  if (code === "linked_issue_superseded") return gateMode(policy.linkedIssueGateMode ?? "advisory");
   // #9129: default changed from "block" to "advisory" — the input this finding is derived from (another
   // contributor's own PR body text) is adversary-controlled, so blocking-by-default let anyone force-close a
   // rival's PR for free. A maintainer who explicitly opts into "block" still gets real effect: evaluateGateCheckCore
@@ -1503,7 +1566,7 @@ export async function recordGateScoreSignals(
   const occurredAt = nowIso();
   const writes: Promise<void>[] = [];
 
-  const slopMode = gateMode(effective.slopGateMode);
+  const slopMode = gateMode(effective.slopGateMode ?? "advisory");
   const slopRisk = normalizeScore(effective.slopRisk);
   if (slopMode === "block" && slopRisk !== null) {
     const slopMin = normalizeScore(effective.slopGateMinScore) ?? DEFAULT_SLOP_BLOCK_THRESHOLD;
@@ -1523,7 +1586,7 @@ export async function recordGateScoreSignals(
     );
   }
 
-  const qualityMode = gateMode(effective.qualityGateMode);
+  const qualityMode = gateMode(effective.qualityGateMode ?? "advisory");
   const readinessScore = normalizeScore(effective.readinessScore);
   const qualityMin = normalizeScore(effective.qualityGateMinScore);
   if (qualityMode !== "off" && readinessScore !== null && qualityMin !== null) {
@@ -1547,7 +1610,7 @@ export async function recordGateScoreSignals(
 }
 
 function buildQualityGateWarning(policy: GateCheckPolicy): AdvisoryFinding | null {
-  if (gateMode(policy.qualityGateMode) === "off") return null;
+  if (gateMode(policy.qualityGateMode ?? "advisory") === "off") return null;
   const score = normalizeScore(policy.readinessScore);
   const minScore = normalizeScore(policy.qualityGateMinScore);
   if (score === null || minScore === null || score >= minScore) return null;
@@ -1581,8 +1644,8 @@ function buildSlopGateBlocker(policy: GateCheckPolicy): AdvisoryFinding | null {
 }
 
 // #9167: fail CLOSED on a value that isn't one of the three real modes, matching the rest of this
-// codebase's fail-closed defaults -- every legitimate caller already supplies its own `?? "advisory"`
-// default before reaching here (see every `gateMode(policy.xGateMode ?? "advisory")` call site above), so
+// codebase's fail-closed defaults -- every call site now supplies its own `?? "advisory"` default
+// before reaching here (see every `gateMode(policy.xGateMode ?? "advisory")` call site above), so
 // this branch is only ever reached for a truly malformed value (e.g. a caller that bypassed
 // GateRuleMode's compile-time union via an untyped/JSON-decoded config). Previously coerced to
 // "advisory" -- a fail-OPEN default in a codebase whose other defaults are carefully fail-closed. This is

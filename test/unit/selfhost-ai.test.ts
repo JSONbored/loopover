@@ -720,7 +720,10 @@ describe("$ai_generation PostHog capture at the chain chokepoint (#8296)", () =>
     await createChainAi([provider]).run("m", { prompt: "x" });
     const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
     expect(properties.$ai_provider).toBe("posthog-no-usage-provider");
-    expect(properties.$ai_input_tokens).toBe(0);
+    // #10207: a provider that reported no usage contributes NO token properties, rather than a fabricated 0
+    // that PostHog cannot tell apart from a measured one. The provider name still resolves, which is what this
+    // case is actually about.
+    expect("$ai_input_tokens" in properties).toBe(false);
   });
 
   it("captures a failed generation with $ai_is_error/$ai_error on a real chain failure", async () => {
@@ -738,6 +741,75 @@ describe("$ai_generation PostHog capture at the chain chokepoint (#8296)", () =>
     const provider = { name: "posthog-routing-provider", ai: { run: async () => { throw new Error("claude_code_no_embed"); } } };
     await expect(createChainAi([provider]).run("m", { text: ["chunk"] })).rejects.toThrow();
     expect(posthogMocks.capture).not.toHaveBeenCalled();
+  });
+
+  // #10218: content capture. ai.ts always passes the prompt/completion; posthog.ts decides whether it is
+  // emitted, so these drive the real chain with the flag on.
+  it("captures the flattened prompt and the completion when content capture is enabled (#10218)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "1" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "ollama", ai: { run: async () => ({ response: "no blockers found" }) } };
+    await createChainAi([provider]).run("m", {
+      messages: [
+        { role: "system", content: "you are a reviewer" },
+        { role: "user", content: "review this diff" },
+      ],
+    });
+    const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_input).toEqual([
+      { role: "system", content: "you are a reviewer" },
+      { role: "user", content: "review this diff" },
+    ]);
+    expect(properties.$ai_output_choices).toEqual([{ role: "assistant", content: "no blockers found" }]);
+  });
+
+  it("drops an image block rather than base64-encoding it into the event (#10218)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "1" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "ollama", ai: { run: async () => ({ response: "ok" }) } };
+    await createChainAi([provider]).run("m", {
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "describe this" },
+            { type: "image", mimeType: "image/png", data: "AAAABBBBCCCC" },
+          ],
+        },
+      ],
+    });
+    const captured = JSON.stringify(posthogMocks.capture.mock.calls[0]?.[0].properties.$ai_input);
+    expect(captured).toContain("describe this");
+    expect(captured).not.toContain("AAAABBBBCCCC");
+  });
+
+  it("reports an embedding request's raw texts as the input, under a synthetic user role (#10218)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "1" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "ollama", ai: { run: async () => ({ data: [[0.1]] }) } };
+    await createChainAi([provider]).run("m", { text: ["chunk one", "chunk two"] });
+    const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_input).toEqual([
+      { role: "user", content: "chunk one" },
+      { role: "user", content: "chunk two" },
+    ]);
+    // An embedding has no completion to report.
+    expect("$ai_output_choices" in properties).toBe(false);
+  });
+
+  it("captures the prompt on the FAILURE path, where it is what makes the failure diagnosable (#10218)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "1" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "claude-code", ai: { run: async () => { throw new Error("claude_stalled_no_output"); } } };
+    await expect(createChainAi([provider]).run("m", { prompt: "review this" })).rejects.toThrow(/stalled/);
+    const generation = posthogMocks.capture.mock.calls.find((call) => call[0].event === "$ai_generation")?.[0];
+    expect(generation.properties.$ai_input).toEqual([{ role: "user", content: "review this" }]);
+    expect("$ai_output_choices" in generation.properties).toBe(false);
+  });
+
+  it("emits NO content when the operator has not opted in, even though ai.ts always passes it (#10218)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const provider = { name: "ollama", ai: { run: async () => ({ response: "secret completion" }) } };
+    await createChainAi([provider]).run("m", { prompt: "private diff" });
+    const keys = Object.keys(posthogMocks.capture.mock.calls[0]?.[0].properties);
+    expect(keys).not.toContain("$ai_input");
+    expect(keys).not.toContain("$ai_output_choices");
   });
 
   it("stays a no-op end-to-end when PostHog is unconfigured (no posthog-node client constructed)", async () => {
@@ -1545,6 +1617,36 @@ describe("branch coverage — defaults + edge inputs", () => {
         ].join("\n"),
       ),
     ).toEqual({ inputTokens: 12, outputTokens: 6, totalTokens: 18, costUsd: 0.09, model: "gpt-5" });
+  });
+
+  it("REGRESSION (#10235): sums the prompt-cache tiers into inputTokens, instead of reporting the uncached remainder", () => {
+    // The real Claude Code result frame. `input_tokens` carries ONLY what was neither read from nor written to
+    // the prompt cache, so with caching active -- which it is on every review -- it degenerates to a handful of
+    // tokens. Measured on the Orb before this fix: 2048 input tokens across 1000 claude-code calls, an average
+    // of exactly 2.0, against 1051 output tokens per call and $225 of real spend.
+    expect(
+      extractCliUsage(
+        JSON.stringify({
+          type: "result",
+          usage: { input_tokens: 2, cache_read_input_tokens: 41_820, cache_creation_input_tokens: 1_140, output_tokens: 1051 },
+          model: "claude-sonnet-5",
+        }),
+      ),
+    ).toEqual({ inputTokens: 42_962, outputTokens: 1051, model: "claude-sonnet-5" });
+  });
+
+  it("sums the cache tiers only when present, leaving every other provider untouched (#10235)", () => {
+    // codex and the OpenAI-compatible providers emit no cache keys at all: their figure must be byte-identical
+    // to before, which is what makes this safe to apply at the shared extraction point.
+    expect(extractCliUsage(JSON.stringify({ usage: { input_tokens: 20, output_tokens: 7 } }))).toEqual({ inputTokens: 20, outputTokens: 7 });
+    // A cache tier alone, with no uncached remainder reported, still yields the real prompt size.
+    expect(extractCliUsage(JSON.stringify({ usage: { cache_read_input_tokens: 900 } }))).toEqual({ inputTokens: 900 });
+    // camelCase aliases resolve the same way the other key groups already do.
+    expect(extractCliUsage(JSON.stringify({ usage: { inputTokens: 5, cacheReadInputTokens: 10, cacheCreationInputTokens: 20 } }))).toEqual({ inputTokens: 35 });
+    // A genuinely reported 0 in one tier contributes a real 0 rather than dropping the whole reading.
+    expect(extractCliUsage(JSON.stringify({ usage: { input_tokens: 0, cache_read_input_tokens: 700, cache_creation_input_tokens: 0 } }))).toEqual({ inputTokens: 700 });
+    // No input counter of any kind stays ABSENT -- never a fabricated 0 (#10207).
+    expect(extractCliUsage(JSON.stringify({ usage: { output_tokens: 4 } }))).toEqual({ outputTokens: 4 });
   });
   it("claudeErrorStatus: subtype + unknown fallbacks", () => {
     expect(claudeErrorStatus(JSON.stringify({ is_error: true, subtype: "sub" }))).toBe("sub");

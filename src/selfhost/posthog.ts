@@ -74,6 +74,37 @@ function processEnvString(env: NodeJS.ProcessEnv, name: string): string | undefi
   return nonBlank(env[name]);
 }
 
+/** Truthy-string env flag, matching the repo-wide convention for a flag-gated capability that ships OFF. */
+const TRUE_ENV_VALUES = new Set(["1", "true", "yes", "on"]);
+
+/** Default ceiling on a single captured message's characters (#10218). A review prompt carries up to 120k
+ *  chars of diff plus a 240k-char aggregate context budget, so an uncapped capture would push events past
+ *  PostHog's own payload limits and be dropped wholesale -- a cap is what makes this survivable at all. */
+const DEFAULT_AI_CONTENT_MAX_CHARS = 10_000;
+
+/** #10218: whether `$ai_input`/`$ai_output_choices` are populated at all. OFF unless
+ *  `LOOPOVER_POSTHOG_AI_CONTENT` is explicitly truthy. Self-host-only, read off real process.env, matching
+ *  this file's precedent for every other self-host-exclusive knob. */
+let aiContentCapture = false;
+let aiContentMaxChars = DEFAULT_AI_CONTENT_MAX_CHARS;
+
+function resolveAiContentCapture(env: NodeJS.ProcessEnv): boolean {
+  return TRUE_ENV_VALUES.has((env.LOOPOVER_POSTHOG_AI_CONTENT ?? "").trim().toLowerCase());
+}
+
+/** Per-message character ceiling. A non-numeric, zero, negative or fractional override falls back to the
+ *  default rather than disabling the cap -- an operator typo must never become "send the whole diff". */
+function resolveAiContentMaxChars(env: NodeJS.ProcessEnv): number {
+  const raw = Number(env.LOOPOVER_POSTHOG_AI_CONTENT_MAX_CHARS);
+  return Number.isInteger(raw) && raw > 0 ? raw : DEFAULT_AI_CONTENT_MAX_CHARS;
+}
+
+/** Truncate to the configured ceiling, marking that it happened so a reader never mistakes a clipped prompt
+ *  for the whole one. */
+function boundedContent(value: string): string {
+  return value.length <= aiContentMaxChars ? value : `${value.slice(0, aiContentMaxChars)}…[truncated]`;
+}
+
 /** Resolve the PostHog release id: explicit override first, then the image-baked self-host version, matching
  *  {@link resolveSentryRelease}'s identical precedence in sentry.ts. */
 export function resolvePostHogRelease(env: NodeJS.ProcessEnv): string | undefined {
@@ -181,6 +212,11 @@ export async function initPostHog(env: NodeJS.ProcessEnv): Promise<boolean> {
   usingCentralPostHogKey = !explicitKey;
   await loadNodeHasher();
   const { PostHog } = await import("posthog-node");
+  // #10218: content capture is OFF unless the operator turns it on. Upgrading an ORB must never start
+  // shipping private PR diffs and model completions to a vendor as a side effect of a version bump, so the
+  // default stays metadata-only exactly as before -- see resolveAiContentCapture.
+  aiContentCapture = resolveAiContentCapture(env);
+  aiContentMaxChars = resolveAiContentMaxChars(env);
   posthogEnvironment = processEnvString(env, "POSTHOG_ENVIRONMENT") ?? "production";
   activeRelease = resolvePostHogRelease(env);
   const host = processEnvString(env, "POSTHOG_HOST") ?? DEFAULT_POSTHOG_HOST;
@@ -406,7 +442,33 @@ export type PostHogAiGenerationEvent = {
   /** Raw caught value on the error path (mirrors capturePostHogError's own `error` param) -- never a
    *  caller-preformatted string. Ignored when `isError` is false. */
   error?: unknown;
+  /** #10218: the prompt messages, already flattened to plain text by the caller (an image block has no
+   *  place in a telemetry event and is dropped upstream). IGNORED unless content capture is enabled --
+   *  passing it is always safe, the gate lives here rather than at every call site. */
+  input?: ReadonlyArray<{ role: string; content: string }> | undefined;
+  /** #10218: the model's completion text. Same gating as {@link PostHogAiGenerationEvent.input}. */
+  outputText?: string | undefined;
 };
+
+/** Build the `$ai_input`/`$ai_output_choices` properties PostHog's LLM-analytics views read (#10218).
+ *  Returns an EMPTY bag when content capture is off, which is the default and the pre-#10218 behavior
+ *  byte-for-byte. Every string is bounded here; the vendor-bound redaction pass still runs afterwards over
+ *  the whole properties bag via `before_send` (scrubPostHogEvent -> scrubRecord), so captured content goes
+ *  through exactly the same credential/vocabulary scrubbing as every other field in this file -- it is not
+ *  a second, weaker path. */
+function aiContentProperties(event: PostHogAiGenerationEvent): Record<string, unknown> {
+  if (!aiContentCapture) return {};
+  const properties: Record<string, unknown> = {};
+  if (event.input && event.input.length > 0) {
+    properties.$ai_input = event.input.map((message) => ({ role: message.role, content: boundedContent(message.content) }));
+  }
+  // PostHog's shape is a list of choices; the self-host providers are all single-completion, so this is
+  // always a one-element list rather than a fabricated multi-choice response.
+  if (event.outputText !== undefined && event.outputText !== "") {
+    properties.$ai_output_choices = [{ role: "assistant", content: boundedContent(event.outputText) }];
+  }
+  return properties;
+}
 
 /** Capture one AI provider attempt as PostHog's `$ai_generation` (`$ai_embedding` for an embedding
  *  request) event (#8296). No-op when PostHog is off -- same contract as every other capture function in
@@ -445,12 +507,112 @@ function repoGroup(operational: Record<string, unknown>): { groups?: { repo: str
   return typeof operational.repo === "string" ? { groups: { repo: operational.repo } } : {};
 }
 
+/** #10221: PostHog's Traces view takes a trace's NAME from a trace-level `$ai_trace` event, not from any
+ *  property on the generations underneath it (confirmed upstream in PostHog/posthog#33179 -- an
+ *  `$ai_span_name` on a generation does not populate that column). This project emitted only generations, so
+ *  every trace read as an anonymous id with no way to tell a gate review from an embedding batch.
+ *
+ *  Per in-flight trace: how deeply {@link withPostHogAiTrace} is nested, and whether any generation actually
+ *  landed underneath. Both matter -- see that function for why. */
+const aiTraceState = new Map<string, { depth: number; generations: number }>();
+
+/** Note that a generation landed under `traceId`, so its enclosing pipeline span knows the trace is worth
+ *  naming. A generation captured outside any pipeline span has no entry and is simply ignored. */
+function markAiTraceGeneration(traceId: unknown): void {
+  if (typeof traceId !== "string") return;
+  const state = aiTraceState.get(traceId);
+  if (state) state.generations += 1;
+}
+
+export const POSTHOG_AI_TRACE_EVENT = "$ai_trace";
+
+/**
+ * Name the AI trace a pipeline span represents (#10221), emitting one `$ai_trace` as the OUTERMOST span for
+ * that trace completes.
+ *
+ * Two conditions guard the emit, and both are load-bearing:
+ *
+ * - **Outermost only.** `withReviewPipelineSpan` is called from several sites that can nest, and PostHog
+ *   expects one `$ai_trace` per trace id. A depth counter means the inner calls contribute nothing and the
+ *   name that survives is the outermost one -- the whole operation, not whichever leaf happened to finish.
+ * - **Only when generations exist.** Not every pipeline span wraps an AI call (the gate, for one). Emitting
+ *   unconditionally would manufacture trace rows with zero generations under them, which is a worse reading
+ *   than an unnamed trace.
+ *
+ * A no-op when PostHog is off or there is no ambient OTel trace to name -- in both cases the callback runs
+ * untouched, so this never changes what the wrapped work does or what it throws.
+ */
+export async function withPostHogAiTrace<T>(
+  name: string,
+  context: Record<string, unknown> | undefined,
+  fn: () => T | Promise<T>,
+): Promise<T> {
+  const traceId = currentOtelTraceIds()?.trace_id;
+  // Pin the client that was active when the span opened, rather than re-reading the module binding in the
+  // `finally` below -- it also lets the emit helper stay free of a second, unreachable off-switch check.
+  const target = client;
+  if (!active || !target || !traceId) return await fn();
+  const state = aiTraceState.get(traceId) ?? { depth: 0, generations: 0 };
+  if (state.depth === 0) aiTraceState.set(traceId, state);
+  state.depth += 1;
+  const startedAtMs = Date.now();
+  let failure: unknown;
+  try {
+    return await fn();
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    state.depth -= 1;
+    if (state.depth === 0) {
+      aiTraceState.delete(traceId);
+      if (state.generations > 0) captureAiTraceEnvelope(target, name, context, traceId, Date.now() - startedAtMs, failure);
+    }
+  }
+}
+
+/** Emit the trace-level envelope. Separate from {@link withPostHogAiTrace} only so the bookkeeping above
+ *  reads as bookkeeping. */
+function captureAiTraceEnvelope(
+  target: PostHogClient,
+  name: string,
+  context: Record<string, unknown> | undefined,
+  traceId: string,
+  latencyMs: number,
+  failure: unknown,
+): void {
+  const operational = operationalProperties(context);
+  const properties: Record<string, unknown> = {
+    ...operational,
+    // The trace id is the one the generations already carry -- taken from the SAME ambient OTel trace, so the
+    // envelope and its children can never disagree about which trace they belong to.
+    $ai_trace_id: traceId,
+    $ai_span_name: name,
+    $ai_latency: latencyMs / 1000,
+    $ai_is_error: failure !== undefined,
+    environment: posthogEnvironment,
+  };
+  if (failure !== undefined) {
+    const error = failure instanceof Error ? failure : new Error(String(failure));
+    properties.$ai_error = error.message.slice(0, 500);
+  }
+  target.capture({
+    distinctId: POSTHOG_DISTINCT_ID,
+    event: POSTHOG_AI_TRACE_EVENT,
+    properties,
+    ...repoGroup(operational),
+  });
+}
+
 export function capturePostHogAiGeneration(event: PostHogAiGenerationEvent): void {
   if (!active || !client) return;
   const operational = operationalProperties(event.context);
+  // #10221: tells the enclosing pipeline span this trace has real AI work under it and is worth naming.
+  markAiTraceGeneration(operational.trace_id);
   const properties: Record<string, unknown> = {
     ...operational,
     ...aiTraceProperties(operational),
+    ...aiContentProperties(event),
     // Names the node in the trace tree. Provider-and-kind rather than the tool/feature name, because
     // that is what this function actually knows -- the feature lives in ai_usage_events, not here.
     $ai_span_name: `ai.${event.requestKind}/${nonBlank(event.provider) ?? "unknown"}`,
@@ -459,11 +621,18 @@ export function capturePostHogAiGeneration(event: PostHogAiGenerationEvent): voi
     // PostHog's own $ai_generation schema reports latency in SECONDS, not ms.
     $ai_latency: event.latencyMs / 1000,
     $ai_http_status: event.isError ? 500 : 200,
-    $ai_input_tokens: Number.isFinite(event.inputTokens) ? event.inputTokens : 0,
-    $ai_output_tokens: Number.isFinite(event.outputTokens) ? event.outputTokens : 0,
     $ai_is_error: event.isError,
     environment: posthogEnvironment,
   };
+  // #10207: OMITTED, not zeroed, when the provider reported no usage. A fabricated 0 is indistinguishable from a
+  // real 0 once it is in an aggregate -- it drags every tokens-per-call and input:output ratio toward zero and
+  // silently understates them. The providers that DO report usage are the majority here (ai_usage_events records
+  // a real split for ollama, claude-code and codex), so the zeros were coming from the handful that genuinely
+  // report none -- Workers AI among them -- and were being averaged in as if they were measurements.
+  // `$ai_total_cost_usd` directly below has always been conditional for exactly this reason; these two were the
+  // outliers. A genuinely reported 0 still lands, because absence is tested, not falsiness.
+  if (Number.isFinite(event.inputTokens)) properties.$ai_input_tokens = event.inputTokens;
+  if (Number.isFinite(event.outputTokens)) properties.$ai_output_tokens = event.outputTokens;
   if (Number.isFinite(event.totalCostUsd)) properties.$ai_total_cost_usd = event.totalCostUsd;
   if (event.effort) properties.$ai_model_parameters = { effort: event.effort };
   if (event.isError) {
@@ -483,6 +652,45 @@ export function capturePostHogAiGeneration(event: PostHogAiGenerationEvent): voi
 export type PostHogAiDegradationReason = "circuit_open" | "chain_exhausted";
 
 export const POSTHOG_AI_DEGRADED_EVENT = "selfhost_ai_degraded";
+
+export const POSTHOG_AI_METRIC_EVENT = "$ai_metric";
+
+/** One review-quality measurement, joined to the AI trace that produced it (#10226).
+ *
+ *  Rich quality signal -- reviewer stances, inter-run agreement, precision -- already reaches SQL, Grafana and
+ *  the maintainer recap, but never PostHog, so cost and model could not be read against whether the review was
+ *  any GOOD. `$ai_metric` is PostHog's own event for exactly this, and the property contract below is taken
+ *  verbatim from the SDK's `captureTraceMetric` (@posthog/core): name, value, trace id -- with the value
+ *  STRINGIFIED, which is the SDK's own choice, matched here so a hand-built event and an SDK-built one are
+ *  indistinguishable downstream.
+ *
+ *  The trace id defaults to the ambient OTel trace, the same one every generation under this review already
+ *  carries, so the metric lands on the trace rather than floating free. No trace, no event -- an orphan
+ *  quality score joins to nothing and would only inflate counts. */
+export function capturePostHogAiMetric(event: {
+  name: string;
+  value: number | string | boolean;
+  /** Extra low-cardinality context (e.g. which reviewer) -- routed through the shared operational allowlist,
+   *  so anything not on it is dropped exactly like every other capture path in this file. */
+  context?: Record<string, unknown> | undefined;
+}): void {
+  if (!active || !client) return;
+  const traceId = currentOtelTraceIds()?.trace_id;
+  if (!traceId) return;
+  const operational = operationalProperties(event.context);
+  client.capture({
+    distinctId: POSTHOG_DISTINCT_ID,
+    event: POSTHOG_AI_METRIC_EVENT,
+    properties: {
+      ...operational,
+      $ai_trace_id: traceId,
+      $ai_metric_name: event.name,
+      $ai_metric_value: String(event.value),
+      environment: posthogEnvironment,
+    },
+    ...repoGroup(operational),
+  });
+}
 
 /** One AI request that produced NO generation. Same metadata-only posture as
  *  {@link PostHogAiGenerationEvent}: provider/model ids, the reason, and an already-redacted error string. */
@@ -566,5 +774,9 @@ export function resetPostHogForTest(): void {
   activeRelease = undefined;
   usingCentralPostHogKey = false;
   centralKeyAnonSecret = undefined;
+  aiContentCapture = false;
+  aiContentMaxChars = DEFAULT_AI_CONTENT_MAX_CHARS;
+  // #10221: in-flight trace bookkeeping, so one test's pipeline span cannot leak into the next.
+  aiTraceState.clear();
   resetRedactionScrubForTest();
 }

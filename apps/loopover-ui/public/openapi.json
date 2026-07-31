@@ -17130,6 +17130,109 @@
           "funnel",
           "note"
         ]
+      },
+      "FindOpportunitiesRequest": {
+        "type": "object",
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "owner": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 39
+                },
+                "repo": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                }
+              },
+              "required": [
+                "owner",
+                "repo"
+              ]
+            },
+            "maxItems": 25
+          },
+          "searchQuery": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          },
+          "goalSpec": {
+            "type": "object",
+            "properties": {
+              "lane": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minRankScore": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              },
+              "languages": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 30
+                },
+                "maxItems": 20
+              }
+            }
+          },
+          "limit": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 50
+          }
+        }
+      },
+      "IssueRagRetrieveRequest": {
+        "type": "object",
+        "properties": {
+          "owner": {
+            "type": "string",
+            "maxLength": 39,
+            "minLength": 1
+          },
+          "repo": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1
+          },
+          "title": {
+            "type": "string",
+            "maxLength": 300,
+            "minLength": 1
+          },
+          "body": {
+            "type": "string",
+            "maxLength": 20000
+          },
+          "labels": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "maxItems": 50
+          },
+          "topK": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 12
+          }
+        },
+        "required": [
+          "owner",
+          "repo",
+          "title"
+        ]
       }
     },
     "parameters": {},
@@ -23605,65 +23708,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "targets": {
-                    "type": "array",
-                    "items": {
-                      "type": "object",
-                      "properties": {
-                        "owner": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 39
-                        },
-                        "repo": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 100
-                        }
-                      },
-                      "required": [
-                        "owner",
-                        "repo"
-                      ]
-                    },
-                    "maxItems": 25
-                  },
-                  "searchQuery": {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 500
-                  },
-                  "goalSpec": {
-                    "type": "object",
-                    "properties": {
-                      "lane": {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      "minRankScore": {
-                        "type": "number",
-                        "minimum": 0,
-                        "maximum": 100
-                      },
-                      "languages": {
-                        "type": "array",
-                        "items": {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 30
-                        },
-                        "maxItems": 20
-                      }
-                    }
-                  },
-                  "limit": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 50
-                  }
-                }
+                "$ref": "#/components/schemas/FindOpportunitiesRequest"
               }
             }
           }
@@ -23700,7 +23745,8 @@
         "operationId": "postOpportunitiesFind",
         "tags": [
           "Discovery"
-        ]
+        ],
+        "description": "Rank contribution opportunities across the given targets or search query. At least one of `targets` (non-empty) or `searchQuery` is required — JSON Schema cannot express that cross-field rule, so an empty body is rejected with reason `targets_or_search_query_required` (#10040)."
       }
     },
     "/v1/issue-rag/retrieve": {
@@ -23710,43 +23756,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "type": "object",
-                "properties": {
-                  "owner": {
-                    "type": "string",
-                    "maxLength": 39
-                  },
-                  "repo": {
-                    "type": "string",
-                    "maxLength": 100
-                  },
-                  "title": {
-                    "type": "string",
-                    "maxLength": 300
-                  },
-                  "body": {
-                    "type": "string",
-                    "maxLength": 20000
-                  },
-                  "labels": {
-                    "type": "array",
-                    "items": {
-                      "type": "string",
-                      "maxLength": 100
-                    },
-                    "maxItems": 50
-                  },
-                  "topK": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 12
-                  }
-                },
-                "required": [
-                  "owner",
-                  "repo",
-                  "title"
-                ]
+                "$ref": "#/components/schemas/IssueRagRetrieveRequest"
               }
             }
           }

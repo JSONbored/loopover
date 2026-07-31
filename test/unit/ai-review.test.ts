@@ -3571,7 +3571,7 @@ describe("pure helpers", () => {
       response: '{"assessment":"looks off","blockers":["No before/after screenshots provided for this visual change","Null deref in src/a.ts"],"nits":[],"suggestions":[]}',
     }));
     const env = createTestEnv({ AI: { run } as unknown as Ai });
-    const truncated = await runWorkersOpinion(env, "@cf/x/model", "@cf/x/model", "sys", "user", 256, [], "", undefined, undefined, true);
+    const truncated = await runWorkersOpinion(env, "@cf/x/model", "@cf/x/model", "sys", "user", 256, { bodyTruncated: true });
     expect(truncated.review?.blockers).toEqual(["Null deref in src/a.ts"]);
     expect(truncated.review?.nits.some((nit) => nit.includes("absence of evidence inside the truncated window"))).toBe(true);
     expect(warn.mock.calls.some(([line]) => String(line).includes("ai_review_evidence_absence_demoted"))).toBe(true);
@@ -3590,7 +3590,7 @@ describe("pure helpers", () => {
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const images = [{ type: "image" as const, data: "QUJD", mimeType: "image/png" }];
-    await runWorkersOpinion(env, "m", "m", "sys", "user text", 256, [], "", undefined, images);
+    await runWorkersOpinion(env, "m", "m", "sys", "user text", 256, { images });
     expect(seenContents[0]).toEqual([
       { type: "text", text: "user text" },
       { type: "image", data: "QUJD", mimeType: "image/png" },
@@ -3608,7 +3608,7 @@ describe("pure helpers", () => {
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const diagnostics: Array<{ status: string; model: string }> = [];
-    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, { diagnostics: diagnostics as never });
     expect(parsed.review?.assessment).toContain("reasonable");
     expect(primaryAttempts).toBe(1); // NOT 3 -- the timeout short-circuits further retries of this model.
     expect(run).toHaveBeenCalledTimes(2); // 1 primary (timed out) + 1 fallback (succeeded on its first try).
@@ -3633,7 +3633,7 @@ describe("pure helpers", () => {
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const diagnostics: Array<{ status: string; model: string }> = [];
-    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, { diagnostics: diagnostics as never });
     expect(parsed.review?.assessment).toContain("reasonable");
     expect(primaryAttempts).toBe(1); // NOT 3 -- the stall short-circuits further retries of this model.
     expect(run).toHaveBeenCalledTimes(2); // 1 primary (stalled) + 1 fallback (succeeded on its first try).
@@ -3650,7 +3650,7 @@ describe("pure helpers", () => {
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const diagnostics: Array<{ status: string; model: string }> = [];
-    await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, { diagnostics: diagnostics as never });
     expect(primaryAttempts).toBe(3);
   });
 
@@ -3665,7 +3665,7 @@ describe("pure helpers", () => {
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const diagnostics: Array<{ status: string; model: string }> = [];
-    await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, { diagnostics: diagnostics as never });
     expect(primaryAttempts).toBe(3);
   });
 
@@ -3678,7 +3678,7 @@ describe("pure helpers", () => {
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const diagnostics: Array<{ status: string; model: string }> = [];
-    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, { diagnostics: diagnostics as never });
     expect(parsed.review?.assessment).toContain("reasonable");
     expect(primaryAttempts).toBe(1); // NOT 3 -- the 429 short-circuits further retries of this model.
     expect(run).toHaveBeenCalledTimes(2); // 1 primary (rate-limited) + 1 fallback (succeeded on its first try).
@@ -3693,7 +3693,7 @@ describe("pure helpers", () => {
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const diagnostics: Array<{ status: string; model: string }> = [];
-    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, { diagnostics: diagnostics as never });
     expect(parsed.review?.assessment).toContain("reasonable");
     expect(primaryAttempts).toBe(1); // NOT 3 -- a structural config error is deterministic, so retrying is pointless.
     expect(run).toHaveBeenCalledTimes(2); // 1 primary (structural failure) + 1 fallback (succeeded on its first try).
@@ -3708,7 +3708,7 @@ describe("pure helpers", () => {
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const diagnostics: Array<{ status: string; model: string }> = [];
-    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, { diagnostics: diagnostics as never });
     expect(parsed.review?.assessment).toContain("reasonable");
     expect(primaryAttempts).toBe(1); // NOT 3 -- the model's own deliberate bail will not change on a same-model retry.
     expect(run).toHaveBeenCalledTimes(2); // 1 primary (incoherent-diff bail) + 1 fallback (succeeded on its first try).
@@ -3736,7 +3736,7 @@ describe("pure helpers", () => {
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const diagnostics: Array<{ status: string; model: string; attempt: number }> = [];
-    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, { diagnostics: diagnostics as never });
     expect(parsed.review?.assessment).toBe("The change looks reasonable and focused.");
     expect(attempts).toBe(2); // 1 missing-assessment attempt, then a real one -- same model, no fallback needed.
     expect(diagnostics[0]).toMatchObject({ model: "primary", attempt: 0, status: "missing_assessment" });
@@ -3781,7 +3781,7 @@ describe("pure helpers", () => {
     }));
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const diagnostics: Array<{ status: string }> = [];
-    const parsed = await runWorkersOpinion(env, "m", "m", "sys", "user", 256, diagnostics as never);
+    const parsed = await runWorkersOpinion(env, "m", "m", "sys", "user", 256, { diagnostics: diagnostics as never });
     expect(parsed.review).toBeNull(); // INCOHERENT_DIFF_ASSESSMENT parses to null (see parseModelReview)
     expect(diagnostics.some((d) => d.status === "missing_assessment")).toBe(false);
   });
@@ -3855,7 +3855,7 @@ describe("pure helpers", () => {
       return { response: reviewJson() };
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai });
-    await runWorkersOpinion(env, "@cf/x/model", "@cf/x/model", "sys", "user", 256, [], "", {
+    await runWorkersOpinion(env, "@cf/x/model", "@cf/x/model", "sys", "user", 256, { correlation: {
       jobId: "job-1",
       repoFullName: "acme/widgets",
       pullNumber: 7,
@@ -3863,7 +3863,7 @@ describe("pure helpers", () => {
       claudeEffort: "low",
       codexModel: "gpt-5.4-mini",
       codexEffort: "high",
-    });
+    } });
     expect(seenOptions).toMatchObject({
       jobId: "job-1",
       repoFullName: "acme/widgets",
@@ -3973,7 +3973,7 @@ describe("pure helpers", () => {
     const run = vi.fn(async () => ({ response: longResponse }));
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const diagnostics: AiReviewDiagnostic[] = [];
-    await runWorkersOpinion(env, "primary-model", "primary-model", "sys", "user", 256, diagnostics);
+    await runWorkersOpinion(env, "primary-model", "primary-model", "sys", "user", 256, { diagnostics });
     // reviewDiagnostics flows into result/Sentry context that must never carry raw provider text (see the
     // "withholds unsafe provider and reviewer fallback text" test) -- the snippet only ever reaches the log.
     expect(diagnostics[0]).not.toHaveProperty("responseSnippet");
@@ -5593,7 +5593,7 @@ describe("reviewer vote attribution (#9478)", () => {
     });
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const diagnostics: Array<{ status: string; model: string }> = [];
-    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, { diagnostics: diagnostics as never });
 
     expect(parsed.review).not.toBeNull();
     expect(parsed.producedBy).toBe("fallback"); // NOT "primary"
@@ -5603,7 +5603,7 @@ describe("reviewer vote attribution (#9478)", () => {
     const run = vi.fn(async () => ({ response: reviewJson() }));
     const env = createTestEnv({ AI: { run } as unknown as Ai });
     const diagnostics: Array<{ status: string; model: string }> = [];
-    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, diagnostics as never);
+    const parsed = await runWorkersOpinion(env, "primary", "fallback", "sys", "user", 256, { diagnostics: diagnostics as never });
 
     expect(parsed.producedBy).toBe("primary");
   });

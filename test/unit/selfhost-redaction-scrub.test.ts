@@ -87,3 +87,56 @@ describe("scrubRecord — end-to-end via the structured-identifier keys (#9142)"
     expect(properties.detail).toContain("private context");
   });
 });
+
+describe("scrubRecord — a secret-shaped key holding a NUMBER is a counter, not a credential (#10211)", () => {
+  it("REGRESSION: PostHog's own token-count properties survive the scrub", () => {
+    // SECRET_KEY matches /token/i, so these were rewritten to the "[redacted]" STRING and PostHog then
+    // coerced that to null on its numerically-typed properties -- not one AI call in the live project
+    // ever carried a token count, while $ai_total_cost_usd came through untouched.
+    const properties: Record<string, unknown> = {
+      $ai_input_tokens: 1200,
+      $ai_output_tokens: 300,
+      $ai_total_cost_usd: 0.44,
+      tokens_used: 1500,
+    };
+    scrubRecord(properties, 0);
+    expect(properties.$ai_input_tokens).toBe(1200);
+    expect(properties.$ai_output_tokens).toBe(300);
+    expect(properties.$ai_total_cost_usd).toBe(0.44);
+    expect(properties.tokens_used).toBe(1500);
+  });
+
+  it("a zero count is preserved rather than read as absent", () => {
+    const properties: Record<string, unknown> = { $ai_input_tokens: 0 };
+    scrubRecord(properties, 0);
+    expect(properties.$ai_input_tokens).toBe(0);
+  });
+
+  it("still redacts a secret-shaped key holding a STRING, which is the only shape a real credential takes", () => {
+    const properties: Record<string, unknown> = {
+      api_token: ["ghp", "abcdefghijklmnopqrst123456"].join("_"),
+      password: "hunter2",
+      authorization: "Bearer abc.def.ghi",
+      session_cookie: "sid=abc123",
+    };
+    scrubRecord(properties, 0);
+    expect(properties.api_token).toBe(REDACTED);
+    expect(properties.password).toBe(REDACTED);
+    expect(properties.authorization).toBe(REDACTED);
+    expect(properties.session_cookie).toBe(REDACTED);
+  });
+
+  it("still redacts a secret-shaped key holding a non-numeric, non-string value", () => {
+    // An object or array under a secret-shaped key is not a counter, so the number carve-out must not
+    // widen into "anything that is not a string".
+    const properties: Record<string, unknown> = {
+      credentials: { token: "abc" },
+      api_keys: ["one", "two"],
+      secret_flag: true,
+    };
+    scrubRecord(properties, 0);
+    expect(properties.credentials).toBe(REDACTED);
+    expect(properties.api_keys).toBe(REDACTED);
+    expect(properties.secret_flag).toBe(REDACTED);
+  });
+});

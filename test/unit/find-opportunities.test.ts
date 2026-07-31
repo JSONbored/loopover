@@ -4,9 +4,6 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH,
-  MAX_FIND_OPPORTUNITIES_LANGUAGES,
-  MAX_FIND_OPPORTUNITIES_OWNER_LENGTH,
-  MAX_FIND_OPPORTUNITIES_REPO_LENGTH,
   MAX_FIND_OPPORTUNITIES_TARGETS,
   normalizeFindOpportunitiesLimit,
   publicRankScore,
@@ -74,8 +71,9 @@ describe("validateFindOpportunitiesInput", () => {
     expect(validateFindOpportunitiesInput({})).toEqual({ ok: false, reason: "targets_or_search_query_required" });
   });
 
-  it("rejects invalid targets and oversized search queries", () => {
+  it("rejects empty or non-string targets after trimming (#10040 keeps only cross-field / trim checks)", () => {
     expect(validateFindOpportunitiesInput({ targets: [{ owner: "", repo: "demo" }] })).toEqual({ ok: false, reason: "invalid_target" });
+    expect(validateFindOpportunitiesInput({ targets: [{ owner: "   ", repo: "demo" }] })).toEqual({ ok: false, reason: "invalid_target" });
     expect(validateFindOpportunitiesInput({ targets: [{ owner: 123 as unknown as string, repo: "demo" }] })).toEqual({
       ok: false,
       reason: "invalid_target",
@@ -83,25 +81,6 @@ describe("validateFindOpportunitiesInput", () => {
     expect(validateFindOpportunitiesInput({ targets: [{ owner: "acme", repo: 456 as unknown as string }] })).toEqual({
       ok: false,
       reason: "invalid_target",
-    });
-    expect(
-      validateFindOpportunitiesInput({
-        targets: Array.from({ length: MAX_FIND_OPPORTUNITIES_TARGETS + 1 }, () => ({ owner: "acme", repo: "demo" })),
-      }),
-    ).toEqual({ ok: false, reason: "too_many_targets" });
-    expect(
-      validateFindOpportunitiesInput({ targets: [{ owner: "x".repeat(MAX_FIND_OPPORTUNITIES_OWNER_LENGTH + 1), repo: "demo" }] }),
-    ).toEqual({ ok: false, reason: "owner_too_long" });
-    expect(
-      validateFindOpportunitiesInput({ targets: [{ owner: "acme", repo: "x".repeat(MAX_FIND_OPPORTUNITIES_REPO_LENGTH + 1) }] }),
-    ).toEqual({ ok: false, reason: "repo_too_long" });
-    expect(validateFindOpportunitiesInput({ searchQuery: "x".repeat(501) })).toEqual({ ok: false, reason: "search_query_too_long" });
-    expect(
-      validateFindOpportunitiesInput({ searchQuery: "docs", goalSpec: { minRankScore: 101 } }),
-    ).toEqual({ ok: false, reason: "invalid_min_rank_score" });
-    expect(validateFindOpportunitiesInput({ searchQuery: "docs", goalSpec: { languages: [""] } })).toEqual({
-      ok: false,
-      reason: "invalid_languages",
     });
   });
 
@@ -144,37 +123,7 @@ describe("validateFindOpportunitiesInput", () => {
     if (parsed.ok) expect(parsed.value.targets).toHaveLength(MAX_FIND_OPPORTUNITIES_TARGETS);
   });
 
-  it("rejects a non-array goalSpec.languages", () => {
-    expect(
-      validateFindOpportunitiesInput({ searchQuery: "docs", goalSpec: { languages: "typescript" as unknown as string[] } }),
-    ).toEqual({ ok: false, reason: "invalid_languages" });
-  });
-
-  it("rejects a non-string language entry", () => {
-    expect(
-      validateFindOpportunitiesInput({ searchQuery: "docs", goalSpec: { languages: [123 as unknown as string] } }),
-    ).toEqual({ ok: false, reason: "invalid_languages" });
-  });
-
-  it("rejects more than MAX_FIND_OPPORTUNITIES_LANGUAGES languages", () => {
-    expect(
-      validateFindOpportunitiesInput({
-        searchQuery: "docs",
-        goalSpec: { languages: Array.from({ length: MAX_FIND_OPPORTUNITIES_LANGUAGES + 1 }, (_, i) => `lang${i}`) },
-      }),
-    ).toEqual({ ok: false, reason: "invalid_languages" });
-  });
-
-  it("rejects a language entry longer than MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH", () => {
-    expect(
-      validateFindOpportunitiesInput({
-        searchQuery: "docs",
-        goalSpec: { languages: ["x".repeat(MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH + 1)] },
-      }),
-    ).toEqual({ ok: false, reason: "invalid_languages" });
-  });
-
-  it("accepts a valid languages list at or under the boundary", () => {
+  it("passes a valid languages list through unchanged (bound checks live on the contract schema)", () => {
     const parsed = validateFindOpportunitiesInput({
       searchQuery: "docs",
       goalSpec: { languages: ["typescript", "x".repeat(MAX_FIND_OPPORTUNITIES_LANGUAGE_LENGTH)] },

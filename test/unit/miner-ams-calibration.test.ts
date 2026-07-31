@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -214,5 +214,53 @@ describe("readMinRankAutotuneEnabled (#8187 gate one)", () => {
         }) as never,
       }),
     ).toBe(false); // fail CLOSED
+  });
+
+  it("REGRESSION: the autotune flag is honoured from every documented AMS policy filename, not just the canonical one", () => {
+    // Before #10009, this resolved only AMS_POLICY_SPEC_FILENAMES[0] (.loopover-ams.yml) instead of sharing
+    // resolveLocalAmsPolicyReadPath, so candidates 2-4 were silently ignored even though resolveAmsPolicy
+    // (attempt-time) honoured them.
+    const candidates = [".loopover-ams.yml", ".github/loopover-ams.yml", ".loopover-ams.json", ".github/loopover-ams.json"];
+    for (const candidate of candidates) {
+      const dir = mkdtempSync(join(tmpdir(), "miner-ams-policy-multi-"));
+      tempDirs.push(dir);
+      const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+      const path = join(dir, candidate);
+      mkdirSync(join(path, ".."), { recursive: true });
+      const isJson = candidate.endsWith(".json");
+      writeFileSync(path, isJson ? JSON.stringify({ minRankAutotuneEnabled: true }) : "minRankAutotuneEnabled: true\n");
+      expect(readMinRankAutotuneEnabled(env)).toBe(true);
+    }
+  });
+
+  it("first-match-wins: the canonical file's value is used even when a later candidate also exists", () => {
+    const dir = mkdtempSync(join(tmpdir(), "miner-ams-policy-precedence-"));
+    tempDirs.push(dir);
+    const env = { LOOPOVER_MINER_CONFIG_DIR: dir };
+    writeFileSync(join(dir, ".loopover-ams.yml"), "minRankAutotuneEnabled: false\n");
+    mkdirSync(join(dir, ".github"), { recursive: true });
+    writeFileSync(join(dir, ".github", "loopover-ams.yml"), "minRankAutotuneEnabled: true\n");
+    expect(readMinRankAutotuneEnabled(env)).toBe(false); // canonical candidate wins, same precedence as resolveAmsPolicy
+  });
+
+  it("an explicit LOOPOVER_MINER_AMS_POLICY_PATH outside the config dir wins outright and skips discovery", () => {
+    const dir = mkdtempSync(join(tmpdir(), "miner-ams-policy-explicit-"));
+    tempDirs.push(dir);
+    const explicitPath = join(dir, "custom-policy.yml");
+    writeFileSync(explicitPath, "minRankAutotuneEnabled: true\n");
+    // A discovery candidate is ALSO present, but the explicit override must win without ever probing it.
+    mkdirSync(join(dir, "cfg"), { recursive: true });
+    writeFileSync(join(dir, "cfg", ".loopover-ams.yml"), "minRankAutotuneEnabled: false\n");
+    const env = { LOOPOVER_MINER_AMS_POLICY_PATH: explicitPath, LOOPOVER_MINER_CONFIG_DIR: join(dir, "cfg") };
+    expect(readMinRankAutotuneEnabled(env)).toBe(true);
+  });
+
+  it("an explicit LOOPOVER_MINER_AMS_POLICY_PATH pointing at a nonexistent file returns false without probing discovery candidates", () => {
+    const dir = mkdtempSync(join(tmpdir(), "miner-ams-policy-explicit-missing-"));
+    tempDirs.push(dir);
+    // A discovery candidate exists in the config dir, but it must never be consulted once an explicit path is set.
+    writeFileSync(join(dir, ".loopover-ams.yml"), "minRankAutotuneEnabled: true\n");
+    const env = { LOOPOVER_MINER_AMS_POLICY_PATH: join(dir, "nope.yml"), LOOPOVER_MINER_CONFIG_DIR: dir };
+    expect(readMinRankAutotuneEnabled(env)).toBe(false);
   });
 });

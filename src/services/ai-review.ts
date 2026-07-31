@@ -1610,6 +1610,38 @@ const REVIEW_ATTEMPTS_PER_MODEL = 3;
 
 /** One reviewer opinion (whichever provider `env.AI` resolves to — self-host Codex/Claude Code/etc, or the
  *  legacy Workers-AI pair) with a per-slot reliable fallback and a 3× retry on the primary. */
+/**
+ * The reviewer inputs BOTH provider paths must agree on (#10253).
+ *
+ * `runWorkersOpinion` (Workers AI) and `runProviderReview` (BYOK) each ran the same demotion sequence off the
+ * same trailing arguments, kept in step by nothing but two comments reading "same contract as
+ * runWorkersOpinion". Two adjacent, same-typed, identically-defaulted booleans meant transposing them at any
+ * call site compiled cleanly, type-checked cleanly, and silently armed the wrong demotion — and doing it in
+ * only ONE of the two paths split Workers AI and BYOK behaviour apart with no signal at all.
+ *
+ * One shared type referenced by both signatures makes the compiler enforce what the comments only asserted, so
+ * the pair cannot drift and needs no entry in `NAMED_TWIN_PAIRS` (scripts/check-engine-parity.ts) to guard it.
+ */
+type ReviewerDemotionContext = {
+  /** Pixel-diff-confirmed screenshot(s) for a visual-vision pass (#4111). Absent for every existing caller —
+   *  wiring a real caller (source images, invoke with them) is a deliberately deferred follow-up; see
+   *  review/visual/visual-findings.ts. Kept rather than deleted: removing a deferred-but-designed parameter is
+   *  a separate call from de-positionalising this signature. */
+  images?: readonly AiContentBlock[] | undefined;
+  /** #8961: true when the PR description exceeded the prompt window — arms the evidence-absence demotion. */
+  bodyTruncated?: boolean | undefined;
+  /** #8833: true when the PR changes at least one test path — arms the test-absence demotion. */
+  prHasTestEvidence?: boolean | undefined;
+};
+
+/** {@link runWorkersOpinion}'s own accidental tail, on top of the shared context above. `env` through
+ *  `maxTokens` stay positional — those are the genuine arguments. */
+type WorkersOpinionOptions = ReviewerDemotionContext & {
+  diagnostics?: AiReviewDiagnostic[] | undefined;
+  systemAppend?: string | undefined;
+  correlation?: AiRunCorrelation | undefined;
+};
+
 async function runWorkersOpinion(
   env: Env,
   primary: string,
@@ -1617,18 +1649,11 @@ async function runWorkersOpinion(
   system: string,
   user: string,
   maxTokens: number,
-  diagnostics: AiReviewDiagnostic[] = [],
-  systemAppend = "",
-  correlation?: AiRunCorrelation,
-  // Pixel-diff-confirmed screenshot(s) for a visual-vision pass (#4111). Absent for every existing caller —
-  // wiring a real caller (source images, invoke with them) is a deliberately deferred follow-up; see
-  // review/visual/visual-findings.ts.
-  images?: readonly AiContentBlock[] | undefined,
-  // #8961: true when the PR description exceeded the prompt window — arms the evidence-absence demotion.
-  bodyTruncated = false,
-  // #8833: true when the PR changes at least one test path — arms the test-absence demotion.
-  prHasTestEvidence = false,
+  options: WorkersOpinionOptions = {},
 ): Promise<ReviewerOpinionOutcome> {
+  // Destructured with the identical defaults the positional signature carried, so every body reference below
+  // is unchanged and this stays a pure de-positionalisation.
+  const { diagnostics = [], systemAppend = "", correlation, images, bodyTruncated = false, prHasTestEvidence = false } = options;
   const ai = env.AI as unknown as AiRunner | undefined;
   if (!ai || typeof ai.run !== "function") return { review: null };
   // Route through Cloudflare AI Gateway when configured (caching, rate-limiting, logging, fallback). The
@@ -2009,7 +2034,11 @@ function priceByokUsageUsd(
  *  the already-camelCase envelope `coerceAiUsage` reads from `env.AI.run()`. Anthropic's `usage` can also
  *  carry `cache_creation_input_tokens`/`cache_read_input_tokens`, priced differently than `input_tokens` —
  *  intentionally not read here, since `callAiProvider` never sends `cache_control`, so Anthropic never
- *  populates them on this path. Private to this file, but not private in effect: `ai-slop.ts`'s BYOK branch
+ *  populates them on this path. #10235: the CLI-subprocess path (`mergeUsage`, src/selfhost/ai.ts) now DOES
+ *  sum those two tiers, because Claude Code caches internally and was therefore reporting ~2 input tokens per
+ *  call. That divergence is deliberate, not drift: reading them here would be dead code today, and if
+ *  `cache_control` is ever introduced it would mis-price, since the sum below feeds
+ *  BYOK_MODEL_PRICING_USD_PER_MTOK at the fresh-input rate while a cache read bills at a reduced one. Private to this file, but not private in effect: `ai-slop.ts`'s BYOK branch
  *  depends on this normalization too, indirectly, via `callAiProvider`'s returned `usage` field — if this
  *  ever moves, update both call sites. */
 function coerceByokUsage(
@@ -2170,15 +2199,16 @@ export async function regeneratePublicSafeSummary(
   return toPublicSafeBySentence(trimmed, options);
 }
 
+/** The BYOK half of the pair {@link ReviewerDemotionContext} documents. It now shares that type with
+ *  `runWorkersOpinion` rather than restating the same three parameters positionally, so the two cannot drift. */
 async function runProviderReview(
   providerKey: AiReviewProviderKey,
   system: string,
   user: string,
   maxTokens: number,
-  images?: readonly AiContentBlock[] | undefined,
-  bodyTruncated = false, // #8961: arms the evidence-absence demotion, same contract as runWorkersOpinion
-  prHasTestEvidence = false, // #8833: arms the test-absence demotion, same contract as runWorkersOpinion
+  options: ReviewerDemotionContext = {},
 ): Promise<ProviderReviewOutcome> {
+  const { images, bodyTruncated = false, prHasTestEvidence = false } = options;
   const { text, usage, failure } = await callAiProvider(
     providerKey,
     system,
@@ -3213,15 +3243,7 @@ export async function runLoopOverAiReview(
     anthropicModel: input.reviewKnobs?.model ?? input.anthropicModel ?? undefined,
   };
   if (input.providerKey) {
-    const outcome = await runProviderReview(
-      input.providerKey,
-      system,
-      user,
-      maxTokens,
-      undefined,
-      bodyTruncated,
-      prHasTestEvidence,
-    );
+    const outcome = await runProviderReview(input.providerKey, system, user, maxTokens, { bodyTruncated, prHasTestEvidence });
     advisoryReview = outcome.review;
     byokFailure = outcome.failure;
     if (outcome.fallbackNote) fallbackNotes.push(outcome.fallbackNote);
@@ -3234,12 +3256,7 @@ export async function runLoopOverAiReview(
       system,
       user,
       maxTokens,
-      reviewDiagnostics,
-      repoInstructionsSystemAppend,
-      aiRunCorrelation,
-      undefined,
-      bodyTruncated,
-      prHasTestEvidence,
+      { diagnostics: reviewDiagnostics, systemAppend: repoInstructionsSystemAppend, correlation: aiRunCorrelation, bodyTruncated, prHasTestEvidence },
     );
     advisoryReview = outcome.review;
     if (outcome.fallbackNote) fallbackNotes.push(outcome.fallbackNote);
@@ -3265,12 +3282,7 @@ export async function runLoopOverAiReview(
               system,
               user,
               maxTokens,
-              reviewDiagnostics,
-              repoInstructionsSystemAppend,
-              aiRunCorrelation,
-              undefined,
-              bodyTruncated,
-              prHasTestEvidence,
+              { diagnostics: reviewDiagnostics, systemAppend: repoInstructionsSystemAppend, correlation: aiRunCorrelation, bodyTruncated, prHasTestEvidence },
             )
           : Promise.resolve<ReviewerOpinionOutcome>({ review: advisoryReview }),
         runWorkersOpinion(
@@ -3280,12 +3292,7 @@ export async function runLoopOverAiReview(
           system,
           user,
           maxTokens,
-          reviewDiagnostics,
-          repoInstructionsSystemAppend,
-          aiRunCorrelation,
-          undefined,
-          bodyTruncated,
-          prHasTestEvidence,
+          { diagnostics: reviewDiagnostics, systemAppend: repoInstructionsSystemAppend, correlation: aiRunCorrelation, bodyTruncated, prHasTestEvidence },
         ),
       ]);
       if (a.fallbackNote) fallbackNotes.push(a.fallbackNote);
@@ -3349,12 +3356,7 @@ export async function runLoopOverAiReview(
             system,
             user,
             maxTokens,
-            reviewDiagnostics,
-            repoInstructionsSystemAppend,
-            aiRunCorrelation,
-            undefined,
-            bodyTruncated,
-            prHasTestEvidence,
+            { diagnostics: reviewDiagnostics, systemAppend: repoInstructionsSystemAppend, correlation: aiRunCorrelation, bodyTruncated, prHasTestEvidence },
           )
         : ({ review: advisoryReview } as ReviewerOpinionOutcome);
       if (a.fallbackNote) fallbackNotes.push(a.fallbackNote);
@@ -3402,12 +3404,7 @@ export async function runLoopOverAiReview(
         system + rotatedExemplarSuffix(rotationSeed, runIndex),
         user,
         maxTokens,
-        reviewDiagnostics,
-        repoInstructionsSystemAppend,
-        aiRunCorrelation,
-        undefined,
-        bodyTruncated,
-        prHasTestEvidence,
+        { diagnostics: reviewDiagnostics, systemAppend: repoInstructionsSystemAppend, correlation: aiRunCorrelation, bodyTruncated, prHasTestEvidence },
       );
       // No fallbackNote handling: runWorkersOpinion never produces one (that field is the BYOK provider
       // path's). A failed extra simply contributes no stance -- recorded below as spend, never fabricated.

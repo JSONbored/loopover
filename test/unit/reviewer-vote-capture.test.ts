@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { runAiReviewForAdvisory } from "../../src/queue/processors";
 import * as repositories from "../../src/db/repositories";
+import * as posthogModule from "../../src/selfhost/posthog";
+import * as routingModule from "../../src/services/reviewer-routing";
 import { createTestEnv } from "../helpers/d1";
 import type { Advisory, RepositorySettings } from "../../src/types";
 
@@ -105,6 +107,7 @@ describe("routing shadow orchestration hook (#8229 stage 1)", () => {
   it("a dual ok review invokes the shadow (recording nothing on a sparse corpus); the review outcome is untouched", async () => {
     const seen: string[] = [];
     const env = voteEnv(seen);
+    const metricSpy = vi.spyOn(posthogModule, "capturePostHogAiMetric").mockImplementation(() => undefined);
     const result = await runAiReviewForAdvisory(env, {
       mode: "live",
       settings: { aiReviewMode: "block" } as RepositorySettings,
@@ -121,5 +124,42 @@ describe("routing shadow orchestration hook (#8229 stage 1)", () => {
     // The votes themselves persisted — the hook runs strictly after and independently of them.
     const votes = await env.DB.prepare("SELECT COUNT(*) AS n FROM audit_events WHERE event_type = 'reviewer_vote' AND target_key = ?").bind(`${REPO}#21`).first<{ n: number }>();
     expect(votes?.n).toBe(2);
+    // #10265: no decision ⇒ no metric. An orphan margin would join to a review the shadow never ranked.
+    expect(metricSpy.mock.calls.filter((call) => call[0].name.startsWith("routing_shadow_"))).toEqual([]);
+    vi.restoreAllMocks();
+  });
+
+  it("#10265: a shadow decision emits the margin and the leader's precision onto the review's trace", async () => {
+    const seen: string[] = [];
+    const env = voteEnv(seen);
+    const metricSpy = vi.spyOn(posthogModule, "capturePostHogAiMetric").mockImplementation(() => undefined);
+    // The corpus math that PRODUCES a decision is pinned in reviewer-routing.test.ts; this test owns the
+    // wiring only, so the hook is stubbed with a decision whose basis is deliberately NOT precision-ordered.
+    vi.spyOn(routingModule, "recordRoutingShadow").mockResolvedValue({
+      repoFullName: REPO,
+      preferredProvider: "codex",
+      actualProviders: ["claude-code", "codex"],
+      basis: [
+        { provider: "claude-code", decided: 12, precision: 0.5 },
+        { provider: "codex", decided: 14, precision: 0.8 },
+      ],
+    });
+    const result = await runAiReviewForAdvisory(env, {
+      mode: "live",
+      settings: { aiReviewMode: "block" } as RepositorySettings,
+      repoFullName: REPO,
+      pr: { number: 22, title: "Add helper", body: "Adds a helper." },
+      author: "alice",
+      confirmedContributor: true,
+      advisory: advisory(22),
+    });
+    expect(result).toBeDefined();
+    const shadowMetrics = metricSpy.mock.calls.map((call) => call[0]).filter((event) => event.name.startsWith("routing_shadow_"));
+    expect(shadowMetrics).toEqual([
+      // The margin is ranked from the basis, not read off its (unordered) first entry.
+      { name: "routing_shadow_precision_margin", value: 0.8 - 0.5, context: { repo: REPO, pullNumber: 22, agent: "codex" } },
+      { name: "routing_shadow_preferred_precision", value: 0.8, context: { repo: REPO, pullNumber: 22, agent: "codex" } },
+    ]);
+    vi.restoreAllMocks();
   });
 });

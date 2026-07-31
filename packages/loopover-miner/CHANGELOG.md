@@ -1,5 +1,62 @@
 # Changelog
 
+## [3.21.1](https://github.com/JSONbored/loopover/compare/miner-v3.21.0...miner-v3.21.1) (2026-07-31)
+
+
+### Fixes
+
+* **miner:** cap check-runs page follows so poll cannot spin forever ([#10007](https://github.com/JSONbored/loopover/issues/10007)) ([#10258](https://github.com/JSONbored/loopover/issues/10258)) ([470d417](https://github.com/JSONbored/loopover/commit/470d4175f20f35e6f2c43d29df4b98a516101db3))
+* **miner:** keep discover --dry-run off the contribution-profile cache ([#10255](https://github.com/JSONbored/loopover/issues/10255)) ([e8c5200](https://github.com/JSONbored/loopover/commit/e8c5200cd0eb06f13b53e997935c1eaf71d3c9cf))
+* **miner:** prime runLoop's ledger cursor with an indexed MAX(seq) lookup ([#10259](https://github.com/JSONbored/loopover/issues/10259)) ([efc2c7e](https://github.com/JSONbored/loopover/commit/efc2c7e33eb3bab0168da105068a707a9537f4a7))
+* **miner:** scope the policy-verdict-cache purge to its real host-scoped repo key ([#10250](https://github.com/JSONbored/loopover/issues/10250)) ([5b24374](https://github.com/JSONbored/loopover/commit/5b243749fe587ec6ea3d2fdf95100847f50830e5))
+* **miner:** stop doctor's ams-backtest-proposals check from creating and pruning the event ledger ([#10264](https://github.com/JSONbored/loopover/issues/10264)) ([6f3ac84](https://github.com/JSONbored/loopover/commit/6f3ac84b9384ad54ca0e54eb5dc388c3034d4a3a))
+* **miner:** stop pickScript selecting watch/fix validation scripts ([#10261](https://github.com/JSONbored/loopover/issues/10261)) ([c7e8e80](https://github.com/JSONbored/loopover/commit/c7e8e8096f800c56bff02b8ee557d915c999f067))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.21.0 to ^3.21.1
+    * @loopover/engine bumped from ^3.21.0 to ^3.21.1
+
+## [3.21.0](https://github.com/JSONbored/loopover/compare/miner-v3.20.0...miner-v3.21.0) (2026-07-31)
+
+
+### Features
+
+* **observability:** capture every miner AI generation, and stop fabricating zero token counts ([#10233](https://github.com/JSONbored/loopover/issues/10233)) ([ba35c8b](https://github.com/JSONbored/loopover/commit/ba35c8babc661b9ab97d00ee0a4080a5fed899fa))
+
+
+### Fixes
+
+* **miner:** give manage-status and manage-poll store openers their own try/catch ([#10206](https://github.com/JSONbored/loopover/issues/10206)) ([800045f](https://github.com/JSONbored/loopover/commit/800045fffe67a9018f195c7c7c94bccbe69e9314))
+* **miner:** make readMinRankAutotuneEnabled probe all four AMS policy filenames ([#10215](https://github.com/JSONbored/loopover/issues/10215)) ([447dff1](https://github.com/JSONbored/loopover/commit/447dff18dcfa867f0d64e6e2c1e30aa1fcec83da))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.20.0 to ^3.21.0
+    * @loopover/engine bumped from ^3.20.0 to ^3.21.0
+
+## [3.20.0](https://github.com/JSONbored/loopover/compare/miner-v3.19.0...miner-v3.20.0) (2026-07-31)
+
+
+### Fixes
+
+* **mcp:** advertise _meta.category on all three servers ([#10162](https://github.com/JSONbored/loopover/issues/10162)) ([236907c](https://github.com/JSONbored/loopover/commit/236907c457c8184022cb885e7c8ef8a00db6d86f))
+* **miner:** scope recordRateLimit to the core-billed rate-limit resource ([#10201](https://github.com/JSONbored/loopover/issues/10201)) ([d308a9c](https://github.com/JSONbored/loopover/commit/d308a9cef80353bd748833aff306a13ad2e0085f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.19.0 to ^3.20.0
+    * @loopover/engine bumped from ^3.19.0 to ^3.20.0
+
 ## [3.19.0](https://github.com/JSONbored/loopover/compare/miner-v3.18.4...miner-v3.19.0) (2026-07-31)
 
 

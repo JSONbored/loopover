@@ -209,7 +209,7 @@ export type PlannedAgentAction = {
 // scoring/model.ts), and spreading/reading another module's export INTO A TOP-LEVEL ARRAY LITERAL evaluates it
 // eagerly at module-load time, before that module has necessarily finished initializing on this cycle's first
 // pass -- confirmed by a real "X is not iterable" failure when that was tried. A plain literal has no such
-// hazard. A source-text parity test in the test file below guards all ten against producer-side drift instead.
+// hazard. A source-text parity test in the test file below guards all eleven against producer-side drift instead.
 const CONCRETE_EVIDENCE_BLOCKER_CODES = new Set<string>([
   "secret_leak",
   "duplicate_pr_risk",
@@ -219,6 +219,9 @@ const CONCRETE_EVIDENCE_BLOCKER_CODES = new Set<string>([
   "pre_merge_check_required",
   "lockfile_tamper_risk",
   "missing_linked_issue",
+  // #10168: the superseded split-off of missing_linked_issue, and concrete on the same footing -- two
+  // recorded timestamps and a merged sibling's own linked-issue set, no AI judgment anywhere in it.
+  "linked_issue_superseded",
   "self_authored_linked_issue",
   // #content-lane-deliverable: a text/path match against the resolved RegistryLaneSpec, no AI judgment involved --
   // same deterministic footing as surface_lane_reject immediately above.

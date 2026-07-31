@@ -17,7 +17,7 @@ import {
   resolveAiReviewLowConfidenceHold,
 } from "../../src/rules/advisory";
 import type { CollisionReport } from "../../src/signals/engine";
-import type { IssueRecord, PullRequestRecord, PullRequestFileRecord, RepositoryRecord } from "../../src/types";
+import type { Advisory, IssueRecord, PullRequestRecord, PullRequestFileRecord, RepositoryRecord } from "../../src/types";
 
 const repo: RepositoryRecord = {
   fullName: "JSONbored/loopover",
@@ -179,6 +179,48 @@ describe("advisory rules", () => {
 
     const finding = advisory.findings.find((f) => f.code === "missing_linked_issue");
     expect(finding?.detail).toBe("No closing reference or linked issue number was found in the PR metadata/body.");
+  });
+
+  // #10168: the same confirmedNoOpenLinkedIssue state splits in two once the caller can prove a rival merged
+  // after this PR opened and closed its issue. The contributor did not fail to link anything.
+  describe("supersession (#10168)", () => {
+    const supersededPr: PullRequestRecord = {
+      repoFullName: repo.fullName,
+      number: 8886,
+      title: "Fix a bug",
+      state: "open",
+      authorLogin: "oktofeesh1",
+      authorAssociation: "NONE",
+      headSha: "abc123",
+      labels: [],
+      linkedIssues: [8829],
+    };
+    const supersededBy = { issueNumber: 8829, rivalPullNumber: 8881, rivalMergedAt: "2026-07-31T09:30:24Z", issueClosedAt: "2026-07-31T09:30:25Z" };
+
+    it("reports a supersession naming the rival, not 'No linked issue detected'", () => {
+      const advisory = buildPullRequestAdvisory(repo, supersededPr, { requireLinkedIssue: true, confirmedNoOpenLinkedIssue: true, supersededBy });
+
+      expect(advisory.findings.find((f) => f.code === "missing_linked_issue")).toBeUndefined();
+      const finding = advisory.findings.find((f) => f.code === "linked_issue_superseded");
+      expect(finding?.title).toBe("Superseded by a merged pull request");
+      expect(finding?.detail).toContain("#8829 was closed by #8881");
+      // The advice must not be the one that cannot work -- re-linking a closed issue changes nothing.
+      expect(finding?.action).not.toContain("link it explicitly in the PR body");
+      expect(finding?.action).toContain("#8881");
+    });
+
+    it("keeps the anti-gaming reading when no rival is proven (absent and explicit-null both)", () => {
+      for (const value of [undefined, null]) {
+        const advisory = buildPullRequestAdvisory(repo, supersededPr, { requireLinkedIssue: true, confirmedNoOpenLinkedIssue: true, supersededBy: value });
+        expect(advisory.findings.find((f) => f.code === "linked_issue_superseded")).toBeUndefined();
+        expect(advisory.findings.find((f) => f.code === "missing_linked_issue")).toBeDefined();
+      }
+    });
+
+    it("never fires while the linked-issue requirement is off", () => {
+      const advisory = buildPullRequestAdvisory(repo, supersededPr, { requireLinkedIssue: false, confirmedNoOpenLinkedIssue: true, supersededBy });
+      expect(advisory.findings.find((f) => f.code === "linked_issue_superseded")).toBeUndefined();
+    });
   });
 
   it("marks unknown repositories as action required", () => {
@@ -694,6 +736,67 @@ describe("advisory rules", () => {
     expect(evaluateGateCheck(splitAdvisory, { aiReviewGateMode: "block" }).conclusion).toBe("failure");
     expect(evaluateGateCheck(splitAdvisory, { aiReviewGateMode: "advisory" }).conclusion).toBe("success");
     expect(evaluateGateCheck(splitAdvisory).conclusion).toBe("success");
+  });
+
+  describe("ai_review_inconclusive hold is gated by aiReviewGateMode (#10016)", () => {
+    const inconclusiveAdvisory = (extraFindings: Advisory["findings"] = []) => ({
+      ...buildPullRequestAdvisory(repo, null),
+      findings: [
+        {
+          code: "ai_review_inconclusive" as const,
+          title: "AI review could not complete for this PR head",
+          severity: "warning" as const,
+          detail: "The AI review attempt did not produce a result.",
+          action: "The review is retried automatically after a short cooldown.",
+        },
+        ...extraFindings,
+      ],
+    });
+
+    it("REGRESSION: an inconclusive review does not hold an advisory-mode repo's otherwise-clean gate", () => {
+      const result = evaluateGateCheck(inconclusiveAdvisory());
+      expect(result.conclusion).toBe("success");
+      expect(result.warnings.map((finding) => finding.code)).toContain("ai_review_inconclusive");
+    });
+
+    it("stays non-blocking under an explicit advisory or off mode", () => {
+      const advisory = inconclusiveAdvisory();
+      const advisoryMode = evaluateGateCheck(advisory, { aiReviewGateMode: "advisory" });
+      expect(advisoryMode.conclusion).toBe("success");
+      expect(advisoryMode.warnings.map((finding) => finding.code)).toContain("ai_review_inconclusive");
+
+      const offMode = evaluateGateCheck(advisory, { aiReviewGateMode: "off" });
+      expect(offMode.conclusion).toBe("success");
+      expect(offMode.warnings.map((finding) => finding.code)).toContain("ai_review_inconclusive");
+    });
+
+    it("still HOLDS the gate (neutral) under aiReviewGateMode: block, with the unchanged title", () => {
+      const result = evaluateGateCheck(inconclusiveAdvisory(), { aiReviewGateMode: "block" });
+      expect(result.conclusion).toBe("neutral");
+      expect(result.title).toBe("LoopOver Orb Review Agent — held for human review");
+      expect(result.blockers).toEqual([]);
+    });
+
+    it("the unconditional secret_scan_incomplete hold still fires once the AI hold no longer does", () => {
+      const advisory = inconclusiveAdvisory([
+        {
+          code: "secret_scan_incomplete",
+          title: "Patch-less file(s) could not be fully scanned for secrets (1)",
+          severity: "critical",
+          detail: "GitHub omitted inline diff for: secrets.env.",
+          action: "Ensure patch-less files are within scan limits or split the change so secrets can be verified.",
+        },
+      ]);
+      const result = evaluateGateCheck(advisory);
+      expect(result.conclusion).toBe("neutral");
+      expect(result.blockers).toEqual([]);
+    });
+
+    it("dry-run: displayConclusion previews the block-mode hold while the posted conclusion stays success", () => {
+      const result = evaluateGateCheck(inconclusiveAdvisory(), { aiReviewGateMode: "advisory", dryRun: true });
+      expect(result.conclusion).toBe("success");
+      expect(result.displayConclusion).toBe("neutral");
+    });
   });
 
   describe("aiReviewLowConfidenceDisposition (#4603)", () => {

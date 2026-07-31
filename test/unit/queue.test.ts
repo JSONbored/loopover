@@ -6925,6 +6925,65 @@ describe("queue processors", () => {
       expect(flipRow).toMatchObject({ lastHadDefect: 0, flipCount: VERDICT_FLIP_ESCALATION_THRESHOLD + 1 });
     });
 
+    it("#9016: a failure recording the flip-escalation audit event is best-effort and does not abort the pass", async () => {
+      // Same flip-flop-past-threshold setup as the test above, but the audit write for the escalation itself
+      // fails -- recordVerdictFlip never throws by construction, and this catch is there so a D1 hiccup on the
+      // observability write can't take down the review pass that just correctly held the gate.
+      const originalRecordAuditEvent = repositoriesModule.recordAuditEvent;
+      const auditSpy = vi.spyOn(repositoriesModule, "recordAuditEvent").mockImplementation(async (auditEnv, event) => {
+        if (event.eventType === "github_app.ai_review_verdict_flip_escalated") throw new Error("D1 audit failed");
+        return originalRecordAuditEvent(auditEnv, event);
+      });
+      const env = createTestEnv({
+        GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),
+        AI: { run: async () => ({ response: JSON.stringify({ assessment: "Looks fine.", blockers: [], nits: [], suggestions: [] }) }) } as unknown as Ai,
+        AI_SUMMARIES_ENABLED: "true",
+        AI_PUBLIC_COMMENTS_ENABLED: "true",
+        AI_DAILY_NEURON_BUDGET: "100000",
+      });
+      await seedRegateChurnRepo(env, { publicSurface: "comment_and_label" });
+      await upsertRepoFocusManifest(env, "JSONbored/gittensory", { settings: { commentMode: "all_prs", publicSurface: "comment_and_label", checkRunMode: "off", reviewCheckMode: "required", aiReviewMode: "block" }, review: { auto_review: { cadence: "continuous" } } });
+      const headSha = "flipfinalauditfail";
+      await upsertPullRequestFromGitHub(env, "JSONbored/gittensory", { number: 78, title: "Flip-flop PR", state: "open", user: { login: "contributor" }, head: { sha: headSha }, labels: [], body: "Closes #1" });
+      await upsertPullRequestDetailSyncState(env, { repoFullName: "JSONbored/gittensory", pullNumber: 78, status: "complete", reviewsSyncedAt: new Date().toISOString() });
+      await upsertPullRequestFile(env, { repoFullName: "JSONbored/gittensory", pullNumber: 78, path: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, payload: { patch: "@@\n+export const roll = final;" } });
+
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = input.toString();
+        const method = init?.method ?? "GET";
+        if (url.includes("/access_tokens")) return Response.json({ token: "fake-installation-token" });
+        if (url.includes(`/pulls/78/files`)) return Response.json([{ filename: "src/a.ts", status: "modified", additions: 1, deletions: 0, changes: 1, patch: "@@\n+export const roll = final;" }]);
+        if (url.endsWith("/pulls/78")) return Response.json({ number: 78, title: "Flip-flop PR", state: "open", user: { login: "contributor" }, head: { sha: headSha }, labels: [], body: "Closes #1", mergeable_state: "clean" });
+        if (url.includes(`/commits/${headSha}/check-runs`)) return Response.json({ total_count: 0, check_runs: [] });
+        if (url.includes(`/commits/${headSha}/status`)) return Response.json({ state: "success", statuses: [] });
+        if (url.includes("/issues/1")) return Response.json({ number: 1, title: "Issue", state: "open", labels: [], user: { login: "reporter" } });
+        if (url.includes("/issues/78/comments")) return Response.json(method === "GET" ? [] : { id: 1 }, { status: method === "GET" ? 200 : 201 });
+        if (url.includes("/issues/comments/1")) return Response.json({ id: 1 }, { status: 200 });
+        if (url.includes("/issues/78/labels") && method === "GET") return Response.json([{ name: "gittensor" }, { name: "gittensor:bug" }]);
+        if (url.includes("/issues/78/labels") && method === "POST") return Response.json([]);
+        if (url.includes("/check-runs") && (method === "POST" || method === "PATCH")) return Response.json({ id: 601, html_url: "https://github.com/checks/601" }, { status: method === "POST" ? 201 : 200 });
+        if (url.includes("/branches/")) return Response.json({ protected: false, protection: { required_status_checks: { contexts: [] } } });
+        return Response.json({});
+      });
+
+      await processJob(env, { type: "agent-regate-pr", deliveryId: "flip-seed-2", repoFullName: "JSONbored/gittensory", prNumber: 78, installationId: 123 });
+      await env.DB.prepare("UPDATE ai_review_verdict_flips SET last_had_defect = 1, flip_count = ? WHERE repo_full_name = ? AND pull_number = ?")
+        .bind(VERDICT_FLIP_ESCALATION_THRESHOLD, "JSONbored/gittensory", 78)
+        .run();
+      await env.DB.prepare("DELETE FROM ai_review_cache").run();
+
+      await expect(
+        processJob(env, { type: "agent-regate-pr", deliveryId: "flip-final-2", repoFullName: "JSONbored/gittensory", prNumber: 78, installationId: 123 }),
+      ).resolves.toBeUndefined(); // the pass still completes -- the audit write failure is swallowed, not fatal
+      auditSpy.mockRestore();
+
+      const finalBlocker = await env.DB.prepare("select blocker_codes_json from gate_outcomes where repo_full_name = ? and pull_number = ? order by rowid desc limit 1")
+        .bind("JSONbored/gittensory", 78)
+        .first<{ blocker_codes_json: string }>();
+      expect(finalBlocker?.blocker_codes_json ?? "").not.toContain("ai_consensus_defect"); // the hold still landed
+      expect(counterValue("loopover_ai_review_verdict_flip_escalated_total")).toBeGreaterThanOrEqual(1);
+    });
+
     it("#9016: advisory-mode reviews never touch the flip-escalation wiring at all (nothing to shop for when AI never gates)", async () => {
       const env = createTestEnv({
         GITHUB_APP_PRIVATE_KEY: await generatePrivateKeyPem(),

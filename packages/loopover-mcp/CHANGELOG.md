@@ -5,6 +5,51 @@
 ### Fixes
 - Blunt slop-risk / issue-slop REST + CLI to match the MCP tools (#6990) (#7052)
 
+## [3.21.1](https://github.com/JSONbored/loopover/compare/mcp-v3.21.0...mcp-v3.21.1) (2026-07-31)
+
+
+### Chores
+
+* **mcp:** Synchronize engine-and-dependents versions
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.21.0 to ^3.21.1
+    * @loopover/engine bumped from ^3.21.0 to ^3.21.1
+
+## [3.21.0](https://github.com/JSONbored/loopover/compare/mcp-v3.20.0...mcp-v3.21.0) (2026-07-31)
+
+
+### Fixes
+
+* **mcp:** shape a remote JSON-RPC error into a tool result in the gateway proxy ([#10216](https://github.com/JSONbored/loopover/issues/10216)) ([fa9789e](https://github.com/JSONbored/loopover/commit/fa9789e6319798fe746fcb8a78b81139f4ced417))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.20.0 to ^3.21.0
+    * @loopover/engine bumped from ^3.20.0 to ^3.21.0
+
+## [3.20.0](https://github.com/JSONbored/loopover/compare/mcp-v3.19.0...mcp-v3.20.0) (2026-07-31)
+
+
+### Fixes
+
+* **mcp:** advertise _meta.category on all three servers ([#10162](https://github.com/JSONbored/loopover/issues/10162)) ([236907c](https://github.com/JSONbored/loopover/commit/236907c457c8184022cb885e7c8ef8a00db6d86f))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.19.0 to ^3.20.0
+    * @loopover/engine bumped from ^3.19.0 to ^3.20.0
+
 ## [3.19.0](https://github.com/JSONbored/loopover/compare/mcp-v3.18.4...mcp-v3.19.0) (2026-07-31)
 
 

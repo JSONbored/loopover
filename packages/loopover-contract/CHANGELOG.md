@@ -1,5 +1,36 @@
 # Changelog
 
+## [3.21.1](https://github.com/JSONbored/loopover/compare/contract-v3.21.0...contract-v3.21.1) (2026-07-31)
+
+
+### Chores
+
+* **contract:** Synchronize engine-and-dependents versions
+
+## [3.21.0](https://github.com/JSONbored/loopover/compare/contract-v3.20.0...contract-v3.21.0) (2026-07-31)
+
+
+### Features
+
+* **observability:** capture every miner AI generation, and stop fabricating zero token counts ([#10233](https://github.com/JSONbored/loopover/issues/10233)) ([ba35c8b](https://github.com/JSONbored/loopover/commit/ba35c8babc661b9ab97d00ee0a4080a5fed899fa))
+
+
+### Fixes
+
+* **api:** validate discovery routes against the schemas their spec publishes ([#10225](https://github.com/JSONbored/loopover/issues/10225)) ([6946385](https://github.com/JSONbored/loopover/commit/6946385f77cb55032460459f0114894003d878e6))
+
+## [3.20.0](https://github.com/JSONbored/loopover/compare/contract-v3.19.0...contract-v3.20.0) (2026-07-31)
+
+
+### Features
+
+* **analytics:** complete the PostHog migration — retire Umami, fix the MCP event contract ([#10177](https://github.com/JSONbored/loopover/issues/10177)) ([2cafde3](https://github.com/JSONbored/loopover/commit/2cafde31b127d6a4b5d1083d72e5b1184ed78f7d)), closes [#8293](https://github.com/JSONbored/loopover/issues/8293) [#8299](https://github.com/JSONbored/loopover/issues/8299) [#10175](https://github.com/JSONbored/loopover/issues/10175) [#10176](https://github.com/JSONbored/loopover/issues/10176)
+
+
+### Fixes
+
+* **observability:** group AI generations by their real trace, and attribute spend per repo ([#10187](https://github.com/JSONbored/loopover/issues/10187)) ([693aed8](https://github.com/JSONbored/loopover/commit/693aed823b9fb51518ce6649cc610a17ded86e9c)), closes [#10185](https://github.com/JSONbored/loopover/issues/10185)
+
 ## [3.19.0](https://github.com/JSONbored/loopover/compare/contract-v3.18.4...contract-v3.19.0) (2026-07-31)
 
 

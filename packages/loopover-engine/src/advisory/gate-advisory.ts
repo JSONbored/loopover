@@ -195,6 +195,12 @@ export function buildPullRequestAdvisory(
      *  — this is fail-open by construction: the caller only ever sets it true after a live check confirms
      *  every reference is dead, never on ambiguity. */
     confirmedNoOpenLinkedIssue?: boolean;
+    /** #10168: evidence that this PR's linked issue was closed by a rival that merged AFTER it opened.
+     *  Present ⇒ the `confirmedNoOpenLinkedIssue` case reports as a supersession naming the rival instead of
+     *  as `missing_linked_issue`'s unactionable "link it explicitly in the PR body". Structurally typed here
+     *  rather than imported from the host's review/linked-issue-superseded.ts, for the same reason the rest of
+     *  this file is a slimmed twin: @loopover/engine must not drag the host's subsystem into its graph. */
+    supersededBy?: { issueNumber: number; rivalPullNumber: number } | null | undefined;
   } = {},
 ): Advisory {
   const repoFullName = pr?.repoFullName ?? repo?.fullName ?? "unknown/unknown";
@@ -223,7 +229,14 @@ export function buildPullRequestAdvisory(
       action: "Re-deliver the webhook or wait for the next sync.",
     });
   } else {
-    addPullRequestFindings(repo, pr, findings, context.otherOpenPullRequests ?? [], Boolean(context.requireLinkedIssue), Boolean(context.duplicateWinnerEnabled), context.linkedIssueAuthorLogins ?? [], Boolean(context.confirmedNoOpenLinkedIssue));
+    addPullRequestFindings(repo, pr, findings, {
+      otherOpenPullRequests: context.otherOpenPullRequests ?? [],
+      requireLinkedIssue: Boolean(context.requireLinkedIssue),
+      duplicateWinnerEnabled: Boolean(context.duplicateWinnerEnabled),
+      linkedIssueAuthorLogins: context.linkedIssueAuthorLogins ?? [],
+      confirmedNoOpenLinkedIssue: Boolean(context.confirmedNoOpenLinkedIssue),
+      supersededBy: context.supersededBy,
+    });
   }
   return advisory("pull_request", targetKey, repoFullName, findings, "Pull request advisory generated.", pr?.number, undefined, pr?.headSha ?? undefined);
 }
@@ -289,16 +302,23 @@ function hasDuplicateOverlapCorroboration(pr: PullRequestRecord, otherPr: PullRe
   return Boolean(theirsFiles && theirsFiles.length > 0);
 }
 
-function addPullRequestFindings(
-  repo: RepositoryRecord | null,
-  pr: PullRequestRecord,
-  findings: AdvisoryFinding[],
-  otherOpenPullRequests: PullRequestRecord[],
-  requireLinkedIssue: boolean,
-  duplicateWinnerEnabled: boolean,
-  linkedIssueAuthorLogins: (string | null | undefined)[],
-  confirmedNoOpenLinkedIssue: boolean,
-): void {
+/** #10210 (host-parity): the resolved per-PR signals {@link addPullRequestFindings} evaluates, as ONE object
+ *  rather than a positional tail. See the host copy (src/rules/advisory.ts) for the full rationale — in short,
+ *  the tail had to be threaded in identical ORDER through both twins on every addition, and transposing two
+ *  same-typed arguments compiled cleanly. Declared locally rather than shared with the host: keeping these two
+ *  files free of a common import is precisely what the divergence exists for (#4518/#4881). */
+type PullRequestFindingSignals = {
+  otherOpenPullRequests: PullRequestRecord[];
+  requireLinkedIssue: boolean;
+  duplicateWinnerEnabled: boolean;
+  linkedIssueAuthorLogins: (string | null | undefined)[];
+  confirmedNoOpenLinkedIssue: boolean;
+  /** #10168: present only when the caller proved a rival merged after this PR opened and closed its issue. */
+  supersededBy?: { issueNumber: number; rivalPullNumber: number } | null | undefined;
+};
+
+function addPullRequestFindings(repo: RepositoryRecord | null, pr: PullRequestRecord, findings: AdvisoryFinding[], signals: PullRequestFindingSignals): void {
+  const { otherOpenPullRequests, requireLinkedIssue, duplicateWinnerEnabled, linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue, supersededBy } = signals;
   if (pr.state !== "open") {
     findings.push({
       code: "pr_not_open",
@@ -314,15 +334,29 @@ function addPullRequestFindings(
   // which always hand in a freshly-read body and never hit the webhook race) stays byte-identical.
   const noLinkedIssueCited = pr.linkedIssues.length === 0 && pr.bodyObservedAt !== null;
   if ((noLinkedIssueCited || confirmedNoOpenLinkedIssue) && requireLinkedIssue) {
-    findings.push({
-      code: "missing_linked_issue",
-      severity: "warning",
-      title: "No linked issue detected",
-      detail: noLinkedIssueCited
-        ? "No closing reference or linked issue number was found in the PR metadata/body."
-        : "The PR cites an issue number, but it could not be verified as a currently open issue.",
-      action: "If this PR is intended to solve an issue, link it explicitly in the PR body.",
-    });
+    // #10168 (host-parity): a PR whose linked issue a merged rival closed did NOT fail to link an issue -- it
+    // linked one correctly and lost a race, and telling it to "link it explicitly" is advice that cannot
+    // work. See the host copy (src/rules/advisory.ts) for the full rationale and the two facts the caller
+    // must prove before setting this.
+    if (supersededBy) {
+      findings.push({
+        code: "linked_issue_superseded",
+        severity: "warning",
+        title: "Superseded by a merged pull request",
+        detail: `Issue #${supersededBy.issueNumber} was closed by #${supersededBy.rivalPullNumber}, which merged after this pull request opened. The work this pull request targets is already on the default branch.`,
+        action: `Nothing is wrong with the issue link. If part of this pull request is still unaddressed by #${supersededBy.rivalPullNumber}, open a new issue describing what remains.`,
+      });
+    } else {
+      findings.push({
+        code: "missing_linked_issue",
+        severity: "warning",
+        title: "No linked issue detected",
+        detail: noLinkedIssueCited
+          ? "No closing reference or linked issue number was found in the PR metadata/body."
+          : "The PR cites an issue number, but it could not be verified as a currently open issue.",
+        action: "If this PR is intended to solve an issue, link it explicitly in the PR body.",
+      });
+    }
   } else {
     const overlappingPrs = otherOpenPullRequests.filter((otherPr) =>
       otherPr.linkedIssues.some((issueNumber) => pr.linkedIssues.includes(issueNumber)),
@@ -548,7 +582,13 @@ function evaluateGateCheckCore(advisoryResult: Advisory, policy: GateCheckPolicy
     // automatically — NEVER a failure, so a contributor PR is never auto-CLOSED because a model hiccupped. This
     // is evaluated AFTER the deterministic blockers above, so a real violation (secret_leak, duplicate,
     // missing-issue, slop, quality) still blocks: an inconclusive AI can no longer bury a blocked PR in a hold.
-    if (advisoryResult.findings.some((finding) => finding.code === "ai_review_inconclusive")) {
+    // #10016: mirrors isEvaluationBlocker's CLA case -- the finding is produced in every aiReviewGateMode (the
+    // two producers in ai-review-orchestration.ts don't consult the mode), so only "block" should ever HOLD the
+    // gate on it. "advisory"/"off" mode's whole contract is "surface findings, never affect the verdict";
+    // unconditionally holding here diverted a clean, green advisory-mode PR to manual review over a race or a
+    // transient model failure the repo never opted into blocking on. The finding still reaches the panel via
+    // `gateWarnings` below either way -- only the HOLD is mode-gated, never the visibility.
+    if (gatePolicyBlocks(effective.aiReviewGateMode, "advisory") && advisoryResult.findings.some((finding) => finding.code === "ai_review_inconclusive")) {
       return {
         enabled: true,
         conclusion: "neutral",

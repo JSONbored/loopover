@@ -166,11 +166,13 @@ import {
   StdioWatchIssuesInput,
   StdioCompareLocalVariantsInput,
   StdioComparePrVariantsInput,
+  StdioLocalBranchAnalysisInput,
+  StdioDraftPrBodyInput,
   getToolContract,
   projectToolDefinition,
   ListPendingActionsStdioInput,
 } from "@loopover/contract/tools";
-import { AUTONOMY_LEVELS as MAINTAIN_AUTONOMY_LEVELS, MAINTAIN_ACTION_CLASSES, PROPOSE_ACTION_CLASSES, type ToolContract } from "@loopover/contract";
+import { AUTONOMY_LEVELS as MAINTAIN_AUTONOMY_LEVELS, MAINTAIN_ACTION_CLASSES, PROPOSE_ACTION_CLASSES, resolveErrorCode, type ToolContract } from "@loopover/contract";
 import { buildBranchAnalysisPayload, collectLocalDiff, collectLocalBranchMetadata, probeLocalScorer, referenceScorePreviewExample, resolveScorePreviewCommand, resolveWorkspaceCwd, sanitizeLocalScorerStatus, setupGuidanceForLocalScorer, isTestFile } from "../lib/local-branch.js";
 import { formatTable } from "../lib/format-table.js";
 import { argsWantJson, describeCliError, reportCliFailure } from "../lib/cli-error.js";
@@ -1670,6 +1672,9 @@ registerStdioTool(
       workspaceIntelligence: publicSafeWorkspaceIntelligence(result.analysis.workspaceIntelligence),
     });
   },
+  // #10034: this server resolves login/repoFullName from the checkout and active session, so it
+  // accepts a call without either -- stated as a declared narrowing of the contract's wider shape.
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 registerStdioTool(
@@ -1689,6 +1694,7 @@ registerStdioTool(
       recommendedRerunCondition: result.analysis.recommendedRerunCondition,
     });
   },
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 registerStdioTool(
@@ -1697,6 +1703,7 @@ registerStdioTool(
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("LoopOver local next-action ranking.", { local: result.local, nextActions: result.analysis.nextActions, rewardRisk: result.analysis.rewardRisk, recommendedRerunCondition: result.analysis.recommendedRerunCondition });
   },
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 registerStdioTool(
@@ -1713,6 +1720,7 @@ registerStdioTool(
       recommendedRerunCondition: result.analysis.recommendedRerunCondition,
     });
   },
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 registerStdioTool(
@@ -1723,6 +1731,7 @@ registerStdioTool(
     const { localScorerStatus: _localScorerStatus, ...body } = payload;
     return toolResult("LoopOver remediation plan.", await apiPost("/v1/local/remediation-plan", body));
   },
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 registerStdioTool(
@@ -1731,6 +1740,7 @@ registerStdioTool(
     const result = await analyzeCurrentBranch(await withClientWorkspaceRoots(input));
     return toolResult("LoopOver public-safe PR packet.", { local: result.local, prPacket: result.analysis.prPacket });
   },
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 // #6741: CLI stdio mirror of loopover_draft_pr_body — same analyzeCurrentBranch fetch as prepare_pr_packet,
@@ -1755,6 +1765,7 @@ registerStdioTool(
       draft,
     );
   },
+  { input: StdioDraftPrBodyInput },
 );
 
 registerStdioTool(
@@ -1823,6 +1834,7 @@ registerStdioTool(
 registerStdioTool(
   "loopover_agent_prepare_pr_packet",
   async (input: z.infer<typeof CurrentBranchInput>) => toolResult("LoopOver base-agent public-safe PR packet.", await agentPreparePrPacket(await withClientWorkspaceRoots(input))),
+  { input: StdioLocalBranchAnalysisInput },
 );
 
 // Only this tool declares an outputSchema today; every other tool returns text + unschematized
@@ -2579,7 +2591,21 @@ function registerProxiedTool(tool: RemoteToolDescriptor): void {
         // Forwarded verbatim to the remote's own tools/call: this layer routes, it does not interpret.
         const payload = await apiPost("/mcp", { jsonrpc: "2.0", id: Date.now(), method: "tools/call", params: { name: tool.name, arguments: input } });
         const result = (payload as { result?: unknown }).result;
-        return result ?? payload;
+        if (result !== undefined) return result;
+        // `enableJsonResponse` (src/mcp/server.ts) means a request-level failure still arrives as HTTP 200,
+        // with a JSON-RPC `{ error }` envelope in place of `result` -- apiPost only throws on a non-2xx, so
+        // that envelope (or, degenerately, neither key at all) would otherwise be handed back verbatim as
+        // if it were the tool's own answer. Shape it into a real CallToolResult instead: the numeric
+        // JSON-RPC `code` is not a member of the closed telemetry vocabulary, so it is never surfaced as
+        // one -- resolveErrorCode reclassifies from the message, the same as every other server here.
+        const rpcError = (payload as { error?: { message?: unknown } }).error;
+        const message =
+          typeof rpcError?.message === "string" ? rpcError.message : "The remote MCP server returned neither a result nor an error for this call.";
+        return {
+          content: [{ type: "text" as const, text: message }],
+          structuredContent: { error: { code: resolveErrorCode(message), message } },
+          isError: true as const,
+        };
       }) as (...args: unknown[]) => Promise<unknown>,
       "proxied",
     ) as never,

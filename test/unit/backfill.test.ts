@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearInstallationTokenCacheForTest } from "../../src/github/app";
 import {
   getInstallationHealth,
+  getRepoSyncSegment,
   listCheckSummaries,
   listContributorRepoStats,
   listIssues,
@@ -209,6 +210,30 @@ async function seedRegisteredRepo(env: Env) {
 async function seedInstalledAndRegisteredRepo(env: Env) {
   await upsertRepositoryFromGitHub(env, { name: "gittensory", full_name: "JSONbored/gittensory", private: true, owner: { login: "JSONbored" } }, 123);
   await seedRegisteredRepo(env);
+}
+
+// The freshness gate reads the OPEN-DATA segments' own completions, not repo_sync_state.lastCompletedAt
+// (#10193), so a test asserting a skip must seed both -- in production a `success`/`partial` sync state only
+// ever exists BECAUSE refreshRepoSyncStateFromSegments rolled these four segment rows up into it.
+async function seedOpenDataSegments(
+  env: Env,
+  completedAt: string,
+  segments: readonly import("../../src/types").RepoSyncSegmentRecord["segment"][] = ["labels", "open_issues", "open_pull_requests", "recent_merged_pull_requests"],
+) {
+  for (const segment of segments) {
+    await upsertRepoSyncSegment(env, {
+      repoFullName: "JSONbored/gittensory",
+      segment,
+      status: "complete",
+      sourceKind: "github",
+      mode: "light",
+      fetchedCount: 1,
+      pageCount: 1,
+      startedAt: completedAt,
+      completedAt,
+      warnings: [],
+    });
+  }
 }
 
 async function persistTotalsSnapshot(
@@ -1518,6 +1543,7 @@ describe("GitHub backfill", () => {
     // than removed, since #5021's own scope is the eligibility filter, not this unrelated branch.
     const freshEnv = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
     await seedInstalledAndRegisteredRepo(freshEnv);
+    await seedOpenDataSegments(freshEnv, new Date().toISOString());
     await upsertRepoSyncState(freshEnv, {
       repoFullName: "JSONbored/gittensory",
       status: "success",
@@ -2624,6 +2650,7 @@ describe("GitHub backfill", () => {
       } as unknown as Queue,
     });
     await seedInstalledAndRegisteredRepo(env);
+    await seedOpenDataSegments(env, new Date().toISOString());
     await upsertRepoSyncState(env, {
       repoFullName: "JSONbored/gittensory",
       status: "success",
@@ -2744,6 +2771,245 @@ describe("GitHub backfill", () => {
     expect(sent).toEqual([]);
   });
 
+  it("INVARIANT (#10193): every status the fresh-success window covers (success/partial/capped) skips on fresh open-data segments, and every status outside it proceeds", async () => {
+    for (const status of ["success", "partial", "capped"] as const) {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", JOBS: { async send() {} } as unknown as Queue });
+      await seedInstalledAndRegisteredRepo(env);
+      await seedOpenDataSegments(env, new Date().toISOString());
+      await upsertRepoSyncState(env, {
+        repoFullName: "JSONbored/gittensory",
+        status,
+        sourceKind: "github",
+        openIssuesCount: 1,
+        openPullRequestsCount: 1,
+        recentMergedPullRequestsCount: 0,
+        lastCompletedAt: new Date().toISOString(),
+        warnings: [],
+      });
+      vi.stubGlobal("fetch", async () => new Response("must not be called", { status: 500 }));
+
+      expect(await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" })).toMatchObject({ status: "skipped" });
+    }
+
+    // rate_limited is in NEITHER window: it is not a fresh success and not an error, so it must proceed rather
+    // than leak into the skip through a status the gate never meant to cover.
+    const proceedEnv = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", JOBS: { async send() {} } as unknown as Queue });
+    await seedInstalledAndRegisteredRepo(proceedEnv);
+    await seedOpenDataSegments(proceedEnv, new Date().toISOString());
+    await upsertRepoSyncState(proceedEnv, {
+      repoFullName: "JSONbored/gittensory",
+      status: "rate_limited",
+      sourceKind: "github",
+      openIssuesCount: 1,
+      openPullRequestsCount: 1,
+      recentMergedPullRequestsCount: 0,
+      lastCompletedAt: new Date().toISOString(),
+      warnings: [],
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString() === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 1, openPullRequests: 1, mergedPullRequests: 0, closedPullRequests: 0, labels: 0 });
+      return Response.json([]);
+    });
+
+    expect(await enqueueRepositoryOpenDataBackfill(proceedEnv, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" })).toMatchObject({ status: "queued" });
+  });
+
+  it("INVARIANT (#10193): the error-backoff window still reads repo_sync_state's own clock -- an error past the window, or with an unparseable timestamp, proceeds", async () => {
+    for (const lastCompletedAt of [new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), "not-a-timestamp"]) {
+      const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token", JOBS: { async send() {} } as unknown as Queue });
+      await seedInstalledAndRegisteredRepo(env);
+      // Segments are stale too, so the ONLY thing that could still force a skip here is the error window.
+      await seedOpenDataSegments(env, new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString());
+      await upsertRepoSyncState(env, {
+        repoFullName: "JSONbored/gittensory",
+        status: "error",
+        sourceKind: "github",
+        openIssuesCount: 0,
+        openPullRequestsCount: 0,
+        recentMergedPullRequestsCount: 0,
+        lastCompletedAt,
+        errorSummary: "rate limited",
+        warnings: [],
+      });
+      vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+        if (input.toString() === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 0, closedPullRequests: 0, labels: 0 });
+        return Response.json([]);
+      });
+
+      expect(await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" })).toMatchObject({ status: "queued" });
+    }
+  });
+
+  it("REGRESSION (#10193, starved-open-data-crawl incident): a repo whose lastCompletedAt is minutes old but whose open-data segments last ran three weeks ago still syncs -- the gate previously read a repo-wide clock the ~2-min sweep kept bumping, so labels/open_issues/recent_merged_pull_requests were never dispatched again", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedInstalledAndRegisteredRepo(env);
+    // The exact production shape: the open-data segments are frozen weeks back, while repo_sync_state was
+    // rewritten seconds ago by refreshRepoSyncStateFromSegments at the tail of an UNRELATED write path (the
+    // sweep's own force:true open_pull_requests refresh and the backfill-pr-details follow-on it enqueues).
+    await seedOpenDataSegments(env, new Date(Date.now() - 21 * 24 * 60 * 60 * 1000).toISOString());
+    await upsertRepoSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      status: "success",
+      sourceKind: "github",
+      openIssuesCount: 5,
+      openPullRequestsCount: 3,
+      recentMergedPullRequestsCount: 10,
+      lastCompletedAt: new Date().toISOString(),
+      warnings: [],
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString() === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 5, openPullRequests: 3, mergedPullRequests: 10, closedPullRequests: 0, labels: 0 });
+      return Response.json([]);
+    });
+
+    const result = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+
+    expect(result.status).toBe("queued");
+    // recent_merged_pull_requests specifically: it is the one open-data table with no webhook or sweep writer,
+    // so it is the segment whose starvation actually froze a table (recent_merged_pull_requests stopped
+    // growing on 2026-07-09) rather than being masked.
+    expect(sent).toEqual(
+      expect.arrayContaining([expect.objectContaining({ type: "backfill-repo-segment", segment: "recent_merged_pull_requests" })]),
+    );
+  });
+
+  it("INVARIANT (#10193): a repo missing an open-data segment row entirely is never treated as fresh, however recent its sync state", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedInstalledAndRegisteredRepo(env);
+    // Three of four are fresh; recent_merged_pull_requests has never run at all. The crawl is still owed, so
+    // the oldest-completion anchor must read as infinitely stale rather than settling for the fresh three.
+    await seedOpenDataSegments(env, new Date().toISOString(), ["labels", "open_issues", "open_pull_requests"]);
+    await upsertRepoSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      status: "success",
+      sourceKind: "github",
+      openIssuesCount: 1,
+      openPullRequestsCount: 1,
+      recentMergedPullRequestsCount: 0,
+      lastCompletedAt: new Date().toISOString(),
+      warnings: [],
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString() === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 1, openPullRequests: 1, mergedPullRequests: 0, closedPullRequests: 0, labels: 0 });
+      return Response.json([]);
+    });
+
+    const result = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+
+    expect(result.status).toBe("queued");
+    expect(sent.filter((message) => message.type === "backfill-repo-segment").length).toBe(4);
+  });
+
+  it("INVARIANT (#10193): an unparseable segment completedAt reads as never-run, not as fresh", async () => {
+    const sent: import("../../src/types").JobMessage[] = [];
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: {
+        async send(message: import("../../src/types").JobMessage) {
+          sent.push(message);
+        },
+      } as unknown as Queue,
+    });
+    await seedInstalledAndRegisteredRepo(env);
+    await seedOpenDataSegments(env, new Date().toISOString());
+    // A legacy/hand-edited row whose completedAt cannot be parsed must fail OPEN (sync proceeds), never
+    // silently pin the gate shut the way an unmeasurable clock otherwise would.
+    await upsertRepoSyncSegment(env, {
+      repoFullName: "JSONbored/gittensory",
+      segment: "labels",
+      status: "complete",
+      sourceKind: "github",
+      mode: "light",
+      fetchedCount: 1,
+      pageCount: 1,
+      completedAt: "not-a-timestamp",
+      warnings: [],
+    });
+    await upsertRepoSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      status: "success",
+      sourceKind: "github",
+      openIssuesCount: 1,
+      openPullRequestsCount: 1,
+      recentMergedPullRequestsCount: 0,
+      lastCompletedAt: new Date().toISOString(),
+      warnings: [],
+    });
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      if (input.toString() === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 1, openPullRequests: 1, mergedPullRequests: 0, closedPullRequests: 0, labels: 0 });
+      return Response.json([]);
+    });
+
+    const result = await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+
+    expect(result.status).toBe("queued");
+  });
+
+  it("INVARIANT (#10193): the skip is logged with its reason on both the fresh-success and error-backoff paths, instead of only being returned as a discarded warning string", async () => {
+    const env = createTestEnv({
+      GITHUB_PUBLIC_TOKEN: "public-token",
+      JOBS: { async send() {} } as unknown as Queue,
+    });
+    await seedInstalledAndRegisteredRepo(env);
+    await seedOpenDataSegments(env, new Date().toISOString());
+    await upsertRepoSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      status: "success",
+      sourceKind: "github",
+      openIssuesCount: 1,
+      openPullRequestsCount: 1,
+      recentMergedPullRequestsCount: 0,
+      lastCompletedAt: new Date().toISOString(),
+      warnings: [],
+    });
+    vi.stubGlobal("fetch", async () => new Response("must not be called", { status: 500 }));
+    const logged = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+
+    const freshEvents = logged.mock.calls.map((call) => String(call[0])).filter((line) => line.includes("open_data_backfill_skipped"));
+    expect(freshEvents).toHaveLength(1);
+    expect(JSON.parse(freshEvents[0]!)).toMatchObject({ event: "open_data_backfill_skipped", repoFullName: "JSONbored/gittensory", reason: "fresh_success" });
+    // The age is a real measurement, not a placeholder -- a starved crawl is recognisable by it growing.
+    expect(JSON.parse(freshEvents[0]!).openDataCrawlAgeMs).toBeGreaterThanOrEqual(0);
+
+    logged.mockClear();
+    await upsertRepoSyncState(env, {
+      repoFullName: "JSONbored/gittensory",
+      status: "error",
+      sourceKind: "github",
+      openIssuesCount: 0,
+      openPullRequestsCount: 0,
+      recentMergedPullRequestsCount: 0,
+      lastCompletedAt: new Date().toISOString(),
+      errorSummary: "rate limited",
+      warnings: [],
+    });
+
+    await enqueueRepositoryOpenDataBackfill(env, { repoFullName: "JSONbored/gittensory", requestedBy: "schedule", mode: "light" });
+
+    const errorEvents = logged.mock.calls.map((call) => String(call[0])).filter((line) => line.includes("open_data_backfill_skipped"));
+    expect(errorEvents).toHaveLength(1);
+    expect(JSON.parse(errorEvents[0]!)).toMatchObject({ reason: "recent_error" });
+    logged.mockRestore();
+  });
+
   it("REGRESSION (#4497, endless-scheduled-resync incident): two scheduled dispatches within the freshness window only sync once -- previously every registered repo was re-synced every 30 min forever regardless of freshness or a permanent error state", async () => {
     const sent: import("../../src/types").JobMessage[] = [];
     const env = createTestEnv({
@@ -2765,6 +3031,10 @@ describe("GitHub backfill", () => {
     expect(first.status).toBe("queued");
     const segmentJobsAfterFirst = sent.filter((message) => message.type === "backfill-repo-segment").length;
     expect(segmentJobsAfterFirst).toBeGreaterThan(0);
+    // The queued segment jobs are captured, not executed (JOBS.send is a stub), so stand in for the segment
+    // rows a real run would have written -- the fresh sync state below is only reachable in production once
+    // those exist (#10193).
+    await seedOpenDataSegments(env, new Date().toISOString());
     await upsertRepoSyncState(env, {
       repoFullName: "JSONbored/gittensory",
       status: "success",
@@ -3783,6 +4053,56 @@ describe("GitHub backfill", () => {
 
     expect(result).toMatchObject({ status: "sampled", fetchedCount: 10, expectedCount: 2000 });
     expect(await listRecentMergedPullRequests(env, "JSONbored/gittensory")).toHaveLength(10);
+
+    // REGRESSION (#10209): a `sampled` segment records NO continuation cursor. It is not resumable --
+    // canResumePreviousScan accepts only running/partial/waiting_rate_limit -- so a stored nextCursor would be
+    // written and never read, describing a continuation no scheduled or manual path can perform. expectedCount
+    // is deliberately still recorded: "10 of 2000" is a true coverage statement, just not a progress one.
+    expect(result.nextCursor ?? null).toBeNull();
+    const stored = await getRepoSyncSegment(env, "JSONbored/gittensory", "recent_merged_pull_requests");
+    expect(stored?.status).toBe("sampled");
+    expect(stored?.nextCursor ?? null).toBeNull();
+    expect(stored?.expectedCount).toBe(2000);
+  });
+
+  it("REGRESSION (#10209): a resume dispatched against a sampled segment restarts at page 1 rather than advancing", async () => {
+    // Pins the behaviour the absent cursor now advertises honestly. Verified live on edge-nl-01 before the
+    // change: a resume run with an explicit cursor: "11" against next_cursor=11 re-crawled pages 1-10 and
+    // persisted nothing new. The segment is a rolling most-recently-updated window, not a deepening crawl.
+    const env = createTestEnv({ GITHUB_PUBLIC_TOKEN: "public-token" });
+    await seedRegisteredRepo(env);
+    const pagesRequested: number[] = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url === "https://api.github.com/graphql") return githubTotalsResponse({ openIssues: 0, openPullRequests: 0, mergedPullRequests: 2000, closedPullRequests: 0, labels: 0 });
+      if (/\/pulls\/\d+\/files/.test(url)) return Response.json([]);
+      if (url.includes("/pulls?state=closed")) {
+        const page = Number(new URL(url).searchParams.get("page") ?? "1");
+        pagesRequested.push(page);
+        return Response.json(
+          [{ number: page, title: `Merged ${page}`, state: "closed", merged_at: "2026-05-20T00:00:00.000Z", user: { login: "oktofeesh1" }, labels: [], body: "" }],
+          { headers: { link: `<https://api.github.com/repositories/1/pulls?page=${page + 1}>; rel="next"` } },
+        );
+      }
+      return Response.json([]);
+    });
+
+    await backfillRepositorySegment(env, { repoFullName: "JSONbored/gittensory", segment: "recent_merged_pull_requests", mode: "full" });
+    pagesRequested.length = 0;
+
+    const resumed = await backfillRepositorySegment(env, {
+      repoFullName: "JSONbored/gittensory",
+      segment: "recent_merged_pull_requests",
+      mode: "resume",
+      cursor: "11",
+    });
+
+    // The explicitly-passed cursor is ignored: the crawl restarts from page 1, so nothing beyond the window
+    // is ever reachable and the run settles as `sampled` again with no cursor to hand back.
+    expect(pagesRequested[0]).toBe(1);
+    expect(pagesRequested).not.toContain(11);
+    expect(resumed).toMatchObject({ status: "sampled" });
+    expect(resumed.nextCursor ?? null).toBeNull();
   });
 
   it("hydrates PR files and reviews through GraphQL when public-token REST detail endpoints are hidden", async () => {

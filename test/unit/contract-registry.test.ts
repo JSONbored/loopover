@@ -30,6 +30,7 @@ import {
   QUEUE_STATUSES,
   CLAIM_STATUSES,
   MINER_RUN_STATES,
+  toJsonSchema,
 } from "@loopover/contract";
 import { TEST_FRAMEWORKS as ENGINE_TEST_FRAMEWORKS } from "../../packages/loopover-engine/src/signals/test-evidence";
 import { QUEUE_STATUSES as MINER_QUEUE_STATUSES } from "../../packages/loopover-miner/lib/portfolio-queue";
@@ -37,6 +38,7 @@ import { CLAIM_STATUSES as MINER_CLAIM_STATUSES } from "../../packages/loopover-
 import { RUN_STATES as LIVE_MINER_RUN_STATES } from "../../packages/loopover-miner/lib/run-state";
 import { LocalStatusStructuredInput } from "@loopover/contract/tools";
 import { GetRepoContextInput } from "@loopover/contract/tools";
+import { StdioLocalBranchAnalysisInput, StdioDraftPrBodyInput } from "@loopover/contract/tools";
 import { PREFLIGHT_LIMITS as ENGINE_PREFLIGHT_LIMITS } from "../../packages/loopover-engine/src/signals/preflight-limits";
 import { PUBLIC_SURFACE_SKIP_REASONS as SERVER_PUBLIC_SURFACE_SKIP_REASONS } from "../../src/signals/settings-preview";
 import { AUTONOMY_LEVELS as ENGINE_AUTONOMY_LEVELS, AGENT_ACTION_CLASSES as ENGINE_AGENT_ACTION_CLASSES } from "../../packages/loopover-engine/src/settings/autonomy";
@@ -86,6 +88,16 @@ describe("contract tool registry", () => {
     const first = TOOL_CONTRACTS[0]!;
     expect(getToolContract(first.name)).toBe(first);
     expect(getToolContract("loopover_not_a_real_tool")).toBeUndefined();
+  });
+
+  it("rejects empty owner/repo/title on RetrieveIssueContextInput and stays a ZodObject (#10040)", () => {
+    const contract = getToolContract("loopover_retrieve_issue_context");
+    expect(contract).toBeDefined();
+    expect(contract!.input).toBeInstanceOf(z.ZodObject);
+    expect(contract!.input.safeParse({ owner: "", repo: "x", title: "t" }).success).toBe(false);
+    expect(contract!.input.safeParse({ owner: "o", repo: "", title: "t" }).success).toBe(false);
+    expect(contract!.input.safeParse({ owner: "o", repo: "r", title: "" }).success).toBe(false);
+    expect(contract!.input.safeParse({ owner: "o", repo: "r", title: "t" }).success).toBe(true);
   });
 });
 
@@ -308,5 +320,43 @@ describe("contract enums", () => {
     for (const status of PLAN_STATUSES) {
       expect(PLAN_STEP_STATUSES as readonly string[], status).toContain(status);
     }
+  });
+
+  // #10034: the eight local-branch tools the stdio server narrows away from LocalBranchAnalysisInput's
+  // required login/repoFullName. Asserts both halves checkInputNarrowing (scripts/lib/validate-mcp)
+  // cares about: the narrowing requires no MORE than the contract, and declares no property the
+  // contract does not already have.
+  it("narrows the eight stdio local-branch tools to drop the required login/repoFullName", () => {
+    const STDIO_LOCAL_BRANCH_TOOLS = [
+      { name: "loopover_preflight_current_branch", narrowing: StdioLocalBranchAnalysisInput },
+      { name: "loopover_preview_current_branch_score", narrowing: StdioLocalBranchAnalysisInput },
+      { name: "loopover_rank_local_next_actions", narrowing: StdioLocalBranchAnalysisInput },
+      { name: "loopover_explain_local_blockers", narrowing: StdioLocalBranchAnalysisInput },
+      { name: "loopover_remediation_plan", narrowing: StdioLocalBranchAnalysisInput },
+      { name: "loopover_prepare_pr_packet", narrowing: StdioLocalBranchAnalysisInput },
+      { name: "loopover_draft_pr_body", narrowing: StdioDraftPrBodyInput },
+      { name: "loopover_agent_prepare_pr_packet", narrowing: StdioLocalBranchAnalysisInput },
+    ];
+    for (const { name, narrowing } of STDIO_LOCAL_BRANCH_TOOLS) {
+      const contract = getToolContract(name);
+      expect(contract, name).toBeDefined();
+      const contractSchema = toJsonSchema(contract!.input) as { properties?: Record<string, unknown>; required?: string[] };
+      const narrowedSchema = toJsonSchema(narrowing) as { properties?: Record<string, unknown>; required?: string[] };
+      const contractRequired = new Set(contractSchema.required ?? []);
+      const narrowedRequired = narrowedSchema.required ?? [];
+      // Every property the narrowing requires, the contract requires too -- the left half of
+      // checkInputNarrowing, which is what makes advertising this shape a true narrowing.
+      for (const property of narrowedRequired) expect(contractRequired.has(property), `${name}: ${property}`).toBe(true);
+      expect(narrowedRequired, name).not.toContain("login");
+      expect(narrowedRequired, name).not.toContain("repoFullName");
+      // Every property the narrowing declares also exists on the contract's input.
+      const contractProperties = new Set(Object.keys(contractSchema.properties ?? {}));
+      for (const property of Object.keys(narrowedSchema.properties ?? {})) {
+        expect(contractProperties.has(property), `${name}: ${property}`).toBe(true);
+      }
+    }
+    // loopover_draft_pr_body's narrowing must still declare `format` -- the one field the issue
+    // called out as easy to drop by narrowing from the wrong base.
+    expect(Object.keys(toJsonSchema(StdioDraftPrBodyInput).properties ?? {})).toContain("format");
   });
 });

@@ -64,6 +64,29 @@ export function scoreJudgmentAgreement(samples: readonly JudgmentSample[], verba
   return { agreement, confidence: agreement * stated, sampleCount, uncorroborated };
 }
 
+/**
+ * The quality metrics this review's judgment agreement is worth reporting to PostHog (#10226). PURE — the
+ * caller does the emitting.
+ *
+ * Returns an EMPTY list for an uncorroborated review rather than reporting the agreement floor: with fewer
+ * than two samples there is nothing to agree WITH, and `UNCORROBORATED_AGREEMENT` is a deliberate placeholder,
+ * not a measurement. Publishing it as one would put a fabricated 0.5 into an average alongside real scores.
+ *
+ * Only the confidence-INDEPENDENT half of the score is reported. `agreement` and `sampleCount` are properties
+ * of the stances themselves; `confidence` folds in a per-finding verbalized confidence, so it belongs to a
+ * finding rather than to the review.
+ */
+export function judgmentAgreementMetrics(
+  samples: readonly JudgmentSample[],
+): Array<{ name: string; value: number }> {
+  const scored = scoreJudgmentAgreement(samples, 1);
+  if (scored.uncorroborated) return [];
+  return [
+    { name: "judgment_agreement", value: scored.agreement },
+    { name: "judgment_sample_count", value: scored.sampleCount },
+  ];
+}
+
 // NOT IMPLEMENTED HERE, deliberately (#8834): the issue also describes running N=2-3 evaluations of the SAME
 // judge with few-shot exemplars rotated out of the golden corpus ("simulated annotators"). That is a strictly
 // better agreement signal than two different models voting once each — it isolates the judge's own

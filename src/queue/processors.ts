@@ -25,6 +25,7 @@ import {
   listIssueSignalSample,
   listLatestSignalSnapshotsByTarget,
   listOtherOpenPullRequests,
+  listMergedPullRequestsInWindow,
   listOtherOpenPullRequestsForAuthor,
   listOpenIssues,
   listOpenPullRequests,
@@ -97,6 +98,7 @@ import {
   upsertRepositoryFromGitHub,
   getLatestAdvisoryForPullRequest,
 } from "../db/repositories";
+import { readVerdictStability, recordVerdict, shouldSkipStableVerdict, verdictStabilityKey, writeVerdictStability } from "../review/verdict-stability";
 import { withLinkedIssueMaintainerExemption, type LinkedIssueExemptionAuthor } from "../settings/linked-issue-exemption";
 import { resolveConfiguredRepoCandidates } from "../review/configured-repo-set";
 import { renameRepositoryIdentity } from "../db/repo-identity-rename";
@@ -349,6 +351,8 @@ import {
 } from "../signals/engine";
 import { isDuplicateClusterWinnerByClaim } from "../signals/duplicate-winner";
 import { isDuplicateWinnerEnabledGlobally, resolveDuplicateWinnerEnabled } from "../settings/duplicate-winner-mode";
+import { isSupersededCloseEnabledGlobally } from "../settings/superseded-close-mode";
+import { resolveSupersession, supersededSearchWindow, type LinkedIssueClosure, type SupersededByRival } from "../review/linked-issue-superseded";
 import { isOpenPrFileCollisionEnabledGlobally, resolveOpenPrFileCollisionEnabled } from "../settings/open-pr-file-collision-mode";
 import { buildAiReviewDiff, buildSecretScanDiff, totalAddedLineCount } from "../review/review-diff";
 // #4013 step 4 (prep): buildAiReviewDiff/buildSecretScanDiff moved to review-diff.ts (a natural existing
@@ -655,7 +659,7 @@ import {
 } from "../review/linked-issue-hard-rules";
 import { DEFAULT_UNLINKED_ISSUE_GUARDRAIL } from "../review/unlinked-issue-guardrail-config";
 import { resolveUnlinkedIssueMatchDisposition } from "../review/unlinked-issue-guardrail";
-import { DEFAULT_SCREENSHOT_CONTRACT_MESSAGE, DEFAULT_SCREENSHOT_TABLE_GATE, evaluateScreenshotTableGate, extractTableRowImageUrls, type ScreenshotTableGateConfig } from "../review/screenshot-table-gate";
+import { CAPTURE_UNOBTAINABLE_REASON, DEFAULT_SCREENSHOT_CONTRACT_MESSAGE, DEFAULT_SCREENSHOT_TABLE_GATE, evaluateScreenshotTableGate, extractTableRowImageUrls, type ScreenshotTableGateConfig } from "../review/screenshot-table-gate";
 import { isSafeHttpUrl } from "../review/content-lane/safe-url";
 import {
   buildScreenshotTableVisionFindings,
@@ -1609,12 +1613,13 @@ export async function sweepRepoRegate(
     // Thread linked-issue authors + the open-reference check so the re-gate sweep applies the same
     // self-authored-linked-issue block AND stale-issue-link countermeasure the main webhook path applies —
     // without this a self-authored or stale-link-gaming PR re-gated by the sweep escapes both. (#self-authored-parity, #unlinked-issue-guardrail-followup)
-    const { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue } = await resolveLinkedIssueAdvisoryContext(
+    const { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue, supersededBy } = await resolveLinkedIssueAdvisoryContext(
       env,
       sweepInstallationId,
       repoFullName,
       pr.linkedIssues,
       settings,
+      pr,
     );
     // #9160: see resolveScopedLinkedIssueClaimedAt's own doc comment -- scopes pr's claim time to only the
     // issue(s) actually contested with an open sibling instead of pr's blended linkedIssueClaimedAt column.
@@ -1626,6 +1631,7 @@ export async function sweepRepoRegate(
       duplicateWinnerEnabled,
       linkedIssueAuthorLogins,
       confirmedNoOpenLinkedIssue,
+      supersededBy,
       copycatGateMode: settings.copycatGateMode,
       copycatGateMinScore: settings.copycatGateMinScore,
       scopedLinkedIssueClaimedAt,
@@ -3968,6 +3974,19 @@ async function runAgentMaintenancePlanAndExecute(
       { reason: deriveReevaluationReason(deliveryId) },
       holdCause,
     );
+    // #10184: fold this verdict into the PR's stability state, at the one place every verdict passes through
+    // so no caller can bypass it -- the same reasoning persistDecisionRecord itself uses for its
+    // reevaluation check. Keyed on the head SHA, so a new commit starts clean without an explicit reset.
+    // Best effort: a failed write means the next pass sees no prior state and evaluates normally.
+    if (record.headSha) {
+      const stabilityKey = verdictStabilityKey(repoFullName, pr.number, record.headSha);
+      const priorStability = await readVerdictStability(env.SELFHOST_TRANSIENT_CACHE, stabilityKey);
+      await writeVerdictStability(
+        env.SELFHOST_TRANSIENT_CACHE,
+        stabilityKey,
+        recordVerdict(priorStability, { action: record.action, reasonCode: record.reasonCode, holdCause }, Date.now()),
+      );
+    }
     // #8838: persist the evaluation's own exact inputs beside the record (PRIVATE sibling, migration 0182)
     // so the replay harness can re-derive this decision bit-exactly. Best-effort, like the record itself;
     // the no-replay no-op (synthetic content-lane/bridge evaluations) lives inside the helper. Keyed to the
@@ -4350,6 +4369,27 @@ export async function reReviewStoredPullRequest(
     ))
   )
     return false;
+  // #10222: back off AFTER the readiness gate, but BEFORE onReachedReadiness and the retrigger consumption
+  // just below. #10204 placed it after the actuation-lock claim, past both -- so a backed-off pass had already
+  // consumed the user's one-shot "Re-run LoopOver review" marker and charged regatePullRequest's repair budget
+  // for work it never did. It must not move EARLIER than readiness either: readiness legitimately defers a
+  // pass (rebase fired, CI still running), and the screenshot-table gate's bounded recapture chain (#10061)
+  // depends on those deferrals continuing to happen, so a pre-readiness guard silently truncates that retry
+  // budget. Between the two is the only correct place.
+  //
+  // `force` is an operator's manual re-gate and `previewPollAttempt` is a visual poll's own next tick -- both
+  // are explicit requests for THIS pass, and backoff must never suppress a pass a human or a bounded retry
+  // chain asked for.
+  if (
+    await stableVerdictBackoffEngaged(env, {
+      repoFullName,
+      prNumber,
+      headSha: pr.headSha,
+      deliveryId,
+      explicitlyRequested: options.force === true || previewPollAttempt !== undefined,
+    })
+  )
+    return false;
   // Fire BEFORE any further (throwable) work below -- this is the one instant readiness is confirmed, so a
   // caller learns it even if this call goes on to THROW instead of returning (see the JSDoc above).
   options.onReachedReadiness?.();
@@ -4364,10 +4404,10 @@ export async function reReviewStoredPullRequest(
     pr.number,
     pr.headSha,
   );
-  const [cachedOtherOpenPullRequests, { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue }] =
+  const [cachedOtherOpenPullRequests, { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue, supersededBy }] =
     await Promise.all([
       listOtherOpenPullRequests(env, repoFullName, prNumber),
-      resolveLinkedIssueAdvisoryContext(env, installationId, repoFullName, pr.linkedIssues, settings),
+      resolveLinkedIssueAdvisoryContext(env, installationId, repoFullName, pr.linkedIssues, settings, pr),
     ]);
   // #dup-winner / audit #15: drop any cached-open duplicate sibling already closed on GitHub before the advisory
   // (and the disposition below) elect the cluster winner, so the real lowest-OPEN PR is never demoted+auto-closed.
@@ -4391,6 +4431,7 @@ export async function reReviewStoredPullRequest(
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
     duplicateWinnerEnabled: duplicateWinnerEnabledForPr,
     confirmedNoOpenLinkedIssue,
+    supersededBy,
     linkedIssueAuthorLogins,
     copycatGateMode: settings.copycatGateMode,
     copycatGateMinScore: settings.copycatGateMinScore,
@@ -4449,11 +4490,30 @@ export async function reReviewStoredPullRequest(
   // and the AI review alone can outlive the 600s TTL. Renew it while the work runs so a slow-but-healthy pass
   // cannot have its lock claimed out from under it mid-flight. Compare-and-extend, so if this pass has already
   // lost the key it learns that instead of extending the new owner's lock.
+  let actuationLockLost = false;
   const actuationHeartbeat = startLockHeartbeat(
     env,
     prActuationLockKeyForHeartbeat(repoFullName, pr.number),
     actuationLock.ownerToken,
     PR_ACTUATION_LOCK_TTL_SECONDS,
+    {
+      // #10019: a renewal that comes back "not ours" means another pass already re-claimed this PR's
+      // actuation lock (TTL lapse + re-claim, or a maintainer's forced-re-run steal, #9008). The maintenance
+      // pass below performs the irreversible merge/close/comment actuation, so this pass must not reach it --
+      // the check right after the publish call throws before that happens.
+      onLost: () => {
+        actuationLockLost = true;
+        console.error(
+          JSON.stringify({
+            level: "error",
+            event: "pr_actuation_lock_lost",
+            repoFullName,
+            pullNumber: pr.number,
+            deliveryId,
+          }),
+        );
+      },
+    },
   );
   let gate: ReturnType<typeof evaluateGateCheck> | undefined;
   try {
@@ -4501,6 +4561,13 @@ export async function reReviewStoredPullRequest(
       );
       return undefined;
     });
+    // #10019: mirrors the initial contention check above (throw, uncaught, so the queue's attempt-free retry
+    // handles it) -- this pass learned mid-flight that it no longer owns the actuation lock, so it must abort
+    // before the maintenance pass below performs any merge/close/comment mutation instead of racing the new
+    // owner.
+    if (actuationLockLost) {
+      throw new PrActuationLockContendedError(repoFullName, pr.number, "actuation-lock-lost");
+    }
     await withReviewPipelineSpan(
       "selfhost.review.maintenance",
       {
@@ -5096,6 +5163,51 @@ async function consumePendingPrPanelRetrigger(
  * varies by call (#selfhost-ci-deferral-staleness). A missing cache / cache hiccup degrades to `false` (never
  * force-finalize → keeps the safe old defer rather than acting early).
  */
+/**
+ * #10222: should this publish-and-maintain pass back off, because this PR's verdict has not changed (#10184)?
+ *
+ * Shared by BOTH sites that run the unit -- `reReviewStoredPullRequest` (sweep / CI completion) and
+ * `handlePullRequestWebhookEvent` (the `pull_request` webhook). #10204 guarded only the first, which left the
+ * DOMINANT source unthrottled: over 24h on the Orb, 293 of 344 repeat evaluations carried
+ * `upstream_state_change` -- `deriveReevaluationReason`'s mapping for a RAW GitHub delivery, i.e. the webhook
+ * path. A label write the engine itself caused arrives there, not on the sweep.
+ *
+ * Call this BEFORE the readiness gate at either site. Readiness fires `onReachedReadiness` (which charges
+ * regatePullRequest's repair budget) and consumes the one-shot panel-retrigger marker, and a pass that backs
+ * off after those has silently eaten a user's "Re-run LoopOver review" click with nothing left to re-trigger
+ * it. Before the lock claim, too: there is no lock to take or release on a pass that is not going to run.
+ *
+ * `explicitlyRequested` is the escape hatch and the reason this takes a flag at all -- backoff exists to stop
+ * the machine asking itself the same question, and must NEVER suppress a pass a human asked for.
+ *
+ * Fails OPEN everywhere: no head SHA, no state, unreadable state, no cache, or a throwing read all return
+ * false and evaluate normally (see verdict-stability.ts). The delay is capped, so even a stuck PR is still
+ * revisited -- it just stops being asked 1.2x/minute.
+ */
+async function stableVerdictBackoffEngaged(
+  env: Env,
+  args: { repoFullName: string; prNumber: number; headSha: string | null | undefined; deliveryId: string; explicitlyRequested: boolean },
+): Promise<boolean> {
+  const { repoFullName, prNumber, headSha, deliveryId, explicitlyRequested } = args;
+  // The `!headSha` half is enforced by TSC, not by a test: verdictStabilityKey takes a `string`, so removing
+  // it does not compile. Mutation testing confirms no RUNTIME test can distinguish its absence -- with no head
+  // SHA the lookup would miss and shouldSkipStableVerdict would return false anyway -- so it is an early-out
+  // that saves a pointless cache round-trip, not a safety guard. Recorded here so nobody later mistakes it for
+  // one (same reasoning as verdict-stability.ts's removed exponent clamp).
+  if (explicitlyRequested || !headSha) return false;
+  const stability = await readVerdictStability(env.SELFHOST_TRANSIENT_CACHE, verdictStabilityKey(repoFullName, prNumber, headSha)).catch(() => null);
+  if (!shouldSkipStableVerdict(stability, Date.now())) return false;
+  await recordAuditEvent(env, {
+    eventType: "github_app.review_skipped_stable_verdict",
+    actor: "loopover",
+    targetKey: `${repoFullName}#${prNumber}`,
+    outcome: "completed",
+    detail: `Verdict unchanged across ${stability?.repeats ?? 0} consecutive evaluations of this commit; backing off instead of re-deriving the same answer.`,
+    metadata: { deliveryId, repoFullName, repeats: stability?.repeats ?? 0 },
+  }).catch(() => undefined);
+  return true;
+}
+
 async function ciPendingDeferStuck(
   env: Env,
   repoFullName: string,
@@ -7491,11 +7603,11 @@ async function handlePullRequestWebhookEvent(
     // column, so reading late would always see this pass's own bookkeeping write instead of the real prior
     // review pass's recorded visual_unrelated_issue_finding. Gated on `closed` (the only action
     // maybePostVisualFollowupComment ever fires for) so every other action skips this read entirely.
-    const [repo, cachedOtherOpenPullRequests, { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue }, priorAdvisoryForVisualFollowup] =
+    const [repo, cachedOtherOpenPullRequests, { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue, supersededBy }, priorAdvisoryForVisualFollowup] =
       await Promise.all([
         getRepository(env, repoFullName),
         listOtherOpenPullRequests(env, repoFullName, pr.number),
-        resolveLinkedIssueAdvisoryContext(env, installationId, repoFullName, pr.linkedIssues, settings),
+        resolveLinkedIssueAdvisoryContext(env, installationId, repoFullName, pr.linkedIssues, settings, pr),
         payload.action === "closed" && installationId ? getLatestAdvisoryForPullRequest(env, repoFullName, pr.number) : Promise.resolve(null),
       ]);
     // #dup-winner / audit #15: drop any cached-open duplicate sibling already closed on GitHub before the
@@ -7520,6 +7632,7 @@ async function handlePullRequestWebhookEvent(
       requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
       duplicateWinnerEnabled: duplicateWinnerEnabledForPr,
       confirmedNoOpenLinkedIssue,
+      supersededBy,
       linkedIssueAuthorLogins,
       copycatGateMode: settings.copycatGateMode,
       copycatGateMinScore: settings.copycatGateMinScore,
@@ -8313,12 +8426,45 @@ async function resolveLinkedIssueAdvisoryContext(
   repoFullName: string,
   linkedIssues: number[],
   settings: Pick<RepositorySettings, "selfAuthoredLinkedIssueGateMode" | "linkedIssueGateMode">,
-): Promise<{ linkedIssueAuthorLogins: (string | null)[]; confirmedNoOpenLinkedIssue: boolean }> {
-  const [linkedIssueAuthorLogins, hasOpenReference] = await Promise.all([
+  // #10168: needed only to distinguish a superseded PR from one that cited a dead issue -- the check is
+  // "was this issue still open when THIS pull request was created".
+  pr: Pick<PullRequestRecord, "number" | "createdAt">,
+): Promise<{ linkedIssueAuthorLogins: (string | null)[]; confirmedNoOpenLinkedIssue: boolean; supersededBy: SupersededByRival | null }> {
+  const [linkedIssueAuthorLogins, reference] = await Promise.all([
     resolveLinkedIssueAuthorLogins(env, installationId, repoFullName, linkedIssues, settings.selfAuthoredLinkedIssueGateMode === "block"),
-    settings.linkedIssueGateMode === "block" ? resolveLinkedIssueHasOpenReference({ env, repoFullName, linkedIssues, installationId }) : Promise.resolve(true),
+    settings.linkedIssueGateMode === "block"
+      ? resolveLinkedIssueHasOpenReference({ env, repoFullName, linkedIssues, installationId })
+      : Promise.resolve({ hasOpenReference: true, closures: [] }),
   ]);
-  return { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue: !hasOpenReference };
+  const confirmedNoOpenLinkedIssue = !reference.hasOpenReference;
+  // Only a PR that ALREADY reads as having no open linked issue can be superseded -- this splits that one
+  // verdict in two, it never creates a new one. Gated OFF by default (#10168): recognising supersession
+  // closes the PR. Best effort: a failed lookup yields null, which keeps today's `missing_linked_issue`.
+  const supersededBy =
+    confirmedNoOpenLinkedIssue && isSupersededCloseEnabledGlobally(env)
+      ? await resolveSupersededRival(env, repoFullName, pr, reference.closures).catch(() => null)
+      : null;
+  return { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue, supersededBy };
+}
+
+/**
+ * #10168: find the merged rival that closed this PR's linked issue, if there is one.
+ *
+ * The candidate window runs from this PR's own creation to the latest observed issue close plus the
+ * resolver's tolerance -- the smallest range that can still contain a qualifying merge, so the DB read stays
+ * bounded no matter how long the PR has been sitting. Returns null when the PR has no synced `createdAt` or
+ * no conclusively-read closed issue, because neither half of the evidence can be established without them.
+ */
+async function resolveSupersededRival(
+  env: Env,
+  repoFullName: string,
+  pr: Pick<PullRequestRecord, "number" | "createdAt">,
+  closures: LinkedIssueClosure[],
+): Promise<SupersededByRival | null> {
+  const window = supersededSearchWindow(pr.createdAt, closures);
+  if (window === null) return null;
+  const mergedRivals = await listMergedPullRequestsInWindow(env, repoFullName, window.sinceIso, window.untilIso);
+  return resolveSupersession({ prNumber: pr.number, prCreatedAt: pr.createdAt, closures, mergedRivals });
 }
 
 export async function shouldRefreshFilesForPreMergeChecks(
@@ -8782,14 +8928,15 @@ export async function maybeAddLockfileTamperFinding(
 }
 
 /**
- * Screenshot-table gate advisory visibility (#2006 follow-up). `action: "close"` already communicates via its
- * own templated close comment (see planAgentMaintenanceActions/screenshotTableCloseMessage), so a violation
- * there never needs a SEPARATE advisory finding -- this only ever fires for `action: "advisory"`, which
- * previously had NO visible effect at all: the live gate's only other `evaluateScreenshotTableGate` call site
- * (`runAgentMaintenancePlanAndExecute`) discards the result entirely once `action !== "close"`. Mirrors
- * `maybeAddLockfileTamperFinding` immediately above: off/out-of-scope is free, a violation appends ONE
- * warning-severity, non-blocking finding (unrecognized by `isConfiguredGateBlocker`, so it can never gate),
- * and any evaluation error is swallowed so it can never destabilize the gate.
+ * Screenshot-table gate advisory visibility (#2006 follow-up, #9881 degrade follow-up). `action: "close"`/
+ * `"block"` already communicate via their own templated close/hold comment (see
+ * planAgentMaintenanceActions/screenshotTableCloseMessage), so a violation there never needs a SEPARATE
+ * advisory finding UNLESS enforcement was degraded (#9881: the bot proved this repo's preview pipeline can
+ * never satisfy the gate) -- in that case the close/hold comment never fires either, so THIS finding is the
+ * only place a maintainer ever learns the gate is unsatisfiable here (#10060). Mirrors
+ * `maybeAddLockfileTamperFinding` immediately above: off is free, a violation appends ONE warning-severity,
+ * non-blocking finding (unrecognized by `isConfiguredGateBlocker`, so it can never gate), and any evaluation
+ * error is swallowed so it can never destabilize the gate.
  */
 export async function maybeAddScreenshotTableAdvisoryFinding(
   env: Env,
@@ -8801,23 +8948,50 @@ export async function maybeAddScreenshotTableAdvisoryFinding(
     prBody: string | null | undefined;
     prLabels: string[];
     botCaptureSatisfied: boolean;
+    // #9881/#10060: true when the bot proved this repo's preview pipeline can never produce a capture for
+    // this head -- threaded from the SAME `Boolean(pr.headSha) && pr.visualCaptureUnobtainableSha ===
+    // pr.headSha` expression the enforcement call site (runAgentMaintenancePlanAndExecute) computes, so the
+    // two evaluations of this pure check can never disagree about whether this PR's gate is degraded.
+    captureUnobtainable: boolean;
     files: Awaited<ReturnType<typeof listPullRequestFiles>> | null;
   },
 ): Promise<void> {
-  if (!args.screenshotTableGateConfig.enabled || args.screenshotTableGateConfig.action !== "advisory") return;
+  if (!args.screenshotTableGateConfig.enabled) return;
   try {
-    const files =
-      args.files ??
-      (await listPullRequestFiles(env, args.repoFullName, args.pullNumber));
+    // #10060: an if-fallback, not `args.files ?? (await listPullRequestFiles(...))` -- that shape left the
+    // statements immediately following it (the gate evaluation, the violated check) with a phantom 0 lcov hit
+    // count despite genuinely running every test, which would have sunk this file's Codecov patch coverage.
+    let files = args.files;
+    if (files === null) {
+      files = await listPullRequestFiles(env, args.repoFullName, args.pullNumber);
+    }
+    const changedFiles = files.map((file) => file.path);
     const result = evaluateScreenshotTableGate({
       config: args.screenshotTableGateConfig,
       prBody: args.prBody,
       prLabels: args.prLabels,
-      changedFiles: files.map((file) => file.path),
+      changedFiles,
       botCaptureSatisfied: args.botCaptureSatisfied,
+      captureUnobtainable: args.captureUnobtainable,
     });
     if (!result.violated) return;
     const detail = result.reason ?? DEFAULT_SCREENSHOT_CONTRACT_MESSAGE;
+    // #10060: a degraded gate must surface here REGARDLESS of the configured action -- close/block never get
+    // their own comment on this path (the enforcement that would have produced one was degraded away), so an
+    // advisory-mode repo and a close-mode repo with an unsatisfiable pipeline both need this same visibility.
+    if (result.enforcementDegradedReason !== undefined) {
+      const degradedDetail = `${detail}\n\n${CAPTURE_UNOBTAINABLE_REASON}`;
+      args.advisory.findings.push({
+        code: "screenshot_table_missing",
+        severity: "warning",
+        title: "Screenshot-table enforcement degraded (capture unobtainable)",
+        detail: degradedDetail,
+        action: "Enable preview deploys for this repository, or set requireScreenshotTable.action to advisory.",
+        publicText: degradedDetail,
+      });
+      return;
+    }
+    if (args.screenshotTableGateConfig.action !== "advisory") return;
     args.advisory.findings.push({
       code: "screenshot_table_missing",
       severity: "warning",
@@ -10611,6 +10785,11 @@ async function maybePublishPrPublicSurface(
   let inlineCommentsPerCategoryForReview: number | null = null;
   let aiReviewExpected = false;
   let aiReviewWasReused = false;
+  // #10019: set by the AI-review lock heartbeat's onLost callback below when a renewal reports this pass no
+  // longer owns the key. Declared here (not inside the `if (aiReviewWillRun)` block that starts the heartbeat)
+  // so aiReviewCacheReadDecideAndRun -- a sibling function in this same scope -- can read it before writing
+  // ai_review_cache.
+  let aiReviewLockLost = false;
   let gateFinalized = false;
   // #6685: hoisted the same way aiReviewExpected/aiReviewWasReused are above -- assigned inside the try block
   // below, read at the draft-republish skip check past it (autoReviewSkipReason itself is try-block-scoped).
@@ -11719,6 +11898,25 @@ async function maybePublishPrPublicSurface(
           aiReviewHeadSha,
           settings.aiReviewMode,
           aiReviewLock.ownerToken,
+          {
+            // #10019: a renewal that comes back "not ours" means another pass already re-claimed this lock
+            // (TTL lapse + re-claim, or a maintainer's forced-re-run steal, #9008) -- this pass's eventual
+            // verdict must not overwrite the new owner's. aiReviewCacheReadDecideAndRun checks this flag
+            // before persisting anything.
+            onLost: () => {
+              aiReviewLockLost = true;
+              console.error(
+                JSON.stringify({
+                  level: "error",
+                  event: "ai_review_lock_lost",
+                  repoFullName,
+                  pullNumber: pr.number,
+                  headSha: aiReviewHeadSha,
+                  aiReviewMode: settings.aiReviewMode,
+                }),
+              );
+            },
+          },
         );
         try {
           await aiReviewCacheReadDecideAndRun(aiReviewLock);
@@ -12022,95 +12220,109 @@ async function maybePublishPrPublicSurface(
               deliveryId: webhook.deliveryId,
               preComputedReputationSkip,
             });
-            // #9016 (security): a FRESH verdict (this branch only runs on a genuine cache miss — never for a
-            // reused cache hit, which is not a new independent roll) is checked against the PR's flip history.
-            // The AI reviewer is non-deterministic, so a contributor can otherwise force re-rolls (a no-op
-            // recommit, or a same-head retry after the non-cacheable cooldown lapses) until a lucky CLEAN roll
-            // auto-merges a PR another roll flagged as blocked. Scoped to block mode only — advisory mode never
-            // gates on the AI verdict, so there is nothing to shop for there. Best-effort/fail-open by
-            // construction (recordVerdictFlip never throws); a persistable placeholder never counts as a roll.
-            if (aiReview && aiReview.persistable !== false && settings.aiReviewMode === "block") {
-              const verdictFlip = await recordVerdictFlip(env, repoFullName, pr.number, aiReview.findings ?? [], inputFingerprint);
-              if (verdictFlip.escalate) {
-                advisory.findings.push({
-                  code: "ai_review_inconclusive",
-                  severity: "warning",
-                  title: "AI review verdict has flip-flopped too many times",
-                  detail: `This PR's AI review result has changed direction ${verdictFlip.flipCount} times across recent re-reviews of the same or similar content. Repeated re-rolls of a non-deterministic reviewer are held for a human instead of trusting the newest roll.`,
-                  action: "A maintainer should review this PR directly, or push a substantive fix so the next review reflects real content change.",
-                });
-                incr("loopover_ai_review_verdict_flip_escalated_total");
-                await recordAuditEvent(env, {
-                  eventType: "github_app.ai_review_verdict_flip_escalated",
-                  actor: author,
-                  targetKey: `${repoFullName}#${pr.number}`,
-                  outcome: "completed",
-                  detail: `verdict flipped ${verdictFlip.flipCount} times; held for human review`,
-                  metadata: { deliveryId: webhook.deliveryId, repoFullName, headSha: advisory.headSha ?? null, flipCount: verdictFlip.flipCount },
-                }).catch(() => undefined);
+            // #10019: the heartbeat learned mid-review that this pass no longer owns the lock (renewIfValue
+            // reported someone else re-claimed the key). The winning pass persists the real verdict within
+            // seconds, so this pass's own result must be discarded rather than racing that write -- same
+            // shape (and same reason) as the lock-contended placeholder a pass that never acquired the lock
+            // returns above.
+            if (aiReviewLockLost) {
+              aiReview = aiReviewLockContendedResult(advisory);
+            } else {
+              // #9016 (security): a FRESH verdict (this branch only runs on a genuine cache miss — never for a
+              // reused cache hit, which is not a new independent roll) is checked against the PR's flip history.
+              // The AI reviewer is non-deterministic, so a contributor can otherwise force re-rolls (a no-op
+              // recommit, or a same-head retry after the non-cacheable cooldown lapses) until a lucky CLEAN roll
+              // auto-merges a PR another roll flagged as blocked. Scoped to block mode only — advisory mode never
+              // gates on the AI verdict, so there is nothing to shop for there. Best-effort/fail-open by
+              // construction (recordVerdictFlip never throws); a persistable placeholder never counts as a roll.
+              if (aiReview && aiReview.persistable !== false && settings.aiReviewMode === "block") {
+                /* v8 ignore next -- aiReview here is always cachedReview or runAiReviewForAdvisory's result (see the
+                 * assignments above), both of which always populate `findings` as a real array; the `?? []` is a
+                 * type-level fallback for the outer `aiReview` declaration's wider (optional) field type only. */
+                const verdictFlip = await recordVerdictFlip(env, repoFullName, pr.number, aiReview.findings ?? [], inputFingerprint);
+                if (verdictFlip.escalate) {
+                  advisory.findings.push({
+                    code: "ai_review_inconclusive",
+                    severity: "warning",
+                    title: "AI review verdict has flip-flopped too many times",
+                    detail: `This PR's AI review result has changed direction ${verdictFlip.flipCount} times across recent re-reviews of the same or similar content. Repeated re-rolls of a non-deterministic reviewer are held for a human instead of trusting the newest roll.`,
+                    action: "A maintainer should review this PR directly, or push a substantive fix so the next review reflects real content change.",
+                  });
+                  incr("loopover_ai_review_verdict_flip_escalated_total");
+                  await recordAuditEvent(env, {
+                    eventType: "github_app.ai_review_verdict_flip_escalated",
+                    actor: author,
+                    targetKey: `${repoFullName}#${pr.number}`,
+                    outcome: "completed",
+                    detail: `verdict flipped ${verdictFlip.flipCount} times; held for human review`,
+                    metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null, flipCount: verdictFlip.flipCount },
+                  }).catch(() => undefined);
+                }
               }
-            }
-            // `persistable === false` (only the lock-contention placeholder — see runAiReviewForAdvisory's return
-            // type doc comment) is excluded from EVERY write, not just the durable one: it describes a transient
-            // scheduling race, not a real AI opinion, and the concurrent pass it deferred to persists the real
-            // result within seconds — writing this placeholder (even non-durably) could replay a stale "another
-            // pass is running" message for the rest of the cooldown window, well after that race resolved.
-            if (aiReview && aiReview.persistable !== false) {
-              // A dynamic-context result is never durably cacheable (see the comment above); otherwise defer to
-              // the review's own verdict (consensus defect / inconclusive → false).
-              const cacheableForStorage = !dynamicReviewContextActive && aiReview.cacheable !== false;
-              if (!cacheableForStorage) {
-                incr("loopover_ai_review_non_cacheable_total");
-                await recordAuditEvent(env, {
-                  eventType: "github_app.ai_review_non_cacheable",
-                  actor: author,
-                  targetKey: `${repoFullName}#${pr.number}`,
-                  outcome: "completed",
-                  detail: "AI review outcome is not durably cacheable; persisted for bounded-cooldown reuse only",
-                  metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
-                }).catch(() => undefined);
-              }
-              await putCachedAiReview(
-                env,
-                repoFullName,
-                pr.number,
-                advisory.headSha,
-                settings.aiReviewMode,
-                {
-                  ...aiReview,
-                  cacheable: cacheableForStorage,
-                  metadata: {
-                    /* v8 ignore next -- runAiReviewForAdvisory (the sole path reaching here) always sets metadata on its "ok" returns; the nullish fallback is a type-level (optional field) safeguard, not a reachable runtime path. */
-                    ...(aiReview.metadata ?? {}),
-                    inputFingerprint,
-                    // #9019: `cacheable=0` conflates TWO independent, unrelated reasons -- (a) a dynamic review
-                    // context (grounding/RAG), where the verdict itself is perfectly CONCLUSIVE but simply not
-                    // durable across time, and (b) the review's own verdict being inconclusive/consensus-
-                    // disputed. Only (b) should be retried; (a) is correctly reused once published (#2119).
-                    // Recording the review's OWN verdict here keeps the two separable at read time without
-                    // needing a schema migration, since `cacheable` alone can no longer tell them apart.
-                    inconclusive: aiReview.cacheable === false,
-                    // Persist line-anchored findings for post-submission MCP readback (#4519). Inline comments
-                    // themselves are still only posted on a fresh review (see inlineFindings hoisting above);
-                    // this metadata is read-only structured output, not a cache-replay trigger.
-                    ...(aiReview.inlineFindings && aiReview.inlineFindings.length > 0
-                      ? { inlineFindings: aiReview.inlineFindings }
-                      : {}),
+              // `persistable === false` (only the lock-contention placeholder — see runAiReviewForAdvisory's return
+              // type doc comment) is excluded from EVERY write, not just the durable one: it describes a transient
+              // scheduling race, not a real AI opinion, and the concurrent pass it deferred to persists the real
+              // result within seconds — writing this placeholder (even non-durably) could replay a stale "another
+              // pass is running" message for the rest of the cooldown window, well after that race resolved.
+              /* v8 ignore next -- aiReview is always defined here (cachedReview or runAiReviewForAdvisory's result,
+               * assigned just above); the truthy check is a type-level guard for an unreachable branch. */
+              if (aiReview && aiReview.persistable !== false) {
+                // A dynamic-context result is never durably cacheable (see the comment above); otherwise defer to
+                // the review's own verdict (consensus defect / inconclusive → false).
+                const cacheableForStorage = !dynamicReviewContextActive && aiReview.cacheable !== false;
+                if (!cacheableForStorage) {
+                  incr("loopover_ai_review_non_cacheable_total");
+                  await recordAuditEvent(env, {
+                    eventType: "github_app.ai_review_non_cacheable",
+                    actor: author,
+                    targetKey: `${repoFullName}#${pr.number}`,
+                    outcome: "completed",
+                    detail: "AI review outcome is not durably cacheable; persisted for bounded-cooldown reuse only",
+                    metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
+                  }).catch(() => undefined);
+                }
+                await putCachedAiReview(
+                  env,
+                  repoFullName,
+                  pr.number,
+                  advisory.headSha,
+                  settings.aiReviewMode,
+                  {
+                    ...aiReview,
+                    cacheable: cacheableForStorage,
+                    metadata: {
+                      /* v8 ignore next -- runAiReviewForAdvisory (the sole path reaching here) always sets metadata on its "ok" returns; the nullish fallback is a type-level (optional field) safeguard, not a reachable runtime path. */
+                      ...(aiReview.metadata ?? {}),
+                      inputFingerprint,
+                      // #9019: `cacheable=0` conflates TWO independent, unrelated reasons -- (a) a dynamic review
+                      // context (grounding/RAG), where the verdict itself is perfectly CONCLUSIVE but simply not
+                      // durable across time, and (b) the review's own verdict being inconclusive/consensus-
+                      // disputed. Only (b) should be retried; (a) is correctly reused once published (#2119).
+                      // Recording the review's OWN verdict here keeps the two separable at read time without
+                      // needing a schema migration, since `cacheable` alone can no longer tell them apart.
+                      inconclusive: aiReview.cacheable === false,
+                      // Persist line-anchored findings for post-submission MCP readback (#4519). Inline comments
+                      // themselves are still only posted on a fresh review (see inlineFindings hoisting above);
+                      // this metadata is read-only structured output, not a cache-replay trigger.
+                      ...(aiReview.inlineFindings && aiReview.inlineFindings.length > 0
+                        ? { inlineFindings: aiReview.inlineFindings }
+                        : {}),
+                    },
                   },
-                },
-              ).catch((error) => {
-                // #regate-churn (req 3/9): a swallowed write failure here is exactly how the cache goes silently
-                // stale in production — make it observable instead of a bare no-op catch.
-                incr("loopover_ai_review_cache_write_error_total");
-                return recordAuditEvent(env, {
-                  eventType: "github_app.ai_review_cache_write_error",
-                  actor: author,
-                  targetKey: `${repoFullName}#${pr.number}`,
-                  outcome: "error",
-                  detail: errorMessage(error),
-                  metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
-                }).catch(() => undefined);
-              });
+                ).catch((error) => {
+                  // #regate-churn (req 3/9): a swallowed write failure here is exactly how the cache goes silently
+                  // stale in production — make it observable instead of a bare no-op catch.
+                  incr("loopover_ai_review_cache_write_error_total");
+                  return recordAuditEvent(env, {
+                    eventType: "github_app.ai_review_cache_write_error",
+                    actor: author,
+                    targetKey: `${repoFullName}#${pr.number}`,
+                    outcome: "error",
+                    detail: errorMessage(error),
+                    metadata: { deliveryId: webhook.deliveryId, repoFullName, /* v8 ignore next -- reached only inside aiReviewWillRun (which requires a truthy advisory.headSha) or the publish-skip guard's own `advisory.headSha &&` check; the `?? null` is a type-level fallback for an unreachable branch. */ headSha: advisory.headSha ?? null },
+                  }).catch(() => undefined);
+                });
+              }
             }
           }
         },
@@ -12184,6 +12396,9 @@ async function maybePublishPrPublicSurface(
       prBody: pr.body,
       prLabels: pr.labels,
       botCaptureSatisfied: Boolean(pr.headSha) && pr.visualCaptureSatisfiedSha === pr.headSha,
+      // #9881/#10060: same expression runAgentMaintenancePlanAndExecute computes for the enforcement decision,
+      // so the two evaluations of this pure check cannot disagree about whether this PR's gate is degraded.
+      captureUnobtainable: Boolean(pr.headSha) && pr.visualCaptureUnobtainableSha === pr.headSha,
       files: await getReviewFiles(),
     });
 
@@ -15171,12 +15386,13 @@ export async function buildAuthorizedPrActionAdvisory(
   // Mirror the main webhook path: thread linked-issue authors + the open-reference check so an authorized PR
   // action (gate-override / panel retrigger) honors the same self-authored-linked-issue block AND stale-
   // issue-link countermeasure. installationId comes from the repo record. (#self-authored-parity, #unlinked-issue-guardrail-followup)
-  const { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue } = await resolveLinkedIssueAdvisoryContext(
+  const { linkedIssueAuthorLogins, confirmedNoOpenLinkedIssue, supersededBy } = await resolveLinkedIssueAdvisoryContext(
     env,
     repo?.installationId ?? null,
     repoFullName,
     pr.linkedIssues,
     settings,
+    pr,
   );
   const duplicateWinnerEnabledForPr = resolveDuplicateWinnerEnabled(isDuplicateWinnerEnabledGlobally(env), settings.duplicateWinnerMode);
   // #9160: see resolveScopedLinkedIssueClaimedAt's own doc comment -- scopes pr's claim time to only the
@@ -15190,6 +15406,7 @@ export async function buildAuthorizedPrActionAdvisory(
     requireLinkedIssue: shouldCollectLinkedIssueEvidence(settings),
     duplicateWinnerEnabled: duplicateWinnerEnabledForPr,
     confirmedNoOpenLinkedIssue,
+    supersededBy,
     linkedIssueAuthorLogins,
     copycatGateMode: settings.copycatGateMode,
     copycatGateMinScore: settings.copycatGateMinScore,

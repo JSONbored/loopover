@@ -27,8 +27,19 @@ export type CodingAgentDriverResult = {
    *  zero) when the provider never got far enough, or reports no token signal at all -- never fabricated,
    *  mirroring `costUsd`'s own convention. */
   tokensUsed?: number | undefined;
+  /** The input/output split behind `tokensUsed`, when the provider reports the two sides separately (#10198).
+   *  Both drivers already read them individually and then summed them away, which left the miner unable to
+   *  populate PostHog's own `$ai_input_tokens`/`$ai_output_tokens` -- the properties its cost views read --
+   *  so miner spend was invisible there. Same never-fabricated convention as the two fields above: a provider
+   *  that reports only a blended total leaves these absent, and the blended `tokensUsed` still stands alone. */
+  inputTokens?: number | undefined;
+  outputTokens?: number | undefined;
   error?: string | undefined;
 };
+
+/** The token fields a driver contributes to its result (#10198) -- spread into the result at each return site
+ *  so a driver can never report a split that disagrees with its own blended total. */
+export type CodingAgentTokenUsage = Pick<CodingAgentDriverResult, "tokensUsed" | "inputTokens" | "outputTokens">;
 
 export interface CodingAgentDriver {
   run(task: CodingAgentDriverTask): Promise<CodingAgentDriverResult>;

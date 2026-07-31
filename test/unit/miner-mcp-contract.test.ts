@@ -113,6 +113,7 @@ const benignEventLedger: MinerMcpServerOptions["initEventLedger"] = () => ({
   dbPath: "",
   appendEvent: readThrows,
   readEvents: () => [],
+  latestSeq: readThrows,
   purgeByRepo: readThrows,
   close() {},
 });
@@ -197,6 +198,7 @@ const READ_ONLY_TOOLS: ToolContract[] = [
             createdAt: "2026-01-01T00:00:00.000Z",
           },
         ],
+        latestSeq: readThrows,
         purgeByRepo: readThrows,
         close() {},
       }),
@@ -207,6 +209,7 @@ const READ_ONLY_TOOLS: ToolContract[] = [
         dbPath: "",
         appendEvent: readThrows,
         readEvents: readThrows,
+        latestSeq: readThrows,
         purgeByRepo: readThrows,
         close() {},
       }),
@@ -252,15 +255,15 @@ const READ_ONLY_TOOLS: ToolContract[] = [
     args: {},
     valid: {
       initPredictionLedger: () => ({ readPredictions: () => [], close() {} }),
-      initEventLedger: () => ({ dbPath: "", appendEvent: readThrows, readEvents: () => [], purgeByRepo: readThrows, close() {} }),
+      initEventLedger: () => ({ dbPath: "", appendEvent: readThrows, readEvents: () => [], latestSeq: readThrows, purgeByRepo: readThrows, close() {} }),
     },
     missing: {
       initPredictionLedger: openerThrows,
-      initEventLedger: () => ({ dbPath: "", appendEvent: readThrows, readEvents: () => [], purgeByRepo: readThrows, close() {} }),
+      initEventLedger: () => ({ dbPath: "", appendEvent: readThrows, readEvents: () => [], latestSeq: readThrows, purgeByRepo: readThrows, close() {} }),
     },
     corrupt: {
       initPredictionLedger: () => ({ readPredictions: readThrows, close() {} }),
-      initEventLedger: () => ({ dbPath: "", appendEvent: readThrows, readEvents: () => [], purgeByRepo: readThrows, close() {} }),
+      initEventLedger: () => ({ dbPath: "", appendEvent: readThrows, readEvents: () => [], latestSeq: readThrows, purgeByRepo: readThrows, close() {} }),
     },
     excluded: [],
   },

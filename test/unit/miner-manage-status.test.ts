@@ -19,14 +19,19 @@ import {
   closeDefaultEventLedger,
   initEventLedger,
 } from "../../packages/loopover-miner/lib/event-ledger";
+import type { EventLedger } from "../../packages/loopover-miner/lib/event-ledger";
+import * as eventLedgerModule from "../../packages/loopover-miner/lib/event-ledger";
 import {
   closeDefaultPortfolioQueueStore,
   initPortfolioQueueStore,
 } from "../../packages/loopover-miner/lib/portfolio-queue";
+import type { PortfolioQueueStore } from "../../packages/loopover-miner/lib/portfolio-queue";
+import * as portfolioQueueModule from "../../packages/loopover-miner/lib/portfolio-queue";
 import {
   closeDefaultRunStateStore,
   initRunStateStore,
 } from "../../packages/loopover-miner/lib/run-state";
+import type { RunStateStore } from "../../packages/loopover-miner/lib/run-state";
 
 const roots: string[] = [];
 const stores: Array<{ close(): void }> = [];
@@ -348,6 +353,123 @@ describe("loopover-miner manage status (#2325)", () => {
       ok: false,
       error: "boom: portfolio-queue read failed",
     });
+  });
+
+  it("returns 2 and prints the error (honoring --json) when the portfolio-queue opener itself throws", () => {
+    const initStores = {
+      initPortfolioQueue: () => {
+        throw new Error("boom");
+      },
+      initEventLedger: () => ({ readEvents: () => [], close() {} }) as unknown as EventLedger,
+      initRunStateStore: () => ({ listRunStates: () => [], close() {} }) as unknown as RunStateStore,
+    };
+
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(runManageStatus([], initStores)).toBe(2);
+    expect(String(error.mock.calls.at(-1)?.[0])).toContain("boom");
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    expect(runManageStatus(["--json"], initStores)).toBe(2);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({ ok: false, error: "boom" });
+  });
+
+  it("REGRESSION: a store-open failure exits 2 instead of throwing, and closes the handle already opened", () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-manage-status-open-failure-"));
+    roots.push(root);
+    vi.stubEnv("LOOPOVER_MINER_CONFIG_DIR", root);
+
+    // The portfolio queue is opened for real (no override, so runManageStatus owns and would normally close it
+    // itself) so this proves the actual owned-close path, not just that an injected test-double was passed
+    // through untouched.
+    const realInitPortfolioQueue = portfolioQueueModule.initPortfolioQueueStore;
+    let openedPortfolioQueue: ReturnType<typeof realInitPortfolioQueue> | undefined;
+    let closeSpy: ReturnType<typeof vi.fn> | undefined;
+    vi.spyOn(portfolioQueueModule, "initPortfolioQueueStore").mockImplementation((...args) => {
+      openedPortfolioQueue = realInitPortfolioQueue(...args);
+      closeSpy = vi.spyOn(openedPortfolioQueue, "close");
+      return openedPortfolioQueue;
+    });
+
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(
+      runManageStatus([], {
+        initEventLedger: () => {
+          throw new Error("boom: event-ledger open failed");
+        },
+      }),
+    ).toBe(2);
+    expect(String(error.mock.calls.at(-1)?.[0])).toContain("boom: event-ledger open failed");
+    expect(openedPortfolioQueue).toBeDefined();
+    expect(closeSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves an injected (non-owned) portfolio queue open when the event-ledger opener throws", () => {
+    const injectedPortfolioQueue = { listQueue: () => [], close: vi.fn() };
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(
+      runManageStatus([], {
+        initPortfolioQueue: () => injectedPortfolioQueue as unknown as PortfolioQueueStore,
+        initEventLedger: () => {
+          throw new Error("boom: event-ledger open failed");
+        },
+      }),
+    ).toBe(2);
+    expect(String(error.mock.calls.at(-1)?.[0])).toContain("boom: event-ledger open failed");
+    expect(injectedPortfolioQueue.close).not.toHaveBeenCalled();
+  });
+
+  it("REGRESSION: a run-state-store open failure closes both an owned portfolio queue and an owned event ledger", () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-manage-status-run-state-open-failure-"));
+    roots.push(root);
+    vi.stubEnv("LOOPOVER_MINER_CONFIG_DIR", root);
+
+    const realInitPortfolioQueue = portfolioQueueModule.initPortfolioQueueStore;
+    let portfolioQueueCloseSpy: ReturnType<typeof vi.fn> | undefined;
+    vi.spyOn(portfolioQueueModule, "initPortfolioQueueStore").mockImplementation((...args) => {
+      const store = realInitPortfolioQueue(...args);
+      portfolioQueueCloseSpy = vi.spyOn(store, "close");
+      return store;
+    });
+
+    const realInitEventLedger = eventLedgerModule.initEventLedger;
+    let eventLedgerCloseSpy: ReturnType<typeof vi.fn> | undefined;
+    vi.spyOn(eventLedgerModule, "initEventLedger").mockImplementation((...args) => {
+      const store = realInitEventLedger(...args);
+      eventLedgerCloseSpy = vi.spyOn(store, "close");
+      return store;
+    });
+
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(
+      runManageStatus([], {
+        initRunStateStore: () => {
+          throw new Error("boom: run-state open failed");
+        },
+      }),
+    ).toBe(2);
+    expect(String(error.mock.calls.at(-1)?.[0])).toContain("boom: run-state open failed");
+    expect(portfolioQueueCloseSpy).toHaveBeenCalledTimes(1);
+    expect(eventLedgerCloseSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves injected (non-owned) portfolio queue and event ledger open when the run-state-store opener throws", () => {
+    const injectedPortfolioQueue = { listQueue: () => [], close: vi.fn() };
+    const injectedEventLedger = { readEvents: () => [], close: vi.fn() };
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(
+      runManageStatus([], {
+        initPortfolioQueue: () => injectedPortfolioQueue as unknown as PortfolioQueueStore,
+        initEventLedger: () => injectedEventLedger as unknown as EventLedger,
+        initRunStateStore: () => {
+          throw new Error("boom: run-state open failed");
+        },
+      }),
+    ).toBe(2);
+    expect(String(error.mock.calls.at(-1)?.[0])).toContain("boom: run-state open failed");
+    expect(injectedPortfolioQueue.close).not.toHaveBeenCalled();
+    expect(injectedEventLedger.close).not.toHaveBeenCalled();
   });
 
   it("rejects unknown CLI options", () => {

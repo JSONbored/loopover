@@ -1,5 +1,6 @@
 import { sha256Hex } from "../utils/crypto";
 import { setCurrentOtelSpanAttributes, withOtelSpan } from "./otel";
+import { withPostHogAiTrace } from "./posthog";
 
 const INSTALLATION_HASH_SEED = "github-installation:";
 
@@ -54,7 +55,13 @@ export async function withReviewPipelineSpan<T>(
   input: ReviewTraceInput,
   fn: () => T | Promise<T>,
 ): Promise<T> {
-  return withOtelSpan(name, await reviewTraceAttributes(input), fn);
+  // #10221: withPostHogAiTrace runs INSIDE the OTel span, because the trace id it names the trace by is the
+  // ambient one this span establishes -- the same id capturePostHogAiGeneration stamps on every generation
+  // underneath it. Outside the span there is nothing yet to name. It is a pass-through whenever PostHog is
+  // off or the trace turns out to hold no AI calls, so a non-AI pipeline span is unaffected.
+  return withOtelSpan(name, await reviewTraceAttributes(input), () =>
+    withPostHogAiTrace(name, { repo: input.repoFullName, pullNumber: input.pullNumber }, fn),
+  );
 }
 
 export async function setReviewPipelineSpanOutcome(

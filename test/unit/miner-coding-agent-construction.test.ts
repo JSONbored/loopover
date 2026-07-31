@@ -17,9 +17,9 @@ vi.mock("posthog-node", () => ({ PostHog: posthogMock.PostHog }));
 import {
   createRealCliSubprocessSpawn,
   constructProductionCodingAgentDriver,
-  withCodingAgentAiGenerationCapture,
 } from "../../packages/loopover-miner/lib/coding-agent-construction";
 import { initMinerPostHog, resetMinerPostHogForTesting } from "../../packages/loopover-miner/lib/posthog";
+import { withCodingAgentGenerationCapture } from "../../packages/loopover-engine/src/index";
 import type { AgentSdkQueryFn, CodingAgentDriver, CodingAgentDriverTask } from "../../packages/loopover-engine/src/index";
 
 beforeEach(() => {
@@ -199,24 +199,27 @@ describe("constructProductionCodingAgentDriver (#5131)", () => {
   });
 });
 
-describe("withCodingAgentAiGenerationCapture (#8296 AMS follow-up)", () => {
+// #10200: the wrapper itself moved into @loopover/engine (ai-generation-sink.ts) so the engine's own driver
+// factory can apply it; these cases still drive it end-to-end through the miner's real PostHog sink, which is
+// what they were always actually asserting.
+describe("withCodingAgentGenerationCapture (#8296 AMS follow-up, relocated by #10200)", () => {
   function driverReturning(result: Awaited<ReturnType<CodingAgentDriver["run"]>>): CodingAgentDriver {
     return { run: async () => result };
   }
 
   it("stays a no-op end-to-end when PostHog is unconfigured", async () => {
-    const driver = withCodingAgentAiGenerationCapture("claude-cli", "claude-sonnet-5", driverReturning({ ok: true, changedFiles: [], summary: "done", transcript: "" }));
+    const driver = withCodingAgentGenerationCapture("claude-cli", "claude-sonnet-5", driverReturning({ ok: true, changedFiles: [], summary: "done", transcript: "" }));
     const result = await driver.run(task);
     expect(result.ok).toBe(true);
     expect(posthogMock.capture).not.toHaveBeenCalled();
   });
 
-  it("captures a successful attempt's cost/tokens as a combined figure (no fabricated input/output split)", async () => {
+  it("forwards the driver's cost, blended tokens AND input/output split to the capture (#10198)", async () => {
     await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
-    const driver = withCodingAgentAiGenerationCapture(
+    const driver = withCodingAgentGenerationCapture(
       "claude-cli",
       "claude-sonnet-5",
-      driverReturning({ ok: true, changedFiles: ["a.ts"], summary: "done", transcript: "", costUsd: 0.12, tokensUsed: 4000 }),
+      driverReturning({ ok: true, changedFiles: ["a.ts"], summary: "done", transcript: "", costUsd: 0.12, tokensUsed: 4000, inputTokens: 3200, outputTokens: 800 }),
     );
     await driver.run(task);
     expect(posthogMock.capture).toHaveBeenCalledTimes(1);
@@ -225,12 +228,42 @@ describe("withCodingAgentAiGenerationCapture (#8296 AMS follow-up)", () => {
     expect(properties.$ai_model).toBe("claude-sonnet-5");
     expect(properties.$ai_is_error).toBe(false);
     expect(properties.tokens_used).toBe(4000);
+    expect(properties.$ai_input_tokens).toBe(3200);
+    expect(properties.$ai_output_tokens).toBe(800);
     expect(properties.$ai_total_cost_usd).toBe(0.12);
+  });
+
+  it("REGRESSION (#10207): OMITS the split for a driver that reports only a blended total -- never a fabricated 0", async () => {
+    await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+    const driver = withCodingAgentGenerationCapture(
+      "codex-cli",
+      "gpt-5-codex",
+      driverReturning({ ok: true, changedFiles: [], summary: "done", transcript: "", tokensUsed: 4000 }),
+    );
+    await driver.run(task);
+    const { properties } = posthogMock.capture.mock.calls[0]?.[0];
+    expect(properties.tokens_used).toBe(4000);
+    expect(properties).not.toHaveProperty("$ai_input_tokens");
+    expect(properties).not.toHaveProperty("$ai_output_tokens");
+  });
+
+  it("still reports a GENUINELY reported 0 -- absence is what is tested, not falsiness (#10207)", async () => {
+    await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
+    const driver = withCodingAgentGenerationCapture(
+      "codex-cli",
+      "gpt-5-codex",
+      driverReturning({ ok: true, changedFiles: [], summary: "done", transcript: "", tokensUsed: 0, inputTokens: 0, outputTokens: 0 }),
+    );
+    await driver.run(task);
+    const { properties } = posthogMock.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_input_tokens).toBe(0);
+    expect(properties.$ai_output_tokens).toBe(0);
+    expect(properties.tokens_used).toBe(0);
   });
 
   it("captures result.ok:false as a failure, using the driver's own error string -- no exception thrown", async () => {
     await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
-    const driver = withCodingAgentAiGenerationCapture(
+    const driver = withCodingAgentGenerationCapture(
       "codex-cli",
       "gpt-5-codex",
       driverReturning({ ok: false, changedFiles: [], summary: "failed", transcript: "", error: "codex_timeout_120000ms" }),
@@ -245,7 +278,7 @@ describe("withCodingAgentAiGenerationCapture (#8296 AMS follow-up)", () => {
 
   it("REGRESSION: still captures a failure AND rethrows when the wrapped driver itself throws unexpectedly", async () => {
     await initMinerPostHog({ LOOPOVER_MINER_POSTHOG_API_KEY: "phc_test_key" });
-    const driver = withCodingAgentAiGenerationCapture("agent-sdk", "agent-sdk", { run: async () => { throw new Error("sdk crashed"); } });
+    const driver = withCodingAgentGenerationCapture("agent-sdk", "agent-sdk", { run: async () => { throw new Error("sdk crashed"); } });
     await expect(driver.run(task)).rejects.toThrow("sdk crashed");
     const { properties } = posthogMock.capture.mock.calls[0]?.[0];
     expect(properties.$ai_is_error).toBe(true);

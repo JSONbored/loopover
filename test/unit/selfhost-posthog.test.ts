@@ -32,8 +32,12 @@ import {
   forwardStructuredLogToPostHog,
   initPostHog,
   installPostHogStructuredLogForwarding,
+  capturePostHogAiMetric,
   POSTHOG_AI_DEGRADED_EVENT,
+  POSTHOG_AI_METRIC_EVENT,
+  POSTHOG_AI_TRACE_EVENT,
   POSTHOG_MONITOR_HEARTBEAT_EVENT,
+  withPostHogAiTrace,
   resetPostHogForTest,
   resolvePostHogRelease,
   scrubPostHogEvent,
@@ -680,12 +684,28 @@ describe("capturePostHogAiGeneration (#8296)", () => {
     expect(mocks.capture.mock.calls[0]?.[0].event).toBe("$ai_embedding");
   });
 
-  it("defaults input/output tokens to 0 when omitted or non-finite", async () => {
+  it("REGRESSION (#10207): omits input/output tokens when omitted or non-finite -- never a fabricated 0", async () => {
+    // A provider that reports no usage (Workers AI among them) used to contribute a 0 to both properties, which
+    // PostHog cannot tell apart from a measured 0 -- so every tokens-per-call and input:output ratio was pulled
+    // toward zero by calls that had never measured anything. Absence must stay absent.
     await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
     capturePostHogAiGeneration({ ...BASE, inputTokens: undefined, outputTokens: Number.NaN });
     const { properties } = mocks.capture.mock.calls[0]?.[0];
-    expect(properties.$ai_input_tokens).toBe(0);
-    expect(properties.$ai_output_tokens).toBe(0);
+    expect("$ai_input_tokens" in properties).toBe(false);
+    expect("$ai_output_tokens" in properties).toBe(false);
+  });
+
+  it("keeps a partially-reported split's real side, and a genuinely measured 0 (#10207)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, inputTokens: 512, outputTokens: undefined });
+    capturePostHogAiGeneration({ ...BASE, inputTokens: 0, outputTokens: 0 });
+    const partial = mocks.capture.mock.calls[0]?.[0].properties;
+    expect(partial.$ai_input_tokens).toBe(512);
+    expect("$ai_output_tokens" in partial).toBe(false);
+    // The omission tests absence, not falsiness: a provider that really measured 0 still reports 0.
+    const measuredZero = mocks.capture.mock.calls[1]?.[0].properties;
+    expect(measuredZero.$ai_input_tokens).toBe(0);
+    expect(measuredZero.$ai_output_tokens).toBe(0);
   });
 
   it("omits $ai_total_cost_usd when cost is not supplied or non-finite", async () => {
@@ -723,12 +743,77 @@ describe("capturePostHogAiGeneration (#8296)", () => {
     expect(mocks.capture.mock.calls[0]?.[0].properties.$ai_error).toBe("just a string");
   });
 
-  it("never carries prompt/response content -- no field beyond model/provider ids", async () => {
+  it("carries NO prompt/response content by default, even when the caller supplies it (#10218)", async () => {
+    // The gate lives in posthog.ts, not at the call sites: ai.ts always passes the content, so this is the
+    // single place that decides. An operator who has not opted in is byte-identical to before #10218.
     await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
-    capturePostHogAiGeneration(BASE);
+    capturePostHogAiGeneration({ ...BASE, input: [{ role: "user", content: "review this diff" }], outputText: "looks good" });
     const keys = Object.keys(mocks.capture.mock.calls[0]?.[0].properties);
     expect(keys).not.toContain("$ai_input");
     expect(keys).not.toContain("$ai_output_choices");
+  });
+
+  it("populates $ai_input/$ai_output_choices once LOOPOVER_POSTHOG_AI_CONTENT is set (#10218)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "1" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({
+      ...BASE,
+      input: [{ role: "system", content: "you are a reviewer" }, { role: "user", content: "review this diff" }],
+      outputText: "looks good",
+    });
+    const { properties } = mocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_input).toEqual([
+      { role: "system", content: "you are a reviewer" },
+      { role: "user", content: "review this diff" },
+    ]);
+    // PostHog's shape is a list of choices; the self-host providers are single-completion, so exactly one.
+    expect(properties.$ai_output_choices).toEqual([{ role: "assistant", content: "looks good" }]);
+  });
+
+  it("omits each content field independently when it has nothing to say", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "true" } as unknown as NodeJS.ProcessEnv);
+    // A failure has a prompt but no completion; an empty prompt list must not become an empty array.
+    capturePostHogAiGeneration({ ...BASE, input: [{ role: "user", content: "x" }] });
+    capturePostHogAiGeneration({ ...BASE, input: [], outputText: "" });
+    const withPrompt = mocks.capture.mock.calls[0]?.[0].properties;
+    expect(withPrompt.$ai_input).toHaveLength(1);
+    expect("$ai_output_choices" in withPrompt).toBe(false);
+    const withNeither = mocks.capture.mock.calls[1]?.[0].properties;
+    expect("$ai_input" in withNeither).toBe(false);
+    expect("$ai_output_choices" in withNeither).toBe(false);
+  });
+
+  it("truncates content at the cap and marks that it happened (#10218)", async () => {
+    await initPostHog({
+      POSTHOG_API_KEY: "phc_test_key",
+      LOOPOVER_POSTHOG_AI_CONTENT: "on",
+      LOOPOVER_POSTHOG_AI_CONTENT_MAX_CHARS: "10",
+    } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, input: [{ role: "user", content: "a".repeat(50) }], outputText: "b".repeat(50) });
+    const { properties } = mocks.capture.mock.calls[0]?.[0];
+    // A reader must never mistake a clipped prompt for the whole one.
+    expect((properties.$ai_input as Array<{ content: string }>)[0]?.content).toBe(`${"a".repeat(10)}…[truncated]`);
+    expect((properties.$ai_output_choices as Array<{ content: string }>)[0]?.content).toBe(`${"b".repeat(10)}…[truncated]`);
+  });
+
+  it("leaves content at or under the cap untouched", async () => {
+    await initPostHog({
+      POSTHOG_API_KEY: "phc_test_key",
+      LOOPOVER_POSTHOG_AI_CONTENT: "yes",
+      LOOPOVER_POSTHOG_AI_CONTENT_MAX_CHARS: "10",
+    } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiGeneration({ ...BASE, input: [{ role: "user", content: "a".repeat(10) }] });
+    expect((mocks.capture.mock.calls[0]?.[0].properties.$ai_input as Array<{ content: string }>)[0]?.content).toBe("a".repeat(10));
+  });
+
+  it("captured content still goes through the same before_send redaction as every other field", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key", LOOPOVER_POSTHOG_AI_CONTENT: "1" } as unknown as NodeJS.ProcessEnv);
+    const leaked = ["ghp", "abcdefghijklmnopqrst123456"].join("_");
+    capturePostHogAiGeneration({ ...BASE, input: [{ role: "user", content: `token is ${leaked}` }] });
+    // scrubPostHogEvent is posthog-node's before_send, so assert on it directly the way the client would.
+    const event = scrubPostHogEvent(mocks.capture.mock.calls[0]?.[0] as never) as unknown as { properties: Record<string, unknown> };
+    const captured = JSON.stringify(event.properties.$ai_input);
+    expect(captured).not.toContain(leaked);
+    expect(captured).toContain("[redacted]");
   });
 
   it("mints a fresh, real UUID trace id on every call", async () => {
@@ -871,6 +956,184 @@ describe("capturePostHogAiDegradation (#10186 — a request that reached NO mode
     const keys = Object.keys(mocks.capture.mock.calls[0]?.[0].properties);
     expect(keys).not.toContain("$ai_input");
     expect(keys).not.toContain("$ai_output_choices");
+  });
+});
+
+describe("capturePostHogAiMetric (#10226 — review quality, joined to the AI trace)", () => {
+  it("is a no-op when PostHog is unconfigured", () => {
+    capturePostHogAiMetric({ name: "reviewer_vote_fail", value: 1 });
+    expect(mocks.capture).not.toHaveBeenCalled();
+  });
+
+  it("is a no-op with no ambient trace — an orphan quality score joins to nothing", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue(undefined);
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiMetric({ name: "reviewer_vote_fail", value: 1 });
+    expect(mocks.capture).not.toHaveBeenCalled();
+  });
+
+  it("emits the SDK's exact property contract, with the value stringified", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "review-trace-1", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiMetric({ name: "judgment_agreement", value: 0.75, context: { repo: "owner/repo", pullNumber: 7 } });
+    const call = mocks.capture.mock.calls[0]?.[0];
+    expect(call.event).toBe(POSTHOG_AI_METRIC_EVENT);
+    // @posthog/core's captureTraceMetric stringifies the value; a hand-built event must be
+    // indistinguishable from an SDK-built one downstream.
+    expect(call.properties.$ai_metric_name).toBe("judgment_agreement");
+    expect(call.properties.$ai_metric_value).toBe("0.75");
+    expect(call.properties.$ai_trace_id).toBe("review-trace-1");
+    expect(call.properties.repo).toBe("owner/repo");
+    expect(call.groups).toEqual({ repo: "owner/repo" });
+  });
+
+  it("stringifies a numeric zero and a boolean rather than dropping them", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "t", span_id: "s" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiMetric({ name: "reviewer_vote_fail", value: 0 });
+    capturePostHogAiMetric({ name: "flagged", value: false });
+    // A "did not flag" vote is real signal, not an absent one.
+    expect(mocks.capture.mock.calls[0]?.[0].properties.$ai_metric_value).toBe("0");
+    expect(mocks.capture.mock.calls[1]?.[0].properties.$ai_metric_value).toBe("false");
+  });
+
+  it("omits the repo group when the metric has no repo context", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "t", span_id: "s" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiMetric({ name: "reviewer_vote_fail", value: 1 });
+    expect("groups" in (mocks.capture.mock.calls[0]?.[0] as object)).toBe(false);
+  });
+
+  it("drops a context key that is not on the shared operational allowlist", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "t", span_id: "s" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiMetric({ name: "reviewer_vote_fail", value: 1, context: { notAllowlisted: "dropped" } });
+    expect("notAllowlisted" in mocks.capture.mock.calls[0]?.[0].properties).toBe(false);
+  });
+
+  it("never carries prompt/response content", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "t", span_id: "s" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiMetric({ name: "reviewer_vote_fail", value: 1 });
+    const keys = Object.keys(mocks.capture.mock.calls[0]?.[0].properties);
+    expect(keys).not.toContain("$ai_input");
+    expect(keys).not.toContain("$ai_output_choices");
+  });
+});
+
+describe("withPostHogAiTrace (#10221 — naming the trace PostHog's Traces view shows)", () => {
+  const GENERATION = { provider: "claude-code", model: "claude-sonnet-5", requestKind: "review" as const, latencyMs: 1500, isError: false };
+  const traceEvents = (): Array<{ properties: Record<string, unknown>; groups?: unknown }> =>
+    mocks.capture.mock.calls.map((call) => call[0]).filter((call) => call.event === POSTHOG_AI_TRACE_EVENT);
+
+  it("is a transparent pass-through when PostHog is unconfigured", async () => {
+    await expect(withPostHogAiTrace("review.gate", undefined, async () => "result")).resolves.toBe("result");
+    expect(mocks.capture).not.toHaveBeenCalled();
+  });
+
+  it("is a pass-through when there is no ambient OTel trace to name", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue(undefined);
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await expect(withPostHogAiTrace("review.gate", undefined, async () => "result")).resolves.toBe("result");
+    expect(traceEvents()).toHaveLength(0);
+  });
+
+  it("names the trace once a generation has landed under it", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "review-trace-1", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await withPostHogAiTrace("review.pipeline", { repo: "owner/repo", pullNumber: 7 }, async () => {
+      capturePostHogAiGeneration({ ...GENERATION, context: { repo: "owner/repo", pullNumber: 7 } });
+    });
+    const [envelope] = traceEvents();
+    // The envelope must claim the SAME trace id the generation carries, or the two never join up.
+    expect(envelope?.properties.$ai_trace_id).toBe("review-trace-1");
+    expect(envelope?.properties.$ai_span_name).toBe("review.pipeline");
+    expect(envelope?.properties.$ai_is_error).toBe(false);
+    expect(envelope?.properties.repo).toBe("owner/repo");
+    expect(envelope?.groups).toEqual({ repo: "owner/repo" });
+  });
+
+  it("does NOT name a pipeline span that ran no AI calls at all", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "gate-trace", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    // The gate is a real pipeline span with no generation under it. Naming it would manufacture a trace row
+    // with nothing in it, which reads worse than an unnamed trace.
+    await withPostHogAiTrace("review.gate", { repo: "owner/repo" }, async () => "no ai here");
+    expect(traceEvents()).toHaveLength(0);
+  });
+
+  it("emits exactly ONE envelope for nested spans, named by the OUTERMOST one", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "nested-trace", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await withPostHogAiTrace("review.outer", { repo: "owner/repo" }, async () => {
+      await withPostHogAiTrace("review.inner", { repo: "owner/repo" }, async () => {
+        capturePostHogAiGeneration({ ...GENERATION, context: { repo: "owner/repo" } });
+      });
+    });
+    const envelopes = traceEvents();
+    expect(envelopes).toHaveLength(1);
+    // The whole operation, not whichever leaf happened to finish.
+    expect(envelopes[0]?.properties.$ai_span_name).toBe("review.outer");
+  });
+
+  it("marks the trace errored and rethrows when the wrapped work throws", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "failing-trace", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await expect(
+      withPostHogAiTrace("review.pipeline", { repo: "owner/repo" }, async () => {
+        capturePostHogAiGeneration({ ...GENERATION, context: { repo: "owner/repo" } });
+        throw new Error("reviewer exploded");
+      }),
+    ).rejects.toThrow("reviewer exploded");
+    const [envelope] = traceEvents();
+    expect(envelope?.properties.$ai_is_error).toBe(true);
+    expect(envelope?.properties.$ai_error).toBe("reviewer exploded");
+  });
+
+  it("handles a non-Error thrown value, and bounds the recorded message", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "string-throw-trace", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await expect(
+      withPostHogAiTrace("review.pipeline", undefined, async () => {
+        capturePostHogAiGeneration(GENERATION);
+        throw "a string failure";
+      }),
+    ).rejects.toBe("a string failure");
+    expect(traceEvents()[0]?.properties.$ai_error).toBe("a string failure");
+
+    mocks.capture.mockClear();
+    await expect(
+      withPostHogAiTrace("review.pipeline", undefined, async () => {
+        capturePostHogAiGeneration(GENERATION);
+        throw new Error("y".repeat(600));
+      }),
+    ).rejects.toThrow();
+    expect(traceEvents()[0]?.properties.$ai_error).toHaveLength(500);
+  });
+
+  it("omits the repo group when the span has no repo, and still names the trace", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "no-repo-trace", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await withPostHogAiTrace("ai.advisory", undefined, async () => {
+      capturePostHogAiGeneration(GENERATION);
+    });
+    const [envelope] = traceEvents();
+    expect(envelope?.properties.$ai_span_name).toBe("ai.advisory");
+    expect(envelope && "groups" in envelope).toBe(false);
+  });
+
+  it("a second, later span over the SAME trace id starts from a clean slate", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "reused-trace", span_id: "span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    await withPostHogAiTrace("first", undefined, async () => {
+      capturePostHogAiGeneration(GENERATION);
+    });
+    // The bookkeeping entry is deleted on completion, so the second span must not inherit the first's
+    // generation count and name an empty trace.
+    await withPostHogAiTrace("second", undefined, async () => "no ai here");
+    const envelopes = traceEvents();
+    expect(envelopes).toHaveLength(1);
+    expect(envelopes[0]?.properties.$ai_span_name).toBe("first");
   });
 });
 

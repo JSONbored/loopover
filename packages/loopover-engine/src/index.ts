@@ -392,12 +392,21 @@ export {
   createFakeCodingAgentDriverForFactory,
   isConfiguredCodingAgentDriver,
   resolveConfiguredCodingAgentDriverNames,
+  resolveCodingAgentTelemetryModel,
   resolveFirstConfiguredCodingAgentDriverName,
   runCodingAgentAttempt,
   type CodingAgentDriverName,
   type CreateCodingAgentDriverOptions,
   type RunCodingAgentAttemptOptions,
 } from "./miner/driver-factory.js";
+export {
+  emitMinerAiGeneration,
+  hasMinerAiGenerationSink,
+  setMinerAiGenerationSink,
+  withCodingAgentGenerationCapture,
+  type MinerAiGenerationRecord,
+  type MinerAiGenerationSink,
+} from "./miner/ai-generation-sink.js";
 export * from "./miner/attempt-metering.js";
 export {
   buildRepoMap,
@@ -415,6 +424,7 @@ export {
 } from "./miner/repo-map.js";
 export {
   createAgentSdkCodingAgentDriver,
+  readAgentSdkResultUsage,
   type AgentSdkHooks,
   type AgentSdkQueryFn,
   type AgentSdkQueryOptions,
@@ -423,6 +433,7 @@ export {
 export {
   buildChatPrompt,
   CHAT_GROUNDING_MCP_SERVER_NAME,
+  CHAT_GROUNDING_PROVIDER,
   CHAT_GROUNDING_TOOL_NAMES,
   CHAT_REDACTED_TEXT,
   CHAT_SYSTEM_PROMPT,

@@ -372,6 +372,29 @@ describe("recordStdioToolTelemetry / wrapStdioToolHandler (#8690)", () => {
     expect(usage.properties).toMatchObject({ surface: "stdio", transport: "proxied" });
   });
 
+  // #10036: the counterpart to the assertion just above. registerProxiedTool's handler used to hand back
+  // the remote's raw JSON-RPC `{ error }` envelope, which has no `isError`, so `ok = result?.isError !==
+  // true` read every remote refusal as a SUCCESS -- a proxied failure recorded no differently from a
+  // proxied success, with gateway failure rate unmeasurable. Now that the handler shapes a conformant
+  // `isError: true` result with a closed-set envelope, this must record ok:false + the resolved error_code.
+  it("wrapStdioToolHandler records a PROXIED remote refusal as a failure with a resolved error_code", async () => {
+    vi.stubEnv("LOOPOVER_MCP_POSTHOG_API_KEY", "phc_test");
+    const wrapped = wrapStdioToolHandler(
+      "loopover_lint_pr_text",
+      () => true,
+      async () => ({
+        isError: true,
+        content: [{ type: "text", text: "Tool loopover_x not found" }],
+        structuredContent: { error: { code: "not_found", message: "Tool loopover_x not found" } },
+      }),
+      "proxied",
+    );
+    await wrapped({});
+
+    const usage = h.captureSpy.mock.calls.map((entry) => entry[0] as CapturedMessage).find((message) => message.event === "usage_event")!;
+    expect(usage.properties).toMatchObject({ surface: "stdio", transport: "proxied", ok: false, error_code: "not_found" });
+  });
+
   // #9659: the stdio wrapper passed NO error on the returned-failure path, so `resolveErrorCode(undefined)`
   // classified every one of them as `unknown_error` no matter what the tool told its caller.
   it("wrapStdioToolHandler resolves the error code from the result's own envelope", async () => {

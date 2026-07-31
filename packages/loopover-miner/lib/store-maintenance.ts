@@ -33,8 +33,17 @@ export const PREDICTION_LEDGER_RETENTION_SPEC: LedgerRetentionSpec = { table: "p
  *  real-delete path, `purgeStoreByRepo`, is never used for such a store (it does an unconditional `DELETE`,
  *  wrong for a row that must be preserved and merely blanked) — its own custom `purgeByRepo` method is used
  *  instead, and `--dry-run` must count using the identical condition so its preview never overstates what a
- *  real purge would remove. */
-export type LedgerPurgeSpec = { table: string; repoColumn: string; extraWhereSql?: string };
+ *  real purge would remove.
+ *
+ *  `hostScopedSuffixMatch` is the same "custom real purge, `countStoreByRepo` mirrors it" split for a store
+ *  whose `repoColumn` is not a bare `owner/repo` but a composite `<apiBaseUrl>::owner/repo` scope (#10001) —
+ *  `repoColumn = ?` can never match such a row for a plain `owner/repo` argument, so an exact-equality purge
+ *  silently purges nothing, always. When set, `countStoreByRepo` matches the `owner/repo` SUFFIX after each
+ *  row's `::` separator instead, across every recorded host prefix, via `hostScopedRepoSuffixPattern`'s
+ *  escaped `LIKE` pattern — the store's own real purge (e.g. `policy-verdict-cache.ts`'s `purgeByRepo`) builds
+ *  the identical pattern with the same helper so the two can never diverge. Mutually exclusive with
+ *  `extraWhereSql` in practice: no spec needs both. */
+export type LedgerPurgeSpec = { table: string; repoColumn: string; extraWhereSql?: string; hostScopedSuffixMatch?: boolean };
 
 /** Fixed purge specs (#5564, #6599) for the six stores whose rows are directly scoped by a `repoColumn`. Same
  *  internal-constant-only discipline as the retention specs above. `attempt-log.js` is deliberately absent: its
@@ -62,8 +71,15 @@ export const GOVERNOR_OWN_SUBMISSIONS_PURGE_SPEC: LedgerPurgeSpec = { table: "go
 /** policy-verdict-cache (#6987), another repo-scoped store the earlier sweeps missed. Its `repo_scope TEXT
  *  PRIMARY KEY` is the per-repo column (a tenant forge host + `owner/repo`), the same `repoColumn` shape and
  *  internal-constant-only discipline as the specs above. `policy-doc-cache.js` stays out (keyed by URL, no repo
- *  column, exactly like `attempt-log.js`). */
-export const POLICY_VERDICT_CACHE_PURGE_SPEC: LedgerPurgeSpec = { table: "policy_verdict_cache", repoColumn: "repo_scope" };
+ *  column, exactly like `attempt-log.js`). `hostScopedSuffixMatch: true` (#10001): `repo_scope` rows are keyed
+ *  `<apiBaseUrl>::owner/repo` (`policyVerdictCacheKey`, opportunity-fanout.js), never a bare `owner/repo` — the
+ *  only value `purge-cli.js` ever calls `purgeByRepo`/`countStoreByRepo` with — so an exact-equality match here
+ *  matched zero rows, always. See `LedgerPurgeSpec`'s own doc for the suffix-match replacement. */
+export const POLICY_VERDICT_CACHE_PURGE_SPEC: LedgerPurgeSpec = {
+  table: "policy_verdict_cache",
+  repoColumn: "repo_scope",
+  hostScopedSuffixMatch: true,
+};
 
 /** Three more repo-scoped stores the #5564/#7091/#6987 sweeps missed (#8009), same `repoColumn` shape and same
  *  internal-constant-only discipline. ranked-candidates is a wholesale-replaced snapshot, but its rows persist
@@ -212,6 +228,25 @@ export function purgeStoreByRepo(db: DatabaseSync, spec: LedgerPurgeSpec, repoFu
   return Number(info.changes);
 }
 
+/** Escape SQL `LIKE` wildcards (`_`, `%`) and the escape character itself in a caller-supplied value before it
+ *  is embedded in a `LIKE` pattern, so a literal `_`/`%` (both valid in a GitHub `owner/repo` segment — see
+ *  `REPO_SEGMENT_PATTERN`, repo-clone.js) is matched literally instead of as a wildcard. Same convention as
+ *  `src/db/repositories.ts`'s own `escapeSqlLikePattern`. */
+function escapeSqlLikePattern(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
+}
+
+/** Build the exact-suffix `LIKE` pattern for a `hostScopedSuffixMatch` spec's composite `<apiBaseUrl>::owner/
+ *  repo` column: matches a row whose column value ends with exactly `::` + `repoFullName`, across every forge
+ *  host prefix. Exported so a store's own hand-written real-purge SQL (`policy-verdict-cache.ts`'s
+ *  `purgeByRepo`) builds the identical pattern `countStoreByRepo` uses for its dry-run count — the two share
+ *  this one escaping path instead of each hand-rolling their own, so they can never diverge (#10001). No
+ *  trailing wildcard: a longer name sharing the same prefix (e.g. `acme/my_repo-extra` when purging
+ *  `acme/my_repo`) does not match, since the pattern requires the column to end exactly at the escaped value. */
+export function hostScopedRepoSuffixPattern(repoFullName: string): string {
+  return `%::${escapeSqlLikePattern(repoFullName)}`;
+}
+
 /**
  * Count rows for one repo in a store without deleting anything (#5564) — the read-only counterpart to
  * `purgeStoreByRepo`, used by `purge-cli.js --dry-run` to report what a real purge would remove.
@@ -219,6 +254,12 @@ export function purgeStoreByRepo(db: DatabaseSync, spec: LedgerPurgeSpec, repoFu
 export function countStoreByRepo(db: DatabaseSync, spec: LedgerPurgeSpec, repoFullName: string): number {
   for (const identifier of [spec.table, spec.repoColumn]) {
     if (!SQL_IDENTIFIER.test(identifier)) throw new Error(`unsafe SQL identifier: ${identifier}`);
+  }
+  if (spec.hostScopedSuffixMatch) {
+    const row = db
+      .prepare(`SELECT COUNT(*) AS count FROM ${spec.table} WHERE ${spec.repoColumn} LIKE ? ESCAPE '\\'`)
+      .get(hostScopedRepoSuffixPattern(repoFullName));
+    return Number(row?.count);
   }
   // extraWhereSql is only ever one of this file's own internal constants (never caller/user text), so it is
   // ANDed in verbatim rather than parsed as an identifier — see LedgerPurgeSpec's doc comment (#8320).

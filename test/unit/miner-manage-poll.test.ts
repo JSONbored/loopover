@@ -6,6 +6,8 @@ import {
   closeDefaultEventLedger,
   initEventLedger,
 } from "../../packages/loopover-miner/lib/event-ledger";
+import type { EventLedger } from "../../packages/loopover-miner/lib/event-ledger";
+import * as eventLedgerModule from "../../packages/loopover-miner/lib/event-ledger";
 import {
   MANAGE_PR_UPDATE_EVENT,
   collectManageStatus,
@@ -327,6 +329,73 @@ describe("loopover-miner manage poll (#2323/#2325)", () => {
       ok: false,
       error: "github_404: not found",
     });
+  });
+
+  it("returns 2 and prints the error (honoring --json) when the event-ledger opener itself throws", async () => {
+    const initStores = {
+      initEventLedger: () => {
+        throw new Error("boom");
+      },
+    };
+
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    expect(await runManagePoll(["acme/widgets", "4"], initStores)).toBe(2);
+    expect(String(error.mock.calls.at(-1)?.[0])).toContain("boom");
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    expect(await runManagePoll(["acme/widgets", "4", "--json"], initStores)).toBe(2);
+    expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({ ok: false, error: "boom" });
+  });
+
+  it("REGRESSION: a store-open failure exits 2 instead of throwing, and closes the handle already opened", async () => {
+    const root = mkdtempSync(join(tmpdir(), "loopover-miner-manage-poll-open-failure-"));
+    roots.push(root);
+    const previousEventLedgerDbPath = process.env.LOOPOVER_MINER_EVENT_LEDGER_DB;
+    process.env.LOOPOVER_MINER_EVENT_LEDGER_DB = join(root, "event-ledger.sqlite3");
+    try {
+      // The event ledger is opened for real (no override, so runManagePoll owns and would normally close it
+      // itself) so this proves the actual owned-close path, not just that an injected test-double was passed
+      // through untouched.
+      const realInitEventLedger = eventLedgerModule.initEventLedger;
+      let openedEventLedger: ReturnType<typeof realInitEventLedger> | undefined;
+      let closeSpy: ReturnType<typeof vi.fn> | undefined;
+      vi.spyOn(eventLedgerModule, "initEventLedger").mockImplementation((...args) => {
+        openedEventLedger = realInitEventLedger(...args);
+        closeSpy = vi.spyOn(openedEventLedger, "close");
+        return openedEventLedger;
+      });
+
+      const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      expect(
+        await runManagePoll(["acme/widgets", "4"], {
+          initPortfolioQueue: () => {
+            throw new Error("boom: portfolio-queue open failed");
+          },
+        }),
+      ).toBe(2);
+      expect(String(error.mock.calls.at(-1)?.[0])).toContain("boom: portfolio-queue open failed");
+      expect(openedEventLedger).toBeDefined();
+      expect(closeSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      if (previousEventLedgerDbPath === undefined) delete process.env.LOOPOVER_MINER_EVENT_LEDGER_DB;
+      else process.env.LOOPOVER_MINER_EVENT_LEDGER_DB = previousEventLedgerDbPath;
+    }
+  });
+
+  it("leaves an injected (non-owned) event ledger open when the portfolio-queue opener throws", async () => {
+    const injectedEventLedger = { appendEvent: () => null, close: vi.fn() };
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    expect(
+      await runManagePoll(["acme/widgets", "4"], {
+        initEventLedger: () => injectedEventLedger as unknown as EventLedger,
+        initPortfolioQueue: () => {
+          throw new Error("boom: portfolio-queue open failed");
+        },
+      }),
+    ).toBe(2);
+    expect(String(error.mock.calls.at(-1)?.[0])).toContain("boom: portfolio-queue open failed");
+    expect(injectedEventLedger.close).not.toHaveBeenCalled();
   });
 
   it("parseManagePollArgs rejects an invalid owner/repo argument", () => {

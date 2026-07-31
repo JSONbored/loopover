@@ -359,4 +359,65 @@ describe("discovery-index runDiscoveryQuery (#7164)", () => {
     await runDiscoveryQuery(query({ repos: ["acme/one"] }), makeDeps(github));
     expect(errorSpy).not.toHaveBeenCalled();
   });
+
+  it("caches a complete pass and serves the second identical query from the result cache", async () => {
+    const { github, calls } = makeStubGitHub({
+      issuesByRepo: { "owner/repo": [{ number: 42, title: "Cached issue" }] },
+      filesByRepo: { "owner/repo": { "AI-USAGE.md": ALLOWED_AI_USAGE } },
+    });
+    const deps = makeDeps(github);
+    const first = await runDiscoveryQuery(query({ repos: ["owner/repo"] }), deps);
+    const second = await runDiscoveryQuery(query({ repos: ["owner/repo"] }), deps);
+    expect(calls.filter((c) => c.method === "fetchRepoIssues")).toHaveLength(1);
+    expect(second).toEqual(first);
+    expect(first.candidates).toHaveLength(1);
+    expect(first.candidates[0]?.issueNumber).toBe(42);
+  });
+
+  it("REGRESSION: a GitHub-failure-truncated candidate set is not cached for the TTL", async () => {
+    const oneIssue: GitHubIssue = { number: 1, title: "Partial page" };
+    const { github, calls } = makeStubGitHub({
+      issuesByRepo: { "owner/repo": [oneIssue] },
+      warningsByRepo: { "owner/repo": ["GitHub returned 500 for owner/repo issues"] },
+      filesByRepo: { "owner/repo": { "AI-USAGE.md": ALLOWED_AI_USAGE } },
+    });
+    const deps = makeDeps(github);
+    const first = await runDiscoveryQuery(query({ repos: ["owner/repo"] }), deps);
+    const second = await runDiscoveryQuery(query({ repos: ["owner/repo"] }), deps);
+    expect(calls.filter((c) => c.method === "fetchRepoIssues")).toHaveLength(2);
+    expect(first.candidates).toHaveLength(1);
+    expect(second.candidates).toEqual(first.candidates);
+    expect(counterValue("discovery_index_cache_lookups_total", { cache: "result", outcome: "miss" })).toBe(2);
+    expect(counterValue("discovery_index_cache_lookups_total", { cache: "result", outcome: "hit" })).toBe(0);
+  });
+
+  it("does not cache org-search results when searchIssues returns warnings", async () => {
+    const { github, calls } = makeStubGitHub({
+      searchResults: {
+        "org:acme state:open type:issue": [{ number: 7, title: "Org hit", repository_url: "https://api.github.com/repos/acme/one" }],
+      },
+      warningsBySearch: { "org:acme state:open type:issue": ["GitHub returned 500 for search"] },
+      filesByRepo: { "acme/one": { "AI-USAGE.md": ALLOWED_AI_USAGE } },
+    });
+    const deps = makeDeps(github);
+    const q = query({ orgs: ["acme"] });
+    await runDiscoveryQuery(q, deps);
+    await runDiscoveryQuery(q, deps);
+    expect(calls.filter((c) => c.method === "searchIssues")).toHaveLength(2);
+  });
+
+  it("does not cache search-term results when searchIssues returns warnings", async () => {
+    const { github, calls } = makeStubGitHub({
+      searchResults: {
+        "flaky test state:open type:issue": [{ number: 9, title: "Term hit", repository_url: "https://api.github.com/repos/acme/one" }],
+      },
+      warningsBySearch: { "flaky test state:open type:issue": ["GitHub returned 503 for search"] },
+      filesByRepo: { "acme/one": { "AI-USAGE.md": ALLOWED_AI_USAGE } },
+    });
+    const deps = makeDeps(github);
+    const q = query({ searchTerms: ["flaky test"] });
+    await runDiscoveryQuery(q, deps);
+    await runDiscoveryQuery(q, deps);
+    expect(calls.filter((c) => c.method === "searchIssues")).toHaveLength(2);
+  });
 });

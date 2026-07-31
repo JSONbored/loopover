@@ -785,8 +785,10 @@ void _INTERNAL_JOB_MESSAGE_TYPES_ARE_REAL;
 
 /** Master opt-in for the "admin" tool category (#7721), default OFF. Same truthy-string convention as every
  *  other LOOPOVER_* flag in this repo. Gates tool REGISTRATION in createServer() below; each admin tool
- *  handler additionally requires actor === "mcp-admin" at call time regardless of this flag. */
-function isMcpAdminEnabled(env: Env): boolean {
+ *  handler additionally requires actor === "mcp-admin" at call time regardless of this flag. Exported so the
+ *  `.well-known` discovery routes (#10039) can mirror this exact registration gate instead of growing a
+ *  second copy of the truthy-string regex. */
+export function isMcpAdminEnabled(env: Env): boolean {
   return /^(1|true|yes|on)$/i.test((env.LOOPOVER_MCP_ADMIN_ENABLED ?? "").trim());
 }
 

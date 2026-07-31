@@ -30,7 +30,7 @@ import { buildOpenApiSpec } from "../../src/openapi/spec";
 // that is answering, it is stable enough to cache, and it never under- or over-states the tool set.
 
 const TOOLS = listToolDefinitions({ availability: ["cloud"] });
-const CONTEXT = { version: "3.15.2", deployment: "cloud" as const, baseUrl: "https://api.loopover.ai", tools: TOOLS };
+const CONTEXT = { version: "3.15.2", deployment: "cloud" as const, baseUrl: "https://api.loopover.ai", tools: TOOLS, adminEnabled: false };
 
 beforeEach(() => {
   resetDiscoveryCacheForTesting();
@@ -38,8 +38,8 @@ beforeEach(() => {
 
 describe("availability filtering (#9526)", () => {
   it("a cloud card excludes selfhost-only tools, and a selfhost card excludes cloud-only ones", () => {
-    const cloud = new Set(toolsForDeployment("cloud").map((tool) => tool.name));
-    const selfhost = new Set(toolsForDeployment("selfhost").map((tool) => tool.name));
+    const cloud = new Set(toolsForDeployment("cloud", false).map((tool) => tool.name));
+    const selfhost = new Set(toolsForDeployment("selfhost", false).map((tool) => tool.name));
 
     // The registry's availability filter is INCLUSIVE (`both` satisfies any constraint), so "only" has to
     // be derived from the raw field rather than by filtering.
@@ -54,8 +54,8 @@ describe("availability filtering (#9526)", () => {
 
   it("both deployments carry every `both` tool", () => {
     const shared = listToolDefinitions().filter((tool) => tool.availability === "both").map((tool) => tool.name);
-    const cloud = new Set(toolsForDeployment("cloud").map((tool) => tool.name));
-    const selfhost = new Set(toolsForDeployment("selfhost").map((tool) => tool.name));
+    const cloud = new Set(toolsForDeployment("cloud", false).map((tool) => tool.name));
+    const selfhost = new Set(toolsForDeployment("selfhost", false).map((tool) => tool.name));
     for (const name of shared) {
       expect(cloud.has(name)).toBe(true);
       expect(selfhost.has(name)).toBe(true);
@@ -67,7 +67,7 @@ describe("availability filtering (#9526)", () => {
     // reading a checkout. Hiding them would under-describe the server.
     const localGit = listToolDefinitions({ locality: ["local-git"] }).filter((tool) => tool.availability === "both").map((tool) => tool.name);
     expect(localGit.length).toBeGreaterThan(0);
-    const cloud = new Set(toolsForDeployment("cloud").map((tool) => tool.name));
+    const cloud = new Set(toolsForDeployment("cloud", false).map((tool) => tool.name));
     for (const name of localGit) expect(cloud.has(name)).toBe(true);
   });
 });
@@ -215,7 +215,7 @@ describe("the per-origin memo (#9526)", () => {
   it("keeps deployments separate, so a self-host card is not a copy of the cloud one", () => {
     const cloud = JSON.parse(discoveryDocumentsFor(CONTEXT)["/.well-known/mcp.json"]!.body);
     const selfhost = JSON.parse(
-      discoveryDocumentsFor({ ...CONTEXT, deployment: "selfhost", tools: toolsForDeployment("selfhost") })["/.well-known/mcp.json"]!.body,
+      discoveryDocumentsFor({ ...CONTEXT, deployment: "selfhost", tools: toolsForDeployment("selfhost", false) })["/.well-known/mcp.json"]!.body,
     );
     expect(selfhost.deployment).toBe("selfhost");
     expect(selfhost.tools.length).not.toBe(cloud.tools.length);

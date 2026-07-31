@@ -176,7 +176,7 @@ import {
   validateOrbRelayEnrollment,
 } from "../orb/relay";
 import { computeFleetAnalytics } from "../orb/analytics";
-import { handleMcpRequest } from "../mcp/server";
+import { handleMcpRequest, isMcpAdminEnabled } from "../mcp/server";
 import { simulateOpenPrPressureSchema } from "../mcp/server";
 import { simulateOpenPrPressure, type OpenPrPressureInput } from "../services/open-pr-pressure-scenarios";
 import { DISCOVERY_PATHS, discoveryDocumentsFor, respondWithDocument, toolsForDeployment } from "../mcp/discovery-routes";
@@ -644,11 +644,15 @@ export function createApp() {
       // app (src/server.ts serves this very Hono instance), so the deployment has to be read at request
       // time rather than assumed.
       const deployment = isSelfHostedReviewRuntime(c.env) ? "selfhost" : "cloud";
+      // #10039: same request-time read `createServer()` uses to gate admin-tool REGISTRATION, so a
+      // self-host card never advertises the five admin tools when the flag that would register them is off.
+      const adminEnabled = isMcpAdminEnabled(c.env);
       const documents = discoveryDocumentsFor({
         version: LATEST_RECOMMENDED_MCP_VERSION,
         deployment,
+        adminEnabled,
         baseUrl: c.env.PUBLIC_API_ORIGIN ?? new URL(c.req.url).origin,
-        tools: toolsForDeployment(deployment),
+        tools: toolsForDeployment(deployment, adminEnabled),
       });
       return respondWithDocument(documents[path]!, c.req.header("if-none-match") ?? null);
     });

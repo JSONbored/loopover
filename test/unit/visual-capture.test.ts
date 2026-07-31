@@ -342,6 +342,71 @@ describe("visual capture preview discovery", () => {
     await expect(previewPollAttemptCount(env, "budget-head-2")).resolves.toBe(MAX_PREVIEW_POLL_ATTEMPTS);
   });
 
+  const captureAt = (env: Env, headSha: string, prNumber: number) =>
+    buildCapture(env, "installation-token", { repoFullName: "owner/repo", prNumber, headSha, previewFromChecks: true }, ["apps/loopover-ui/src/routes/app.index.tsx"]);
+
+  it("REGRESSION (#10059): a rejecting check-runs read at an exhausted budget yields previewUnobtainable false, not a proven absence", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/deployments?")) return Response.json([]);
+      if (url.includes("/status")) return Response.json({ statuses: [] });
+      if (url.includes("/check-runs")) throw new Error("simulated GitHub read failure");
+      if (url.includes("/comments")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "", REVIEW_AUDIT: memoryReviewAudit() });
+    for (let i = 0; i < MAX_PREVIEW_POLL_ATTEMPTS; i += 1) await recordPreviewPollAttempt(env, "unreadable-head");
+    const result = await captureAt(env, "unreadable-head", 21);
+    expect(result.previewUnobtainable).toBe(false);
+    expect(result.previewPending).toBe(false);
+  });
+
+  it("#9881 pinned: a SUCCEEDING check-runs read that finds no preview build at an exhausted budget yields previewUnobtainable true", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/deployments?")) return Response.json([]);
+      if (url.includes("/status")) return Response.json({ statuses: [] });
+      if (url.includes("/check-runs")) return Response.json({ check_runs: [{ name: "lint", status: "completed", conclusion: "success" }] });
+      if (url.includes("/comments")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "", REVIEW_AUDIT: memoryReviewAudit() });
+    for (let i = 0; i < MAX_PREVIEW_POLL_ATTEMPTS; i += 1) await recordPreviewPollAttempt(env, "absent-head");
+    const result = await captureAt(env, "absent-head", 22);
+    expect(result.previewUnobtainable).toBe(true);
+  });
+
+  it("REGRESSION (#10059): a rejecting deployments read suppresses previewUnobtainable even when the check-runs read succeeds empty", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/deployments?")) throw new Error("simulated deployments read failure");
+      if (url.includes("/status")) return Response.json({ statuses: [] });
+      if (url.includes("/check-runs")) return Response.json({ check_runs: [{ name: "lint", status: "completed", conclusion: "success" }] });
+      if (url.includes("/comments")) return Response.json([]);
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "", REVIEW_AUDIT: memoryReviewAudit() });
+    for (let i = 0; i < MAX_PREVIEW_POLL_ATTEMPTS; i += 1) await recordPreviewPollAttempt(env, "deploy-fail-head");
+    const result = await captureAt(env, "deploy-fail-head", 23);
+    expect(result.previewUnobtainable).toBe(false);
+  });
+
+  it("REGRESSION (#10059): a sustained GitHub read failure across the whole poll budget never marks capture structurally unobtainable", async () => {
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.includes("/deployments?")) throw new Error("read failure");
+      if (url.includes("/check-runs")) throw new Error("read failure");
+      if (url.includes("/comments")) return Response.json([]);
+      if (url.includes("/status")) return Response.json({ statuses: [] });
+      return new Response("not found", { status: 404 });
+    });
+    const env = createTestEnv({ PUBLIC_API_ORIGIN: "https://worker.example", PUBLIC_SITE_ORIGIN: "", REVIEW_AUDIT: memoryReviewAudit() });
+    for (let i = 0; i <= MAX_PREVIEW_POLL_ATTEMPTS; i += 1) {
+      const result = await captureAt(env, "sustained-fail-head", 24);
+      expect(result.previewUnobtainable).toBe(false);
+    }
+  });
+
   it("eternal-loading-placeholder fix: marks the capture pending (not silently ignored) when no matching preview check run exists at all (buildState 'absent') and no actions_fallback is configured", async () => {
     vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
       const url = input.toString();

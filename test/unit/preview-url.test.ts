@@ -204,9 +204,10 @@ describe("preview-url pagination (#7450)", () => {
     await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "s3" })).resolves.toBe("absent");
   });
 
-  it("getPreviewBuildState is bounded and degrades to absent on a later-page failure", async () => {
+  it("getPreviewBuildState is bounded, returns absent when the read completes empty, and unreadable when a later-page read fails (#10059)", async () => {
     const spin = vi.fn(async () => Response.json({ check_runs: [] }, { headers: { link: NEXT_LINK } }));
     vi.stubGlobal("fetch", spin);
+    // A read that COMPLETED across every page and found no build is a genuine absence.
     await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "spin" })).resolves.toBe("absent");
     expect(spin).toHaveBeenCalledTimes(10); // PREVIEW_LIST_MAX_PAGES
 
@@ -215,7 +216,9 @@ describe("preview-url pagination (#7450)", () => {
       return Response.json({ check_runs: [] }, { headers: { link: NEXT_LINK } });
     });
     vi.stubGlobal("fetch", failLater);
-    await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "fail" })).resolves.toBe("absent");
+    // A read that THREW (here, mid-pagination) never proved absence — it is unreadable, still a value so the
+    // caller never infinite-polls, but distinct from a genuine empty read (#10059).
+    await expect(getPreviewBuildState({ token: "t", repo: REPO, sha: "fail" })).resolves.toBe("unreadable");
     expect(failLater).toHaveBeenCalledTimes(2);
   });
 

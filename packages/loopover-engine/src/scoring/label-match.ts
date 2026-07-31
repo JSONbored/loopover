@@ -1,4 +1,4 @@
-import { hasUnsafeWildcardCount } from "../signals/change-guardrail.js";
+import { MAX_GLOB_WILDCARD_GROUPS } from "../signals/change-guardrail.js";
 
 export function labelMatchesPattern(label: string, pattern: string): boolean {
   return labelPatternToRegExp(pattern.toLowerCase()).test(label.toLowerCase());
@@ -42,6 +42,19 @@ const LABEL_PATTERN_NEVER_MATCHES = /^(?!)$/;
 // change-guardrail.ts (there `*` stops at `/` and `?` is literal): labels are flat strings, so `*` matches any
 // run, `?` any single character, and `[seq]`/`[!seq]` a character class. Literal keys are unaffected — for a
 // pattern with no glob metacharacter the RegExp is an exact match, so existing configs score identically.
+
+/** Count the backtracking-capable wildcard GROUPS this fnmatch compiler will emit: one per raw `*` (each
+ *  compiles to a `.*` below), with NO `**`-is-one-group rule — unlike change-guardrail's path-glob counter,
+ *  this compiler has no globstar concept, so `**` is two `.*` groups, not one (#9994). `?` is not counted (it
+ *  compiles to a single `.`, which cannot backtrack ambiguously), and neither are `[…]` classes. */
+function fnmatchWildcardGroups(pattern: string): number {
+  let count = 0;
+  for (let i = 0; i < pattern.length; i += 1) {
+    if (pattern.charAt(i) === "*") count += 1;
+  }
+  return count;
+}
+
 function labelPatternToRegExp(pattern: string): RegExp {
   const cached = labelPatternRegExpCache.get(pattern);
   if (cached !== undefined) {
@@ -51,13 +64,15 @@ function labelPatternToRegExp(pattern: string): RegExp {
     labelPatternRegExpCache.set(pattern, cached);
     return cached;
   }
-  // Reuses change-guardrail.ts's wildcard-GROUP counting (a `*` here matches the same "any run of chars"
-  // semantics as that glob compiler's `*`, so the same catastrophic-backtracking risk and the same empirically-
-  // safe threshold apply) — an over-complex registry-sourced label_multipliers key degrades to a safe never-match
-  // instead of hanging RegExp.test() on an adversarial near-miss label (#2456). Reachable via the public
-  // score-preview API, the MCP tool, and the per-PR label-audit signal, so one bad registry entry could otherwise
-  // hang scoring for every PR on that repo.
-  if (hasUnsafeWildcardCount(pattern)) {
+  // Reject an over-complex registry-sourced label_multipliers key so it degrades to a safe never-match instead
+  // of hanging RegExp.test() on an adversarial near-miss label (#2456). Reachable via the public score-preview
+  // API, the MCP tool, and the per-PR label-audit signal, so one bad registry entry could otherwise hang
+  // scoring for every PR on that repo. Counting is fnmatch-specific, NOT change-guardrail's path-glob count:
+  // this compiler emits one `.*` per `*` with no `**` pairing (see below), so `**` is TWO backtracking groups
+  // here, not the single `.*` the path compiler collapses it into (#9994) — counting via that predicate would
+  // undercount `**` and admit a glob this compiler builds into a catastrophic-backtracking RegExp. The threshold
+  // itself is the shared MAX_GLOB_WILDCARD_GROUPS, so the two surfaces stay on one empirically-safe boundary.
+  if (fnmatchWildcardGroups(pattern) > MAX_GLOB_WILDCARD_GROUPS) {
     setLabelPatternRegExpCacheEntry(pattern, LABEL_PATTERN_NEVER_MATCHES);
     return LABEL_PATTERN_NEVER_MATCHES;
   }

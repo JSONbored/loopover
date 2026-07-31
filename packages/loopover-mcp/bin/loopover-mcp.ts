@@ -923,6 +923,7 @@ function registerStdioTool<TInput>(
       inputSchema: overrides?.input ?? contract.input,
       outputSchema: contract.output,
       annotations: advertised.annotations,
+      _meta: { category: advertised.category },
     },
     wrapStdioToolHandler(name, () => telemetryState().enabled, handler as (...args: unknown[]) => Promise<unknown>),
   );

@@ -138,6 +138,7 @@ function registerMinerTool<TInput extends z.ZodObject, TOutput extends z.ZodObje
       // The schema OBJECTS, never their `.shape` -- see above.
       inputSchema: contract.input,
       outputSchema: contract.output,
+      _meta: { category: advertised.category },
     },
     handler,
   );

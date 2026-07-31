@@ -39,12 +39,13 @@ describe("validate-mcp invariants", () => {
 
   describe("advertised metadata matches the registry's projection (#9655)", () => {
     const projected = (name: string, overrides: Partial<McpToolDefinition> = {}): McpToolDefinition =>
-      ({ name, title: `${name} title`, description: `${name} description`, annotations: { readOnlyHint: true, destructiveHint: false }, ...overrides }) as McpToolDefinition;
+      ({ name, title: `${name} title`, description: `${name} description`, annotations: { readOnlyHint: true, destructiveHint: false }, category: "utility", ...overrides }) as McpToolDefinition;
     const advertised = (name: string) => ({
       name,
       title: `${name} title`,
       description: `${name} description`,
       annotations: { readOnlyHint: true, destructiveHint: false },
+      _meta: { category: "utility" },
     });
 
     it("passes when every advertised field is the projected one", () => {
@@ -83,6 +84,21 @@ describe("validate-mcp invariants", () => {
       expect(checkAdvertisedMetadata([projected("a")], [{ name: "a", title: "a title", description: "a description" }])).toEqual([
         "a advertises readOnlyHint=undefined, registry says true",
         "a advertises destructiveHint=undefined, registry says false",
+        "a advertises _meta.category=undefined, registry says utility",
+      ]);
+    });
+
+    it("reports a tool advertising no _meta at all (#10038)", () => {
+      // Stdio's locally-registered half and the miner server sent title/description/annotations but
+      // no `_meta`, so half a server's tools/list was uncategorised while the other half (proxied, or
+      // the remote server) was not.
+      const { _meta: _dropped, ...noMeta } = advertised("a");
+      expect(checkAdvertisedMetadata([projected("a")], [noMeta])).toEqual(["a advertises _meta.category=undefined, registry says utility"]);
+    });
+
+    it("reports a _meta.category that disagrees with the registry's (#10038)", () => {
+      expect(checkAdvertisedMetadata([projected("a")], [{ ...advertised("a"), _meta: { category: "admin" } }])).toEqual([
+        "a advertises _meta.category=admin, registry says utility",
       ]);
     });
 

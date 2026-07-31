@@ -4,6 +4,9 @@ import { nowIso } from "../utils/json";
 
 const QUEUE_TREND_WINDOWS_DAYS = [7, 14, 30] as const;
 export const QUEUE_TREND_HISTORY_DAYS = 35;
+/** Per-repo row backstop for the queue-health history read (#10020). Sized for ≥4 snapshots/day across
+ *  `QUEUE_TREND_HISTORY_DAYS` so the time bound (`trendSince`) is the primary constraint. */
+export const QUEUE_TREND_SNAPSHOT_LIMIT = QUEUE_TREND_HISTORY_DAYS * 4;
 
 export type QueueTrendWindow = {
   windowDays: 7 | 14 | 30;

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   commandAuthorizationAllowedRoles,
   commandAuthorizationNeedsMinerDetection,
+  DEFAULT_COMMAND_AUTHORIZATION_POLICY,
   evaluateCommandAuthorization,
   normalizeCommandAuthorizationPolicy,
   summarizeCommandAuthorizationPolicy,
@@ -291,5 +292,22 @@ describe("repo command authorization policy", () => {
     const malformedCommands = normalizeCommandAuthorizationPolicy({ commands: ["preflight"] });
     expect(malformedCommands.warnings).toContain("commandAuthorization.commands must be an object; using command defaults.");
     expect(malformedCommands.policy.commands["queue-summary"]).toEqual(["maintainer", "collaborator"]);
+  });
+
+  it("#9998: returns fresh, non-aliased role arrays on every input and freezes the default", () => {
+    // The record path used a shallow spread, sharing every un-overridden command's array with the module-level
+    // default; a caller mutating a returned array would corrupt the vocabulary for every repo in the isolate.
+    for (const input of [{}, null, { commands: { plan: ["maintainer"] } }] as const) {
+      const policy = normalizeCommandAuthorizationPolicy(input).policy;
+      // `pause` is never overridden by any of these inputs, so it exercises the deep-copied default path.
+      expect(policy.commands["pause"]).not.toBe(DEFAULT_COMMAND_AUTHORIZATION_POLICY.commands["pause"]);
+      expect(policy.commands["pause"]).toEqual(DEFAULT_COMMAND_AUTHORIZATION_POLICY.commands["pause"]);
+    }
+    const review = normalizeCommandAuthorizationPolicy({}).policy.commands["review"];
+    expect(review).toBeDefined();
+    review?.push("pr_author");
+    expect(DEFAULT_COMMAND_AUTHORIZATION_POLICY.commands["review"]).toEqual(["maintainer", "collaborator", "confirmed_miner"]);
+    expect(Object.isFrozen(DEFAULT_COMMAND_AUTHORIZATION_POLICY.commands["generate-tests"])).toBe(true);
+    expect(Object.isFrozen(DEFAULT_COMMAND_AUTHORIZATION_POLICY)).toBe(true);
   });
 });

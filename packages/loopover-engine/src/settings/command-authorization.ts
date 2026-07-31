@@ -43,6 +43,15 @@ export const DEFAULT_COMMAND_AUTHORIZATION_POLICY: RepositoryCommandAuthorizatio
   },
 };
 
+// #9998: freeze the security vocabulary at runtime -- the object, its `default` array, its `commands` record,
+// and every role array inside it -- so a future aliasing regression fails loudly (a strict-mode TypeError on
+// the offending `push`) instead of silently widening a command for every repo in the isolate. Values are
+// unchanged; normalizeCommandAuthorizationPolicy always hands callers a fresh deep copy to mutate.
+for (const roles of Object.values(DEFAULT_COMMAND_AUTHORIZATION_POLICY.commands)) Object.freeze(roles);
+Object.freeze(DEFAULT_COMMAND_AUTHORIZATION_POLICY.default);
+Object.freeze(DEFAULT_COMMAND_AUTHORIZATION_POLICY.commands);
+Object.freeze(DEFAULT_COMMAND_AUTHORIZATION_POLICY);
+
 const COMMAND_AUTHORIZATION_ROLES = new Set<CommandAuthorizationRole>(["maintainer", "collaborator", "pr_author", "confirmed_miner"]);
 // Roles that may remain configured on a maintainer-only command. The clamp drops only the spoofable
 // plain `pr_author` role; `confirmed_miner` survives so a detected miner can self-trigger reruns (#824).
@@ -70,7 +79,12 @@ export function normalizeCommandAuthorizationPolicy(input: unknown): { policy: R
   }
 
   const defaultRoles = normalizeRoleList(input.default, DEFAULT_COMMAND_AUTHORIZATION_POLICY.default, "default", warnings);
-  const commands: Record<string, CommandAuthorizationRole[]> = { ...DEFAULT_COMMAND_AUTHORIZATION_POLICY.commands };
+  // #9998: DEEP-copy the default command arrays, not a shallow spread. A shallow `{ ...DEFAULT...commands }`
+  // shares every un-overridden command's role array with the module-level (now frozen) default, so a caller
+  // that mutated a returned array would corrupt the security vocabulary for every repo in the isolate. This
+  // reuses `clonePolicy` -- the same deep copy the non-record exit already returns -- so both paths hand back
+  // arrays the caller solely owns.
+  const commands: Record<string, CommandAuthorizationRole[]> = clonePolicy(DEFAULT_COMMAND_AUTHORIZATION_POLICY).commands;
   if (input.commands !== undefined) {
     if (isRecord(input.commands)) {
       for (const [command, roles] of Object.entries(input.commands)) {

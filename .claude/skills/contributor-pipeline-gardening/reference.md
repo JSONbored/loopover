@@ -288,8 +288,20 @@ PR through the gate?" If yes, tighten it before filing.
 - `help wanted` — always paired alongside a `gittensor:*` label on a newly-unlocked issue (confirmed
   2026-07-14: the maintainer wants this kept, it "enhances visibility" and isn't redundant with the
   points label).
-- `maintainer-only` + `roadmap` (paired) — the "held" signal. Remove **both** together when unlocking
-  an issue; adding only one without the other is inconsistent with this repo's own convention.
+- `maintainer-only` — a held signal in its own right. **Corrected 2026-07-31:** an earlier version of
+  this file claimed `maintainer-only` + `roadmap` were a *paired* held signal that had to be
+  added/removed together. That is wrong and caused a gardening pass to flag a correctly-labeled issue
+  (#7662) as inconsistent. The three held signals are, per the maintainer:
+  1. the `maintainer-only` label,
+  2. a JSONbored assignee, and
+  3. the absence of any points-bearing `gittensor:*` label.
+
+  Any one of those holds an issue. **An issue is contributor-available only when it is unassigned,
+  carries no `maintainer-only`, and carries a `gittensor:*` label** — which is exactly the filter the
+  50-100+ floor is computed with.
+- `roadmap` — **orthogonal to held/available; it is not a held signal.** It marks roadmap-tracked work
+  and appears on both held and contributor-open issues. Never add it to, or strip it from, an issue as
+  part of changing that issue's availability, and never read it as evidence either way.
 - Never add anything beyond the above to a gardening-generated issue (no `visual`, `orb`, `docker`,
   etc. unless the issue is unambiguously visual/UI, in which case pair `visual` + `gittensor:*` +
   `help wanted` exactly as the existing convention already does for visual bounties).
@@ -386,6 +398,24 @@ Get an issue's GraphQL node ID via `gh api graphql -f query='query { repository(
 ## gh CLI gotchas already hit doing this work
 
 - `gh api graphql -f query=@file.txt` silently fails to read the file — use `-F query=@file.txt`.
+- **Reading** a dependency relationship uses the field `blockedBy` (and its inverse `blocking`), NOT
+  `blockedByIssues` — the latter fails with a cryptic `undefinedField` error on `type Issue` that
+  reads like the whole dependency feature is unavailable on this repo. It isn't; only the field name
+  is different from the `addBlockedBy` **mutation** documented above. Confirmed working 2026-07-31:
+
+  ```graphql
+  query {
+    repository(owner: "JSONbored", name: "loopover") {
+      issue(number: 9216) {
+        blockedBy(first: 10) { nodes { number title state } }
+      }
+    }
+  }
+  ```
+
+  Sweeping every open issue with this (aliased in chunks, same shape as the Pass-1 cross-reference
+  query) is the cheapest way to find work whose blockers have all since closed — Pass 3's
+  "surface now-unblocked follow-on work" step.
 - `gh issue close` has no `--comment-file` flag — use `-c "$(cat file.md)"` (double-quoted, so the
   command substitution's output — including any backticks in the comment text — is treated as one
   literal argument, not re-parsed by bash).

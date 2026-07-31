@@ -82,6 +82,43 @@ describe("runTargetRepoVerification (#8807)", () => {
     expect(spawn).not.toHaveBeenCalled();
   });
 
+  it("SKIPS when detectRepoStack excluded every watch/fix-only script (#10006)", async () => {
+    const { detectRepoStack } = await import("../../packages/loopover-miner/lib/stack-detection");
+    const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "miner-verify-excluded-scripts-"));
+    try {
+      writeFileSync(
+        join(dir, "package.json"),
+        JSON.stringify({
+          scripts: {
+            "test:watch": "vitest",
+            "lint:fix": "eslint --fix .",
+            "build:watch": "tsc -w",
+          },
+        }),
+      );
+      const stack = detectRepoStack(dir);
+      expect(stack).toMatchObject({
+        detected: true,
+        testCommand: null,
+        lintCommand: null,
+        buildCommand: null,
+      });
+      const spawn = vi.fn();
+      const result = await runTargetRepoVerification({
+        worktreeDir: dir,
+        stack,
+        spawn: spawn as never,
+      });
+      expect(result).toEqual({ status: "skipped", reason: "no_commands_detected" });
+      expect(spawn).not.toHaveBeenCalled();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("the default spawn runs shell commands from the cwd, merges output, and enforces the timeout", async () => {
     const ok = await defaultVerificationSpawn("echo hello && echo err 1>&2", { cwd: process.cwd(), timeoutMs: DEFAULT_VERIFICATION_TIMEOUT_MS });
     expect(ok.code).toBe(0);

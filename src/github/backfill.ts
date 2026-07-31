@@ -4883,7 +4883,14 @@ async function githubJsonWithHeaders<T>(
   }
   if (response.status === 304 && options?.allowNotModified) return notModifiedResponse(response);
   if (response.status === 404 && token && token === env.GITHUB_PUBLIC_TOKEN) {
-    response = await timeoutFetch(url, { headers: githubRestHeaders(undefined, options?.validators) });
+    // The bypass is a liveness guarantee that must survive the fallback: a read whose whole purpose is a live
+    // base tip must not silently become a cacheable `commit`-class GET answered from the persistent response
+    // cache on this retry (#10032). Propagate the flag exactly as the first request spreads it above. The
+    // rateLimitAdmission omission below is separate and deliberate -- it is NOT propagated here on purpose.
+    response = await timeoutFetch(url, {
+      headers: githubRestHeaders(undefined, options?.validators),
+      ...(options?.bypassResponseCache ? { githubBypassResponseCache: true } : {}),
+    });
     // Do not persist unauthenticated fallback rate-limit headers into the shared REST backoff state.
     // GitHub's unauthenticated REST bucket is capped below LOW_REST_RATE_LIMIT_REMAINING, so recording
     // successful fallback responses can incorrectly stall later token-backed segment jobs.

@@ -50,6 +50,13 @@ describe("reachableNpmScripts", () => {
 describe("resolveCheckerHome", () => {
   const base = { scripts: {}, reachableFromTestCi: new Set<string>(), workflowText: "", otherScriptSources: [], allowed: {} };
 
+  // Assembled at runtime: `check-import-specifiers.ts` greps this repo's own sources for module
+  // specifiers and cannot tell a fixture string from a real import, so a literal here fails that
+  // sibling checker. The value under test is identical either way.
+  const fromSpecifier = (name: string, suffix = "") => `import { helper } from "./${name}${suffix}";\n`;
+  const exportFromSpecifier = (name: string, suffix = "") => `export { helper } from "./${name}${suffix}";\n`;
+  const dynamicImportSpecifier = (name: string, suffix = "") => `await import("./${name}${suffix}");\n`;
+
   it("finds a checker wired into the local gate", () => {
     const home = resolveCheckerHome({
       ...base,
@@ -69,12 +76,47 @@ describe("resolveCheckerHome", () => {
   });
 
   it("treats a checker imported by a sibling script as a shared module, not an entry point", () => {
-    // Assembled at runtime rather than written as a literal: `check-import-specifiers.ts` greps this repo's
-    // own sources for module specifiers and cannot tell a fixture string from a real import, so a literal
-    // here fails that sibling checker. The value under test is identical either way.
-    const importLine = `import { x } from "./${"check-foo-core"}.ts";`;
-    const home = resolveCheckerHome({ ...base, file: "check-foo-core.ts", otherScriptSources: [importLine] });
-    expect(home.kind).toBe("imported");
+    const home = resolveCheckerHome({ ...base, file: "check-foo-core.ts", otherScriptSources: [fromSpecifier("check-foo-core")] });
+    expect(home).toEqual({ kind: "imported", via: "check-foo-core" });
+  });
+
+  it("matches import specifiers with .js and .ts suffixes, re-exports, and dynamic import (#10048)", () => {
+    expect(resolveCheckerHome({ ...base, file: "check-foo.ts", otherScriptSources: [fromSpecifier("check-foo", ".js")] })).toEqual({
+      kind: "imported",
+      via: "check-foo",
+    });
+    expect(resolveCheckerHome({ ...base, file: "check-foo.ts", otherScriptSources: [fromSpecifier("check-foo", ".ts")] })).toEqual({
+      kind: "imported",
+      via: "check-foo",
+    });
+    expect(resolveCheckerHome({ ...base, file: "check-foo.ts", otherScriptSources: [exportFromSpecifier("check-foo")] })).toEqual({
+      kind: "imported",
+      via: "check-foo",
+    });
+    expect(resolveCheckerHome({ ...base, file: "check-foo.ts", otherScriptSources: [dynamicImportSpecifier("check-foo")] })).toEqual({
+      kind: "imported",
+      via: "check-foo",
+    });
+  });
+
+  it("does not treat a // comment mention as an imported home (#10048)", () => {
+    expect(resolveCheckerHome({ ...base, file: "check-foo.ts", otherScriptSources: ["// see check-foo.ts for the pattern\n"] })).toEqual({ kind: "none" });
+  });
+
+  it("does not treat a /* */ block comment mention as an imported home (#10048)", () => {
+    expect(resolveCheckerHome({ ...base, file: "check-foo.ts", otherScriptSources: ["/* check-foo.ts is the sibling */\n"] })).toEqual({ kind: "none" });
+  });
+
+  it("does not treat a near-miss specifier as an imported home (#10048)", () => {
+    // `./check-foobar` must not mark `check-foo.ts` as imported — the old substring scan would.
+    expect(resolveCheckerHome({ ...base, file: "check-foo.ts", otherScriptSources: [fromSpecifier("check-foobar")] })).toEqual({ kind: "none" });
+  });
+
+  it("does not treat the check-fixture-clock-races prose mention as an imported home (#10048)", () => {
+    // Live sentence from scripts/check-fixture-clock-races.ts:95 — the bug that motivated the tighter matcher.
+    const prose =
+      "      // STRING LITERALS, exactly as check-turbo-typecheck-inputs.ts's own fixtures do. Those are not real\n";
+    expect(resolveCheckerHome({ ...base, file: "check-turbo-typecheck-inputs.ts", otherScriptSources: [prose] })).toEqual({ kind: "none" });
   });
 
   it("accepts an explicit allowlist entry, carrying its reason", () => {

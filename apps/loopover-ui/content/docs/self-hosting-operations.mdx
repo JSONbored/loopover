@@ -678,8 +678,23 @@ three standalone bindings (`AI_EMBED`, `AI_VISION`, `AI_ADVISORY`).
       description:
         "Metadata only — never the prompt or completion text. $ai_generation's own optional content fields ($ai_input/$ai_output_choices) are never populated, the same redaction posture as every other capture path on this page.",
     },
+    {
+      title: "Model labelling",
+      description:
+        "$ai_model is always the model the provider actually resolved — on the failure path too. The core passes a Workers-AI model id that every self-host provider discards, so it is resolved to the real one (or <provider>-default) before capture and never reported verbatim.",
+    },
+    {
+      title: "Degraded requests",
+      description:
+        "selfhost_ai_degraded is emitted for a request that reached NO model: reason=circuit_open (a provider skipped while its breaker is in cooldown) or reason=chain_exhausted (every provider in AI_PROVIDER threw). It shares the $ai_trace_id of the surrounding attempts, and is deliberately NOT an $ai_generation — no model ran, so none is credited with the failure and the spend/token aggregates stay a record of real calls.",
+    },
   ]}
 />
+
+A CLI-subscription provider declining an embedding request (`claude_code_no_embed` / `codex_no_embed`)
+is routing working as designed — it is how an embed reaches an embed-capable provider — so it is exempt
+from both captures. A chain with **no** embed-capable member at all is a real misconfiguration, but it
+is reported once at boot by the RAG embed preflight rather than once per chunk batch.
 
 ## PostHog alert classes and runbook
 

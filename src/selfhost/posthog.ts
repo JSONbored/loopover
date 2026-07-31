@@ -415,28 +415,42 @@ export type PostHogAiGenerationEvent = {
  *  exception by the caller's own existing `selfhost_ai_provider_failed` log line (forwarded via
  *  {@link forwardStructuredLogToPostHog}) -- this event exists for spend/latency/failure ANALYTICS, a
  *  parallel concern to error tracking, not a substitute gate for it. */
+/** #10185: the OTel trace a capture already runs inside IS the trace PostHog should group by.
+ *  operationalProperties has computed it (as plain `trace_id`/`span_id`) since #8296, but
+ *  {@link capturePostHogAiGeneration} then minted a fresh randomUUID() for $ai_trace_id and threw it away --
+ *  so every generation became its own single-event trace and the review pipeline that produced them was
+ *  never visible as one thing (13,428 events across 13,428 traces on the live project).
+ *
+ *  withReviewPipelineSpan (./review-tracing.ts) wraps a whole review, so every provider attempt inside it --
+ *  both dual-review legs, every retry, every self-consistency run, the RAG embeddings -- shares that span's
+ *  trace id and now nests under one PostHog trace.
+ *
+ *  randomUUID() stays the fallback, NOT an error: AI_EMBED/AI_VISION/AI_ADVISORY and any call made outside a
+ *  review span legitimately have no ambient trace, and an orphan trace is still a valid (if less useful)
+ *  event. `$ai_span_id` is only set when there IS a real span to name. Shared (#10186) so the degradation
+ *  event below lands in the SAME trace as the attempts around it instead of re-deriving this. */
+function aiTraceProperties(operational: Record<string, unknown>): Record<string, unknown> {
+  const traceId = typeof operational.trace_id === "string" ? operational.trace_id : undefined;
+  const spanId = typeof operational.span_id === "string" ? operational.span_id : undefined;
+  return { $ai_trace_id: traceId ?? randomUUID(), ...(spanId === undefined ? {} : { $ai_span_id: spanId }) };
+}
+
+/** #10185: a real group, so "which repo costs the most in AI spend" is answerable in PostHog rather than only
+ *  in the ai_usage_events SQL table. Deliberately reads the ALREADY-PROCESSED `repo` off
+ *  {@link operationalProperties} rather than the caller's raw context: under the shared central key that value
+ *  is HMAC-anonymized, and when the anon secret has not been injected the key is dropped entirely. Reusing it
+ *  means the group inherits that fail-closed behavior for free -- a raw private repo name can never reach the
+ *  group index by this path. */
+function repoGroup(operational: Record<string, unknown>): { groups?: { repo: string } } {
+  return typeof operational.repo === "string" ? { groups: { repo: operational.repo } } : {};
+}
+
 export function capturePostHogAiGeneration(event: PostHogAiGenerationEvent): void {
   if (!active || !client) return;
   const operational = operationalProperties(event.context);
-  // #10185: the OTel trace this call already runs inside IS the trace PostHog should group by.
-  // operationalProperties has computed it (as plain `trace_id`/`span_id`) since #8296, but this
-  // function then minted a fresh randomUUID() for $ai_trace_id and threw it away -- so every
-  // generation became its own single-event trace and the review pipeline that produced them was
-  // never visible as one thing (13,428 events across 13,428 traces on the live project).
-  //
-  // withReviewPipelineSpan (./review-tracing.ts) wraps a whole review, so every provider attempt
-  // inside it -- both dual-review legs, every retry, every self-consistency run, the RAG embeddings
-  // -- shares that span's trace id and now nests under one PostHog trace.
-  //
-  // randomUUID() stays the fallback, NOT an error: AI_EMBED/AI_VISION/AI_ADVISORY and any call made
-  // outside a review span legitimately have no ambient trace, and an orphan trace is still a valid
-  // (if less useful) event. `$ai_span_id` is only set when there IS a real span to name.
-  const traceId = typeof operational.trace_id === "string" ? operational.trace_id : undefined;
-  const spanId = typeof operational.span_id === "string" ? operational.span_id : undefined;
   const properties: Record<string, unknown> = {
     ...operational,
-    $ai_trace_id: traceId ?? randomUUID(),
-    ...(spanId === undefined ? {} : { $ai_span_id: spanId }),
+    ...aiTraceProperties(operational),
     // Names the node in the trace tree. Provider-and-kind rather than the tool/feature name, because
     // that is what this function actually knows -- the feature lives in ai_usage_events, not here.
     $ai_span_name: `ai.${event.requestKind}/${nonBlank(event.provider) ?? "unknown"}`,
@@ -460,13 +474,67 @@ export function capturePostHogAiGeneration(event: PostHogAiGenerationEvent): voi
     distinctId: POSTHOG_DISTINCT_ID,
     event: event.requestKind === "embedding" ? "$ai_embedding" : "$ai_generation",
     properties,
-    // #10185: a real group, so "which repo costs the most in AI spend" is answerable in PostHog
-    // rather than only in the ai_usage_events SQL table. Deliberately reads the ALREADY-PROCESSED
-    // `repo` off operationalProperties rather than event.context: under the shared central key that
-    // value is HMAC-anonymized, and when the anon secret has not been injected the key is dropped
-    // entirely. Reusing it means the group inherits that fail-closed behavior for free -- a raw
-    // private repo name can never reach the group index by this path.
-    ...(typeof operational.repo === "string" ? { groups: { repo: operational.repo } } : {}),
+    ...repoGroup(operational),
+  });
+}
+
+/** Why a provider attempt never reached a model (#10186). `circuit_open`: the provider was SKIPPED because its
+ *  breaker is in cooldown. `chain_exhausted`: every provider in the chain threw, so the caller degrades. */
+export type PostHogAiDegradationReason = "circuit_open" | "chain_exhausted";
+
+export const POSTHOG_AI_DEGRADED_EVENT = "selfhost_ai_degraded";
+
+/** One AI request that produced NO generation. Same metadata-only posture as
+ *  {@link PostHogAiGenerationEvent}: provider/model ids, the reason, and an already-redacted error string. */
+export type PostHogAiDegradationEvent = {
+  reason: PostHogAiDegradationReason;
+  /** The provider that was skipped (`circuit_open`), or the last one tried (`chain_exhausted`). */
+  provider: string;
+  /** The model that WOULD have run, resolved by ai.ts's `resolveTelemetryModel` -- never the raw `@cf/`
+   *  request-layer placeholder, for exactly the reason #10186 exists. */
+  model: string;
+  requestKind: PostHogAiGenerationRequestKind;
+  /** Every provider tried, for `chain_exhausted` -- names WHICH chain failed, not just its last member. */
+  providers?: readonly string[] | undefined;
+  context?: Record<string, unknown> | undefined;
+  error?: unknown;
+};
+
+/** Capture an AI request that degraded WITHOUT any model being called (#10186). No-op when PostHog is off.
+ *
+ *  Deliberately NOT a `$ai_generation` with `$ai_is_error: true`: no model ran, so booking it against one
+ *  would credit that model with a failure it never had -- the same false signal this issue's own headline bug
+ *  produces -- and would drag zero-token, zero-cost rows into the spend and token aggregates. It carries the
+ *  shared `$ai_trace_id` instead, so a degraded request still joins to the real attempts around it in the same
+ *  trace, and PostHog's LLM-analytics views stay a faithful record of calls that actually happened.
+ *
+ *  Both reasons were previously invisible to PostHog as anything but an absence: a provider in cooldown emits
+ *  a Prometheus counter and throws, and chain exhaustion writes a console line. Neither produced an `$ai_*`
+ *  event, so a fully degraded provider looked exactly like a provider with no traffic. */
+export function capturePostHogAiDegradation(event: PostHogAiDegradationEvent): void {
+  if (!active || !client) return;
+  const operational = operationalProperties(event.context);
+  const properties: Record<string, unknown> = {
+    ...operational,
+    ...aiTraceProperties(operational),
+    $ai_span_name: `ai.${event.requestKind}/${nonBlank(event.provider) ?? "unknown"}/${event.reason}`,
+    $ai_model: nonBlank(event.model) ?? "unknown",
+    $ai_provider: nonBlank(event.provider) ?? "unknown",
+    $ai_is_error: true,
+    reason: event.reason,
+    request_kind: event.requestKind,
+    environment: posthogEnvironment,
+  };
+  if (event.providers && event.providers.length > 0) properties.providers = [...event.providers];
+  if (event.error !== undefined) {
+    const error = event.error instanceof Error ? event.error : new Error(String(event.error));
+    properties.$ai_error = error.message.slice(0, 500);
+  }
+  client.capture({
+    distinctId: POSTHOG_DISTINCT_ID,
+    event: POSTHOG_AI_DEGRADED_EVENT,
+    properties,
+    ...repoGroup(operational),
   });
 }
 

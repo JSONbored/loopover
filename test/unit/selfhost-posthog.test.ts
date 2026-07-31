@@ -24,6 +24,7 @@ vi.mock("../../src/selfhost/otel", () => ({
 }));
 
 import {
+  capturePostHogAiDegradation,
   capturePostHogAiGeneration,
   capturePostHogError,
   capturePostHogReviewFailure,
@@ -31,6 +32,7 @@ import {
   forwardStructuredLogToPostHog,
   initPostHog,
   installPostHogStructuredLogForwarding,
+  POSTHOG_AI_DEGRADED_EVENT,
   POSTHOG_MONITOR_HEARTBEAT_EVENT,
   resetPostHogForTest,
   resolvePostHogRelease,
@@ -762,6 +764,113 @@ describe("capturePostHogAiGeneration (#8296)", () => {
     } finally {
       delete process.env.POSTHOG_MIN_SEVERITY;
     }
+  });
+});
+
+describe("capturePostHogAiDegradation (#10186 — a request that reached NO model)", () => {
+  const BASE = {
+    reason: "circuit_open" as const,
+    provider: "claude-code",
+    model: "claude-sonnet-5",
+    requestKind: "review" as const,
+  };
+
+  it("is a no-op when PostHog is unconfigured", () => {
+    capturePostHogAiDegradation(BASE);
+    expect(mocks.capture).not.toHaveBeenCalled();
+  });
+
+  it("emits a NATIVE event, never a $ai_generation — no model ran, so none may be blamed", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiDegradation(BASE);
+    const call = mocks.capture.mock.calls[0]?.[0];
+    // Booking this as $ai_generation would credit claude-sonnet-5 with a failure it never had -- the exact
+    // false signal #10186 exists to remove -- and drag a zero-token, zero-cost row into the spend aggregates.
+    expect(call.event).toBe(POSTHOG_AI_DEGRADED_EVENT);
+    expect(call.event).not.toBe("$ai_generation");
+    expect(call.properties.reason).toBe("circuit_open");
+    expect(call.properties.request_kind).toBe("review");
+    expect(call.properties.$ai_model).toBe("claude-sonnet-5");
+    expect(call.properties.$ai_provider).toBe("claude-code");
+    expect(call.properties.$ai_is_error).toBe(true);
+    expect(call.properties.environment).toBe("production");
+    // Never a spend/token figure: this request consumed neither.
+    expect("$ai_total_cost_usd" in call.properties).toBe(false);
+    expect("$ai_input_tokens" in call.properties).toBe(false);
+  });
+
+  it("shares the ambient OTel trace so a degraded request joins the real attempts around it", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue({ trace_id: "review-trace-1", span_id: "provider-span-1" });
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiDegradation(BASE);
+    const { properties } = mocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_trace_id).toBe("review-trace-1");
+    expect(properties.$ai_span_id).toBe("provider-span-1");
+    expect(properties.$ai_span_name).toBe("ai.review/claude-code/circuit_open");
+  });
+
+  it("falls back to a minted trace id, and omits $ai_span_id, outside any span", async () => {
+    otelMocks.currentOtelTraceIds.mockReturnValue(undefined);
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiDegradation(BASE);
+    const { properties } = mocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_trace_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect("$ai_span_id" in properties).toBe(false);
+  });
+
+  it("names the chain that gave up, not just its last member", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiDegradation({ ...BASE, reason: "chain_exhausted", providers: ["claude-code", "ollama"] });
+    const { properties } = mocks.capture.mock.calls[0]?.[0];
+    expect(properties.reason).toBe("chain_exhausted");
+    expect(properties.providers).toEqual(["claude-code", "ollama"]);
+  });
+
+  it("omits `providers` when absent, and when present-but-empty", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiDegradation(BASE);
+    capturePostHogAiDegradation({ ...BASE, providers: [] });
+    expect("providers" in mocks.capture.mock.calls[0]?.[0].properties).toBe(false);
+    expect("providers" in mocks.capture.mock.calls[1]?.[0].properties).toBe(false);
+  });
+
+  it("records a bounded error message from an Error, and from a non-Error thrown value", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiDegradation({ ...BASE, error: new Error("y".repeat(600)) });
+    capturePostHogAiDegradation({ ...BASE, error: "just a string" });
+    expect(mocks.capture.mock.calls[0]?.[0].properties.$ai_error).toHaveLength(500);
+    expect(mocks.capture.mock.calls[1]?.[0].properties.$ai_error).toBe("just a string");
+  });
+
+  it("omits $ai_error entirely when no error was supplied", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiDegradation(BASE);
+    expect("$ai_error" in mocks.capture.mock.calls[0]?.[0].properties).toBe(false);
+  });
+
+  it("falls back to 'unknown' for a blank provider/model rather than emitting an empty label", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiDegradation({ ...BASE, provider: "   ", model: "" });
+    const { properties } = mocks.capture.mock.calls[0]?.[0];
+    expect(properties.$ai_provider).toBe("unknown");
+    expect(properties.$ai_model).toBe("unknown");
+    expect(properties.$ai_span_name).toBe("ai.review/unknown/circuit_open");
+  });
+
+  it("stamps the repo group when there is a repo, and omits `groups` when there is not", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiDegradation({ ...BASE, context: { repo: "owner/repo", pullNumber: 7 } });
+    capturePostHogAiDegradation(BASE);
+    expect(mocks.capture.mock.calls[0]?.[0].groups).toEqual({ repo: "owner/repo" });
+    expect("groups" in mocks.capture.mock.calls[1]?.[0]).toBe(false);
+  });
+
+  it("never carries prompt/response content", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    capturePostHogAiDegradation({ ...BASE, error: new Error("boom") });
+    const keys = Object.keys(mocks.capture.mock.calls[0]?.[0].properties);
+    expect(keys).not.toContain("$ai_input");
+    expect(keys).not.toContain("$ai_output_choices");
   });
 });
 

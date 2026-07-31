@@ -745,6 +745,132 @@ describe("$ai_generation PostHog capture at the chain chokepoint (#8296)", () =>
     await createChainAi([provider]).run("m", { prompt: "x" });
     expect(posthogMocks.capture).not.toHaveBeenCalled();
   });
+
+  // #10186: the headline bug. Every one of the 33 failed AI events on the live project was labelled with a
+  // model that never ran, so a breakdown by model showed `@cf/*` ids at a 100% error rate on a deployment
+  // that has never called Workers AI, while the real failing providers read 0%.
+  it("REGRESSION (#10186): the FAILURE path reports the model the provider would have run, not the discarded `@cf/` placeholder", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const provider = {
+      name: "claude-code",
+      ai: {
+        telemetryModel: () => "claude-sonnet-5",
+        run: async () => { throw new Error("claude_code_error_429"); },
+      },
+    };
+    await expect(createChainAi([provider]).run("@cf/openai/gpt-oss-120b", { prompt: "x" })).rejects.toThrow(/429/);
+    const generation = posthogMocks.capture.mock.calls.find((call) => call[0].event === "$ai_generation")?.[0];
+    expect(generation.properties.$ai_model).toBe("claude-sonnet-5");
+    expect(generation.properties.$ai_error).toBe("claude_code_error_429");
+  });
+
+  it("REGRESSION (#10186): the success and the failure path agree on the model for the SAME configured provider", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    // The deliverable stated as an invariant: same provider, same passed placeholder, same label either way.
+    const telemetryModel = (): string => "qwen3:8b";
+    await createChainAi([{ name: "ollama", ai: { telemetryModel, run: async () => ({ response: "ok" }) } }])
+      .run("@cf/meta/llama-3.1-8b-instruct-fp8-fast", { prompt: "x" });
+    await expect(
+      createChainAi([{ name: "ollama", ai: { telemetryModel, run: async () => { throw new Error("down"); } } }])
+        .run("@cf/meta/llama-3.1-8b-instruct-fp8-fast", { prompt: "x" }),
+    ).rejects.toThrow("down");
+    const generations = posthogMocks.capture.mock.calls.filter((call) => call[0].event === "$ai_generation");
+    expect(generations[0]?.[0].properties.$ai_is_error).toBe(false);
+    expect(generations[1]?.[0].properties.$ai_is_error).toBe(true);
+    expect(generations[0]?.[0].properties.$ai_model).toBe("qwen3:8b");
+    expect(generations[1]?.[0].properties.$ai_model).toBe("qwen3:8b");
+  });
+
+  it("an embedding request is labelled with the EMBED model, not the chat model (#10186)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    // The live `@cf/baai/bge-m3` mislabelling: 8 embed failures reported a Workers-AI id for a call that
+    // would have run bge-m3:latest.
+    const ai = createOpenAiCompatibleAi({ baseUrl: "http://localhost:11434/v1", model: "qwen3:8b", embedModel: "bge-m3:latest", providerName: "ollama" });
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("nope", { status: 400 })));
+    await expect(createChainAi([{ name: "ollama", ai }]).run("@cf/baai/bge-m3", { text: ["chunk"] })).rejects.toThrow(/ai_embed_http_400/);
+    const generation = posthogMocks.capture.mock.calls.find((call) => call[0].event === "$ai_embedding")?.[0];
+    expect(generation.properties.$ai_model).toBe("bge-m3:latest");
+  });
+
+  // #10186 (second half): the degradation paths, which previously left NOTHING in PostHog -- so a provider
+  // that was failing or being skipped for every request looked exactly like a provider with no traffic.
+  it("captures a circuit_open degradation when a provider in cooldown is SKIPPED", async () => {
+    vi.useFakeTimers();
+    try {
+      await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+      const provider = {
+        name: "claude-code",
+        ai: { telemetryModel: () => "claude-sonnet-5", run: async () => { throw new Error("claude_code_error_429"); } },
+      };
+      const ai = createChainAi([provider]);
+      // Three consecutive failures latch the breaker (AI_PROVIDER_FAILURE_THRESHOLD).
+      for (let i = 0; i < 3; i += 1) await expect(ai.run("m", { prompt: "x" })).rejects.toThrow();
+      posthogMocks.capture.mockClear();
+      await expect(ai.run("m", { prompt: "x" })).rejects.toThrow(/circuit_open/);
+      const degraded = posthogMocks.capture.mock.calls.find((call) => call[0].event === "selfhost_ai_degraded")?.[0];
+      expect(degraded.properties.reason).toBe("circuit_open");
+      expect(degraded.properties.$ai_provider).toBe("claude-code");
+      // Labelled with the model it WOULD have run — the skip is still attributable to a real model.
+      expect(degraded.properties.$ai_model).toBe("claude-sonnet-5");
+      expect(degraded.properties.$ai_error).toMatch(/circuit_open/);
+      // The skipped attempt is NOT also booked as a generation: no model was called.
+      expect(posthogMocks.capture.mock.calls.some((call) => call[0].event === "$ai_generation")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("captures a chain_exhausted degradation naming every provider that was tried", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const ai = createChainAi([
+      { name: "claude-code", ai: { telemetryModel: () => "claude-sonnet-5", run: async () => { throw new Error("claude_code_error_429"); } } },
+      { name: "ollama", ai: { telemetryModel: () => "qwen3:8b", run: async () => { throw new Error("ai_http_500"); } } },
+    ]);
+    await expect(ai.run("@cf/openai/gpt-oss-120b", { prompt: "x", repoFullName: "owner/repo" })).rejects.toThrow(/ai_http_500/);
+    const degraded = posthogMocks.capture.mock.calls.find((call) => call[0].event === "selfhost_ai_degraded")?.[0];
+    expect(degraded.properties.reason).toBe("chain_exhausted");
+    expect(degraded.properties.providers).toEqual(["claude-code", "ollama"]);
+    // Attributed to the provider that ran LAST, which is the one `lastError` belongs to.
+    expect(degraded.properties.$ai_provider).toBe("ollama");
+    expect(degraded.properties.$ai_model).toBe("qwen3:8b");
+    expect(degraded.properties.repo).toBe("owner/repo");
+    // Both per-provider failures are still captured individually alongside it.
+    expect(posthogMocks.capture.mock.calls.filter((call) => call[0].event === "$ai_generation")).toHaveLength(2);
+  });
+
+  it("does NOT capture chain_exhausted when EVERY provider merely declined an embed request (one exemption rule, both sinks)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    // A CLI-subscription chain declining an embed is routing working as designed, not a degradation. Its own
+    // fail-loud signal is shouldWarnRagEmbedUnavailable's boot warning, not one event per chunk batch.
+    const ai = createChainAi([
+      { name: "claude-code", ai: { run: async () => { throw new Error("claude_code_no_embed"); } } },
+      { name: "codex", ai: { run: async () => { throw new Error("codex_no_embed"); } } },
+    ]);
+    await expect(ai.run("m", { text: ["chunk"] })).rejects.toThrow();
+    expect(posthogMocks.capture).not.toHaveBeenCalled();
+  });
+
+  it("DOES capture chain_exhausted when a routing decline is mixed with a real failure", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    // The exemption is all-or-nothing: one genuine failure means the chain really did degrade.
+    const ai = createChainAi([
+      { name: "claude-code", ai: { run: async () => { throw new Error("claude_code_no_embed"); } } },
+      { name: "ollama", ai: { telemetryModel: () => "bge-m3:latest", run: async () => { throw new Error("ai_embed_http_400"); } } },
+    ]);
+    await expect(ai.run("m", { text: ["chunk"] })).rejects.toThrow(/ai_embed_http_400/);
+    const degraded = posthogMocks.capture.mock.calls.find((call) => call[0].event === "selfhost_ai_degraded")?.[0];
+    expect(degraded.properties.reason).toBe("chain_exhausted");
+    expect(degraded.properties.$ai_model).toBe("bge-m3:latest");
+  });
+
+  it("an EMPTY chain exhausts without a degradation event, and labels its log line from the passed model or 'unknown'", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    // There is no provider to attribute to and nothing was skipped -- `no_ai_providers` is a configuration
+    // state the boot preflight owns, not a runtime degradation of a working chain.
+    await expect(createChainAi([]).run("real-model", { prompt: "x" })).rejects.toThrow(/no_ai_providers/);
+    await expect(createChainAi([]).run("", { prompt: "x" })).rejects.toThrow(/no_ai_providers/);
+    expect(posthogMocks.capture).not.toHaveBeenCalled();
+  });
 });
 
 describe("withAiGenerationCapture (#8296 — AI_EMBED/AI_VISION/AI_ADVISORY, ungoverned single-provider bindings)", () => {
@@ -793,7 +919,7 @@ describe("withAiGenerationCapture (#8296 — AI_EMBED/AI_VISION/AI_ADVISORY, ung
     await ai.run("", { prompt: "x" });
     const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
     expect(properties.$ai_provider).toBe("ai_vision");
-    expect(properties.$ai_model).toBe("default");
+    expect(properties.$ai_model).toBe("ai_vision-default");
     expect(properties.$ai_input_tokens).toBe(3);
   });
 
@@ -804,20 +930,65 @@ describe("withAiGenerationCapture (#8296 — AI_EMBED/AI_VISION/AI_ADVISORY, ung
     expect(posthogMocks.capture.mock.calls[0]?.[0].properties.$ai_model).toBe("configured-model");
   });
 
-  it("falls back to 'default' model on the failure path when the model arg is empty", async () => {
+  it("falls back to '<provider>-default' on the failure path when the model arg is empty (#10186)", async () => {
     await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
     const ai = withAiGenerationCapture("ai_embed", { run: async () => { throw new Error("down"); } });
     await expect(ai.run("", { text: ["chunk"] })).rejects.toThrow("down");
-    expect(posthogMocks.capture.mock.calls[0]?.[0].properties.$ai_model).toBe("default");
+    // #10186: a bare "default" said nothing about WHICH binding failed; every unlabelled failure across
+    // AI_EMBED/AI_VISION/AI_ADVISORY collapsed into one indistinguishable bucket.
+    expect(posthogMocks.capture.mock.calls[0]?.[0].properties.$ai_model).toBe("ai_embed-default");
   });
 
-  it("falls back to 'default' model when the result carries no usage at all AND the model arg is empty", async () => {
+  it("falls back to '<provider>-default' when the result carries no usage at all AND the model arg is empty (#10186)", async () => {
     await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
     const ai = withAiGenerationCapture("ai_advisory", { run: async () => ({ response: "ok" }) });
     await ai.run("", { prompt: "x" });
     const { properties } = posthogMocks.capture.mock.calls[0]?.[0];
     expect(properties.$ai_provider).toBe("ai_advisory");
-    expect(properties.$ai_model).toBe("default");
+    expect(properties.$ai_model).toBe("ai_advisory-default");
+  });
+
+  it("REGRESSION (#10186): a `@cf/` placeholder never reaches $ai_model, on the success OR the failure path", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    // Workers AI has no live binding anywhere on a self-host (src/services/ai-summaries.ts), so the core's
+    // `@cf/`-prefixed id is a request-layer placeholder resolveModel discards -- reporting it labels the call
+    // with a model that never ran. The adapter here implements telemetryModel, as every real one does.
+    const ai = withAiGenerationCapture("ai_vision", {
+      telemetryModel: () => "qwen3-vl:8b-instruct",
+      run: async () => { throw new Error("down"); },
+    });
+    await expect(ai.run("@cf/openai/gpt-oss-120b", { prompt: "x" })).rejects.toThrow("down");
+    expect(posthogMocks.capture.mock.calls[0]?.[0].properties.$ai_model).toBe("qwen3-vl:8b-instruct");
+  });
+
+  it("REGRESSION (#10186): with no telemetryModel to consult, a `@cf/` id still degrades to '<provider>-default' rather than passing through", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    const ai = withAiGenerationCapture("ai_embed", { run: async () => { throw new Error("down"); } });
+    await expect(ai.run("@cf/baai/bge-m3", { text: ["chunk"] })).rejects.toThrow("down");
+    expect(posthogMocks.capture.mock.calls[0]?.[0].properties.$ai_model).toBe("ai_embed-default");
+  });
+
+  it("prefers an adapter's own telemetryModel over a truthy non-@cf model arg on the failure path (#10186)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    // "visual-vision" is a real live example: a passed id that is not `@cf/`-prefixed but is still NOT the
+    // model the binding resolves once its own configured model wins in resolveModel.
+    const ai = withAiGenerationCapture("ai_vision", {
+      telemetryModel: () => "qwen3-vl:8b-instruct",
+      run: async () => { throw new Error("down"); },
+    });
+    await expect(ai.run("visual-vision", { prompt: "x" })).rejects.toThrow("down");
+    expect(posthogMocks.capture.mock.calls[0]?.[0].properties.$ai_model).toBe("qwen3-vl:8b-instruct");
+  });
+
+  it("ignores a telemetryModel that resolves to blank, falling through to the model arg (#10186)", async () => {
+    await initPostHog({ POSTHOG_API_KEY: "phc_test_key" } as unknown as NodeJS.ProcessEnv);
+    // Codex's own resolution returns "" when nothing is configured (the CLI picks the account default).
+    const ai = withAiGenerationCapture("ai_advisory", {
+      telemetryModel: () => "   ",
+      run: async () => ({ response: "ok" }),
+    });
+    await ai.run("real-model", { prompt: "x" });
+    expect(posthogMocks.capture.mock.calls[0]?.[0].properties.$ai_model).toBe("real-model");
   });
 });
 
@@ -1202,7 +1373,7 @@ describe("routeProviders (#dual-ai-combiner — address one provider by name for
     });
   });
 
-  it("provider routing falls back to \"default\" when both the adapter's usage AND the requested model are empty", async () => {
+  it("provider routing falls back to \"<provider>-default\" when both the adapter's usage AND the requested model are empty (#10186)", async () => {
     const ai = createChainAi([
       {
         name: "codex",
@@ -1213,7 +1384,7 @@ describe("routeProviders (#dual-ai-combiner — address one provider by name for
     ]);
     await expect(ai.run("", { prompt: "x" })).resolves.toMatchObject({
       response: "ok",
-      usage: { provider: "codex", model: "default", inputTokens: 3 },
+      usage: { provider: "codex", model: "codex-default", inputTokens: 3 },
     });
   });
 

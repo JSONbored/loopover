@@ -27,7 +27,7 @@ import { buildPullRequestAdvisory } from "../rules/advisory";
 import { recordAuditEvent, getDecryptedRepositoryAiKey, getRepository, listCheckSummaries, listPullRequestFiles } from "../db/repositories";
 import { registerHeldLock, unregisterHeldLock } from "./held-lock-registry";
 import { recordRoutingShadow } from "../services/reviewer-routing";
-import { scoreJudgmentAgreement } from "../review/judgment-agreement";
+import { judgmentAgreementMetrics, scoreJudgmentAgreement } from "../review/judgment-agreement";
 import { persistDecisionReplayPrompt } from "../review/decision-replay";
 import { createInstallationToken } from "../github/app";
 import type { AgentActionMode } from "../settings/agent-execution";
@@ -68,7 +68,7 @@ import {
   resolveEnrichmentLinkedIssue,
   resolveEnrichmentLinkedIssueNumbers,
 } from "../review/enrichment-wire";
-import { capturePostHogReviewFailure } from "../selfhost/posthog";
+import { capturePostHogAiMetric, capturePostHogReviewFailure } from "../selfhost/posthog";
 import { isReputationEnabled, shouldSkipAiForReputation } from "../review/reputation-wire";
 import { isConvergenceRepoAllowed } from "../review/cutover-gate";
 import { resolveConvergedFeature } from "../review/feature-activation";
@@ -973,6 +973,20 @@ export async function runAiReviewForAdvisory(
         detail: vote.votedFail ? "flagged a blocking defect" : "did not flag a blocking defect",
         metadata: { repoFullName: args.repoFullName, vote: vote.votedFail ? "fail" : "non_fail" },
       }).catch(() => undefined);
+      // #10226: the same stance, onto the review's own AI trace, so PostHog can read cost and model against
+      // whether the review actually flagged anything. Best-effort like the audit write above -- the capture is
+      // a no-op when PostHog is off and never throws.
+      capturePostHogAiMetric({
+        name: "reviewer_vote_fail",
+        value: vote.votedFail ? 1 : 0,
+        context: { repo: args.repoFullName, pullNumber: args.pr.number, agent: vote.reviewer },
+      });
+    }
+    // #10226: inter-run agreement, emitted ONCE per review rather than per finding. The helper decides what is
+    // worth reporting -- an uncorroborated review yields nothing, so no fabricated agreement floor lands in an
+    // average alongside real scores.
+    for (const metric of judgmentAgreementMetrics([...result.reviewerVotes, ...result.selfConsistencySamples])) {
+      capturePostHogAiMetric({ ...metric, context: { repo: args.repoFullName, pullNumber: args.pr.number } });
     }
     // #8229 stage 1: the report-only routing shadow — records what evidence-weighted routing WOULD have
     // preferred for this repo (audit metadata only; the recap aggregates it). Same best-effort discipline

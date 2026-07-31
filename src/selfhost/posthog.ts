@@ -484,6 +484,45 @@ export type PostHogAiDegradationReason = "circuit_open" | "chain_exhausted";
 
 export const POSTHOG_AI_DEGRADED_EVENT = "selfhost_ai_degraded";
 
+export const POSTHOG_AI_METRIC_EVENT = "$ai_metric";
+
+/** One review-quality measurement, joined to the AI trace that produced it (#10226).
+ *
+ *  Rich quality signal -- reviewer stances, inter-run agreement, precision -- already reaches SQL, Grafana and
+ *  the maintainer recap, but never PostHog, so cost and model could not be read against whether the review was
+ *  any GOOD. `$ai_metric` is PostHog's own event for exactly this, and the property contract below is taken
+ *  verbatim from the SDK's `captureTraceMetric` (@posthog/core): name, value, trace id -- with the value
+ *  STRINGIFIED, which is the SDK's own choice, matched here so a hand-built event and an SDK-built one are
+ *  indistinguishable downstream.
+ *
+ *  The trace id defaults to the ambient OTel trace, the same one every generation under this review already
+ *  carries, so the metric lands on the trace rather than floating free. No trace, no event -- an orphan
+ *  quality score joins to nothing and would only inflate counts. */
+export function capturePostHogAiMetric(event: {
+  name: string;
+  value: number | string | boolean;
+  /** Extra low-cardinality context (e.g. which reviewer) -- routed through the shared operational allowlist,
+   *  so anything not on it is dropped exactly like every other capture path in this file. */
+  context?: Record<string, unknown> | undefined;
+}): void {
+  if (!active || !client) return;
+  const traceId = currentOtelTraceIds()?.trace_id;
+  if (!traceId) return;
+  const operational = operationalProperties(event.context);
+  client.capture({
+    distinctId: POSTHOG_DISTINCT_ID,
+    event: POSTHOG_AI_METRIC_EVENT,
+    properties: {
+      ...operational,
+      $ai_trace_id: traceId,
+      $ai_metric_name: event.name,
+      $ai_metric_value: String(event.value),
+      environment: posthogEnvironment,
+    },
+    ...repoGroup(operational),
+  });
+}
+
 /** One AI request that produced NO generation. Same metadata-only posture as
  *  {@link PostHogAiGenerationEvent}: provider/model ids, the reason, and an already-redacted error string. */
 export type PostHogAiDegradationEvent = {

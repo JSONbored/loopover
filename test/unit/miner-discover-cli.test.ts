@@ -2650,7 +2650,9 @@ describe("#10000: --dry-run makes zero contribution-profile-cache writes", () =>
 
   it("still threads an injected resolveContributionProfiles on both dry-run and real-run paths", async () => {
     vi.spyOn(console, "log").mockImplementation(() => undefined);
-    const resolveContributionProfiles = vi.fn(async () => new Map());
+    const resolveContributionProfiles = vi.fn(
+      async (_repos: string[], _ctx?: Record<string, unknown>) => new Map(),
+    );
     const dryDir = mkdtempSync(join(tmpdir(), "miner-discover-inject-dry-"));
     const realDir = mkdtempSync(join(tmpdir(), "miner-discover-inject-real-"));
     roots.push(dryDir, realDir);

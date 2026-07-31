@@ -147,9 +147,17 @@ function surfaceGithubWarnings(source: string, warnings: string[]): void {
   }
 }
 
-async function computeCandidates(query: DiscoveryIndexQuery, deps: DiscoveryQueryDeps): Promise<DiscoveryIndexCandidate[]> {
+interface ComputeCandidatesResult {
+  candidates: DiscoveryIndexCandidate[];
+  /** False when any fetchRepoIssues/searchIssues call returned warnings — an incomplete live snapshot is
+   *  inconclusive, not evidence, and must not be promoted into the shared result cache. */
+  complete: boolean;
+}
+
+async function computeCandidates(query: DiscoveryIndexQuery, deps: DiscoveryQueryDeps): Promise<ComputeCandidatesResult> {
   const seen = new Set<string>();
   const candidates: DiscoveryIndexCandidate[] = [];
+  let complete = true;
 
   const addCandidate = (repoFullName: string, issue: GitHubIssue, verdict: AiPolicyVerdict): void => {
     const candidate = buildCandidate(repoFullName, issue, verdict);
@@ -174,6 +182,7 @@ async function computeCandidates(query: DiscoveryIndexQuery, deps: DiscoveryQuer
     const verdict = await resolveRepoAiPolicy(repoFullName, deps);
     if (!verdict.allowed) continue;
     const { issues, warnings } = await deps.github.fetchRepoIssues(repoFullName);
+    if (warnings.length > 0) complete = false;
     surfaceGithubWarnings(repoFullName, warnings);
     for (const issue of issues) addCandidate(repoFullName, issue, verdict);
   }
@@ -181,6 +190,7 @@ async function computeCandidates(query: DiscoveryIndexQuery, deps: DiscoveryQuer
   for (const org of query.orgs) {
     const searchQuery = `org:${org} state:open type:issue`;
     const { issues, warnings } = await deps.github.searchIssues(searchQuery);
+    if (warnings.length > 0) complete = false;
     surfaceGithubWarnings(searchQuery, warnings);
     await addFromSearch(issues);
   }
@@ -188,14 +198,15 @@ async function computeCandidates(query: DiscoveryIndexQuery, deps: DiscoveryQuer
   for (const term of query.searchTerms) {
     const searchQuery = `${term} state:open type:issue`;
     const { issues, warnings } = await deps.github.searchIssues(searchQuery);
+    if (warnings.length > 0) complete = false;
     surfaceGithubWarnings(searchQuery, warnings);
     await addFromSearch(issues);
   }
 
   // Deterministic ordering so pagination offsets are stable across a cache lifetime (and identical for two
-  // requests that happen to race a cache miss — see computeCandidates' getOrCompute caller).
+  // requests that happen to race a cache miss — see runDiscoveryQuery's result-cache caller).
   candidates.sort((a, b) => (a.repoFullName === b.repoFullName ? a.issueNumber - b.issueNumber : a.repoFullName.localeCompare(b.repoFullName)));
-  return candidates;
+  return { candidates, complete };
 }
 
 /**
@@ -210,10 +221,17 @@ async function computeCandidates(query: DiscoveryIndexQuery, deps: DiscoveryQuer
 export async function runDiscoveryQuery(query: DiscoveryIndexQuery, deps: DiscoveryQueryDeps): Promise<DiscoveryIndexResponse> {
   const scopeKey = scopeCacheKey(query);
   let missed = false;
-  const allCandidates = await deps.resultCache.getOrCompute(scopeKey, deps.cacheTtlMs, () => {
+  let allCandidates = deps.resultCache.get(scopeKey);
+  if (allCandidates === undefined) {
     missed = true;
-    return computeCandidates(query, deps);
-  });
+    const computed = await computeCandidates(query, deps);
+    allCandidates = computed.candidates;
+    // An incomplete live snapshot is inconclusive, not evidence — return it to this caller but never
+    // promote it into the shared result cache (mirrors listMigrationFilenamesAtRef's truncated-tree posture).
+    if (computed.complete) {
+      deps.resultCache.set(scopeKey, allCandidates, deps.cacheTtlMs);
+    }
+  }
   incr("discovery_index_cache_lookups_total", { cache: "result", outcome: missed ? "miss" : "hit" });
   const offset = decodeCursor(query.cursor);
   const page = allCandidates.slice(offset, offset + query.limit);

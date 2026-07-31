@@ -2009,7 +2009,11 @@ function priceByokUsageUsd(
  *  the already-camelCase envelope `coerceAiUsage` reads from `env.AI.run()`. Anthropic's `usage` can also
  *  carry `cache_creation_input_tokens`/`cache_read_input_tokens`, priced differently than `input_tokens` —
  *  intentionally not read here, since `callAiProvider` never sends `cache_control`, so Anthropic never
- *  populates them on this path. Private to this file, but not private in effect: `ai-slop.ts`'s BYOK branch
+ *  populates them on this path. #10235: the CLI-subprocess path (`mergeUsage`, src/selfhost/ai.ts) now DOES
+ *  sum those two tiers, because Claude Code caches internally and was therefore reporting ~2 input tokens per
+ *  call. That divergence is deliberate, not drift: reading them here would be dead code today, and if
+ *  `cache_control` is ever introduced it would mis-price, since the sum below feeds
+ *  BYOK_MODEL_PRICING_USD_PER_MTOK at the fresh-input rate while a cache read bills at a reduced one. Private to this file, but not private in effect: `ai-slop.ts`'s BYOK branch
  *  depends on this normalization too, indirectly, via `callAiProvider`'s returned `usage` field — if this
  *  ever moves, update both call sites. */
 function coerceByokUsage(

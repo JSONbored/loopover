@@ -1,5 +1,13 @@
 # Changelog
 
+## [3.18.2](https://github.com/JSONbored/loopover/compare/engine-v3.18.1...engine-v3.18.2) (2026-07-31)
+
+
+### Fixes
+
+* **engine:** normalize actionClass once and read policies/buckets own-property in write-rate-limit ([#10073](https://github.com/JSONbored/loopover/issues/10073)) ([9e7aa8d](https://github.com/JSONbored/loopover/commit/9e7aa8d25e1585368d9a92561a8d49716680edb9)), closes [#9999](https://github.com/JSONbored/loopover/issues/9999)
+* **engine:** stop parseAmsPolicySpec aliasing the frozen DEFAULT_AMS_POLICY_SPEC sub-objects ([#10069](https://github.com/JSONbored/loopover/issues/10069)) ([6bdb776](https://github.com/JSONbored/loopover/commit/6bdb776763cbb0d0d01bc2e8464372613f9bcd0c)), closes [#9995](https://github.com/JSONbored/loopover/issues/9995)
+
 ## [3.18.1](https://github.com/JSONbored/loopover/compare/engine-v3.18.0...engine-v3.18.1) (2026-07-31)
 
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.18.2](https://github.com/JSONbored/loopover/compare/miner-v3.18.1...miner-v3.18.2) (2026-07-31)
+
+
+### Fixes
+
+* **miner:** scope checkSubmissionFreshness's claim match to the candidate's own forge host ([#10104](https://github.com/JSONbored/loopover/issues/10104)) ([1a3a502](https://github.com/JSONbored/loopover/commit/1a3a502827250ae7934132301fae64ce494bff1c))
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.18.1 to ^3.18.2
+    * @loopover/engine bumped from ^3.18.1 to ^3.18.2
+
 ## [3.18.1](https://github.com/JSONbored/loopover/compare/miner-v3.18.0...miner-v3.18.1) (2026-07-31)
 
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## [3.21.2](https://github.com/JSONbored/loopover/compare/miner-v3.21.1...miner-v3.21.2) (2026-08-01)
+
+
+### Chores
+
+* **miner:** Synchronize engine-and-dependents versions
+
+
+### Dependencies
+
+* The following workspace dependencies were updated
+  * dependencies
+    * @loopover/contract bumped from ^3.21.1 to ^3.21.2
+    * @loopover/engine bumped from ^3.21.1 to ^3.21.2
+
 ## [3.21.1](https://github.com/JSONbored/loopover/compare/miner-v3.21.0...miner-v3.21.1) (2026-07-31)
 
 

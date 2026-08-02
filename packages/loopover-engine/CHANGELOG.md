@@ -1,5 +1,12 @@
 # Changelog
 
+## [3.21.2](https://github.com/JSONbored/loopover/compare/engine-v3.21.1...engine-v3.21.2) (2026-08-01)
+
+
+### Fixes
+
+* **miner:** count the prompt-cache tiers as input tokens in the engine's own parsers ([#10252](https://github.com/JSONbored/loopover/issues/10252)) ([f0cdfbe](https://github.com/JSONbored/loopover/commit/f0cdfbe111ae66d25651e76b12ed61d856925c6f))
+
 ## [3.21.1](https://github.com/JSONbored/loopover/compare/engine-v3.21.0...engine-v3.21.1) (2026-07-31)
 
 

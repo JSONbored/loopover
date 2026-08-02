@@ -29,7 +29,7 @@ describe("ci.yml skips the heavy jobs for draft pull requests", () => {
     expect(pullRequest.types).toEqual(["opened", "synchronize", "reopened", "ready_for_review"]);
   });
 
-  it.each(["validate-code", "validate-tests"])(
+  it.each(["validate-code", "validate-tests", "drift-checks-history"])(
     "%s's if-condition requires github.event.pull_request.draft != true alongside the existing push/path-filter checks",
     (jobName) => {
       const job = record(jobs[jobName], `jobs.${jobName}`);
@@ -51,8 +51,12 @@ describe("ci.yml skips the heavy jobs for draft pull requests", () => {
   });
 
   it("validate still aggregates the gated jobs and treats a skipped dependency as success", () => {
+    // Enumerated rather than "contains", so a NEW gated job cannot be added without either being
+    // aggregated here or consciously left out: a job nothing depends on cannot fail the PR, which would
+    // make it look like a gate while gating nothing. `drift-checks-history` (#10269) is in the list for
+    // exactly that reason.
     const job = record(jobs.validate, "jobs.validate");
-    expect(job.needs).toEqual(["changes", "validate-code", "validate-tests"]);
+    expect(job.needs).toEqual(["changes", "validate-code", "validate-tests", "drift-checks-history"]);
     expect(String(job.if)).toBe("${{ always() }}");
   });
 });

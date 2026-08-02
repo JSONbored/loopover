@@ -83,16 +83,43 @@ export function isBreaking(subject: string): boolean {
   return /^[a-zA-Z]+(?:\([^)]*\))?!:/.test(subject.trim());
 }
 
+/** PURE. Is this file's diff nothing but a `"version"` bump in a package manifest (#10286)?
+ *
+ *  release-please's own release commit is `chore(release): …` and its whole job is to write the new version
+ *  into `<pkg>/package.json` -- a path {@link publishedSourcePrefixes} matches by construction. So without
+ *  this, the guard fires on EVERY release PR: the one commit shape nobody hand-writes, that a maintainer
+ *  therefore cannot fix by rewording, and whose flagged "would never reach npm" claim is exactly backwards
+ *  (it is the commit that performs the release). That is precisely the ordinary-case firing this file's own
+ *  `isPublishedFile` note warns gets a guard switched off.
+ *
+ *  Deliberately narrower than matching the `chore(release):` subject: a hand-written commit that borrows the
+ *  subject while editing a dependency range or `exports` map is still a real stranded release, so the
+ *  exemption is keyed on what the diff DID, not on what the subject claims. An empty diff (the default
+ *  accessor, or a caller that cannot supply one) proves nothing and stays flagged. */
+export function isVersionOnlyManifestBump(file: string, diff: string): boolean {
+  if (!file.endsWith("/package.json")) return false;
+  const changed = diff
+    .split("\n")
+    .filter((line) => /^[+-]/.test(line) && !/^(\+\+\+|---)/.test(line));
+  if (changed.length === 0) return false;
+  return changed.every((line) => /^[+-]\s*"version":\s*"[^"]*",?\s*$/.test(line));
+}
+
 /**
  * PURE. The commits that change published source under a type release-please will not release.
  *
  * A commit carrying a `Release-As:` footer is exempt: that is release-please's own documented mechanism for
  * forcing a version, so a commit using it has already answered this check's question.
+ *
+ * A path whose only change is a manifest version bump is dropped from consideration (#10286) -- see
+ * {@link isVersionOnlyManifestBump}. A commit left with no other published-source path is release-please's
+ * own release commit and is not stranded.
  */
 export function findStrandedCommits(
   commits: readonly CommitUnderReview[],
   config: ReleasePleaseConfig,
   bodyOf: (sha: string) => string = () => "",
+  diffOf: (sha: string, file: string) => string = () => "",
 ): StrandedCommit[] {
   const hidden = hiddenCommitTypes(config);
   const prefixes = publishedSourcePrefixes(config);
@@ -102,8 +129,10 @@ export function findStrandedCommits(
     if (type === null || !hidden.has(type) || isBreaking(commit.subject)) continue;
     const paths = commit.files.filter((file) => isPublishedFile(file) && prefixes.some((prefix) => file.startsWith(prefix)));
     if (paths.length === 0) continue;
+    const releasable = paths.filter((file) => !isVersionOnlyManifestBump(file, diffOf(commit.sha, file)));
+    if (releasable.length === 0) continue;
     if (/^\s*Release-As:/im.test(bodyOf(commit.sha))) continue;
-    stranded.push({ sha: commit.sha, subject: commit.subject, type, paths });
+    stranded.push({ sha: commit.sha, subject: commit.subject, type, paths: releasable });
   }
   return stranded;
 }
@@ -165,7 +194,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     process.exit(0);
   }
   const config = readConfig();
-  const stranded = findStrandedCommits(commits, config, (sha) => git(["log", "-1", "--format=%b", sha]));
+  const stranded = findStrandedCommits(
+    commits,
+    config,
+    (sha) => git(["log", "-1", "--format=%b", sha]),
+    (sha, file) => git(["show", "--format=", "--unified=0", sha, "--", file]),
+  );
   if (stranded.length === 0) {
     process.stdout.write(`releasable-commit-types: ${commits.length} commit(s) checked, none would be stranded.\n`);
     process.exit(0);

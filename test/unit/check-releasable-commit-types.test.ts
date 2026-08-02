@@ -7,6 +7,7 @@ import {
   hiddenCommitTypes,
   isBreaking,
   isPublishedFile,
+  isVersionOnlyManifestBump,
   publishedSourcePrefixes,
   readConfig,
   type CommitUnderReview,
@@ -154,6 +155,72 @@ describe("findStrandedCommits", () => {
 
   it("does not mistake a mention of Release-As mid-sentence for the footer", () => {
     expect(findStrandedCommits([commit()], CONFIG, () => "we could use Release-As: here")).toHaveLength(1);
+  });
+
+  // #10286: release-please's own release commit is `chore(release):` and writes <pkg>/package.json, which
+  // publishedSourcePrefixes matches by construction -- so before this, the guard fired on every release PR.
+  it("REGRESSION: allows release-please's own release commit -- a version-only manifest bump", () => {
+    const releaseCommit = commit({
+      subject: "chore(release): cut ui-kit v1.7.0",
+      files: ["packages/loopover-ui-kit/package.json"],
+    });
+    const diff = ['-  "version": "1.6.0",', '+  "version": "1.7.0",'].join("\n");
+    expect(findStrandedCommits([releaseCommit], CONFIG, () => "", () => diff)).toEqual([]);
+  });
+
+  it("still flags a chore that changes a manifest BEYOND its version", () => {
+    // The reason the exemption keys on the diff rather than the `chore(release):` subject: a dependency range
+    // is part of what a consumer resolves, so stranding one is the very bug this guard exists for.
+    const depEdit = commit({
+      subject: "chore(release): cut ui-kit v1.7.0",
+      files: ["packages/loopover-ui-kit/package.json"],
+    });
+    const diff = ['-  "version": "1.6.0",', '+  "version": "1.7.0",', '-    "recharts": "^3.9.0"', '+    "recharts": "^3.10.1"'].join("\n");
+    expect(findStrandedCommits([depEdit], CONFIG, () => "", () => diff)).toHaveLength(1);
+  });
+
+  it("reports only the paths that are not version-only bumps when a commit mixes both", () => {
+    const mixed = commit({
+      subject: "chore(release): cut ui-kit v1.7.0",
+      files: ["packages/loopover-ui-kit/package.json", "packages/loopover-ui-kit/src/components/chart.tsx"],
+    });
+    const diffOf = (_sha: string, file: string) =>
+      file.endsWith("package.json") ? '-  "version": "1.6.0",\n+  "version": "1.7.0",' : "-old\n+new";
+    const [stranded] = findStrandedCommits([mixed], CONFIG, () => "", diffOf);
+    expect(stranded?.paths).toEqual(["packages/loopover-ui-kit/src/components/chart.tsx"]);
+  });
+
+  it("keeps flagging when no diff is available -- an unprovable exemption is not an exemption", () => {
+    const releaseCommit = commit({
+      subject: "chore(release): cut ui-kit v1.7.0",
+      files: ["packages/loopover-ui-kit/package.json"],
+    });
+    expect(findStrandedCommits([releaseCommit], CONFIG)).toHaveLength(1);
+  });
+});
+
+describe("isVersionOnlyManifestBump", () => {
+  const bump = '-  "version": "1.6.0",\n+  "version": "1.7.0",';
+
+  it("accepts a manifest whose only changed lines are the version field", () => {
+    expect(isVersionOnlyManifestBump("packages/loopover-ui-kit/package.json", bump)).toBe(true);
+  });
+
+  it("ignores the diff header lines rather than counting them as changes", () => {
+    const withHeader = ["--- a/packages/loopover-ui-kit/package.json", "+++ b/packages/loopover-ui-kit/package.json", bump].join("\n");
+    expect(isVersionOnlyManifestBump("packages/loopover-ui-kit/package.json", withHeader)).toBe(true);
+  });
+
+  it("rejects a non-manifest file however its diff reads", () => {
+    expect(isVersionOnlyManifestBump("packages/loopover-ui-kit/src/version.ts", bump)).toBe(false);
+  });
+
+  it("rejects an empty diff -- proves nothing, so it cannot exempt", () => {
+    expect(isVersionOnlyManifestBump("packages/loopover-ui-kit/package.json", "")).toBe(false);
+  });
+
+  it("rejects a manifest diff carrying any non-version change", () => {
+    expect(isVersionOnlyManifestBump("packages/loopover-ui-kit/package.json", `${bump}\n+  "sideEffects": false,`)).toBe(false);
   });
 
   it("ignores a non-conventional subject rather than guessing at its type", () => {

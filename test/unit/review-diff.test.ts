@@ -168,6 +168,26 @@ describe("buildUnifiedReviewDiff — the #1528 fix: never silently drop the file
   });
 });
 
+describe("buildUnifiedReviewDiff — the #10327 fix: a patch-less file's header+suffix respects the remaining budget", () => {
+  it("falls through to the truncation-notice-and-break path when a long path makes header+suffix overflow, staying within budget", () => {
+    // remaining >= 240 (past the `remaining < 240` break), but a ~250-char path makes header+suffix (~310) exceed it,
+    // so the patch-less branch must break with the truncation notice rather than silently overflow `budget` (#10327).
+    const longPath = "a".repeat(250);
+    const budget = 250;
+    const diff = buildUnifiedReviewDiff([{ path: longPath, patch: undefined, status: "added", additions: 0, deletions: 0 }], budget);
+    expect(diff.length).toBeLessThanOrEqual(budget); // the invariant the patched branch already holds
+    expect(diff).toContain("…diff truncated"); // the drop is announced, not silent
+    expect(diff).not.toContain("no inline patch"); // the overflowing file was not appended
+  });
+
+  it("renders a short-path patch-less file unchanged when it comfortably fits (the header+suffix fits, so no break)", () => {
+    const diff = buildUnifiedReviewDiff([{ path: "logo.png", patch: undefined, status: "added", additions: 0, deletions: 0 }]);
+    expect(diff).toContain("### logo.png (added) +0/-0");
+    expect(diff).toContain("(no inline patch — binary or too large)");
+    expect(diff).not.toContain("…diff truncated"); // it fit, so no truncation
+  });
+});
+
 describe("keepHighSignalHunks — non-positive budget guard (#5849)", () => {
   it("returns only the truncation marker when the budget is zero", () => {
     expect(keepHighSignalHunks("@@ a\n+x\n+y", 0)).toBe("… (this file's diff truncated)");

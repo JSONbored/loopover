@@ -19,16 +19,16 @@
   },
   "dependencies": {
     "@cloudflare/containers": "^0.3.7",
-    "@hono/node-server": "^2.0.11",
+    "@hono/node-server": "^2.0.12",
     "@loopover/engine": "*",
-    "@posthog/cli": "0.9.1",
-    "hono": "^4.12.31",
-    "posthog-node": "^5.46.1"
+    "@posthog/cli": "0.9.4",
+    "hono": "^4.12.33",
+    "posthog-node": "^5.47.3"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260724.1",
+    "@cloudflare/workers-types": "^5.20260801.1",
     "@types/node": "^22.20.1",
     "typescript": "^5.9.3",
-    "wrangler": "^4.115.0"
+    "wrangler": "^4.118.0"
   }
 }

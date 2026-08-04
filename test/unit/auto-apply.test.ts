@@ -612,6 +612,25 @@ describe("writeShadowOverride / loadShadowOverride / deleteShadowOverride", () =
     await writeShadowOverride(env, "g", { confidenceFloor: 0.95 }, "2026-06-25T00:00:00Z");
     expect(tables.shadow.get("g")?.clear_at).toBe("2099-01-01T00:00:00Z");
   });
+  // #10291: the shadow pair only ported the "preserve the column" half of #stale-clear-at-fix, not the
+  // "drop it once expired" half — mirror the live-side "does NOT resurrect an ALREADY-EXPIRED override" test.
+  it("#10291: writeShadowOverride DROPS an already-expired clear_at (and does not resurrect the expired floor) when nowIso is passed", async () => {
+    const { env, tables } = fakeEnv();
+    tables.shadow.set("g", { confidence_floor: 0.8, scope_cap_files: null, scope_cap_lines: null, validated_until: "2026-06-19T00:00:00Z", clear_at: "2020-01-01T00:00:00Z" });
+    await writeShadowOverride(env, "g", { scopeCap: { files: 3, lines: 100 } }, "2026-06-25T00:00:00Z", "2026-06-20T00:00:00Z");
+    const row = tables.shadow.get("g");
+    expect(row?.clear_at).toBeNull(); // the lapsed clear_at is dropped, not carried forward
+    expect(row?.confidence_floor).toBeNull(); // the expired floor is not resurrected into the merge
+    expect(row?.scope_cap_files).toBe(3); // the new write still applies normally
+  });
+  it("#10291: loadShadowOverride reads an already-expired clear_at row as cleared when nowIso is after it", async () => {
+    const { env, tables } = fakeEnv();
+    // Only a confidence_floor gated by an expired clear_at: rowToOverride drops it → the override is empty → null.
+    tables.shadow.set("g", { confidence_floor: 0.8, scope_cap_files: null, scope_cap_lines: null, validated_until: "2026-06-19T00:00:00Z", clear_at: "2020-01-01T00:00:00Z" });
+    expect(await loadShadowOverride(env, "g", "2026-06-20T00:00:00Z")).toBeNull();
+    // Without nowIso (the pre-#10291 caller convention) the row is still read active — additive, non-breaking.
+    expect(await loadShadowOverride(env, "g")).not.toBeNull();
+  });
   it("loadShadowOverride returns null when the row maps to an EMPTY override (rowToOverride → null arm)", async () => {
     const { env, tables } = fakeEnv();
     tables.shadow.set("g", { confidence_floor: null, scope_cap_files: null, scope_cap_lines: null, validated_until: "2026-06-25T00:00:00Z" });

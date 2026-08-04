@@ -276,10 +276,14 @@ async function loadShadowOverrideRow(env: StorageEnv, project: string): Promise<
 /** Write a recommended override to the SHADOW queue with a future validated_until (the soak deadline). MERGED
  *  over any existing shadow row so a partial write never erases a prior queued tunable. (#partial-overwrite-fix)
  *  Preserves any existing clear_at rather than silently nulling it via INSERT OR REPLACE (#stale-clear-at-fix). */
-export async function writeShadowOverride(env: StorageEnv, project: string, o: TunableOverride, validatedUntilIso: string): Promise<void> {
+export async function writeShadowOverride(env: StorageEnv, project: string, o: TunableOverride, validatedUntilIso: string, nowIso?: string): Promise<void> {
   const existingRow = await loadShadowOverrideRow(env, project);
-  const merged = mergeOverride(existingRow ? rowToOverride(existingRow) : null, o);
-  const clearAt = existingRow?.clear_at ?? null;
+  // #10291: mirror writeLiveOverride exactly. Thread nowIso through the merge read AND the clear_at
+  // preservation so an already-lapsed clear_at is DROPPED rather than resurrected — the shadow side only
+  // ported the "preserve the column" half of the #stale-clear-at-fix, not the "drop it once expired" half,
+  // so a stale shadow tightening could be promoted to live after its own operator-set expiry had passed.
+  const merged = mergeOverride(existingRow ? rowToOverride(existingRow, nowIso) : null, o);
+  const clearAt = existingRow && !clearAtIsExpired(existingRow.clear_at, nowIso) ? existingRow.clear_at : null;
   await storage(env)
     .prepare(
       "INSERT OR REPLACE INTO tunables_overrides_shadow (project, confidence_floor, scope_cap_files, scope_cap_lines, applied_at, validated_until, clear_at) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP, ?, ?)",
@@ -289,10 +293,12 @@ export async function writeShadowOverride(env: StorageEnv, project: string, o: T
 }
 
 /** Load the pending shadow override for a project (null if none / DB error). */
-export async function loadShadowOverride(env: StorageEnv, project: string): Promise<ShadowOverride | null> {
+export async function loadShadowOverride(env: StorageEnv, project: string, nowIso?: string): Promise<ShadowOverride | null> {
   const row = await loadShadowOverrideRow(env, project);
   if (!row) return null;
-  const override = rowToOverride(row);
+  // #10291: thread nowIso (mirroring loadOverride) so a shadow row whose clear_at has already lapsed is read
+  // back as cleared, not still-active — rowToOverride applies the same clearAtIsExpired rule the live read uses.
+  const override = rowToOverride(row, nowIso);
   return override ? { override, validatedUntil: row.validated_until } : null;
 }
 

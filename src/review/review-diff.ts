@@ -185,7 +185,15 @@ export function buildUnifiedReviewDiff(files: ReviewDiffFile[], budget: number =
       break;
     }
     if (!file.patch) {
-      diff += `${header}(no inline patch — binary or too large)\n\n`;
+      const suffix = `(no inline patch — binary or too large)\n\n`;
+      // Mirror the patched branch's `header.length + body.length + 2 > remaining` reservation: a long
+      // enough `file.path` can make the header+suffix overflow `budget`, so fall through to the same
+      // truncation-notice-and-break path the `remaining < 240` case uses rather than silently overflowing (#10327).
+      if (header.length + suffix.length > remaining) {
+        diff += truncationNotice;
+        break;
+      }
+      diff += `${header}${suffix}`;
       continue;
     }
     let body = file.patch;

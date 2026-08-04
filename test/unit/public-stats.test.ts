@@ -76,6 +76,15 @@ describe("isPublicStatsEnabled", () => {
       expect(isPublicStatsEnabled({ LOOPOVER_PUBLIC_STATS: v })).toBe(false);
   });
 
+  it("#10329: trims the flag before the anchored regex, matching pr-reconciliation.ts", () => {
+    // A trailing newline / surrounding whitespace (wrangler secret from a file, a CI-injected var) must not
+    // defeat the operator's clear intent to enable it. Also confirms a genuinely unrecognised value stays off.
+    for (const on of ["true\n", " 1 ", "\ton\t", "  yes"])
+      expect(isPublicStatsEnabled({ LOOPOVER_PUBLIC_STATS: on }), on).toBe(true);
+    for (const off of ["  false  ", "\n0\n", "  maybe  "])
+      expect(isPublicStatsEnabled({ LOOPOVER_PUBLIC_STATS: off }), off).toBe(false);
+  });
+
   it("a present manifest override wins outright over the env flag, in both directions (#6275)", () => {
     expect(isPublicStatsEnabled({ LOOPOVER_PUBLIC_STATS: "false" }, { present: true, enabled: true })).toBe(true);
     expect(isPublicStatsEnabled({ LOOPOVER_PUBLIC_STATS: "true" }, { present: true, enabled: false })).toBe(false);

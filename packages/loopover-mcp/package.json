@@ -48,8 +48,8 @@
   "dependencies": {
     "@loopover/contract": "^3.21.2",
     "@loopover/engine": "^3.21.2",
-    "@modelcontextprotocol/sdk": "1.29.0",
-    "posthog-node": "^5.46.1",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "posthog-node": "^5.47.3",
     "zod": "^4.4.3"
   },
   "devDependencies": {

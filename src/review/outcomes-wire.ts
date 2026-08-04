@@ -429,10 +429,28 @@ export async function recordPrOutcome(
     return;
 
   const decision = merged ? "merged" : "closed";
+  const targetId = reviewAuditTargetId(repoFullName, pr.number);
+  // The bot's own recordTerminalActionOutcome writes the pr_outcome row first (right after the merge/close
+  // mutation); GitHub then delivers the `closed` webhook for the SAME action, landing here second. Probe for
+  // the existing row before touching the counter so loopover_pr_outcomes_total is incremented exactly once per
+  // real outcome — mirroring recordTerminalActionOutcome's own guard (#10332).
+  try {
+    const existing = await env.DB.prepare(
+      "SELECT 1 AS x FROM review_audit WHERE target_id = ? AND event_type = 'pr_outcome' LIMIT 1",
+    )
+      .bind(targetId)
+      .first<{ x: number }>();
+    if (existing) return;
+  } catch (error) {
+    // An unreadable ledger must not suppress a genuinely-new outcome — a duplicate row is strictly better than a
+    // lost one (fleet export + computeGateEval both read the LATEST pr_outcome per target). Fail open, like the
+    // direct path.
+    console.warn(JSON.stringify({ event: "pr_outcome_webhook_probe_error", message: errorMessage(error).slice(0, 160) }));
+  }
+
   // Observability (#reviews-dashboard): realized human outcome (merged vs closed) for the Grafana panel + as the
   // ground truth to compare against the engine's gate verdicts.
   incr("loopover_pr_outcomes_total", { outcome: decision });
-  const targetId = reviewAuditTargetId(repoFullName, pr.number);
 
   await appendReviewAudit(env, {
     project: repoFullName.slice(0, 200),

@@ -22,6 +22,7 @@ import {
   type PlannedAgentAction,
 } from "../../src/settings/agent-actions";
 import { recordAuditEvent } from "../../src/db/repositories";
+import { renderMetrics, resetMetrics } from "../../src/selfhost/metrics";
 import { upsertRepoFocusManifest } from "../../src/signals/focus-manifest-loader";
 import type { GitHubPullRequestPayload } from "../../src/types";
 import { createTestEnv } from "../helpers/d1";
@@ -265,6 +266,46 @@ describe("recordTerminalActionOutcome — webhook-independent ground truth (#882
     });
     await recordTerminalActionOutcome(env, "owner/repo", 42, "closed");
     expect(await reviewAuditRows(env, "pr_outcome")).toHaveLength(1);
+  });
+
+  it("counts loopover_pr_outcomes_total exactly ONCE in the realistic terminal-action-first ordering (#10332)", async () => {
+    // Production ordering: the bot's own recordTerminalActionOutcome writes first (right after the merge/close
+    // mutation), THEN GitHub delivers the `closed` webhook and recordPrOutcome runs for the SAME PR. Before the
+    // fix, the webhook path always incremented the counter, so one real outcome was counted twice.
+    const env = createTestEnv();
+    resetMetrics();
+    await recordTerminalActionOutcome(env, "owner/repo", 42, "closed");
+    await recordPrOutcome(env, "pull_request", {
+      action: "closed",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number: 42 }),
+      sender: { login: "loopover[bot]", type: "Bot" },
+    });
+    const counter = (await renderMetrics())
+      .split("\n")
+      .find((l) => l.startsWith('loopover_pr_outcomes_total{outcome="closed"}'));
+    expect(counter).toBe('loopover_pr_outcomes_total{outcome="closed"} 1'); // once total, not twice
+    expect(await reviewAuditRows(env, "pr_outcome")).toHaveLength(1); // and the row stays deduplicated too
+  });
+
+  it("recordPrOutcome fails OPEN when its idempotency probe throws — a lost outcome is worse than a duplicate (#10332)", async () => {
+    const env = createTestEnv();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const realPrepare = env.DB.prepare.bind(env.DB);
+    // Fail ONLY the probe SELECT; every subsequent write (appendReviewAudit/audit_events) still runs for real.
+    vi.spyOn(env.DB, "prepare").mockImplementationOnce(() => {
+      throw new Error("ledger unavailable");
+    });
+    await recordPrOutcome(env, "pull_request", {
+      action: "closed",
+      repository: { name: "repo", full_name: "owner/repo", owner: { login: "owner" } },
+      pull_request: pullRequestPayload({ number: 77 }),
+      sender: { login: "maintainer", type: "User" },
+    });
+    (env.DB.prepare as unknown as { mockRestore: () => void }).mockRestore?.();
+    void realPrepare;
+    expect((await reviewAuditRows(env, "pr_outcome"))[0]).toMatchObject({ target_id: "owner/repo#77" });
+    expect(warn).toHaveBeenCalled();
   });
 
   it("a failing audit_events mirror never breaks the canonical review_audit write", async () => {

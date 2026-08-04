@@ -79,7 +79,10 @@ export function isPublicStatsEnabled(
   manifestOverride?: PublicStatsManifestOverride | undefined,
 ): boolean {
   if (manifestOverride?.present) return manifestOverride.enabled;
-  return /^(1|true|yes|on)$/i.test(env.LOOPOVER_PUBLIC_STATS ?? "");
+  // #10329: trim before the anchored regex, matching every sibling flag-checker (e.g. pr-reconciliation.ts).
+  // A trailing newline/space (plausible from `wrangler secret put` reading a file, or a CI-injected var) makes
+  // `/^(1|true|yes|on)$/i.test("true\n")` false even though the operator clearly meant to enable the flag.
+  return /^(1|true|yes|on)$/i.test((env.LOOPOVER_PUBLIC_STATS ?? "").trim());
 }
 
 // Short in-isolate TTL cache for resolvePublicStatsManifestOverride, mirroring review-memory-wire.ts's

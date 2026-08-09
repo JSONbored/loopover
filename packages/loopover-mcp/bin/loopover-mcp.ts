@@ -302,7 +302,7 @@ const CLI_COMMAND_SPEC = {
   },
   "review-pr": {
     subcommands: [],
-    usage: ["review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]"],
+    usage: ["review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--label <name>]... [--linked-issue <number>] [--issue <number>]... [--json]"],
   },
   "lint-pr-text": { subcommands: [], usage: ["lint-pr-text [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]"] },
   "validate-config": { subcommands: [], usage: ["validate-config --file <path> [--source repo_file|api_record|none] [--json]"] },
@@ -3194,11 +3194,15 @@ function writeBranchAnalysisTable(result: any, command: string) {
 function printReviewPrHelp() {
   process.stdout.write(
     [
-      "Usage: loopover-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--linked-issue <number>] [--json]",
+      "Usage: loopover-mcp review-pr --login <github-login> [--repo owner/repo] [--base origin/main] [--commit <message>]... [--body <text>] [--body-file <path>] [--label <name>]... [--linked-issue <number>] [--issue <number>]... [--json]",
       "",
       "Compose the existing preflight + slop-risk + PR-text-lint checks into ONE pre-PR review report,",
       "so a contributor's own local agent can see everything the loopover gate would flag before ever opening a PR.",
       "Mirrors the loopover_review_pr_before_push MCP tool. Thin composition only — does not reimplement any check. No source upload.",
+      "",
+      "Repeat --label <name> to pass labels to the review request.",
+      "Repeat --issue <number> as an alternate way to provide linked issue numbers.",
+      "When both --linked-issue and --issue are provided, --linked-issue takes precedence and --issue is ignored.",
       "",
       "Pass --json for machine-readable output.",
     ].join("\n") + "\n",

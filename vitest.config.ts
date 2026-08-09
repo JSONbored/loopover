@@ -68,7 +68,7 @@ export default defineConfig({
     // Codecov, or that PR's own Codecov bot comment). No dashboard is wired up to surface it proactively,
     // so check it deliberately if a retry shows up in CI output rather than assuming it's pure infra noise.
     retry: 1,
-    include: ["test/**/*.test.ts"],
+    include: ["test/**/*.test.ts", "packages/loopover-mcp/test/**/*.test.ts"],
     exclude: ["test/workers/**/*.test.ts"],
     reporters: junitPath ? ["default", "junit"] : ["default"],
     ...(junitPath ? { outputFile: { junit: junitPath } } : {}),

@@ -107,11 +107,11 @@ function unquoteYamlValue(value: string): string {
 }
 
 function unquoteYamlScalar(value: string): string {
-  const trimmed = value.trim();
+  const trimmed = stripYamlComment(value);
   if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
     return trimmed.slice(1, -1).trim();
   }
-  return trimmed.replace(/\s+#.*$/, "").trim();
+  return trimmed.trim();
 }
 
 // A YAML block-scalar header indicator: `|` or `>` with an optional chomping (`+`/`-`) and/or a single indentation
@@ -185,6 +185,10 @@ function parseSimpleFrontmatter(source: string): Record<string, string> {
   }
   return fields;
 }
+
+export const __sourceEvidenceInternals = {
+  parseSimpleFrontmatter,
+};
 
 function frontmatterBlock(source: string): string {
   const match = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(String(source || ""));

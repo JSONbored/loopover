@@ -32,6 +32,8 @@ import { simulateOpenPrPressure } from "../services/open-pr-pressure-scenarios";
 import { isCodeFile, isTestFile } from "./path-matchers";
 import { isMaintainerAuthorAssociation } from "../github/author-association";
 
+const SCORE_PREVIEW_BLOCKING_WARNING_PATTERN = /not registered|no active|exceeds|credibility|token gate|confirmed ineligible/i;
+
 export type LocalBranchChangedFile = {
   path: string;
   previousPath?: string | undefined;
@@ -356,7 +358,7 @@ export function buildLocalBranchAnalysis(args: {
   });
   const scoreBlockers = [
     ...rewardRisk.scoreBlockers,
-    ...scorePreview.warnings.filter((warning) => /not registered|no active|exceeds|credibility|token gate|confirmed ineligible/i.test(warning)),
+    ...scorePreview.warnings.filter((warning) => SCORE_PREVIEW_BLOCKING_WARNING_PATTERN.test(warning)),
     ...preflight.findings.filter((finding) => finding.severity !== "info").map((finding) => finding.title),
   ];
   const eligibilityPlan = deriveEligibilityPlan(scorePreview);
@@ -789,6 +791,15 @@ function isApprovedOrMergeableOpenPr(pr: PullRequestRecord): boolean {
   return reviewDecision === "approved" || ["clean", "has_hooks", "mergeable", "mergeable_state_clean"].includes(mergeableState);
 }
 
+function scorePreviewWarningFinding(warning: string): LocalBranchAnalysis["localFindings"][number] {
+  return {
+    code: "score_preview_warning",
+    severity: SCORE_PREVIEW_BLOCKING_WARNING_PATTERN.test(warning) ? "warning" : "info",
+    title: "Private preview warning",
+    detail: warning,
+  };
+}
+
 function buildLocalFindings(
   input: LocalBranchAnalysisInput,
   changedFiles: LocalBranchChangedFile[],
@@ -894,12 +905,7 @@ function buildLocalFindings(
     ...branchEligibilityFindings(branchEligibility),
     ...scorePreview.warnings
       .filter((warning) => !/branch eligibility/i.test(warning))
-      .map((warning) => ({
-        code: "score_preview_warning",
-        severity: /not registered|no active|exceeds|credibility/i.test(warning) ? ("warning" as const) : ("info" as const),
-        title: "Private preview warning",
-        detail: warning,
-      })),
+      .map(scorePreviewWarningFinding),
     ...preflight.findings.map((finding) => ({
       code: `preflight_${finding.code}`,
       severity: finding.severity,
@@ -1284,3 +1290,7 @@ function nonNegative(value: number | undefined): number {
 function unique<T>(value: T, index: number, values: T[]): boolean {
   return values.indexOf(value) === index;
 }
+
+export const __localBranchInternals = {
+  scorePreviewWarningFinding,
+};

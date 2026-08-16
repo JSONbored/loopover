@@ -239,6 +239,7 @@ function duplicatePronePullNumbers(openPullRequests: PullRequestRecord[]): Set<n
   const byNormalizedTitle = new Map<string, PullRequestRecord[]>();
   for (const pr of openPullRequests) {
     const key = normalizeTitle(pr.title);
+    if (!key) continue;
     const bucket = byNormalizedTitle.get(key) ?? [];
     bucket.push(pr);
     byNormalizedTitle.set(key, bucket);

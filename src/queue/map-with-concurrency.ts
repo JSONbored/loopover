@@ -1,7 +1,7 @@
 export async function mapWithConcurrency<T, R>(
   items: T[],
   concurrency: number,
-  mapper: (item: T) => Promise<R>,
+  mapper: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
   const results: R[] = new Array(items.length);
   let nextIndex = 0;
@@ -11,7 +11,7 @@ export async function mapWithConcurrency<T, R>(
       while (nextIndex < items.length) {
         const index = nextIndex;
         nextIndex += 1;
-        results[index] = await mapper(items[index] as T);
+        results[index] = await mapper(items[index] as T, index);
       }
     }),
   );

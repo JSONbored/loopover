@@ -55,11 +55,11 @@ function isBlockScalarHeader(raw: string): boolean {
 }
 
 function unquoteYamlScalar(value: string): string {
-  const trimmed = value.trim();
+  const trimmed = stripYamlComment(value);
   if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
     return trimmed.slice(1, -1).trim();
   }
-  return trimmed.replace(/\s+#.*$/, "").trim();
+  return trimmed.trim();
 }
 
 /**

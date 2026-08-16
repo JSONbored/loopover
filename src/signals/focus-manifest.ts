@@ -816,7 +816,7 @@ export function buildFocusManifestGuidance(args: {
       detail: preferredLabelsDetail,
       action: "Consider applying a maintainer-preferred label so triage stays aligned.",
     });
-    publicNextSteps.push(`Consider a maintainer-preferred label (${manifest.preferredLabels.slice(0, 3).join(", ")}).`);
+    publicNextSteps.push(`Consider a maintainer-preferred label (${safePreferredLabels.slice(0, 3).join(", ")}).`);
   }
 
   if (manifest.linkedIssuePolicy === "required" && linkedIssueCount === 0 && bodyObserved && !hasNoIssueRationale) {

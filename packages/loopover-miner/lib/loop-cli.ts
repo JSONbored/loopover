@@ -339,7 +339,10 @@ export async function runLoop(args: string[], options: RunLoopOptions = {}): Pro
 
   let usage: GovernorCapUsage = governorState.loadCapUsage();
   const cycles: LoopCycleSummary[] = [];
-  let sinceSeq = eventLedger.latestSeq();
+  // Cursor state is repo-scoped because buildLoopClosureSummary applies the cursor together with repoFullName.
+  // Prime every repo from the same session-start global seq, then advance only the repo that was summarized.
+  const sessionStartSeq = eventLedger.latestSeq();
+  const sinceSeqByRepo = new Map<string, number>();
   let haltReason: string | null = null;
   let amsPolicyWithWarnings: { source: string; warnings: string[] } | null = null;
 
@@ -595,11 +598,12 @@ export async function runLoop(args: string[], options: RunLoopOptions = {}): Pro
         }
       }
 
+      const repoSinceSeq = sinceSeqByRepo.get(claimed.repoFullName) ?? sessionStartSeq;
       const loopSummary = buildLoopClosureSummaryFn(
         { eventLedger, portfolioQueue, runState },
-        { sinceSeq, repoFullName: claimed.repoFullName },
+        { sinceSeq: repoSinceSeq, repoFullName: claimed.repoFullName },
       );
-      sinceSeq = loopSummary.lastSeq;
+      sinceSeqByRepo.set(claimed.repoFullName, loopSummary.lastSeq);
 
       const reentry = attemptLoopReentryFn(
         { killSwitchScope: killSwitch.scope, repoFullName: claimed.repoFullName, outcome: reentryOutcome },

@@ -308,6 +308,70 @@ describe("runLoop (#5135)", () => {
     expect(printed).toContain("No discovery, queue, or ledger writes were made.");
   });
 
+  it("REGRESSION (#10336): keeps loop-closure cursors per repo across consecutive multi-repo cycles", async () => {
+    const { eventLedger, governorLedger, portfolioQueue, runState, governorState } = tempStores();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+    for (let i = 0; i < 10; i += 1) {
+      eventLedger.appendEvent({ type: "seed", repoFullName: "seed/repo", payload: { i } });
+    }
+
+    const runDiscover = vi.fn(async () => {
+      if (portfolioQueue.listQueue().length === 0) {
+        portfolioQueue.enqueue({ repoFullName: "a/a", identifier: "issue:1" });
+      }
+      return 0;
+    });
+    const summaryCalls: Array<{ sinceSeq?: number; repoFullName?: string }> = [];
+    const buildLoopClosureSummary = vi.fn((_sources: unknown, opts: unknown) => {
+      const input = opts as { sinceSeq: number; repoFullName: string };
+      summaryCalls.push(input);
+      return { sinceSeq: input.sinceSeq, lastSeq: input.repoFullName === "a/a" ? 100 : 200 };
+    });
+    let reentryCalls = 0;
+    const attemptLoopReentry = vi.fn(() => {
+      reentryCalls += 1;
+      if (reentryCalls === 1) {
+        return {
+          decision: { reenter: true, reasons: [] },
+          dequeued: {
+            repoFullName: "b/b",
+            identifier: "issue:2",
+            priority: 1,
+            status: "in_progress",
+            enqueuedAt: new Date().toISOString(),
+          },
+        };
+      }
+      return { decision: { reenter: false, reasons: ["done"] }, dequeued: null };
+    });
+    const runAttempt = vi.fn(async (_args: string[], opts?: Record<string, unknown>) => {
+      const onResult = opts?.onResult as ((result: unknown) => void) | undefined;
+      onResult?.({ outcome: "blocked_rejection_signaled", reason: "test", totalTurnsUsed: 0, totalCostUsd: 0 });
+      return 5;
+    });
+
+    const exitCode = await runLoop(["a/a", "b/b", "--miner-login", "alice", "--max-cycles", "2", "--json"],
+      readyLoopOptions({
+        openGovernorState: () => governorState,
+        initEventLedger: () => eventLedger,
+        initGovernorLedger: () => governorLedger,
+        initPortfolioQueue: () => portfolioQueue,
+        initRunStateStore: () => runState,
+        runDiscover,
+        runAttempt,
+        evaluateRunLoopBoundaryGate: () => ({ verdict: { reason: "allowed" }, canClaimNext: true }),
+        buildLoopClosureSummary,
+        attemptLoopReentry,
+      }),
+    );
+
+    expect(exitCode).toBe(0);
+    expect(summaryCalls).toEqual([
+      expect.objectContaining({ repoFullName: "a/a", sinceSeq: 10 }),
+      expect.objectContaining({ repoFullName: "b/b", sinceSeq: 10 }),
+    ]);
+  });
+
   it("REGRESSION: exhausting --max-cycles releases the primed claim instead of stranding it in_progress (#6763)", async () => {
     const { eventLedger, governorLedger, portfolioQueue, runState, governorState, paths } = tempStores();
     // A non-empty queue: the initial priming dequeues this item (flipping it to 'in_progress') BEFORE the

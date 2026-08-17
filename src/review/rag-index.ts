@@ -49,6 +49,7 @@ import {
  *  blob SHA (#4365) — git's own content hash, free on the tree response — used to skip re-embedding a file
  *  whose content hasn't changed since the last full index). */
 type TreeEntry = { path: string; size?: number | undefined; sha?: string | undefined };
+type RepoTree = { entries: TreeEntry[]; truncated: boolean };
 
 /**
  * Sort key that puts small, high-value manifest/config files (package.json, tsconfig*.json,
@@ -101,11 +102,11 @@ function ghHeaders(token: string | undefined, accept: string): Record<string, st
 
 /**
  * Fetch the FULL recursive git tree for a repo at `ref` and return only the blob (file) entries. Uses the
- * Git Trees API (`?recursive=1`) — one call yields the whole tree. Returns [] on any non-OK / error response
- * (fail-safe: a tree we can't read = nothing to index). `truncated` is honored (GitHub truncates very large
- * trees) — we index whatever it returned; the MAX_CHUNKS cap is the real bound anyway.
+ * Git Trees API (`?recursive=1`) — one call yields the whole tree. Returns null on any non-OK / error response
+ * (fail-safe: a tree we can't read = nothing to index). `truncated` is surfaced with the returned entries so
+ * callers can index the partial positive results without treating absent paths as evidence that files were removed.
  */
-async function fetchRepoTree(_env: Env, repoFullName: string, ref: string, token: string | undefined, admissionKey: GitHubRateLimitAdmissionKey | undefined): Promise<TreeEntry[] | null> {
+async function fetchRepoTree(_env: Env, repoFullName: string, ref: string, token: string | undefined, admissionKey: GitHubRateLimitAdmissionKey | undefined): Promise<RepoTree | null> {
   try {
     const { owner, name } = repoParts(repoFullName);
     const url = `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/git/trees/${encodeURIComponent(ref)}?recursive=1`;
@@ -116,7 +117,7 @@ async function fetchRepoTree(_env: Env, repoFullName: string, ref: string, token
       ...(admissionKey ? { githubRateLimitAdmissionKey: admissionKey } : {}),
     });
     if (!response.ok) return null;
-    const body = (await response.json()) as { tree?: Array<{ path?: string; type?: string; size?: number; sha?: string }> } | null;
+    const body = (await response.json()) as { tree?: Array<{ path?: string; type?: string; size?: number; sha?: string }>; truncated?: boolean } | null;
     const entries: TreeEntry[] = [];
     for (const node of body?.tree ?? []) {
       if (node.type !== "blob" || typeof node.path !== "string" || node.path.length === 0) continue;
@@ -126,7 +127,7 @@ async function fetchRepoTree(_env: Env, repoFullName: string, ref: string, token
         ...(typeof node.sha === "string" && node.sha.length > 0 ? { sha: node.sha } : {}),
       });
     }
-    return entries;
+    return { entries, truncated: body?.truncated === true };
   } catch (error) {
     console.error(JSON.stringify({ level: "error", event: "rag_index_tree_error", repo: repoFullName, message: String(error).slice(0, 200) }));
     return null;
@@ -299,14 +300,16 @@ export async function indexRepo(
     const ref = indexRef(repo.defaultBranch);
 
     // 1. Fetch the tree, filter to indexable code/docs, and prune retained chunks for files that disappeared
-    //    or moved to a non-indexable path. If the tree fetch fails (null), skip pruning to avoid deleting good
-    //    chunks during a transient GitHub/API failure.
-    const rawTree = await fetchRepoTree(env, repoFullName, ref, token, admissionKey);
-    if (rawTree === null) return empty;
-    const tree = rawTree
+    //    or moved to a non-indexable path. If the tree fetch fails (null) or is truncated, skip pruning to avoid
+    //    deleting good chunks without a complete view of the repository.
+    const repoTree = await fetchRepoTree(env, repoFullName, ref, token, admissionKey);
+    if (repoTree === null) return empty;
+    const tree = repoTree.entries
       .filter((entry) => isIndexablePath(entry.path, entry.size))
       .sort((a, b) => manifestPriority(a.path) - manifestPriority(b.path) || a.path.localeCompare(b.path));
-    await pruneMissingPaths(infra, project, repoName, new Set(tree.map((entry) => entry.path)));
+    // A truncated tree is valid positive evidence for every returned path, but absent paths may live in the
+    // unreturned tail. Skip destructive reconciliation while still indexing every usable entry GitHub returned.
+    if (!repoTree.truncated) await pruneMissingPaths(infra, project, repoName, new Set(tree.map((entry) => entry.path)));
     if (tree.length === 0) return empty;
 
     // 2. Fetch + chunk + upsert, stopping once the per-repo vector cap is reached. `stored` seeds from the

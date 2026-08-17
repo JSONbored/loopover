@@ -75,13 +75,14 @@ function stubGithub(opts: {
   tree?: Array<{ path: string; type?: string; size?: number; sha?: string }>;
   files?: Record<string, string>;
   treeStatus?: number;
+  treeTruncated?: boolean;
 }) {
   const files = opts.files ?? {};
   vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
     const url = input.toString();
     if (url.includes("/git/trees/")) {
       if (opts.treeStatus && opts.treeStatus !== 200) return new Response("err", { status: opts.treeStatus });
-      return Response.json({ tree: (opts.tree ?? []).map((n) => ({ type: "blob", ...n })), truncated: false });
+      return Response.json({ tree: (opts.tree ?? []).map((n) => ({ type: "blob", ...n })), truncated: opts.treeTruncated ?? false });
     }
     if (url.includes("/contents/")) {
       // Decode the path back out of the URL to look up the canned file body.
@@ -159,7 +160,7 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
     expect(vec.upserted).toContain(`${ns}|src/a.ts::0`);
   });
 
-  it("prunes chunks for paths missing from the current full tree before returning retrieved context", async () => {
+  it("prunes chunks for paths missing from a complete tree before returning retrieved context", async () => {
     const { env, vec } = indexEnv();
     const ns = ragNamespace(PROJECT, "gittensory");
     await env.DB.prepare("INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text) VALUES (?,?,?,?,?,?,?)")
@@ -176,6 +177,27 @@ describe("indexRepo: full repo index (tree → chunk → embed → upsert)", () 
     expect(result.files).toBe(1);
     expect(await pathsFor(env, PROJECT, "gittensory")).toEqual(["src/current.ts"]);
     expect(vec.deleted).toContain(`${ns}|src/deleted-secret.ts::0`);
+  });
+
+  it("indexes entries from a truncated tree without pruning paths that may be in the unreturned tail", async () => {
+    const { env, vec } = indexEnv();
+    const ns = ragNamespace(PROJECT, "gittensory");
+    await env.DB.prepare("INSERT INTO repo_chunks (id, project, repo, path, chunk_index, kind, text) VALUES (?,?,?,?,?,?,?)")
+      .bind(`${ns}|src/unreturned-tail.ts::0`, PROJECT, "gittensory", "src/unreturned-tail.ts", 0, "code", "still present beyond the truncated response")
+      .run();
+
+    stubGithub({
+      tree: [{ path: "src/current.ts", size: 30 }],
+      files: { "src/current.ts": "export const current = 1;\n" },
+      treeTruncated: true,
+    });
+
+    const result = await indexRepo(env, PROJECT, REPO);
+
+    expect(result.files).toBe(1);
+    expect(result.indexed).toBe(1);
+    expect(await pathsFor(env, PROJECT, "gittensory")).toEqual(["src/current.ts", "src/unreturned-tail.ts"]);
+    expect(vec.deleted).not.toContain(`${ns}|src/unreturned-tail.ts::0`);
   });
 
   it("skips a file that fails to fetch (404) and indexes the rest (fail-safe)", async () => {

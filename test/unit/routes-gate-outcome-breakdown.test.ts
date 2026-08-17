@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../../src/api/routes";
 import { createSessionForGitHubUser } from "../../src/auth/security";
 import { recordAuditEvent, upsertInstallation, upsertRepositoryFromGitHub } from "../../src/db/repositories";
 import { GATE_OUTCOME_BREAKDOWN_WINDOW_DAYS, buildGateOutcomeBreakdown, classifyGateOutcomeAuditBucket } from "../../src/services/gate-outcome-breakdown";
 import { createTestEnv } from "../helpers/d1";
+
+const TEST_NOW = "2026-07-11T12:00:00.000Z";
 
 function stubMinerDetection(): void {
   vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
@@ -27,14 +29,22 @@ async function seedOwnedRepo(env: Env, owner: string, name: string, installation
 }
 
 describe("GET /v1/app/maintainer-dashboard gateOutcomeBreakdown (#2203)", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(TEST_NOW));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
 
   it("surfaces repo-scoped gate-outcome counts on qualityDashboard for an owner session", async () => {
     const app = createApp();
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
     await seedOwnedRepo(env, "owner", "repo", 101);
     stubMinerDetection();
-    const now = "2026-07-11T12:00:00.000Z";
+    const now = TEST_NOW;
     await recordAuditEvent(env, {
       eventType: "agent.action.merge",
       actor: "loopover",
@@ -90,7 +100,7 @@ describe("GET /v1/app/maintainer-dashboard gateOutcomeBreakdown (#2203)", () => 
     const env = createTestEnv({ ADMIN_GITHUB_LOGINS: "" });
     await seedOwnedRepo(env, "owner", "repo", 101);
     stubMinerDetection();
-    const now = "2026-07-11T12:00:00.000Z";
+    const now = TEST_NOW;
     await recordAuditEvent(env, {
       eventType: "agent.action.merge",
       actor: "loopover",

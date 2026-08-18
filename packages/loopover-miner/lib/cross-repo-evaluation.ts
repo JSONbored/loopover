@@ -724,7 +724,7 @@ async function runExecutionPhases(
   const task = {
     attemptId: `cross-repo-eval-${repoFullName.replace("/", "-")}`,
     workingDirectory: workspace.path,
-    acceptanceCriteriaPath: specResult.acceptanceCriteriaPath ?? join(workspace.path, "ACCEPTANCE_CRITERIA.md"),
+    acceptanceCriteriaPath: specResult.acceptanceCriteriaPath ?? join(workspace.path, ACCEPTANCE_CRITERIA_FILENAME),
     instructions: specResult.instructions ?? "",
     maxTurns: options.maxTurns ?? DEFAULT_CROSS_REPO_EXECUTION_MAX_TURNS,
   };

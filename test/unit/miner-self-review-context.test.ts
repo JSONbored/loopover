@@ -1058,6 +1058,36 @@ describe("live gate thresholds probe (#6487)", () => {
   });
 });
 
+describe("extractLinkedPrNumbers — inline-code exclusion (#10339)", () => {
+  it("REGRESSION (#10339): a backtick-quoted closing PR reference is excluded", async () => {
+    const fetchImpl = routedFetch({
+      "/repos/acme/widgets/issues": () =>
+        jsonResponse([issuePayload({ body: "See the template example `Closes PR #501` before submitting." })]),
+      "/repos/acme/widgets/pulls": () => jsonResponse([]),
+      "/repos/acme/widgets": () => jsonResponse(REPO_PAYLOAD),
+      "raw.githubusercontent.com": () => jsonResponse(null, 404),
+      "api.gittensor.io/miners": () => jsonResponse([]),
+    });
+
+    const result = await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, loopoverAuth: null });
+    expect(result.issues[0]?.linkedPrs).toEqual([]);
+  });
+
+  it("REGRESSION (#10339): a genuine closing PR reference outside inline code still counts", async () => {
+    const fetchImpl = routedFetch({
+      "/repos/acme/widgets/issues": () =>
+        jsonResponse([issuePayload({ body: "Closes PR #501 (template example: `Closes PR #999`)" })]),
+      "/repos/acme/widgets/pulls": () => jsonResponse([]),
+      "/repos/acme/widgets": () => jsonResponse(REPO_PAYLOAD),
+      "raw.githubusercontent.com": () => jsonResponse(null, 404),
+      "api.gittensor.io/miners": () => jsonResponse([]),
+    });
+
+    const result = await fetchSelfReviewContext("acme/widgets", { fetchImpl: fetchImpl as never, loopoverAuth: null });
+    expect(result.issues[0]?.linkedPrs).toEqual([501]);
+  });
+});
+
 describe("extractLinkedIssueNumbers — parity with the host's byte-range exclusion + URL form (#7527)", () => {
   it("counts the bare #N and same-repo qualified owner/repo#N forms, rejecting a different-repo qualified ref", () => {
     expect(extractLinkedIssueNumbers("Closes #7", "acme/widgets")).toEqual([7]);

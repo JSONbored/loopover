@@ -890,7 +890,7 @@ describe("cross-repo evaluation harness (#4788)", () => {
       });
       expect(result.passed).toBe(true);
       expect(tasks[0]?.instructions).toBe("");
-      expect(String(tasks[0]?.acceptanceCriteriaPath).endsWith("ACCEPTANCE_CRITERIA.md")).toBe(true);
+      expect(String(tasks[0]?.acceptanceCriteriaPath).endsWith("acceptance-criteria.json")).toBe(true);
     });
 
     it("runCrossRepoFullExecution mirrors the readiness runner's manifest and filter handling", async () => {

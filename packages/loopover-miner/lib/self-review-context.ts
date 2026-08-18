@@ -264,8 +264,15 @@ async function fetchRepositoryRecord(target: any, resolved: any) {
 // miner skipped an available issue (the host's own #issue-body-pr-mention-pollution fix, never ported here).
 const LINKED_PR_PATTERN = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:PR|pull request)\s+#(\d+)\b/gi;
 function extractLinkedPrNumbers(body: any) {
+  const inlineCodeSpanRanges = [...body.matchAll(/`[^`\n]*`/g)].map((match: any) => ({
+    start: match.index,
+    end: match.index + match[0].length,
+  }));
   const numbers = [];
   for (const match of body.matchAll(LINKED_PR_PATTERN)) {
+    const matchStart = match.index;
+    const matchEnd = matchStart + match[0].length;
+    if (inlineCodeSpanRanges.some((range: { start: number; end: number }) => matchStart < range.end && matchEnd > range.start)) continue;
     const number = Number(match[1]);
     if (Number.isInteger(number) && number > 0) numbers.push(number);
   }

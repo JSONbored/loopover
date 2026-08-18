@@ -29,8 +29,9 @@ import type {
 import { prepareOpenPrSubmission } from "./harness-submission-trigger.js";
 import { captureMinerError } from "./sentry.js";
 
-export const ATTEMPT_OUTCOMES: readonly ["abandon", "stale", "blocked", "governed", "submitted"] = Object.freeze([
+export const ATTEMPT_OUTCOMES: readonly ["abandon", "verification_failed", "stale", "blocked", "governed", "submitted"] = Object.freeze([
   "abandon",
+  "verification_failed",
   "stale",
   "blocked",
   "governed",

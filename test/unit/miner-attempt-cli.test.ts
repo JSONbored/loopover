@@ -1586,6 +1586,26 @@ describe("runAttempt (#5132)", () => {
     expect(String(error.mock.calls[0]?.[0])).toContain("target_not_found");
   });
 
+  it("REGRESSION (#10337): verification_failed has the dedicated exit code 12", async () => {
+    const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
+    vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    const exitCode = await runAttempt(["acme/widgets", "7", "--miner-login", "alice", "--json"], {
+      env: { MINER_CODING_AGENT_PROVIDER: "noop" },
+      openWorktreeAllocator: () => allocator,
+      openClaimLedger: () => claimLedger,
+      initEventLedger: () => eventLedger,
+      initAttemptLog: () => attemptLog,
+      initGovernorLedger: () => governorLedger,
+      ...readyPipelineOptions({
+        runMinerAttempt: async () =>
+          ({ outcome: "verification_failed", verification: { status: "failed" }, loopResult: fakeLoopResult() }) as never,
+      }),
+    });
+
+    expect(exitCode).toBe(12);
+  });
+
   it("REGRESSION: an unexpected runMinerAttempt outcome falls through to exit 2", async () => {
     const { allocator, claimLedger, eventLedger, attemptLog, governorLedger } = tempLedgers();
     vi.spyOn(console, "log").mockImplementation(() => undefined);

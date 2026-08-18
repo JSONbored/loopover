@@ -1073,11 +1073,14 @@ export async function runAttempt(args: string[], options: RunAttemptOptions = {}
     }
     options.onResult?.(finalResult as AttemptCliResult);
 
+    // Terminal attempt outcome exit codes: submitted=0, abandon=7, stale=8, blocked=9, governed=10, verification_failed=12.
     switch (result.outcome) {
       case "submitted":
         return 0;
       case "abandon":
         return 7;
+      case "verification_failed":
+        return 12;
       case "stale":
         return 8;
       case "blocked":

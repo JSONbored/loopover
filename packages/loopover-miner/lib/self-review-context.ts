@@ -172,7 +172,7 @@ export function applyLiveGateThresholdsToManifest(
   const gate = { ...manifest.gate };
   if (typeof fields.confidence_floor === "number") {
     const floorScore = Math.max(0, Math.min(100, Math.round(fields.confidence_floor * 100)));
-    if (typeof gate.readinessMinScore === "number" && floorScore > gate.readinessMinScore) {
+    if (typeof gate.readinessMinScore !== "number" || floorScore > gate.readinessMinScore) {
       gate.readinessMinScore = floorScore;
     }
   }

@@ -518,6 +518,42 @@ describe("runDiscover (#4247)", () => {
     ]);
   });
 
+  it("REGRESSION (#10334): hosted discovery-index supplementation deduplicates repeated candidates", async () => {
+    const portfolioQueue = tempQueueStore();
+    const fetchCandidateIssuesWithSummary = vi.fn(async () => ({
+      issues: [fanOutIssue({ issueNumber: 1, title: "direct fan-out issue" })],
+      warnings: [],
+      rateLimitRemaining: 5000,
+      rateLimitResetAt: "2026-07-09T13:00:00.000Z",
+    }));
+    const queryDiscoveryIndex = vi.fn(async () => ({
+      contractVersion: 1,
+      candidates: [
+        indexCandidate({ issueNumber: 1, title: "stale hosted duplicate" }),
+        indexCandidate({ issueNumber: 2, title: "hosted issue" }),
+        indexCandidate({ issueNumber: 2, title: "hosted duplicate" }),
+      ],
+      nextCursor: null,
+    }));
+
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const exitCode = await runDiscover(["acme/widgets", "--json"], {
+      nowMs: NOW,
+      env: { ...process.env, LOOPOVER_MINER_DISCOVERY_PLANE: "1" },
+      initPortfolioQueue: () => portfolioQueue,
+      initPolicyDocCache: () => tempPolicyDocCacheStore(),
+      initPolicyVerdictCache: () => tempPolicyVerdictCacheStore(),
+      initRankedCandidatesStore: () => tempRankedCandidatesStore(),
+      fetchCandidateIssuesWithSummary,
+      queryDiscoveryIndex: queryDiscoveryIndex as never,
+    });
+
+    expect(exitCode).toBe(0);
+    const payload = JSON.parse(String(log.mock.calls[0]?.[0]));
+    expect(payload.ranked.map((e: { issueNumber: number }) => e.issueNumber).sort()).toEqual([1, 2]);
+    expect(portfolioQueue.listQueue("acme/widgets").map((e) => e.identifier).sort()).toEqual(["issue:1", "issue:2"]);
+  });
+
   it("REGRESSION (#7442): a discovery-index candidate assigned to its own repo owner is excluded once real assignees flow through", async () => {
     const portfolioQueue = tempQueueStore();
     const fetchCandidateIssuesWithSummary = vi.fn(async () => ({

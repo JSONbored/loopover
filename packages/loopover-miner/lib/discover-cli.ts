@@ -209,7 +209,12 @@ async function supplementWithDiscoveryIndex(
 
   const seen = new Set(fanOut.issues.map((issue) => dedupeKey(issue.repoFullName, issue.issueNumber)));
   const supplemented = aiAllowed
-    .filter((candidate) => !seen.has(dedupeKey(candidate.repoFullName, candidate.issueNumber)))
+    .filter((candidate) => {
+      const key = dedupeKey(candidate.repoFullName, candidate.issueNumber);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
     // DiscoveryIndexCandidate is a near-superset of RawCandidateIssue; copy the real assignees through when the
     // hosted contract carried them (#7442), falling back to [] only when the served response genuinely omitted the
     // field — cast preserves pre-existing runtime shape rather than re-mapping.

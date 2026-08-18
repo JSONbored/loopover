@@ -725,6 +725,19 @@ describe("live gate thresholds probe (#6487)", () => {
     expect(overlaid.gate.sizeMaxFiles).toBe(3);
   });
 
+  it("REGRESSION (#10338): adopts a live confidence floor when static readiness is unset", () => {
+    const base = parseFocusManifestContent("gate:\n  duplicates: block\n", "repo_file");
+    expect(base.gate.readinessMinScore).toBeNull();
+
+    const overlaid = applyLiveGateThresholdsToManifest(base, {
+      confidence_floor: 0.91,
+      scope_cap_files: null,
+      scope_cap_lines: null,
+    });
+
+    expect(overlaid.gate.readinessMinScore).toBe(91);
+  });
+
   it("applyLiveGateThresholdsToManifest raises readinessMinScore and prefers live scope caps", () => {
     const base = parseFocusManifestContent("gate:\n  readiness:\n    mode: block\n    minScore: 70\n  size:\n    mode: block\n    maxFiles: 20\n    maxLines: 500\n", "repo_file");
     const overlaid = applyLiveGateThresholdsToManifest(base, {

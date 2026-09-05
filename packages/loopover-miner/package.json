@@ -49,9 +49,9 @@
   "dependencies": {
     "@loopover/contract": "^3.21.2",
     "@loopover/engine": "^3.21.2",
-    "@modelcontextprotocol/sdk": "1.29.0",
-    "@sentry/node": "^10.67.0",
-    "zod": "^4.4.3"
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@sentry/node": "^10.73.0",
+    "zod": "^4.5.4"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

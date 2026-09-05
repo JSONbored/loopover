@@ -93,10 +93,10 @@
     "build": "node -e \"require('node:fs').rmSync('.tsbuildinfo',{force:true})\" && tsc -p tsconfig.json"
   },
   "dependencies": {
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260724.1",
+    "@cloudflare/workers-types": "^5.20260902.1",
     "typescript": "^5.9.3"
   },
   "engines": {

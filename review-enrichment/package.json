@@ -18,10 +18,10 @@
     "test:node": "node --test --experimental-strip-types \"test/**/*.test.ts\""
   },
   "dependencies": {
-    "@hono/node-server": "^2.0.11",
-    "@posthog/cli": "0.9.1",
-    "hono": "^4.12.31",
-    "posthog-node": "^5.46.1"
+    "@hono/node-server": "^2.1.1",
+    "@posthog/cli": "0.18.0",
+    "hono": "^4.13.5",
+    "posthog-node": "^5.51.6"
   },
   "devDependencies": {
     "@types/node": "^22.20.1",

@@ -97,13 +97,13 @@
     "test": "npm run build && rm -rf dist-test .test.tsbuildinfo && tsc -p tsconfig.test.json && node --test \"dist-test/**/*.test.js\""
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.218",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.267",
     "tree-sitter-wasms": "^0.1.13",
-    "web-tree-sitter": "^0.20.8",
+    "web-tree-sitter": "^0.27.0",
     "yaml": "^2.9.0"
   },
   "devDependencies": {
-    "@types/node": "^22.20.1",
+    "@types/node": "^22.20.2",
     "c8": "^11.0.0",
     "typescript": "^5.9.3"
   },

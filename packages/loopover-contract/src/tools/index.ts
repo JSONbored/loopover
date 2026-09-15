@@ -115,6 +115,7 @@ import {
   agentExplainNextActionTool,
   agentStartRunTool,
   agentGetRunTool,
+  agentListRunsTool,
 } from "./agent.js";
 import {
   preflightCurrentBranchTool,
@@ -247,6 +248,7 @@ export const TOOL_CONTRACTS: readonly ToolContract[] = [
   agentExplainNextActionTool,
   agentStartRunTool,
   agentGetRunTool,
+  agentListRunsTool,
   preflightCurrentBranchTool,
   previewCurrentBranchScoreTool,
   rankLocalNextActionsTool,

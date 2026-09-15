@@ -123,6 +123,8 @@ import {
   PrepareLocalPrPacketOutput,
   DraftPrBodyOutput,
   AgentRunBundleOutput,
+  AgentListRunsInput,
+  AgentListRunsOutput,
   GetPrReviewabilityInput,
   GetPrReviewabilityOutput,
   GetRepoContextInput,
@@ -313,6 +315,7 @@ import {
   getLatestUpstreamRulesetSnapshot,
   getRepoQueueTrendSnapshot,
   listAgentAuditEvents,
+  listAgentRunsForActor,
   listCheckSummaries,
   listPrVisibilitySkipAuditEvents,
   listPendingAgentActions,
@@ -1896,6 +1899,15 @@ export class LoopoverMcp {
         outputSchema: AgentRunBundleOutput,
       },
       async (input) => this.toolResult(await this.agentGetRun(input.runId)),
+    );
+
+    register(
+      "loopover_agent_list_runs",
+      {
+        inputSchema: AgentListRunsInput,
+        outputSchema: AgentListRunsOutput,
+      },
+      async (input) => this.toolResult(await this.agentListRuns(input)),
     );
 
     register(
@@ -4940,6 +4952,20 @@ export class LoopoverMcp {
     return {
       summary: `LoopOver base-agent run ${runId}.`,
       data: bundle as unknown as Record<string, unknown>,
+    };
+  }
+
+  private async agentListRuns(input: z.infer<typeof AgentListRunsInput>): Promise<ToolPayload> {
+    this.requireContributorAccess(input.actorLogin);
+    const rawLimit = input.limit === undefined ? 50 : Number(input.limit);
+    const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(100, Math.floor(rawLimit))) : 50;
+    const runs = await listAgentRunsForActor(this.env, input.actorLogin, limit);
+    const bundles = await Promise.all(runs.map((run) => getAgentRunBundle(this.env, run.id)));
+    return {
+      summary: `LoopOver agent runs for ${input.actorLogin}.`,
+      data: {
+        runs: bundles.filter((bundle): bundle is NonNullable<typeof bundle> => Boolean(bundle)),
+      },
     };
   }
 

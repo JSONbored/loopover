@@ -753,3 +753,24 @@ export const agentGetRunTool = defineTool({
   input: AgentGetRunInput,
   output: AgentRunBundleOutput,
 });
+
+export const AgentListRunsInput = z.object({
+  actorLogin: z.string().min(1),
+  // MCP clients commonly encode query-like values as strings; accept both so
+  // the handler can preserve the REST endpoint's non-numeric fallback.
+  limit: z.union([z.number().int(), z.string()]).optional(),
+});
+export const AgentListRunsOutput = z.object({
+  runs: z.array(AgentRunBundleOutput),
+});
+export const agentListRunsTool = defineTool({
+  name: "loopover_agent_list_runs",
+  title: "Agent: list runs",
+  description: "List persisted LoopOver agent runs for a contributor, with the same bounded limit as the REST API.",
+  category: "agent",
+  auth: "token",
+  locality: "remote",
+  availability: "both",
+  input: AgentListRunsInput,
+  output: AgentListRunsOutput,
+});

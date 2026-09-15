@@ -77,6 +77,7 @@ import { z } from "zod";
 // returning unschematized structured content.
 import {
   AgentGetRunInput,
+  AgentListRunsInput,
   AgentPlanInput,
   AgentStartRunInput,
   ApplyLabelsInput,
@@ -789,6 +790,7 @@ export const STDIO_TOOL_NAMES = [
   "loopover_agent_plan_next_work",
   "loopover_agent_start_run",
   "loopover_agent_get_run",
+  "loopover_agent_list_runs",
   "loopover_agent_explain_next_action",
   "loopover_agent_prepare_pr_packet",
   "loopover_local_status_structured",
@@ -1818,6 +1820,15 @@ registerStdioTool(
 registerStdioTool(
   "loopover_agent_get_run",
   async ({ runId }: z.infer<typeof AgentGetRunInput>) => toolResult(`LoopOver base-agent run ${runId}.`, await apiGet(`/v1/agent/runs/${encodeURIComponent(runId)}`)),
+);
+
+registerStdioTool(
+  "loopover_agent_list_runs",
+  async (input: z.infer<typeof AgentListRunsInput>) => {
+    const params = new URLSearchParams({ actorLogin: input.actorLogin });
+    if (input.limit !== undefined) params.set("limit", String(input.limit));
+    return toolResult(`LoopOver agent runs for ${input.actorLogin}.`, await apiGet(`/v1/agent/runs?${params.toString()}`));
+  },
 );
 
 registerStdioTool(

@@ -5635,6 +5635,39 @@ describe("api routes", () => {
     const agentStartPayload = (await mcpJson(agentStart)) as { result: { structuredContent: { run: { id: string; status: string } } } };
     expect(agentStartPayload.result.structuredContent.run.status).toBe("queued");
 
+    for (const [suffix, limit] of [["default", undefined], ["low", 0], ["high", 101], ["nan", "not-a-number"]] as const) {
+      const response = await app.request(
+        "/mcp",
+        {
+          method: "POST",
+          headers: mcpHeaders(env),
+          body: JSON.stringify({
+            jsonrpc: "2.0",
+            id: `agent-list-${suffix}`,
+            method: "tools/call",
+            params: { name: "loopover_agent_list_runs", arguments: { actorLogin: "oktofeesh1", ...(limit === undefined ? {} : { limit }) } },
+          }),
+        },
+        env,
+      );
+      expect(response.status).toBe(200);
+      const payload = (await mcpJson(response)) as { result?: { structuredContent?: { runs?: unknown[] } } };
+      expect(payload.result?.structuredContent?.runs).toEqual(expect.any(Array));
+    }
+    const invalidAgentList = await app.request(
+      "/mcp",
+      {
+        method: "POST",
+        headers: mcpHeaders(env),
+        body: JSON.stringify({ jsonrpc: "2.0", id: "agent-list-invalid", method: "tools/call", params: { name: "loopover_agent_list_runs", arguments: { actorLogin: "" } } }),
+      },
+      env,
+    );
+    expect(invalidAgentList.status).toBe(200);
+    const invalidPayload = (await mcpJson(invalidAgentList)) as { result?: { isError?: boolean; content?: Array<{ text?: string }> } };
+    expect(invalidPayload.result?.isError).toBe(true);
+    expect(invalidPayload.result?.content?.[0]?.text ?? "").toMatch(/actorLogin|actor_login_required/i);
+
     for (const [name, args] of [
       ["loopover_agent_get_run", { runId: agentStartPayload.result.structuredContent.run.id }],
       ["loopover_agent_explain_next_action", { login: "oktofeesh1", repoFullName: "entrius/allways-ui" }],

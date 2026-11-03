@@ -30,11 +30,20 @@
   "main": "src/worker.ts",
   "compatibility_date": "2026-07-21",
   "vars": {},
+  "logpush": false,
   "observability": {
-    "enabled": true,
+    "enabled": false,
+    "head_sampling_rate": 0,
     "logs": {
-      "enabled": true,
-      "head_sampling_rate": 1
+      "enabled": false,
+      "head_sampling_rate": 0,
+      "invocation_logs": false,
+      "persist": false
+    },
+    "traces": {
+      "enabled": false,
+      "head_sampling_rate": 0,
+      "persist": false
     }
   },
   "routes": [
